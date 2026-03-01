@@ -160,11 +160,40 @@ class ProviderCompleteOAuthResponse(BaseModel):
 # ==============================================================================
 
 
+def _get_fixed_template(provider_type: str) -> Any | None:
+    try:
+        return FIXED_PROVIDERS.get(ProviderType(provider_type))
+    except Exception:
+        return None
+
+
+def _supports_oauth(template: Any | None) -> bool:
+    if not template:
+        return False
+    oauth = getattr(template, "oauth", None)
+    if oauth is None:
+        return False
+    return bool(
+        str(getattr(oauth, "authorize_url", "") or "").strip()
+        and str(getattr(oauth, "token_url", "") or "").strip()
+        and str(getattr(oauth, "client_id", "") or "").strip()
+    )
+
+
 def _require_fixed_provider(provider: Provider) -> str:
-    provider_type = (getattr(provider, "provider_type", "custom") or "custom").strip()
-    if provider_type == ProviderType.CUSTOM:
+    provider_type = str(getattr(provider, "provider_type", "custom") or "custom").strip().lower()
+    if not _get_fixed_template(provider_type):
         raise InvalidRequestException("该 Provider 不是固定类型，无法使用 provider-oauth")
     return provider_type
+
+
+def _require_oauth_template(provider_type: str) -> Any:
+    template = _get_fixed_template(provider_type)
+    if not template:
+        raise InvalidRequestException("不支持的 provider_type")
+    if not _supports_oauth(template):
+        raise InvalidRequestException("该 Provider 不支持 OAuth 授权")
+    return template
 
 
 def _resolve_proxy_for_oauth(
@@ -239,7 +268,7 @@ def _create_oauth_key(
     api_formats: list[str],
     flush_only: bool = False,
     proxy: dict[str, Any] | None = None,
-    auto_fetch_models: bool = True,
+    auto_fetch_models: bool = False,
 ) -> "ProviderAPIKey":
     """创建 OAuth Key 记录并持久化。
 
@@ -247,7 +276,7 @@ def _create_oauth_key(
         flush_only: True 时仅 flush（批量导入场景），False 时 commit + refresh。
         proxy: Key 级别代理配置（如 {"node_id": "xxx", "enabled": True}），
                创建时设置后，后续 token 刷新、额度刷新等操作立即走代理，避免 IP 污染。
-        auto_fetch_models: 是否启用自动获取上游模型，非 custom 提供商默认开启。
+        auto_fetch_models: 是否启用自动获取上游模型，默认关闭。
     """
     from src.models.database import ProviderAPIKey as ProviderAPIKeyModel
 
@@ -299,24 +328,6 @@ def _update_existing_oauth_key(
         db.commit()
         db.refresh(existing_key)
     return existing_key
-
-
-async def _trigger_auto_fetch_models(key_ids: list[str]) -> None:
-    """为启用了 auto_fetch_models 的新建 Key 触发模型获取。"""
-    if not key_ids:
-        return
-    try:
-        from src.services.model.fetch_scheduler import get_model_fetch_scheduler
-
-        scheduler = get_model_fetch_scheduler()
-        for key_id in key_ids:
-            logger.info("[AUTO_FETCH] OAuth Key {} 默认开启自动获取模型，触发模型获取", key_id)
-            try:
-                await scheduler._fetch_models_for_key_by_id(key_id)
-            except Exception as e:
-                logger.error(f"[AUTO_FETCH] Key {key_id} 触发模型获取失败: {e}")
-    except Exception as e:
-        logger.error(f"[AUTO_FETCH] 获取 ModelFetchScheduler 失败: {e}")
 
 
 async def _fetch_kiro_email(
@@ -517,6 +528,8 @@ async def supported_types(_: User = Depends(require_admin)) -> list[dict[str, An
     # 不返回 client_secret
     result: list[dict[str, Any]] = []
     for provider_type, template in FIXED_PROVIDERS.items():
+        if not _supports_oauth(template):
+            continue
         result.append(
             {
                 "provider_type": (
@@ -553,12 +566,7 @@ async def start_oauth(
         raise NotFoundException("Provider 不存在", "provider")
     provider_type = _require_fixed_provider(provider)
 
-    try:
-        template = FIXED_PROVIDERS.get(ProviderType(provider_type))
-    except Exception:
-        template = None
-    if not template:
-        raise InvalidRequestException("不支持的 provider_type")
+    template = _require_oauth_template(provider_type)
 
     redis = await get_redis_client(require_redis=True)
     assert redis is not None
@@ -646,12 +654,7 @@ async def complete_oauth(
         raise NotFoundException("Provider 不存在", "provider")
     provider_type = _require_fixed_provider(provider)
 
-    try:
-        template = FIXED_PROVIDERS.get(ProviderType(provider_type))
-    except Exception:
-        template = None
-    if not template:
-        raise InvalidRequestException("不支持的 provider_type")
+    template = _require_oauth_template(provider_type)
 
     # exchange token
     token_url = template.oauth.token_url
@@ -815,12 +818,7 @@ async def refresh_oauth(
             email=None,
         )
 
-    try:
-        template = FIXED_PROVIDERS.get(ProviderType(provider_type))
-    except Exception:
-        template = None
-    if not template:
-        raise InvalidRequestException("不支持的 provider_type")
+    template = _require_oauth_template(provider_type)
 
     encrypted_auth_config = getattr(key, "auth_config", None)
     if not encrypted_auth_config:
@@ -983,12 +981,7 @@ async def start_provider_oauth(
     if provider_type == ProviderType.KIRO.value:
         raise InvalidRequestException("Kiro 不支持 OAuth 授权，请使用导入授权。")
 
-    try:
-        template = FIXED_PROVIDERS.get(ProviderType(provider_type))
-    except Exception:
-        template = None
-    if not template:
-        raise InvalidRequestException("不支持的 provider_type")
+    template = _require_oauth_template(provider_type)
 
     redis = await get_redis_client(require_redis=True)
     assert redis is not None
@@ -1073,12 +1066,7 @@ async def complete_provider_oauth(
     if provider_type == ProviderType.KIRO.value:
         raise InvalidRequestException("Kiro 不支持 OAuth 授权，请使用导入授权。")
 
-    try:
-        template = FIXED_PROVIDERS.get(ProviderType(provider_type))
-    except Exception:
-        template = None
-    if not template:
-        raise InvalidRequestException("不支持的 provider_type")
+    template = _require_oauth_template(provider_type)
 
     # exchange token
     token_url = template.oauth.token_url
@@ -1189,9 +1177,6 @@ async def complete_provider_oauth(
             api_formats=_get_provider_api_formats(provider),
             proxy=key_proxy,
         )
-
-    # 默认开启了 auto_fetch_models，触发模型获取
-    await _trigger_auto_fetch_models([str(new_key.id)])
 
     return ProviderCompleteOAuthResponse(
         key_id=str(new_key.id),
@@ -1441,9 +1426,6 @@ async def import_refresh_token(
                 proxy=key_proxy,
             )
 
-        # 默认开启了 auto_fetch_models，触发模型获取
-        await _trigger_auto_fetch_models([str(new_key.id)])
-
         return ProviderCompleteOAuthResponse(
             key_id=str(new_key.id),
             provider_type=provider_type,
@@ -1453,12 +1435,7 @@ async def import_refresh_token(
             replaced=replaced,
         )
 
-    try:
-        template = FIXED_PROVIDERS.get(ProviderType(provider_type))
-    except Exception:
-        template = None
-    if not template:
-        raise InvalidRequestException("不支持的 provider_type")
+    template = _require_oauth_template(provider_type)
 
     # 用 refresh_token 换取 access_token
     refresh_token = payload.refresh_token.strip()
@@ -1573,9 +1550,6 @@ async def import_refresh_token(
             proxy=key_proxy,
         )
 
-    # 默认开启了 auto_fetch_models，触发模型获取
-    await _trigger_auto_fetch_models([str(new_key.id)])
-
     return ProviderCompleteOAuthResponse(
         key_id=str(new_key.id),
         provider_type=provider_type,
@@ -1635,12 +1609,7 @@ async def batch_import_oauth(
         )
 
     # 标准 OAuth Provider（Codex、Antigravity、GeminiCli、ClaudeCode）
-    try:
-        template = FIXED_PROVIDERS.get(ProviderType(provider_type))
-    except Exception:
-        template = None
-    if not template:
-        raise InvalidRequestException(f"不支持的 provider_type: {provider_type}")
+    template = _require_oauth_template(provider_type)
 
     # 解析 Token 列表
     tokens = _parse_tokens_input(payload.credentials)
@@ -1860,11 +1829,6 @@ async def batch_import_oauth(
     if success_count > 0:
         db.commit()
 
-    # 批量导入完成后，触发所有成功 Key 的模型获取
-    success_key_ids = [r.key_id for r in results if r.status == "success" and r.key_id]
-    if success_key_ids:
-        await _trigger_auto_fetch_models(success_key_ids)
-
     logger.info(
         "[BATCH_IMPORT] Provider {} ({}): 成功 {}/{}, 失败 {}",
         provider_id,
@@ -2013,11 +1977,6 @@ async def _batch_import_kiro_internal(
     # 提交所有成功的记录
     if success_count > 0:
         db.commit()
-
-    # 批量导入完成后，触发所有成功 Key 的模型获取
-    success_key_ids = [r.key_id for r in results if r.status == "success" and r.key_id]
-    if success_key_ids:
-        await _trigger_auto_fetch_models(success_key_ids)
 
     logger.info(
         "[KIRO_BATCH_IMPORT] Provider {}: 成功 {}/{}, 失败 {}",
@@ -2426,8 +2385,6 @@ async def device_poll(
             api_formats=api_formats,
             proxy=key_proxy,
         )
-
-    await _trigger_auto_fetch_models([str(new_key.id)])
 
     # 更新 Redis session 为已完成（短 TTL 让前端最后一次轮询能拿到结果）
     session["status"] = "authorized"
