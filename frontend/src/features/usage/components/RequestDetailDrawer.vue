@@ -552,14 +552,10 @@
                         </template>
 
                         <!-- 区域3：常驻按钮（展开/收缩、复制） -->
-                        <div
-                          v-if="activeTab !== 'metadata'"
-                          class="w-px h-3.5 bg-border mx-0.5"
-                        />
+                        <div class="w-px h-3.5 bg-border mx-0.5" />
 
                         <!-- 展开/收缩 -->
                         <button
-                          v-if="activeTab !== 'metadata'"
                           :title="currentExpandDepth === 0 ? '展开全部' : '收缩全部'"
                           class="p-1 rounded transition-colors"
                           :class="viewMode === 'compare' || (supportsConversationView && contentViewMode === 'conversation')
@@ -580,7 +576,6 @@
 
                         <!-- 复制 -->
                         <button
-                          v-if="activeTab !== 'metadata'"
                           :title="copiedStates[activeTab] ? '已复制' : '复制'"
                           class="p-1 rounded transition-colors"
                           :class="viewMode === 'compare'
