@@ -9,18 +9,31 @@ from src.services.provider.pool.dimensions import get_preset_dimension, get_pres
 from src.services.provider.pool.dimensions._helpers import rank_ascending, safe_float
 from src.services.provider.pool.strategy import register_pool_strategy
 
-# When LRU is enabled alongside presets, this fraction of the final score
-# comes from the LRU rank (tiebreaker to avoid same-score collisions).
-_LRU_BLEND_FACTOR = 0.04
-# Positional weight decay factor: weight = 1 / (1 + DECAY * index).
-_POSITIONAL_DECAY = 0.6
+
+def _normalize_mutex_group(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized or None
+
+
+def _get_preset_mutex_group(preset_name: str) -> str | None:
+    # LRU is a built-in preset (not in registry) but shares the distribution mutex group.
+    if preset_name == "lru":
+        return "distribution_mode"
+    dim = get_preset_dimension(preset_name)
+    if dim is None:
+        return None
+    return _normalize_mutex_group(getattr(dim, "mutex_group", None))
 
 
 def _normalize_presets_from_config(config: Any) -> tuple[tuple[str, str | None], ...]:
     """Extract enabled (preset_name, mode) tuples from config.scheduling_presets.
 
     Supports both new SchedulingPreset objects and legacy string lists.
-    Excludes ``lru`` since LRU is handled separately as a blend factor.
+    Excludes ``lru`` from output (LRU is a final tie-breaker only).
+    For mutex groups, enabled members inherit the group's first appearance index
+    so the selected member keeps the group's visible priority slot.
     """
 
     raw = getattr(config, "scheduling_presets", ())
@@ -28,9 +41,9 @@ def _normalize_presets_from_config(config: Any) -> tuple[tuple[str, str | None],
         return ()
 
     allowed = get_preset_names() | {"lru"}
-    ordered: list[tuple[str, str | None]] = []
+    entries: list[tuple[int, str, bool, str | None]] = []
     seen: set[str] = set()
-    for item in raw:
+    for idx, item in enumerate(raw):
         preset_name: str | None = None
         enabled = True
         mode: str | None = None
@@ -48,13 +61,36 @@ def _normalize_presets_from_config(config: Any) -> tuple[tuple[str, str | None],
 
         if not preset_name or preset_name not in allowed or preset_name in seen:
             continue
-        if not enabled:
-            continue
-        if preset_name == "lru":
-            continue
         seen.add(preset_name)
-        ordered.append((preset_name, mode))
-    return tuple(ordered)
+        entries.append((idx, preset_name, enabled, mode))
+
+    if not entries:
+        return ()
+
+    group_anchor_index: dict[str, int] = {}
+    for idx, preset_name, _enabled, _mode in entries:
+        mutex_group = _get_preset_mutex_group(preset_name)
+        if mutex_group and mutex_group not in group_anchor_index:
+            group_anchor_index[mutex_group] = idx
+
+    ordered_enabled: list[tuple[int, int, str, str | None]] = []
+    group_enabled: dict[str, tuple[int, int, str, str | None]] = {}
+    for idx, preset_name, enabled, mode in entries:
+        if not enabled or preset_name == "lru":
+            continue
+        mutex_group = _get_preset_mutex_group(preset_name)
+        if not mutex_group:
+            ordered_enabled.append((idx, idx, preset_name, mode))
+            continue
+
+        anchor = group_anchor_index.get(mutex_group, idx)
+        existing = group_enabled.get(mutex_group)
+        if existing is None or idx < existing[1]:
+            group_enabled[mutex_group] = (anchor, idx, preset_name, mode)
+
+    ordered_enabled.extend(group_enabled.values())
+    ordered_enabled.sort(key=lambda item: (item[0], item[1]))
+    return tuple((preset_name, mode) for _anchor, _idx, preset_name, mode in ordered_enabled)
 
 
 class MultiScoreStrategy:
@@ -143,34 +179,64 @@ class MultiScoreStrategy:
         keys_by_id: dict[str, Any],
         context: dict[str, Any],
     ) -> float:
-        lru_rank_asc = rank_ascending(key_id, lru_scores, all_key_ids)
+        cache_signature = (tuple(all_key_ids), presets, bool(lru_enabled))
+        cache = context.get("_preset_hard_order_cache")
+        if (
+            isinstance(cache, dict)
+            and cache.get("signature") == cache_signature
+            and isinstance(cache.get("ranks"), dict)
+        ):
+            cached_rank = safe_float(cache["ranks"].get(key_id))
+            if cached_rank is not None:
+                return max(0.0, min(cached_rank, 1.0))
 
-        weighted_sum = 0.0
-        weight_sum = 0.0
-
-        for idx, (preset_name, mode) in enumerate(presets):
-            metric = 0.5
-            dim = get_preset_dimension(preset_name)
-            if dim is not None:
-                metric = dim.compute_metric(
-                    key_id=key_id,
-                    all_key_ids=all_key_ids,
-                    keys_by_id=keys_by_id,
-                    lru_scores=lru_scores,
-                    context=context,
-                    mode=mode,
+        # Hard-priority semantics:
+        # 1) Compare by preset[0] metric first;
+        # 2) only if tied, compare preset[1], preset[2], ...
+        # 3) if all preset metrics tie and LRU is enabled, use LRU as final tiebreak.
+        metric_vectors: dict[str, tuple[float, ...]] = {}
+        for kid in all_key_ids:
+            vector_parts: list[float] = []
+            for preset_name, mode in presets:
+                metric = 0.5
+                dim = get_preset_dimension(preset_name)
+                if dim is not None:
+                    metric = dim.compute_metric(
+                        key_id=kid,
+                        all_key_ids=all_key_ids,
+                        keys_by_id=keys_by_id,
+                        lru_scores=lru_scores,
+                        context=context,
+                        mode=mode,
+                    )
+                metric_value = safe_float(metric)
+                vector_parts.append(
+                    max(0.0, min(metric_value, 1.0)) if metric_value is not None else 0.5
                 )
-            weight = 1.0 / (1.0 + _POSITIONAL_DECAY * idx)
-            weighted_sum += metric * weight
-            weight_sum += weight
 
-        if weight_sum <= 0:
-            return lru_rank_asc
+            if lru_enabled:
+                vector_parts.append(rank_ascending(kid, lru_scores, all_key_ids))
 
-        lru_blend = _LRU_BLEND_FACTOR if lru_enabled else 0.0
-        preset_blend = 1.0 - lru_blend
-        blended = (weighted_sum / weight_sum) * preset_blend + lru_rank_asc * lru_blend
-        return max(0.0, min(blended, 1.0))
+            metric_vectors[kid] = tuple(vector_parts)
+
+        decorated = [
+            (metric_vectors.get(kid, (0.5,)), idx, kid) for idx, kid in enumerate(all_key_ids)
+        ]
+        decorated.sort(key=lambda item: (item[0], item[1]))
+
+        total = len(decorated)
+        ranks: dict[str, float] = {}
+        for rank_idx, (_vec, _idx, kid) in enumerate(decorated):
+            ranks[kid] = 0.0 if total <= 1 else rank_idx / float(total - 1)
+
+        context["_preset_hard_order_cache"] = {
+            "signature": cache_signature,
+            "ranks": ranks,
+        }
+        rank = safe_float(ranks.get(key_id))
+        if rank is None:
+            return 0.5
+        return max(0.0, min(rank, 1.0))
 
 
 register_pool_strategy("multi_score", MultiScoreStrategy())

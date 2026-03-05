@@ -82,6 +82,11 @@ class PoolConfig:
     # -- Temporary Unschedulable Rules ----------------------------------------
     unschedulable_rules: list[UnschedulableRule] = field(default_factory=list)
 
+    # -- Quota Probing --------------------------------------------------------
+    probing_enabled: bool = False
+    probing_interval_minutes: int = 10
+    auto_remove_banned_keys: bool = False
+
     # -- Stream Timeout Auto-Pause --------------------------------------------
     stream_timeout_threshold: int = 3  # N timeouts within window trigger cooldown
     stream_timeout_window_seconds: int = 1800  # 30 min counting window
@@ -188,6 +193,9 @@ def parse_pool_config(provider_config: Any) -> PoolConfig | None:
         proactive_refresh_seconds=_int_or("proactive_refresh_seconds", 180),
         health_policy_enabled=_bool_or("health_policy_enabled", True),
         unschedulable_rules=rules,
+        probing_enabled=_bool_or("probing_enabled", False),
+        probing_interval_minutes=max(1, min(_int_or("probing_interval_minutes", 10), 1440)),
+        auto_remove_banned_keys=_bool_or("auto_remove_banned_keys", False),
         stream_timeout_threshold=_int_or("stream_timeout_threshold", 3),
         stream_timeout_window_seconds=_int_or("stream_timeout_window_seconds", 1800),
         stream_timeout_cooldown_seconds=_int_or("stream_timeout_cooldown_seconds", 300),

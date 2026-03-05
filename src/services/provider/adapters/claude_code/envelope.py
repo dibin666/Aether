@@ -585,10 +585,18 @@ class ClaudeCodeEnvelope:
         key_id: str,
         is_stream: bool,
         provider_id: str | None = None,
+        key: Any = None,
     ) -> str | None:
         from src.services.provider.adapters.claude_code.context import (
             build_and_set_claude_code_request_context,
         )
+
+        # 在 envelope 层设置指纹 context var（仅 Claude Code 需要指纹注入）
+        if key is not None:
+            from src.services.provider.fingerprint import ensure_key_fingerprint
+            from src.services.provider.request_context import set_current_fingerprint
+
+            set_current_fingerprint(ensure_key_fingerprint(key, persist_if_missing=True))
 
         _ctx, tls_profile = build_and_set_claude_code_request_context(
             provider_config=provider_config,

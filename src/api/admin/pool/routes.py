@@ -644,22 +644,16 @@ class AdminListSchedulingPresetsAdapter(AdminApiAdapter):
 class AdminPoolOverviewAdapter(AdminApiAdapter):
     async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
         db = context.db
-        providers = (
-            db.query(Provider)
-            .filter(Provider.is_active.is_(True))
-            .order_by(Provider.provider_priority.asc())
-            .all()
-        )
+        providers = db.query(Provider).order_by(Provider.provider_priority.asc()).all()
 
-        # 先批量计算池化 Provider 的 Key 总数/启用数，避免每个 Provider 单独查询（N+1）。
+        # 仅保留号池调度已开启的 Provider。
+        enabled_providers: list[Provider] = []
         pool_provider_ids: list[str] = []
-        pool_enabled_map: dict[str, bool] = {}
         for p in providers:
-            pid = str(p.id)
-            enabled = parse_pool_config(getattr(p, "config", None)) is not None
-            pool_enabled_map[pid] = enabled
-            if enabled:
-                pool_provider_ids.append(pid)
+            if parse_pool_config(getattr(p, "config", None)) is None:
+                continue
+            enabled_providers.append(p)
+            pool_provider_ids.append(str(p.id))
 
         key_ids_by_provider: dict[str, list[str]] = {pid: [] for pid in pool_provider_ids}
         key_stats_by_provider: dict[str, dict[str, int]] = {
@@ -710,19 +704,8 @@ class AdminPoolOverviewAdapter(AdminApiAdapter):
                     )
 
         items: list[PoolOverviewItem] = []
-        for p in providers:
+        for p in enabled_providers:
             pid = str(p.id)
-            if not pool_enabled_map.get(pid, False):
-                items.append(
-                    PoolOverviewItem(
-                        provider_id=pid,
-                        provider_name=p.name,
-                        provider_type=str(getattr(p, "provider_type", "custom") or "custom"),
-                        pool_enabled=False,
-                    )
-                )
-                continue
-
             key_stats = key_stats_by_provider.get(pid, {"total": 0, "active": 0})
 
             items.append(

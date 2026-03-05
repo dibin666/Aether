@@ -482,6 +482,10 @@ export interface PoolAdvancedConfig {
   proactive_refresh_seconds?: number | null
   health_policy_enabled?: boolean
   unschedulable_rules?: Array<Record<string, unknown>> | null
+  batch_concurrency?: number | null
+  probing_enabled?: boolean
+  probing_interval_minutes?: number | null
+  auto_remove_banned_keys?: boolean
 }
 
 export interface FailoverRuleItem {

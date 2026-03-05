@@ -709,6 +709,28 @@ const poolAttemptCandidates = computed<CandidateRecord[]>(() => {
   const attempts = audit.attempts
   if (!Array.isArray(attempts) || attempts.length === 0) return []
 
+  const providerNameById = new Map<string, string>()
+  for (const candidate of rawTimeline.value) {
+    const providerId = String(candidate.provider_id || '').trim()
+    const providerName = String(candidate.provider_name || '').trim()
+    if (!providerId || !providerName) continue
+    if (!providerNameById.has(providerId)) {
+      providerNameById.set(providerId, providerName)
+    }
+  }
+  const providerTypeLikeNames = new Set<string>([
+    'codex',
+    'kiro',
+    'antigravity',
+    'claude_code',
+    'claude code',
+    'gemini_cli',
+    'gemini cli',
+    'oauth',
+    'api_key',
+    'api key',
+  ])
+
   const traceMap = new Map<string, CandidateRecord>()
   for (const candidate of rawTimeline.value) {
     traceMap.set(makeAttemptKey(candidate.candidate_index, candidate.retry_index), candidate)
@@ -755,6 +777,21 @@ const poolAttemptCandidates = computed<CandidateRecord[]>(() => {
         merged.extra_data = {
           ...(merged.extra_data || {}),
           pool_group_id: finalPoolGroupId,
+        }
+      }
+
+      const mergedProviderId = String(merged.provider_id || '').trim()
+      if (mergedProviderId) {
+        const inferredProviderName = providerNameById.get(mergedProviderId)
+        const currentProviderName = String(merged.provider_name || '').trim()
+        if (
+          inferredProviderName
+          && (
+            !currentProviderName
+            || providerTypeLikeNames.has(currentProviderName.toLowerCase())
+          )
+        ) {
+          merged.provider_name = inferredProviderName
         }
       }
       return merged
@@ -807,14 +844,23 @@ const normalizeProviderName = (value: string): string => {
   return text.replace(/反代$/u, '').trim() || text
 }
 
-const getProviderDisplayName = (attempt: CandidateRecord | null | undefined): string => {
+const getProviderDisplayName = (
+  attempt: CandidateRecord | null | undefined,
+  options: { allowAuthTypeFallback?: boolean } = {},
+): string => {
+  const allowAuthTypeFallback = options.allowAuthTypeFallback ?? true
   if (!attempt) return '未知'
-  const authType = String(attempt.key_auth_type || '').trim().toLowerCase()
-  if (authType && AUTH_TYPE_PROVIDER_LABEL_MAP[authType]) {
-    return AUTH_TYPE_PROVIDER_LABEL_MAP[authType]
-  }
+  // 优先使用提供商名称（管理后台设置的名称）
   const providerName = String(attempt.provider_name || '').trim()
-  return providerName ? normalizeProviderName(providerName) : '未知'
+  if (providerName) return normalizeProviderName(providerName)
+  if (allowAuthTypeFallback) {
+    // 回退：根据 auth_type 推断显示名称
+    const authType = String(attempt.key_auth_type || '').trim().toLowerCase()
+    if (authType && AUTH_TYPE_PROVIDER_LABEL_MAP[authType]) {
+      return AUTH_TYPE_PROVIDER_LABEL_MAP[authType]
+    }
+  }
+  return '未知'
 }
 
 const normalizeProviderIdentity = (value: unknown): string => {
@@ -898,7 +944,7 @@ const groupedTimeline = computed<NodeGroup[]>(() => {
 
     poolGroups.push({
       id: `pool:${groupId}`,
-      providerName: getProviderDisplayName(poolPrimary),
+      providerName: getProviderDisplayName(poolPrimary, { allowAuthTypeFallback: false }),
       primary: poolPrimary,
       primaryStatus: poolPrimaryStatus,
       allAttempts: attempts,

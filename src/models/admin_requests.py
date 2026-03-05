@@ -283,6 +283,20 @@ class PoolAdvancedConfig(BaseModel):
         None,
         description="关键词临时不可调度规则: [{'keyword': '...', 'duration_minutes': 5}]",
     )
+    batch_concurrency: int | None = Field(
+        None,
+        ge=1,
+        le=32,
+        description="批量操作并发数（前端批量刷新 OAuth/额度等）。默认 8",
+    )
+    probing_enabled: bool = Field(False, description="启用主动探测（定期检查 Key 可用性）")
+    probing_interval_minutes: int | None = Field(
+        None,
+        ge=1,
+        le=1440,
+        description="主动探测间隔（分钟）。默认 10",
+    )
+    auto_remove_banned_keys: bool = Field(False, description="检测到封号时自动清除账号")
 
 
 class ClaudeCodeAdvancedConfig(BaseModel):

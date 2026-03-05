@@ -12,14 +12,13 @@
             <div class="flex items-center gap-2">
               <h3 class="text-base font-semibold">
                 号池管理
+                <span
+                  v-if="poolHeaderMetaText"
+                  class="ml-2 text-xs font-normal text-muted-foreground"
+                >
+                  | {{ poolHeaderMetaText }}
+                </span>
               </h3>
-              <Badge
-                v-if="selectedProviderType"
-                variant="outline"
-                class="text-[10px] px-1.5 py-0 h-5 text-muted-foreground"
-              >
-                {{ selectedProviderType }}
-              </Badge>
             </div>
             <div class="flex items-center gap-1.5">
               <Button
@@ -32,13 +31,33 @@
               >
                 <Upload class="w-3.5 h-3.5" />
               </Button>
+              <ProviderProxyPopover
+                v-if="selectedProviderId"
+                :open="providerProxyMobilePopoverOpen"
+                :node-id="selectedProviderData?.proxy?.node_id"
+                :saving="savingProviderProxy"
+                :title="getProviderProxyButtonTitle()"
+                @update:open="(open: boolean) => handleProviderProxyPopoverToggle('mobile', open)"
+                @select="setProviderProxy"
+                @clear="clearProviderProxy"
+              />
+              <Button
+                v-if="selectedProviderId"
+                variant="ghost"
+                size="icon"
+                class="h-8 w-8"
+                title="高级设置"
+                @click="showAdvancedDialog = true"
+              >
+                <Settings2 class="w-3.5 h-3.5" />
+              </Button>
               <Button
                 v-if="selectedProviderId"
                 variant="outline"
                 size="sm"
                 class="h-8 px-2 text-xs gap-1"
-                title="调整号池调度"
-                @click="showSchedulingDialog = true"
+                title="号池调度"
+                @click="openSchedulingDialog()"
               >
                 调度
                 <ChevronDown class="w-3 h-3 text-muted-foreground" />
@@ -47,11 +66,23 @@
                 v-if="selectedProviderId"
                 variant="ghost"
                 size="icon"
-                class="h-8 w-8 text-destructive hover:text-destructive"
-                title="清理已知封号账号"
-                @click="handleCleanupBannedKeys"
+                class="h-8 w-8"
+                title="账号"
+                @click="showAccountBatchDialog = true"
               >
-                <Ban class="w-3.5 h-3.5" />
+                <Users class="w-3.5 h-3.5" />
+              </Button>
+              <Button
+                v-if="selectedProviderId"
+                variant="ghost"
+                size="icon"
+                class="h-8 w-8"
+                :class="getProviderToggleButtonClass()"
+                :disabled="togglingProviderStatus"
+                :title="getProviderToggleButtonTitle()"
+                @click="toggleSelectedProviderStatus"
+              >
+                <Power class="w-3.5 h-3.5" />
               </Button>
               <RefreshButton
                 :loading="refreshCurrentPageLoading"
@@ -80,6 +111,10 @@
                 >
                   {{ item.provider_name }}
                   <span class="text-muted-foreground ml-1">({{ item.total_keys }})</span>
+                  <span
+                    v-if="!item.pool_enabled"
+                    class="ml-1 text-[10px] text-amber-600"
+                  >未启用</span>
                 </SelectItem>
               </SelectContent>
             </Select>
@@ -122,14 +157,13 @@
           <div class="flex items-center gap-2">
             <h3 class="text-base font-semibold">
               号池管理
+              <span
+                v-if="poolHeaderMetaText"
+                class="ml-2 text-xs font-normal text-muted-foreground"
+              >
+                | {{ poolHeaderMetaText }}
+              </span>
             </h3>
-            <Badge
-              v-if="selectedProviderType"
-              variant="outline"
-              class="text-[10px] px-1.5 py-0 h-5 text-muted-foreground"
-            >
-              {{ selectedProviderType }}
-            </Badge>
           </div>
           <div class="flex items-center gap-2">
             <Select
@@ -150,6 +184,10 @@
                 >
                   {{ item.provider_name }}
                   <span class="text-muted-foreground ml-1">({{ item.total_keys }})</span>
+                  <span
+                    v-if="!item.pool_enabled"
+                    class="ml-1 text-[10px] text-amber-600"
+                  >未启用</span>
                 </SelectItem>
               </SelectContent>
             </Select>
@@ -193,7 +231,7 @@
               v-if="selectedProviderId"
               class="group inline-flex items-center gap-1.5 px-2.5 h-8 rounded-md border border-border/50 bg-muted/20 hover:bg-muted/40 hover:border-primary/40 transition-all duration-200 text-xs"
               title="点击调整号池调度"
-              @click="showSchedulingDialog = true"
+              @click="openSchedulingDialog()"
             >
               <span class="text-muted-foreground/80 hidden lg:inline">调度:</span>
               <span class="font-medium text-foreground/90">{{ poolSchedulingLabel }}</span>
@@ -213,15 +251,47 @@
             >
               <Upload class="w-3.5 h-3.5" />
             </Button>
+            <ProviderProxyPopover
+              v-if="selectedProviderId"
+              :open="providerProxyDesktopPopoverOpen"
+              :node-id="selectedProviderData?.proxy?.node_id"
+              :saving="savingProviderProxy"
+              :title="getProviderProxyButtonTitle()"
+              @update:open="(open: boolean) => handleProviderProxyPopoverToggle('desktop', open)"
+              @select="setProviderProxy"
+              @clear="clearProviderProxy"
+            />
             <Button
               v-if="selectedProviderId"
               variant="ghost"
               size="icon"
-              class="h-8 w-8 text-destructive hover:text-destructive"
-              title="清理已知封号账号"
-              @click="handleCleanupBannedKeys"
+              class="h-8 w-8"
+              title="高级设置"
+              @click="showAdvancedDialog = true"
             >
-              <Ban class="w-3.5 h-3.5" />
+              <Settings2 class="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              v-if="selectedProviderId"
+              variant="ghost"
+              size="icon"
+              class="h-8 w-8"
+              title="账号"
+              @click="showAccountBatchDialog = true"
+            >
+              <Users class="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              v-if="selectedProviderId"
+              variant="ghost"
+              size="icon"
+              class="h-8 w-8"
+              :class="getProviderToggleButtonClass()"
+              :disabled="togglingProviderStatus"
+              :title="getProviderToggleButtonTitle()"
+              @click="toggleSelectedProviderStatus"
+            >
+              <Power class="w-3.5 h-3.5" />
             </Button>
             <RefreshButton
               :loading="refreshCurrentPageLoading"
@@ -283,28 +353,44 @@
           v-if="keyPage.keys.length > 0"
           class="hidden xl:block overflow-x-auto"
         >
-          <Table class="min-w-[1400px]">
+          <Table class="w-full table-fixed">
             <TableHeader>
               <TableRow class="border-b border-border/60 hover:bg-transparent">
-                <TableHead class="w-[320px] font-semibold whitespace-nowrap">
+                <TableHead
+                  class="font-semibold whitespace-nowrap"
+                  :style="{ width: desktopColumnWidths.name }"
+                >
                   名称
                 </TableHead>
                 <TableHead
                   v-if="showAccountQuotaColumn"
-                  class="w-[240px] font-semibold whitespace-nowrap"
+                  class="font-semibold whitespace-nowrap"
+                  :style="{ width: desktopColumnWidths.quota }"
                 >
                   配额
                 </TableHead>
-                <TableHead class="w-24 font-semibold whitespace-nowrap">
-                  状态
-                </TableHead>
-                <TableHead class="w-24 font-semibold whitespace-nowrap">
-                  最后使用
-                </TableHead>
-                <TableHead class="w-[160px] font-semibold whitespace-nowrap">
+                <TableHead
+                  class="px-2 font-semibold text-center whitespace-nowrap"
+                  :style="{ width: desktopColumnWidths.stats }"
+                >
                   统计
                 </TableHead>
-                <TableHead class="w-[220px] font-semibold text-center whitespace-nowrap">
+                <TableHead
+                  class="font-semibold text-center whitespace-nowrap"
+                  :style="{ width: desktopColumnWidths.lastUsed }"
+                >
+                  最后使用
+                </TableHead>
+                <TableHead
+                  class="font-semibold text-center whitespace-nowrap"
+                  :style="{ width: desktopColumnWidths.status }"
+                >
+                  状态
+                </TableHead>
+                <TableHead
+                  class="px-2 font-semibold text-center whitespace-nowrap"
+                  :style="{ width: desktopColumnWidths.actions }"
+                >
                   操作
                 </TableHead>
               </TableRow>
@@ -319,13 +405,13 @@
                 <TableCell
                   class="py-3"
                 >
-                  <div class="max-w-[320px] min-w-0">
+                  <div class="min-w-0">
                     <div class="flex items-center gap-1.5 min-w-0">
                       <span class="text-sm truncate block">
                         {{ key.key_name || '未命名' }}
                       </span>
                     </div>
-                    <div class="flex items-center gap-1 text-[11px] text-muted-foreground mt-0.5 min-w-0">
+                    <div class="flex items-center flex-wrap gap-1 text-[11px] text-muted-foreground mt-0.5 min-w-0">
                       <input
                         v-if="editingPriorityKeyId === key.key_id"
                         :value="editingPriorityValue"
@@ -419,7 +505,7 @@
                 </TableCell>
                 <TableCell
                   v-if="showAccountQuotaColumn"
-                  class="py-3"
+                  class="py-3 align-middle"
                 >
                   <div
                     v-if="quotaProgressMap[key.key_id]?.length"
@@ -464,22 +550,8 @@
                     class="text-xs text-muted-foreground"
                   >-</span>
                 </TableCell>
-                <TableCell class="py-3">
-                  <Badge
-                    :variant="getSchedulingBadgeVariant(key)"
-                    class="text-[10px]"
-                    :title="getSchedulingTitle(key)"
-                  >
-                    {{ getSchedulingBadgeLabel(key) }}
-                  </Badge>
-                </TableCell>
-                <TableCell class="py-3">
-                  <span class="text-[10px] text-muted-foreground whitespace-nowrap">
-                    {{ key.last_used_at ? formatRelativeTime(key.last_used_at) : '-' }}
-                  </span>
-                </TableCell>
-                <TableCell class="py-3">
-                  <div class="grid grid-rows-3 gap-0.5 w-[150px] text-[10px] leading-4">
+                <TableCell class="py-3 px-2 align-middle">
+                  <div class="grid grid-rows-3 gap-0.5 w-[136px] mx-auto text-[10px] leading-4">
                     <div class="flex items-center justify-between gap-2">
                       <span class="text-muted-foreground">请求</span>
                       <span class="tabular-nums text-foreground/90">
@@ -500,7 +572,21 @@
                     </div>
                   </div>
                 </TableCell>
-                <TableCell class="py-3">
+                <TableCell class="py-3 text-center">
+                  <span class="text-[10px] text-muted-foreground whitespace-nowrap">
+                    {{ key.last_used_at ? formatRelativeTime(key.last_used_at) : '-' }}
+                  </span>
+                </TableCell>
+                <TableCell class="py-3 text-center">
+                  <Badge
+                    :variant="getSchedulingBadgeVariant(key)"
+                    class="text-[10px]"
+                    :title="getSchedulingTitle(key)"
+                  >
+                    {{ getSchedulingBadgeLabel(key) }}
+                  </Badge>
+                </TableCell>
+                <TableCell class="py-3 px-2 align-middle">
                   <div class="flex justify-center gap-0.5">
                     <Button
                       v-if="key.cooldown_reason"
@@ -975,8 +1061,24 @@
       :provider-id="selectedProviderId"
       :provider-type="selectedProviderType"
       :current-config="selectedProviderConfig"
+      @saved="handleSchedulingSaved"
+    />
+    <PoolAdvancedDialog
+      v-if="selectedProviderId"
+      v-model="showAdvancedDialog"
+      :provider-id="selectedProviderId"
+      :provider-type="selectedProviderType"
+      :current-config="selectedProviderConfig"
       :current-claude-config="selectedProviderClaudeConfig"
       @saved="handleSchedulingSaved"
+    />
+    <PoolAccountBatchDialog
+      v-if="selectedProviderId"
+      v-model="showAccountBatchDialog"
+      :provider-id="selectedProviderId"
+      :provider-name="selectedProviderData?.name || ''"
+      :batch-concurrency="selectedProviderConfig?.batch_concurrency"
+      @changed="handleAccountBatchChanged"
     />
     <KeyFormDialog
       v-if="selectedProviderId"
@@ -1020,7 +1122,8 @@ import {
   Globe,
   SquarePen,
   Trash2,
-  Ban,
+  Users,
+  Settings2,
 } from 'lucide-vue-next'
 
 import {
@@ -1055,7 +1158,6 @@ import {
   getPoolSchedulingPresets,
   listPoolKeys,
   clearPoolCooldown,
-  cleanupBannedPoolKeys,
 } from '@/api/endpoints/pool'
 import {
   revealEndpointKey,
@@ -1073,9 +1175,12 @@ import type {
   PoolPresetMeta,
 } from '@/api/endpoints/pool'
 import type { ClaudeCodeAdvancedConfig, EndpointAPIKey, PoolAdvancedConfig, ProviderWithEndpointsSummary } from '@/api/endpoints/types/provider'
-import { getProvider } from '@/api/endpoints'
+import { getProvider, updateProvider } from '@/api/endpoints'
 import { useProxyNodesStore } from '@/stores/proxy-nodes'
 import PoolSchedulingDialog from '@/features/pool/components/PoolSchedulingDialog.vue'
+import PoolAdvancedDialog from '@/features/pool/components/PoolAdvancedDialog.vue'
+import PoolAccountBatchDialog from '@/features/pool/components/PoolAccountBatchDialog.vue'
+import ProviderProxyPopover from '@/features/pool/components/ProviderProxyPopover.vue'
 import KeyAllowedModelsEditDialog from '@/features/providers/components/KeyAllowedModelsEditDialog.vue'
 import KeyFormDialog from '@/features/providers/components/KeyFormDialog.vue'
 import OAuthKeyEditDialog from '@/features/providers/components/OAuthKeyEditDialog.vue'
@@ -1105,7 +1210,8 @@ async function loadOverview() {
   try {
     const res = await getPoolOverview()
     if (requestId !== overviewRequestId) return
-    const enabledProviders = res.items.filter(item => item.pool_enabled)
+    const allProviders = Array.isArray(res.items) ? res.items : []
+    const enabledProviders = allProviders.filter(item => item.pool_enabled)
     poolProviders.value = enabledProviders
 
     // Keep selected provider aligned with dropdown options.
@@ -1121,6 +1227,8 @@ async function loadOverview() {
       } else {
         selectedProviderId.value = null
         selectedProviderData.value = null
+        showAccountBatchDialog.value = false
+        closeProviderProxyPopovers()
       }
     }
   } catch (err) {
@@ -1139,6 +1247,7 @@ async function handleSchedulingSaved(updatedProvider: ProviderWithEndpointsSumma
     selectedProviderData.value = updatedProvider
   }
   showSchedulingDialog.value = false
+  showAdvancedDialog.value = false
   await loadOverview()
 }
 
@@ -1197,7 +1306,17 @@ async function loadSchedulingPresetMetas(): Promise<void> {
   }
 }
 
+const selectedProviderOverview = computed<PoolOverviewItem | null>(() => {
+  const selectedId = selectedProviderId.value
+  if (!selectedId) return null
+  return poolProviders.value.find(item => item.provider_id === selectedId) || null
+})
+
 const poolSchedulingLabel = computed(() => {
+  if (!selectedProviderConfig.value && selectedProviderOverview.value?.pool_enabled === false) {
+    return '未启用'
+  }
+
   const cfg = selectedProviderConfig.value
   const presets = Array.isArray(cfg?.scheduling_presets) ? cfg.scheduling_presets : []
   const presetLabels = presetLabelsByName.value
@@ -1239,8 +1358,25 @@ const poolSchedulingLabel = computed(() => {
 const selectedProviderType = computed(() => {
   const fromDetail = String(selectedProviderData.value?.provider_type || '').trim().toLowerCase()
   if (fromDetail) return fromDetail
-  const fromOverview = poolProviders.value.find(item => item.provider_id === selectedProviderId.value)?.provider_type
+  const fromOverview = selectedProviderOverview.value?.provider_type
   return String(fromOverview || '').trim().toLowerCase()
+})
+
+const selectedProviderStatusText = computed(() => {
+  if (!selectedProviderId.value) return ''
+  const providerActive = selectedProviderData.value?.is_active
+  if (providerActive === false) return '禁用'
+  if (providerActive === true) return '启用'
+  if (selectedProviderOverview.value?.pool_enabled === false) return '禁用'
+  if (selectedProviderOverview.value?.pool_enabled === true) return '启用'
+  return ''
+})
+
+const poolHeaderMetaText = computed(() => {
+  const providerType = selectedProviderType.value
+  const status = selectedProviderStatusText.value
+  if (providerType && status) return `${providerType} | ${status}`
+  return providerType || status || ''
 })
 
 const showAccountQuotaColumn = computed(() => {
@@ -1249,13 +1385,36 @@ const showAccountQuotaColumn = computed(() => {
     || selectedProviderType.value === 'antigravity'
 })
 
+const desktopColumnWidths = computed(() => {
+  if (showAccountQuotaColumn.value) {
+    return {
+      name: '28%',
+      quota: '23%',
+      stats: '15%',
+      lastUsed: '10%',
+      status: '8%',
+      actions: '16%',
+    }
+  }
+  return {
+    name: '40%',
+    quota: '0%',
+    stats: '18%',
+    lastUsed: '12%',
+    status: '10%',
+    actions: '20%',
+  }
+})
+
 async function selectProvider(id: string) {
   const requestId = ++selectProviderRequestId
   selectedProviderId.value = id
   editingKeyDetail.value = null
+  showAccountBatchDialog.value = false
   keyPermissionsDialogOpen.value = false
   keyFormDialogOpen.value = false
   oauthKeyEditDialogOpen.value = false
+  closeProviderProxyPopovers()
   proxyDesktopPopoverOpenKeyId.value = null
   proxyMobilePopoverOpenKeyId.value = null
   suppressFiltersWatch = true
@@ -1859,29 +2018,139 @@ async function toggleKeyActive(key: PoolKeyDetail) {
   }
 }
 
-async function handleCleanupBannedKeys() {
-  if (!selectedProviderId.value) return
-
-  const confirmed = await confirm({
-    title: '清理封号账号',
-    message: '将删除该 Provider 下已识别为封号/封禁的账号。此操作不可恢复，是否继续？',
-    confirmText: '确认清理',
-    variant: 'destructive',
-  })
-  if (!confirmed) return
-
-  try {
-    const res = await cleanupBannedPoolKeys(selectedProviderId.value)
-    success(res.message || `已清理 ${res.affected} 个账号`)
-    await Promise.all([loadKeys(), loadOverview()])
-  } catch (err) {
-    showError(parseApiError(err, '清理封号账号失败'))
-  }
-}
-
 // --- Dialogs ---
 const showImportDialog = ref(false)
 const showSchedulingDialog = ref(false)
+const showAdvancedDialog = ref(false)
+const showAccountBatchDialog = ref(false)
+const providerProxyMobilePopoverOpen = ref(false)
+const providerProxyDesktopPopoverOpen = ref(false)
+const savingProviderProxy = ref(false)
+const togglingProviderStatus = ref(false)
+
+function openSchedulingDialog() {
+  showSchedulingDialog.value = true
+}
+
+function getProviderProxyNodeName(): string | null {
+  const nodeId = selectedProviderData.value?.proxy?.node_id
+  if (!nodeId) return null
+  const node = proxyNodesStore.nodes.find(n => n.id === nodeId)
+  return node ? node.name : `${nodeId.slice(0, 8)}...`
+}
+
+function getProviderProxyButtonTitle(): string {
+  const nodeName = getProviderProxyNodeName()
+  if (nodeName) return `提供商代理（当前: ${nodeName}）`
+  return '提供商代理（未设置）'
+}
+
+function closeProviderProxyPopovers(): void {
+  providerProxyMobilePopoverOpen.value = false
+  providerProxyDesktopPopoverOpen.value = false
+}
+
+function handleProviderProxyPopoverToggle(scope: 'mobile' | 'desktop', open: boolean): void {
+  if (scope === 'mobile') {
+    providerProxyMobilePopoverOpen.value = open
+    if (open) {
+      providerProxyDesktopPopoverOpen.value = false
+    }
+  } else {
+    providerProxyDesktopPopoverOpen.value = open
+    if (open) {
+      providerProxyMobilePopoverOpen.value = false
+    }
+  }
+  if (open) {
+    proxyNodesStore.ensureLoaded()
+    proxyDesktopPopoverOpenKeyId.value = null
+    proxyMobilePopoverOpenKeyId.value = null
+  }
+}
+
+async function setProviderProxy(nodeId: string): Promise<void> {
+  const providerId = selectedProviderId.value
+  if (!providerId) return
+  savingProviderProxy.value = true
+  try {
+    const updated = await updateProvider(providerId, {
+      proxy: { node_id: nodeId, enabled: true },
+    })
+    if (selectedProviderId.value === providerId) {
+      selectedProviderData.value = updated
+    }
+    closeProviderProxyPopovers()
+    success('提供商代理已设置')
+  } catch (err) {
+    showError(parseApiError(err, '设置提供商代理失败'))
+  } finally {
+    savingProviderProxy.value = false
+  }
+}
+
+async function clearProviderProxy(): Promise<void> {
+  const providerId = selectedProviderId.value
+  if (!providerId) return
+  savingProviderProxy.value = true
+  try {
+    const updated = await updateProvider(providerId, { proxy: null })
+    if (selectedProviderId.value === providerId) {
+      selectedProviderData.value = updated
+    }
+    closeProviderProxyPopovers()
+    success('提供商代理已清除')
+  } catch (err) {
+    showError(parseApiError(err, '清除提供商代理失败'))
+  } finally {
+    savingProviderProxy.value = false
+  }
+}
+
+function getProviderToggleButtonTitle(): string {
+  const active = selectedProviderData.value?.is_active !== false
+  return active ? '当前状态：已启用，点击禁用提供商' : '当前状态：已禁用，点击启用提供商'
+}
+
+function getProviderToggleButtonClass(): string {
+  return ''
+}
+
+async function toggleSelectedProviderStatus(): Promise<void> {
+  if (togglingProviderStatus.value) return
+  const providerId = selectedProviderId.value
+  const current = selectedProviderData.value
+  if (!providerId || !current) return
+
+  const nextStatus = !current.is_active
+  if (!nextStatus) {
+    const confirmed = await confirm({
+      title: '禁用提供商',
+      message: `禁用后该提供商（${current.name}）将不再参与调度，是否继续？`,
+      confirmText: '确认禁用',
+      variant: 'destructive',
+    })
+    if (!confirmed) return
+  }
+
+  togglingProviderStatus.value = true
+  try {
+    const updated = await updateProvider(providerId, { is_active: nextStatus })
+    if (selectedProviderId.value === providerId) {
+      selectedProviderData.value = updated
+    }
+    success(nextStatus ? '提供商已启用' : '提供商已禁用')
+    await loadOverview()
+  } catch (err) {
+    showError(parseApiError(err, nextStatus ? '启用提供商失败' : '禁用提供商失败'))
+  } finally {
+    togglingProviderStatus.value = false
+  }
+}
+
+async function handleAccountBatchChanged(): Promise<void> {
+  await Promise.all([loadKeys(), loadOverview()])
+}
 
 async function handleAccountDialogSaved() {
   showImportDialog.value = false

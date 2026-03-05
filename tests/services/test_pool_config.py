@@ -39,6 +39,9 @@ def test_parse_pool_config_returns_defaults_for_empty_advanced() -> None:
     assert cfg.proactive_refresh_seconds == 180
     assert cfg.health_policy_enabled is True
     assert cfg.unschedulable_rules == []
+    assert cfg.probing_enabled is False
+    assert cfg.probing_interval_minutes == 10
+    assert cfg.auto_remove_banned_keys is False
 
 
 def test_parse_pool_config_overrides_values_legacy_string_list() -> None:
@@ -66,6 +69,9 @@ def test_parse_pool_config_overrides_values_legacy_string_list() -> None:
                 "overload_cooldown_seconds": 60,
                 "proactive_refresh_seconds": 300,
                 "health_policy_enabled": False,
+                "probing_enabled": True,
+                "probing_interval_minutes": 15,
+                "auto_remove_banned_keys": True,
             }
         }
     )
@@ -94,6 +100,9 @@ def test_parse_pool_config_overrides_values_legacy_string_list() -> None:
     assert cfg.overload_cooldown_seconds == 60
     assert cfg.proactive_refresh_seconds == 300
     assert cfg.health_policy_enabled is False
+    assert cfg.probing_enabled is True
+    assert cfg.probing_interval_minutes == 15
+    assert cfg.auto_remove_banned_keys is True
 
 
 def test_parse_pool_config_new_object_list_format() -> None:

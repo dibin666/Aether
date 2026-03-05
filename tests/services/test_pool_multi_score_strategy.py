@@ -257,3 +257,58 @@ def test_multi_score_disabled_presets_are_skipped() -> None:
     # quota_balanced only: k2 (20%) should score lower (better) than k1 (80%)
     # free_team_first is disabled so plan_type should not matter
     assert s2 < s1
+
+
+def test_multi_score_preset_hard_priority_overrides_later_presets() -> None:
+    """Earlier preset should dominate later presets (lexicographic hard priority)."""
+    strategy = MultiScoreStrategy()
+    cfg = PoolConfig(
+        scheduling_mode="multi_score",
+        lru_enabled=False,
+        scheduling_presets=(
+            SchedulingPreset(preset="priority_first", enabled=True),
+            SchedulingPreset(preset="quota_balanced", enabled=True),
+        ),
+    )
+    ctx = {
+        "all_key_ids": ["k1", "k2", "k3"],
+        "lru_scores": {"k1": 100.0, "k2": 100.0, "k3": 100.0},
+        "keys_by_id": {
+            "k1": _key_with_metadata({"codex": {"primary_used_percent": 90}}, internal_priority=1),
+            "k2": _key_with_metadata({"codex": {"primary_used_percent": 10}}, internal_priority=2),
+            "k3": _key_with_metadata({"codex": {"primary_used_percent": 50}}, internal_priority=3),
+        },
+    }
+    s1 = strategy.compute_score(key_id="k1", config=cfg, context=ctx)
+    s2 = strategy.compute_score(key_id="k2", config=cfg, context=ctx)
+    assert s1 is not None and s2 is not None
+    # k1 has better priority_first rank even though quota_balanced is worse.
+    assert s1 < s2
+
+
+def test_multi_score_mutex_group_selected_member_uses_group_priority_slot() -> None:
+    """Selecting single_account should keep distribution group's first priority slot."""
+    strategy = MultiScoreStrategy()
+    cfg = PoolConfig(
+        scheduling_mode="multi_score",
+        lru_enabled=False,
+        scheduling_presets=(
+            SchedulingPreset(preset="lru", enabled=False),
+            SchedulingPreset(preset="quota_balanced", enabled=True),
+            SchedulingPreset(preset="single_account", enabled=True),
+        ),
+    )
+    ctx = {
+        "all_key_ids": ["k1", "k2", "k3"],
+        "lru_scores": {"k1": 100.0, "k2": 100.0, "k3": 100.0},
+        "keys_by_id": {
+            "k1": _key_with_metadata({"codex": {"primary_used_percent": 90}}, internal_priority=1),
+            "k2": _key_with_metadata({"codex": {"primary_used_percent": 10}}, internal_priority=2),
+            "k3": _key_with_metadata({"codex": {"primary_used_percent": 20}}, internal_priority=3),
+        },
+    }
+    s1 = strategy.compute_score(key_id="k1", config=cfg, context=ctx)
+    s2 = strategy.compute_score(key_id="k2", config=cfg, context=ctx)
+    assert s1 is not None and s2 is not None
+    # single_account is selected in distribution_mode and should outrank quota_balanced.
+    assert s1 < s2
