@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from datetime import datetime, timezone
 from typing import Any
 
@@ -296,7 +297,7 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
 
         # 更新 Provider 月度使用量（原子操作）
         if provider_id:
-            actual_total_cost = float(usage_params["actual_total_cost_usd"])
+            actual_total_cost = Decimal(str(usage_params["actual_total_cost_usd"]))
             db.execute(
                 update(Provider)
                 .where(Provider.id == provider_id)
@@ -471,8 +472,8 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
                     "updated_at": sql_func.now(),
                 }
                 if charge_applied:
-                    values["total_cost_usd"] = ApiKeyModel.total_cost_usd + float(
-                        to_money_decimal(total_cost)
+                    values["total_cost_usd"] = ApiKeyModel.total_cost_usd + Decimal(
+                        str(to_money_decimal(total_cost))
                     )
                 db.execute(update(ApiKeyModel).where(ApiKeyModel.id == api_key.id).values(**values))
 
@@ -488,7 +489,7 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
 
             # 更新 Provider 月度使用量（Provider 端真实成本，无论钱包是否扣费）
             if provider_id:
-                actual_total_cost = float(usage_params["actual_total_cost_usd"])
+                actual_total_cost = Decimal(str(usage_params["actual_total_cost_usd"]))
                 db.execute(
                     update(Provider)
                     .where(Provider.id == provider_id)
@@ -693,8 +694,8 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
                     "updated_at": sql_func.now(),
                 }
                 if charge_applied:
-                    values["total_cost_usd"] = ApiKeyModel.total_cost_usd + float(
-                        total_cost_decimal
+                    values["total_cost_usd"] = ApiKeyModel.total_cost_usd + Decimal(
+                        str(total_cost_decimal)
                     )
                 db.execute(update(ApiKeyModel).where(ApiKeyModel.id == api_key.id).values(**values))
 
@@ -710,7 +711,7 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
 
             # 更新 Provider 月度使用量（Provider 端真实成本，无论钱包是否扣费）
             if provider_id:
-                actual_total_cost = float(usage_params["actual_total_cost_usd"])
+                actual_total_cost = Decimal(str(usage_params["actual_total_cost_usd"]))
                 db.execute(
                     update(Provider)
                     .where(Provider.id == provider_id)
@@ -1131,7 +1132,7 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
                 db.execute(
                     update(Provider)
                     .where(Provider.id == provider_id)
-                    .values(monthly_used_usd=Provider.monthly_used_usd + float(cost))
+                    .values(monthly_used_usd=Provider.monthly_used_usd + Decimal(str(cost)))
                 )
 
         # 批量更新 API Key 统计
@@ -1142,7 +1143,7 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
                 .values(
                     total_requests=ApiKeyModel.total_requests + stats["requests"],
                     total_cost_usd=ApiKeyModel.total_cost_usd
-                    + float(to_money_decimal(stats["cost"])),
+                    + Decimal(str(to_money_decimal(stats["cost"]))),
                     last_used_at=sql_func.now(),
                     updated_at=sql_func.now(),
                 )
