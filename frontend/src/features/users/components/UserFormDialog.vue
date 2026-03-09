@@ -536,12 +536,12 @@ const isFormValid = computed(() => {
 // 加载访问控制选项
 async function loadAccessControlOptions(): Promise<void> {
   try {
-    const [providersData, modelsData, formatsData] = await Promise.all([
-      getProvidersSummary(),
+    const [providersResponse, modelsData, formatsData] = await Promise.all([
+      getProvidersSummary({ page_size: 9999 }),
       getGlobalModels({ limit: 1000, is_active: true }),
       adminApi.getApiFormats()
     ])
-    providers.value = providersData
+    providers.value = providersResponse.items
     globalModels.value = modelsData.models || []
     apiFormats.value = formatsData.formats || []
   } catch (err) {

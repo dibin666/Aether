@@ -9,13 +9,32 @@ import type {
 } from './types'
 
 /**
- * 获取 Providers 摘要（包含 Endpoints 统计）
+ * 获取 Providers 摘要（分页）
  */
-export async function getProvidersSummary(): Promise<ProviderWithEndpointsSummary[]> {
-  return dedupedRequest('providers:summary', async () => {
-    const response = await client.get<ProviderWithEndpointsSummary[]>('/api/admin/providers/summary')
-    return response.data
-  })
+export interface ProviderSummaryQuery {
+  page?: number
+  page_size?: number
+  search?: string
+  status?: string
+  api_format?: string
+  model_id?: string
+}
+
+export interface ProviderSummaryPageResponse {
+  total: number
+  page: number
+  page_size: number
+  items: ProviderWithEndpointsSummary[]
+}
+
+export async function getProvidersSummary(
+  params: ProviderSummaryQuery = {},
+): Promise<ProviderSummaryPageResponse> {
+  const response = await client.get<ProviderSummaryPageResponse>(
+    '/api/admin/providers/summary',
+    { params },
+  )
+  return response.data
 }
 
 /**

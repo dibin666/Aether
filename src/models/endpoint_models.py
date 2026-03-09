@@ -1041,6 +1041,15 @@ class ProviderWithEndpointsSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProviderSummaryPageResponse(BaseModel):
+    """Provider 摘要分页响应"""
+
+    total: int
+    page: int
+    page_size: int
+    items: list[ProviderWithEndpointsSummary]
+
+
 # ========== 健康监控可视化模型 ==========
 
 
