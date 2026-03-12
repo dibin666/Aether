@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session, selectinload
@@ -18,7 +19,7 @@ from src.api.base.pipeline import ApiRequestPipeline
 from src.config.constants import CacheTTL
 from src.core.exceptions import InvalidRequestException, NotFoundException, translate_pydantic_error
 from src.core.logger import logger
-from src.database import get_db
+from src.database import get_db, get_db_context
 from src.models.api import SystemSettingsRequest, SystemSettingsResponse
 from src.models.database import ApiKey, Provider, Usage, User
 from src.services.email.email_template import EmailTemplate
@@ -2726,30 +2727,25 @@ class AdminResetEmailTemplateAdapter(AdminApiAdapter):
 # -------- 数据清空适配器 --------
 
 
-class AdminPurgeConfigAdapter(AdminApiAdapter):
-    async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
-        """清空所有提供商配置（Provider、Endpoint、API Key、Model、GlobalModel）"""
-        from src.models.database import (
-            GeminiFileMapping,
-            GlobalModel,
-            Model,
-            ProviderAPIKey,
-            ProviderEndpoint,
-            UserPreference,
-            VideoTask,
-        )
-        from src.models.database_extensions import ApiKeyProviderMapping, ProviderUsageTracking
+def _purge_config_sync() -> dict[str, Any]:
+    from src.models.database import (
+        GeminiFileMapping,
+        GlobalModel,
+        Model,
+        ProviderAPIKey,
+        ProviderEndpoint,
+        UserPreference,
+        VideoTask,
+    )
+    from src.models.database_extensions import ApiKeyProviderMapping, ProviderUsageTracking
 
-        db = context.db
-
-        # 统计
+    with get_db_context() as db:
         providers_count = int(db.query(func.count(Provider.id)).scalar() or 0)
         endpoints_count = int(db.query(func.count(ProviderEndpoint.id)).scalar() or 0)
         keys_count = int(db.query(func.count(ProviderAPIKey.id)).scalar() or 0)
         models_count = int(db.query(func.count(Model.id)).scalar() or 0)
         global_models_count = int(db.query(func.count(GlobalModel.id)).scalar() or 0)
 
-        # VideoTask 的 provider_id/endpoint_id/key_id 无 ondelete，置 NULL 保留任务记录
         db.query(VideoTask).filter(
             (VideoTask.provider_id.isnot(None))
             | (VideoTask.endpoint_id.isnot(None))
@@ -2763,23 +2759,19 @@ class AdminPurgeConfigAdapter(AdminApiAdapter):
             synchronize_session=False,
         )
 
-        # 先清理有外键引用的关联表
         db.query(GeminiFileMapping).delete()
         db.query(ApiKeyProviderMapping).delete()
         db.query(ProviderUsageTracking).delete()
 
-        # 清空 UserPreference 中的 default_provider_id（无 ondelete 设置）
         db.query(UserPreference).filter(UserPreference.default_provider_id.isnot(None)).update(
             {UserPreference.default_provider_id: None}, synchronize_session=False
         )
 
-        # 按依赖顺序删除配置
         db.query(Model).delete()
         db.query(ProviderAPIKey).delete()
         db.query(ProviderEndpoint).delete()
         db.query(Provider).delete()
         db.query(GlobalModel).delete()
-        db.commit()
 
         return {
             "message": "配置已清空",
@@ -2793,37 +2785,27 @@ class AdminPurgeConfigAdapter(AdminApiAdapter):
         }
 
 
-class AdminPurgeUsersAdapter(AdminApiAdapter):
-    async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
-        """清空所有非管理员用户及其关联数据"""
-        from src.core.enums import UserRole
+def _purge_users_sync() -> dict[str, Any]:
+    from src.core.enums import UserRole
+    from src.models.database import VideoTask
 
-        db = context.db
-
+    with get_db_context() as db:
         user_ids = [uid for (uid,) in db.query(User.id).filter(User.role != UserRole.ADMIN).all()]
         users_count = len(user_ids)
 
         if user_ids:
-            from src.models.database import VideoTask
-
-            # 删除关联的 VideoTask（user_id 无 ondelete 设置）
             db.query(VideoTask).filter(VideoTask.user_id.in_(user_ids)).delete(
                 synchronize_session=False
             )
 
-            # 统计关联 API Keys 数量（DB 级别 CASCADE 会随 User 自动删除）
             keys_count = int(
                 db.query(func.count(ApiKey.id)).filter(ApiKey.user_id.in_(user_ids)).scalar() or 0
             )
 
-            # 将使用记录的 user_id 置空（保留记录）
             db.query(Usage).filter(Usage.user_id.in_(user_ids)).update(
                 {Usage.user_id: None}, synchronize_session=False
             )
-
-            # 删除用户
             db.query(User).filter(User.id.in_(user_ids)).delete(synchronize_session=False)
-            db.commit()
         else:
             keys_count = 0
 
@@ -2834,6 +2816,105 @@ class AdminPurgeUsersAdapter(AdminApiAdapter):
                 "api_keys": keys_count,
             },
         }
+
+
+def _purge_usage_sync() -> dict[str, Any]:
+    from src.models.database import RequestCandidate, UserModelUsageCount
+
+    with get_db_context() as db:
+        usage_count = int(db.query(func.count(Usage.id)).scalar() or 0)
+        candidates_count = int(db.query(func.count(RequestCandidate.id)).scalar() or 0)
+        usage_counts_count = int(db.query(func.count(UserModelUsageCount.id)).scalar() or 0)
+
+        db.query(RequestCandidate).delete()
+        db.query(Usage).delete()
+        db.query(UserModelUsageCount).delete()
+        _purge_stats_and_reset_counters(db)
+
+        return {
+            "message": "使用记录已清空",
+            "deleted": {
+                "usage_records": usage_count,
+                "request_candidates": candidates_count,
+                "user_model_usage_counts": usage_counts_count,
+            },
+        }
+
+
+def _purge_audit_logs_sync() -> dict[str, Any]:
+    from src.models.database import AuditLog
+
+    with get_db_context() as db:
+        count = int(db.query(func.count(AuditLog.id)).scalar() or 0)
+        db.query(AuditLog).delete()
+        return {
+            "message": "审计日志已清空",
+            "deleted": {
+                "audit_logs": count,
+            },
+        }
+
+
+def _purge_request_bodies_sync() -> dict[str, Any]:
+    with get_db_context() as db:
+        with_body = int(
+            db.query(func.count(Usage.id))
+            .filter(
+                (Usage.request_body.isnot(None))
+                | (Usage.response_body.isnot(None))
+                | (Usage.provider_request_body.isnot(None))
+                | (Usage.client_response_body.isnot(None))
+                | (Usage.request_body_compressed.isnot(None))
+                | (Usage.response_body_compressed.isnot(None))
+                | (Usage.provider_request_body_compressed.isnot(None))
+                | (Usage.client_response_body_compressed.isnot(None))
+            )
+            .scalar()
+            or 0
+        )
+
+        db.query(Usage).update(
+            {
+                Usage.request_body: None,
+                Usage.response_body: None,
+                Usage.provider_request_body: None,
+                Usage.client_response_body: None,
+                Usage.request_body_compressed: None,
+                Usage.response_body_compressed: None,
+                Usage.provider_request_body_compressed: None,
+                Usage.client_response_body_compressed: None,
+                Usage.request_headers: None,
+                Usage.response_headers: None,
+                Usage.provider_request_headers: None,
+                Usage.client_response_headers: None,
+            },
+            synchronize_session=False,
+        )
+
+        return {
+            "message": "请求体已清空",
+            "cleaned": {
+                "records_with_body": with_body,
+            },
+        }
+
+
+def _purge_stats_sync() -> dict[str, Any]:
+    with get_db_context() as db:
+        _purge_stats_and_reset_counters(db)
+        return {"message": "聚合统计数据已清空"}
+
+
+class AdminPurgeConfigAdapter(AdminApiAdapter):
+    async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
+        """清空所有提供商配置（Provider、Endpoint、API Key、Model、GlobalModel）"""
+        return await run_in_threadpool(_purge_config_sync)
+
+
+class AdminPurgeUsersAdapter(AdminApiAdapter):
+    async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
+        """清空所有非管理员用户及其关联数据"""
+        return await run_in_threadpool(_purge_users_sync)
 
 
 def _purge_stats_and_reset_counters(db: Session) -> None:
@@ -2902,112 +2983,25 @@ def _purge_stats_and_reset_counters(db: Session) -> None:
 class AdminPurgeUsageAdapter(AdminApiAdapter):
     async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
         """清空全部使用记录及相关统计数据"""
-        from src.models.database import RequestCandidate, UserModelUsageCount
-
-        db = context.db
-
-        usage_count = int(db.query(func.count(Usage.id)).scalar() or 0)
-        candidates_count = int(db.query(func.count(RequestCandidate.id)).scalar() or 0)
-        usage_counts_count = int(db.query(func.count(UserModelUsageCount.id)).scalar() or 0)
-
-        # 清空使用记录
-        db.query(RequestCandidate).delete()
-        db.query(Usage).delete()
-        db.query(UserModelUsageCount).delete()
-
-        _purge_stats_and_reset_counters(db)
-        db.commit()
-
-        return {
-            "message": "使用记录已清空",
-            "deleted": {
-                "usage_records": usage_count,
-                "request_candidates": candidates_count,
-                "user_model_usage_counts": usage_counts_count,
-            },
-        }
+        return await run_in_threadpool(_purge_usage_sync)
 
 
 class AdminPurgeAuditLogsAdapter(AdminApiAdapter):
     async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
         """清空全部审计日志"""
-        from src.models.database import AuditLog
-
-        db = context.db
-
-        count = int(db.query(func.count(AuditLog.id)).scalar() or 0)
-        db.query(AuditLog).delete()
-        db.commit()
-
-        return {
-            "message": "审计日志已清空",
-            "deleted": {
-                "audit_logs": count,
-            },
-        }
+        return await run_in_threadpool(_purge_audit_logs_sync)
 
 
 class AdminPurgeRequestBodiesAdapter(AdminApiAdapter):
     async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
         """清空全部请求体/响应体（保留使用记录的统计信息）"""
-        db = context.db
-
-        # 统计有 body 的记录数
-        with_body = int(
-            db.query(func.count(Usage.id))
-            .filter(
-                (Usage.request_body.isnot(None))
-                | (Usage.response_body.isnot(None))
-                | (Usage.provider_request_body.isnot(None))
-                | (Usage.client_response_body.isnot(None))
-                | (Usage.request_body_compressed.isnot(None))
-                | (Usage.response_body_compressed.isnot(None))
-                | (Usage.provider_request_body_compressed.isnot(None))
-                | (Usage.client_response_body_compressed.isnot(None))
-            )
-            .scalar()
-            or 0
-        )
-
-        # 批量清空所有 body 字段
-        db.query(Usage).update(
-            {
-                Usage.request_body: None,
-                Usage.response_body: None,
-                Usage.provider_request_body: None,
-                Usage.client_response_body: None,
-                Usage.request_body_compressed: None,
-                Usage.response_body_compressed: None,
-                Usage.provider_request_body_compressed: None,
-                Usage.client_response_body_compressed: None,
-                Usage.request_headers: None,
-                Usage.response_headers: None,
-                Usage.provider_request_headers: None,
-                Usage.client_response_headers: None,
-            },
-            synchronize_session=False,
-        )
-        db.commit()
-
-        return {
-            "message": "请求体已清空",
-            "cleaned": {
-                "records_with_body": with_body,
-            },
-        }
+        return await run_in_threadpool(_purge_request_bodies_sync)
 
 
 class AdminPurgeStatsAdapter(AdminApiAdapter):
     async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
         """清空全部聚合统计数据（保留原始使用记录）"""
-        db = context.db
-
-        _purge_stats_and_reset_counters(db)
-        db.commit()
-
-        return {
-            "message": "聚合统计数据已清空",
-        }
+        return await run_in_threadpool(_purge_stats_sync)
 
 
 # ---------------------------------------------------------------------------
