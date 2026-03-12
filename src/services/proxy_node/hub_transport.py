@@ -34,8 +34,8 @@ _HEARTBEAT_DEDUP_TTL_SECONDS = 600
 _LOOP_WATCHDOG_INTERVAL_SECONDS = 1.0
 _LOOP_LAG_WARNING_SECONDS = 1.0
 _LOOP_LAG_DEGRADE_SECONDS = 3.0
-_LOOP_LAG_DEGRADE_MIN_COOLDOWN_SECONDS = 10.0
-_LOOP_LAG_DEGRADE_MAX_COOLDOWN_SECONDS = 30.0
+_LOOP_LAG_DEGRADE_MIN_COOLDOWN_SECONDS = 2.0
+_LOOP_LAG_DEGRADE_MAX_COOLDOWN_SECONDS = 5.0
 _LOOP_LAG_WARNING_LOG_INTERVAL_SECONDS = 10.0
 
 _HOP_BY_HOP_HEADERS = frozenset(
@@ -168,7 +168,7 @@ class HubConnectionManager:
         if lag_seconds >= _LOOP_LAG_DEGRADE_SECONDS:
             cooldown = min(
                 _LOOP_LAG_DEGRADE_MAX_COOLDOWN_SECONDS,
-                max(_LOOP_LAG_DEGRADE_MIN_COOLDOWN_SECONDS, lag_seconds * 3.0),
+                max(_LOOP_LAG_DEGRADE_MIN_COOLDOWN_SECONDS, lag_seconds * 1.5),
             )
             degraded_until = now + cooldown
             self._degraded_until = max(self._degraded_until, degraded_until)
