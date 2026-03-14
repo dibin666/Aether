@@ -16,7 +16,7 @@
               请求数
             </TableHead>
             <TableHead class="h-8 px-2 text-right">
-              <div class="flex flex-col text-xs gap-0.5">
+              <div class="flex flex-col text-xs gap-0.5 whitespace-nowrap">
                 <span>输入/输出</span>
                 <span class="text-muted-foreground font-normal">缓存</span>
               </div>
@@ -52,9 +52,9 @@
               {{ item.request_count }}
             </TableCell>
             <TableCell class="text-right py-2 px-2">
-              <div class="flex flex-col items-end text-xs gap-0.5">
+              <div class="flex flex-col items-end text-xs gap-0.5 whitespace-nowrap">
                 <span>{{ formatTokens(item.total_input_context || 0) }} / {{ formatTokens(item.output_tokens || 0) }}</span>
-                <span class="text-muted-foreground">{{ formatTokens(item.cache_read_tokens || 0) }} / {{ formatTokens(item.cache_creation_tokens || 0) }}</span>
+                <span class="text-muted-foreground">{{ formatTokens((item.cache_read_tokens || 0) + (item.cache_creation_tokens || 0)) }}</span>
               </div>
             </TableCell>
             <TableCell class="text-right py-2 px-2">
