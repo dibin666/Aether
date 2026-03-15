@@ -1408,3 +1408,106 @@ class TestItemCondition:
         # flag=False，全局条件不满足，所有元素都不变
         assert "active" not in result["tools"][0]
         assert "active" not in result["tools"][1]
+
+    def test_nested_all_any_condition_with_item_ref(self) -> None:
+        """嵌套 all/any 中包含 $item 时，按元素递归评估。"""
+        body = {
+            "flag": True,
+            "tools": [
+                {"name": "a", "type": "read"},
+                {"name": "b", "type": "write"},
+                {"name": "c", "type": "other"},
+            ],
+        }
+        result = apply_body_rules(
+            body,
+            [
+                {
+                    "action": "set",
+                    "path": "tools[*].enabled",
+                    "value": True,
+                    "condition": {
+                        "all": [
+                            {"path": "flag", "op": "eq", "value": True},
+                            {
+                                "any": [
+                                    {"path": "$item.type", "op": "eq", "value": "read"},
+                                    {"path": "$item.type", "op": "eq", "value": "write"},
+                                ]
+                            },
+                        ]
+                    },
+                }
+            ],
+        )
+        assert result["tools"][0]["enabled"] is True
+        assert result["tools"][1]["enabled"] is True
+        assert "enabled" not in result["tools"][2]
+
+    def test_condition_source_original_uses_original_body_after_current_mutation(self) -> None:
+        """source=original 在前序规则改写 current body 后仍读取原始请求体。"""
+        original_body = {"metadata": {"mode": "prod"}}
+        result = apply_body_rules(
+            original_body,
+            [
+                {"action": "set", "path": "metadata.mode", "value": "test"},
+                {
+                    "action": "set",
+                    "path": "audit.from_original",
+                    "value": True,
+                    "condition": {
+                        "path": "metadata.mode",
+                        "op": "eq",
+                        "value": "prod",
+                        "source": "original",
+                    },
+                },
+                {
+                    "action": "set",
+                    "path": "audit.from_current",
+                    "value": True,
+                    "condition": {
+                        "path": "metadata.mode",
+                        "op": "eq",
+                        "value": "prod",
+                    },
+                },
+            ],
+            original_body=original_body,
+        )
+        assert result["metadata"]["mode"] == "test"
+        assert result["audit"]["from_original"] is True
+        assert "from_current" not in result["audit"]
+
+    def test_condition_all_any_can_mix_original_and_current_sources(self) -> None:
+        """组合条件允许 current/original 混用。"""
+        original_body = {"mode": "prod", "count": 0}
+        result = apply_body_rules(
+            original_body,
+            [
+                {"action": "set", "path": "count", "value": 3},
+                {
+                    "action": "set",
+                    "path": "matched",
+                    "value": True,
+                    "condition": {
+                        "all": [
+                            {"path": "count", "op": "gte", "value": 1},
+                            {
+                                "any": [
+                                    {
+                                        "path": "mode",
+                                        "op": "eq",
+                                        "value": "prod",
+                                        "source": "original",
+                                    },
+                                    {"path": "mode", "op": "eq", "value": "stage"},
+                                ]
+                            },
+                        ]
+                    },
+                },
+            ],
+            original_body=original_body,
+        )
+        assert result["matched"] is True

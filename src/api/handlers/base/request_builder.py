@@ -599,10 +599,24 @@ _ITEM_PREFIX = "$item."
 _ITEM_EXACT = "$item"
 
 
+def _get_condition_children(
+    condition: dict[str, Any],
+) -> tuple[str, list[Any]] | None:
+    """如果 condition 是 all/any 组合节点，返回 (key, children)；否则返回 None。"""
+    for key in ("all", "any"):
+        children = condition.get(key)
+        if isinstance(children, list):
+            return key, children
+    return None
+
+
 def _has_item_ref(condition: dict[str, Any] | None) -> bool:
     """检查 condition 的 path 是否包含 $item 引用"""
     if not condition or not isinstance(condition, dict):
         return False
+    group = _get_condition_children(condition)
+    if group is not None:
+        return any(_has_item_ref(c) for c in group[1] if isinstance(c, dict))
     path = condition.get("path", "")
     return isinstance(path, str) and (
         path.strip().startswith(_ITEM_PREFIX) or path.strip() == _ITEM_EXACT
@@ -624,6 +638,16 @@ def _resolve_item_condition(
         item_path_prefix = "tools[0]"
         -> {"path": "tools[0]", "op": "type_is", "value": "object"}
     """
+    group = _get_condition_children(condition)
+    if group is not None:
+        key, children = group
+        return {
+            key: [
+                _resolve_item_condition(c, item_path_prefix) if isinstance(c, dict) else c
+                for c in children
+            ]
+        }
+
     resolved = dict(condition)
     raw_path = resolved.get("path", "").strip()
     if raw_path == _ITEM_EXACT:
@@ -667,6 +691,7 @@ def _iter_wildcard_targets(
     condition: dict[str, Any] | None,
     item_condition: bool,
     *,
+    original_body: dict[str, Any] | None = None,
     require_leaf: bool = False,
     reverse: bool = False,
 ) -> list[str]:
@@ -696,7 +721,7 @@ def _iter_wildcard_targets(
         if item_condition:
             prefix = _get_item_prefix_from_concrete(concrete_segs, parts)
             resolved = _resolve_item_condition(condition, prefix)  # type: ignore[arg-type]
-            if not _evaluate_condition(result, resolved):
+            if not evaluate_condition(result, resolved, original_body=original_body):
                 continue
         targets.append(_segments_to_path(concrete_segs))
     return targets
@@ -715,7 +740,11 @@ _SIMPLE_TYPE_MAP: dict[str, type] = {
 }
 
 
-def _evaluate_condition(body: dict[str, Any], condition: dict[str, Any]) -> bool:
+def evaluate_condition(
+    body: dict[str, Any],
+    condition: dict[str, Any],
+    original_body: dict[str, Any] | None = None,
+) -> bool:
     """
     评估单个条件表达式，决定规则是否应该执行。
 
@@ -726,6 +755,24 @@ def _evaluate_condition(body: dict[str, Any], condition: dict[str, Any]) -> bool
     if not isinstance(condition, dict):
         return False
 
+    if "all" in condition:
+        children = condition.get("all")
+        if not isinstance(children, list) or not children:
+            return False
+        return all(
+            isinstance(child, dict) and evaluate_condition(body, child, original_body=original_body)
+            for child in children
+        )
+
+    if "any" in condition:
+        children = condition.get("any")
+        if not isinstance(children, list) or not children:
+            return False
+        return any(
+            isinstance(child, dict) and evaluate_condition(body, child, original_body=original_body)
+            for child in children
+        )
+
     op = condition.get("op")
     if not isinstance(op, str) or op not in _CONDITION_OPS:
         return False
@@ -734,7 +781,12 @@ def _evaluate_condition(body: dict[str, Any], condition: dict[str, Any]) -> bool
     if not isinstance(path, str) or not path.strip():
         return False
 
-    found, current_val = _get_nested_value(body, path.strip())
+    source = condition.get("source", "current")
+    if not isinstance(source, str) or source not in {"current", "original"}:
+        return False
+    target = original_body if source == "original" and original_body is not None else body
+
+    found, current_val = _get_nested_value(target, path.strip())
 
     # 存在性检查：不需要 value
     if op == "exists":
@@ -817,6 +869,7 @@ def apply_body_rules(
     body: dict[str, Any],
     rules: list[dict[str, Any]],
     protected_keys: frozenset[str] | None = None,
+    original_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     应用请求体规则
@@ -848,6 +901,7 @@ def apply_body_rules(
         body: 原始请求体
         rules: 规则列表
         protected_keys: 受保护的字段（不能被 set/drop/rename 修改）
+        original_body: 条件评估使用的原始请求体；未提供时回退到当前 body
 
     Returns:
         应用规则后的请求体
@@ -870,7 +924,7 @@ def apply_body_rules(
         condition = rule.get("condition")
         item_condition = _has_item_ref(condition)
         if condition is not None and not item_condition:
-            if not _evaluate_condition(result, condition):
+            if not evaluate_condition(result, condition, original_body=original_body):
                 continue
 
         action = rule.get("action")
@@ -884,7 +938,7 @@ def apply_body_rules(
                 continue
             parts = _parse_path(path)
             for target_path in _iter_wildcard_targets(
-                result, path, parts, condition, item_condition
+                result, path, parts, condition, item_condition, original_body=original_body
             ):
                 value = rule.get("value")
                 if _contains_original_placeholder(value):
@@ -903,6 +957,7 @@ def apply_body_rules(
                 parts,
                 condition,
                 item_condition,
+                original_body=original_body,
                 require_leaf=True,
                 reverse=True,
             ):
@@ -940,7 +995,13 @@ def apply_body_rules(
                 continue
             parts = _parse_path(path)
             for target_path in _iter_wildcard_targets(
-                result, path, parts, condition, item_condition, require_leaf=True
+                result,
+                path,
+                parts,
+                condition,
+                item_condition,
+                original_body=original_body,
+                require_leaf=True,
             ):
                 found, target = _get_nested_value(result, target_path)
                 if found and isinstance(target, list):
@@ -984,7 +1045,13 @@ def apply_body_rules(
 
             parts = _parse_path(path)
             for target_path in _iter_wildcard_targets(
-                result, path, parts, condition, item_condition, require_leaf=True
+                result,
+                path,
+                parts,
+                condition,
+                item_condition,
+                original_body=original_body,
+                require_leaf=True,
             ):
                 found, current_val = _get_nested_value(result, target_path)
                 if found and isinstance(current_val, str):
@@ -1000,7 +1067,13 @@ def apply_body_rules(
                 continue
             parts = _parse_path(path)
             for target_path in _iter_wildcard_targets(
-                result, path, parts, condition, item_condition, require_leaf=True
+                result,
+                path,
+                parts,
+                condition,
+                item_condition,
+                original_body=original_body,
+                require_leaf=True,
             ):
                 found, current_val = _get_nested_value(result, target_path)
                 if found and isinstance(current_val, str):
@@ -1038,6 +1111,8 @@ class RequestBuilder(ABC):
         extra_headers: dict[str, str] | None = None,
         pre_computed_auth: tuple[str, str] | None = None,
         envelope: ProviderEnvelope | None = None,
+        body: dict[str, Any] | None = None,
+        original_body: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         """构建请求头"""
         pass
@@ -1080,7 +1155,7 @@ class RequestBuilder(ABC):
         # 应用请求体规则（如果 endpoint 配置了 body_rules）
         body_rules = getattr(endpoint, "body_rules", None)
         if body_rules:
-            payload = apply_body_rules(payload, body_rules)
+            payload = apply_body_rules(payload, body_rules, original_body=original_body)
 
         headers = self.build_headers(
             original_headers,
@@ -1089,6 +1164,8 @@ class RequestBuilder(ABC):
             extra_headers=extra_headers,
             pre_computed_auth=pre_computed_auth,
             envelope=envelope,
+            body=payload,
+            original_body=original_body,
         )
         return payload, headers
 
@@ -1191,6 +1268,8 @@ class PassthroughRequestBuilder(RequestBuilder):
         extra_headers: dict[str, str] | None = None,
         pre_computed_auth: tuple[str, str] | None = None,
         envelope: ProviderEnvelope | None = None,
+        body: dict[str, Any] | None = None,
+        original_body: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         """
         透传请求头 - 清理敏感头部（黑名单），透传其他所有头部
@@ -1239,7 +1318,13 @@ class PassthroughRequestBuilder(RequestBuilder):
         # 3. 应用 endpoint 的请求头规则（认证头受保护，无法通过 rules 设置）
         header_rules = getattr(endpoint, "header_rules", None)
         if header_rules:
-            builder.apply_rules(header_rules, protected_keys)
+            builder.apply_rules(
+                header_rules,
+                protected_keys,
+                body=body,
+                original_body=original_body,
+                condition_evaluator=evaluate_condition,
+            )
 
         # 4. 添加额外头部
         effective_extra_headers = self._merge_extra_headers_with_original(

@@ -1,5 +1,6 @@
 import json
 
+from src.api.handlers.base.request_builder import evaluate_condition
 from src.core.api_format import (
     CORE_REDACT_HEADERS,
     HeaderBuilder,
@@ -93,6 +94,68 @@ class TestHeaderBuilder:
         parsed = json.loads(normalized)
         assert "d:\\桌面\\123\\Aether" in parsed["workspaces"]
 
+    def test_apply_rules_supports_nested_conditions(self) -> None:
+        builder = HeaderBuilder()
+        builder.apply_rules(
+            [
+                {
+                    "action": "set",
+                    "key": "X-Flag",
+                    "value": "1",
+                    "condition": {
+                        "all": [
+                            {"path": "metadata.mode", "op": "eq", "value": "prod"},
+                            {
+                                "any": [
+                                    {"path": "tier", "op": "eq", "value": "gold"},
+                                    {"path": "tier", "op": "eq", "value": "silver"},
+                                ]
+                            },
+                        ]
+                    },
+                }
+            ],
+            body={"metadata": {"mode": "prod"}, "tier": "silver"},
+            condition_evaluator=evaluate_condition,
+        )
+        assert builder.build()["X-Flag"] == "1"
+
+    def test_apply_rules_supports_original_source(self) -> None:
+        builder = HeaderBuilder()
+        builder.apply_rules(
+            [
+                {
+                    "action": "set",
+                    "key": "X-Original",
+                    "value": "yes",
+                    "condition": {
+                        "path": "metadata.mode",
+                        "op": "eq",
+                        "value": "prod",
+                        "source": "original",
+                    },
+                }
+            ],
+            body={"metadata": {"mode": "test"}},
+            original_body={"metadata": {"mode": "prod"}},
+            condition_evaluator=evaluate_condition,
+        )
+        assert builder.build()["X-Original"] == "yes"
+
+    def test_apply_rules_fail_closed_without_body_or_evaluator(self) -> None:
+        builder = HeaderBuilder()
+        builder.apply_rules(
+            [
+                {
+                    "action": "set",
+                    "key": "X-Skip",
+                    "value": "1",
+                    "condition": {"path": "flag", "op": "eq", "value": True},
+                }
+            ]
+        )
+        assert "X-Skip" not in builder.build()
+
 
 class TestBuildUpstreamHeaders:
     def test_priority_and_drop_headers(self) -> None:
@@ -142,6 +205,24 @@ class TestBuildUpstreamHeaders:
     def test_default_content_type(self) -> None:
         result = build_upstream_headers_for_endpoint({}, "openai:chat", "provider")
         assert result["Content-Type"] == "application/json"
+
+    def test_header_rules_can_use_condition_against_body(self) -> None:
+        result = build_upstream_headers_for_endpoint(
+            {},
+            "openai:chat",
+            "provider",
+            header_rules=[
+                {
+                    "action": "set",
+                    "key": "X-Conditional",
+                    "value": "1",
+                    "condition": {"path": "mode", "op": "eq", "value": "prod"},
+                }
+            ],
+            body={"mode": "prod"},
+            condition_evaluator=evaluate_condition,
+        )
+        assert result["X-Conditional"] == "1"
 
 
 class TestFilterResponseHeaders:
