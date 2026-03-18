@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import codecs
-import copy
 import json
 import time
 from collections.abc import AsyncGenerator
@@ -41,6 +40,7 @@ from src.core.logger import logger
 from src.services.provider.behavior import get_provider_behavior
 from src.services.scheduling.aware_scheduler import ProviderCandidate
 from src.services.system.config import SystemConfigService
+from src.services.task.request_state import MutableRequestBodyState
 from src.utils.sse_parser import SSEEventParser
 
 from .cli_sse_helpers import _format_converted_events_to_sse
@@ -84,9 +84,7 @@ class CliStreamMixin:
             client_content_encoding,
         )
 
-        # 可变请求体容器：允许 TaskService 在遇到 Thinking 签名错误时整流请求体后重试
-        # 结构: {"body": 实际请求体, "_rectified": 是否已整流, "_rectified_this_turn": 本轮是否整流}
-        request_body_ref: dict[str, Any] = {"body": copy.deepcopy(original_request_body)}
+        request_state = MutableRequestBodyState(original_request_body)
 
         # 使用子类实现的方法提取 model（不同 API 格式的 model 位置不同）
         # 注意：使用 original_request_body，因为整流只修改 messages，不影响 model 字段
@@ -132,7 +130,7 @@ class CliStreamMixin:
                 provider,
                 endpoint,
                 key,
-                request_body_ref["body"],  # 使用容器中的请求体
+                request_state.build_attempt_body(),
                 original_headers,
                 query_params,
                 candidate,
@@ -167,7 +165,7 @@ class CliStreamMixin:
                 is_stream=True,
                 capability_requirements=capability_requirements or None,
                 preferred_key_ids=preferred_key_ids or None,
-                request_body_ref=request_body_ref,
+                request_body_state=request_state,
                 request_headers=original_headers,
                 request_body=original_request_body,
             )
@@ -206,7 +204,7 @@ class CliStreamMixin:
             if isinstance(scheduling_audit, dict):
                 ctx.scheduling_audit = scheduling_audit
             # 同步整流状态（如果请求体被整流过）
-            ctx.rectified = request_body_ref.get("_rectified", False)
+            ctx.rectified = request_state.is_rectified()
 
             # 创建后台任务记录统计
             background_tasks = BackgroundTasks()
@@ -253,7 +251,7 @@ class CliStreamMixin:
         provider: "Provider",
         endpoint: "ProviderEndpoint",
         key: "ProviderAPIKey",
-        original_request_body: dict[str, Any],
+        working_request_body: dict[str, Any],
         original_headers: dict[str, str],
         query_params: dict[str, str] | None = None,
         candidate: ProviderCandidate | None = None,
@@ -297,8 +295,8 @@ class CliStreamMixin:
                 provider_id=str(provider.id),
             )
 
-        # 应用模型映射到请求体（子类可覆盖此方法处理不同格式）
-        request_body = copy.deepcopy(original_request_body)
+        # `working_request_body` is already isolated per attempt.
+        request_body = working_request_body
         if mapped_model:
             ctx.mapped_model = mapped_model  # 保存映射后的模型名，用于 Usage 记录
             request_body = self.apply_mapped_model(request_body, mapped_model)

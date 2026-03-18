@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import time
 from typing import TYPE_CHECKING, Any
@@ -33,6 +32,7 @@ from src.core.exceptions import (
 )
 from src.core.logger import logger
 from src.services.scheduling.aware_scheduler import ProviderCandidate
+from src.services.task.request_state import MutableRequestBodyState
 
 if TYPE_CHECKING:
     from src.api.handlers.base.cli_protocol import CliHandlerProtocol
@@ -100,9 +100,7 @@ class CliSyncMixin:
         needs_conversion = False  # 是否需要格式转换（由 candidate 决定）
         sync_proxy_info: dict[str, Any] | None = None  # 代理信息
 
-        # 可变请求体容器：允许 TaskService 在遇到 Thinking 签名错误时整流请求体后重试
-        # 结构: {"body": 实际请求体, "_rectified": 是否已整流, "_rectified_this_turn": 本轮是否整流}
-        request_body_ref: dict[str, Any] = {"body": copy.deepcopy(original_request_body)}
+        request_state = MutableRequestBodyState(original_request_body)
 
         async def sync_request_func(
             provider: "Provider",
@@ -122,8 +120,7 @@ class CliSyncMixin:
                     provider_id=str(provider.id),
                 )
 
-            # 应用模型映射到请求体（子类可覆盖此方法处理不同格式）
-            request_body = copy.deepcopy(request_body_ref["body"])
+            request_body = request_state.build_attempt_body()
             if mapped_model:
                 mapped_model_result = mapped_model  # 保存映射后的模型名，用于 Usage 记录
                 request_body = self.apply_mapped_model(request_body, mapped_model)
@@ -390,7 +387,7 @@ class CliSyncMixin:
                 is_stream=False,
                 capability_requirements=capability_requirements or None,
                 preferred_key_ids=preferred_key_ids or None,
-                request_body_ref=request_body_ref,
+                request_body_state=request_state,
                 request_headers=original_headers,
                 request_body=original_request_body,
             )

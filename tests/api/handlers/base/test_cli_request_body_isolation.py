@@ -10,6 +10,7 @@ import src.api.handlers.base.cli_request_mixin as request_mixmod
 from src.api.handlers.base.cli_request_mixin import CliRequestMixin
 from src.api.handlers.base.cli_stream_mixin import CliStreamMixin
 from src.api.handlers.base.stream_context import StreamContext
+from src.services.task.request_state import MutableRequestBodyState
 
 
 class _StopBuild(Exception):
@@ -135,6 +136,7 @@ async def test_execute_stream_request_does_not_mutate_original_request_body(
         ],
     }
     snapshot = copy.deepcopy(original_request_body)
+    request_state = MutableRequestBodyState(original_request_body)
 
     with pytest.raises(_StopBuild):
         await handler._execute_stream_request(
@@ -142,7 +144,7 @@ async def test_execute_stream_request_does_not_mutate_original_request_body(
             provider,
             endpoint,
             key,
-            original_request_body,
+            request_state.build_attempt_body(),
             {},
             candidate=candidate,
         )
