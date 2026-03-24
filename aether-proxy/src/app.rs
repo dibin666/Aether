@@ -4,8 +4,11 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use aether_runtime::{
+    init_reloadable_tracing, wait_for_shutdown_signal, ConcurrencyGate, DistributedConcurrencyGate,
+    LogFormat, RedisDistributedConcurrencyConfig,
+};
 use arc_swap::ArcSwap;
-use tokio::signal;
 use tokio::sync::{watch, Mutex};
 use tracing::{error, info, warn};
 
@@ -140,12 +143,38 @@ pub async fn run(mut config: Config, servers: Vec<ServerEntry>) -> anyhow::Resul
 
     // Build shared application state
     let tunnel_tls_config = Arc::new(crate::tunnel::client::build_tls_config());
-    let state = Arc::new(AppState {
+    let mut state = AppState {
         config: Arc::new(config),
         dns_cache,
         upstream_client,
         tunnel_tls_config,
-    });
+        stream_gate: None,
+        distributed_stream_gate: None,
+    };
+    if let Some(limit) = state.config.max_in_flight_streams {
+        state = state
+            .with_stream_concurrency_gate(Arc::new(ConcurrencyGate::new("proxy_streams", limit)));
+    }
+    if let Some(limit) = state.config.distributed_stream_limit {
+        let redis_url = state
+            .config
+            .distributed_stream_redis_url
+            .clone()
+            .expect("distributed stream redis url should be validated");
+        let distributed_gate = DistributedConcurrencyGate::new_redis(
+            "proxy_streams_distributed",
+            limit,
+            RedisDistributedConcurrencyConfig {
+                url: redis_url,
+                key_prefix: state.config.distributed_stream_redis_key_prefix.clone(),
+                lease_ttl_ms: state.config.distributed_stream_lease_ttl_ms,
+                renew_interval_ms: state.config.distributed_stream_renew_interval_ms,
+                command_timeout_ms: Some(state.config.distributed_stream_command_timeout_ms),
+            },
+        )?;
+        state = state.with_distributed_stream_concurrency_gate(Arc::new(distributed_gate));
+    }
+    let state = Arc::new(state);
 
     // Shutdown signal channel
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -309,52 +338,19 @@ async fn retry_failed_registrations(
 }
 
 fn init_tracing(config: &Config) {
-    use tracing_subscriber::prelude::*;
-    use tracing_subscriber::{reload, EnvFilter};
-
-    let filter = EnvFilter::try_new(&config.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
-
-    let (filter_layer, reload_handle) = reload::Layer::new(filter);
-
-    runtime::set_log_reloader(Box::new(move |level: &str| {
-        if let Ok(new_filter) = EnvFilter::try_new(level) {
-            let _ = reload_handle.modify(|f| *f = new_filter);
-        }
-    }));
-
-    if config.log_json {
-        tracing_subscriber::registry()
-            .with(filter_layer)
-            .with(tracing_subscriber::fmt::layer().json())
-            .init();
+    let format = if config.log_json {
+        LogFormat::Json
     } else {
-        tracing_subscriber::registry()
-            .with(filter_layer)
-            .with(tracing_subscriber::fmt::layer())
-            .init();
-    }
+        LogFormat::Pretty
+    };
+
+    let reloader = init_reloadable_tracing(&config.log_level, format)
+        .expect("proxy tracing should initialize");
+    runtime::set_log_reloader(reloader);
 }
 
 async fn wait_for_shutdown() {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
+    wait_for_shutdown_signal()
+        .await
+        .expect("failed to install shutdown signal handler");
 }

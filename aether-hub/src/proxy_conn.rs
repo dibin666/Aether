@@ -5,9 +5,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use aether_runtime::bounded_queue;
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 use crate::hub::{ConnConfig, HubRouter, ProxyConn, SendStatus};
@@ -27,7 +28,7 @@ pub async fn handle_proxy_connection(
     let conn_id = hub.alloc_conn_id();
     let (mut ws_tx, ws_rx) = ws.split();
 
-    let (tx, mut rx) = mpsc::channel::<Message>(cfg.outbound_queue_capacity);
+    let (tx, mut rx) = bounded_queue::<Message>(cfg.outbound_queue_capacity);
     let (close_tx, mut close_rx) = watch::channel(false);
 
     let conn = Arc::new(ProxyConn::new(

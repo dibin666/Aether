@@ -4,6 +4,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use aether_runtime::{
+    AdmissionPermit, ConcurrencyError, ConcurrencyGate, ConcurrencySnapshot,
+    DistributedConcurrencyError, DistributedConcurrencyGate, DistributedConcurrencySnapshot,
+};
+
 use crate::config::Config;
 use crate::registration::client::AetherClient;
 use crate::runtime::SharedDynamicConfig;
@@ -19,6 +24,10 @@ pub struct AppState {
     pub upstream_client: UpstreamClient,
     /// Shared TLS config for tunnel WebSocket connections (avoids re-parsing root CAs on each reconnect).
     pub tunnel_tls_config: Arc<rustls::ClientConfig>,
+    /// Optional per-process stream admission gate.
+    pub stream_gate: Option<Arc<ConcurrencyGate>>,
+    /// Optional cross-instance stream admission gate.
+    pub distributed_stream_gate: Option<Arc<DistributedConcurrencyGate>>,
 }
 
 /// Per-server state: one instance per Aether server connection.
@@ -73,5 +82,102 @@ impl ProxyMetrics {
         let nanos = u64::try_from(connect_elapsed.as_nanos()).unwrap_or(u64::MAX);
         self.total_requests.fetch_add(1, Ordering::Release);
         self.total_latency_ns.fetch_add(nanos, Ordering::Release);
+    }
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ProxyAdmissionError {
+    #[error("proxy stream admission saturated at {limit} for gate {gate}")]
+    Saturated { gate: &'static str, limit: usize },
+    #[error("proxy stream admission unavailable for gate {gate}: {message}")]
+    Unavailable {
+        gate: &'static str,
+        limit: usize,
+        message: String,
+    },
+}
+
+impl AppState {
+    pub fn with_stream_concurrency_gate(mut self, gate: Arc<ConcurrencyGate>) -> Self {
+        self.stream_gate = Some(gate);
+        self
+    }
+
+    pub fn with_distributed_stream_concurrency_gate(
+        mut self,
+        gate: Arc<DistributedConcurrencyGate>,
+    ) -> Self {
+        self.distributed_stream_gate = Some(gate);
+        self
+    }
+
+    pub fn stream_concurrency_snapshot(&self) -> Option<ConcurrencySnapshot> {
+        self.stream_gate.as_ref().map(|gate| gate.snapshot())
+    }
+
+    pub async fn distributed_stream_concurrency_snapshot(
+        &self,
+    ) -> Result<Option<DistributedConcurrencySnapshot>, DistributedConcurrencyError> {
+        match &self.distributed_stream_gate {
+            Some(gate) => gate.snapshot().await.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn try_acquire_stream_permit(
+        &self,
+    ) -> Result<Option<AdmissionPermit>, ProxyAdmissionError> {
+        let local = match &self.stream_gate {
+            Some(gate) => Some(gate.try_acquire().map_err(|err| {
+                match err {
+                    ConcurrencyError::Saturated { gate, limit } => {
+                        ProxyAdmissionError::Saturated { gate, limit }
+                    }
+                    ConcurrencyError::Closed { gate } => ProxyAdmissionError::Unavailable {
+                        gate,
+                        limit: self
+                            .stream_gate
+                            .as_ref()
+                            .map(|inner| inner.snapshot().limit)
+                            .unwrap_or(0),
+                        message: "local stream gate is closed".to_string(),
+                    },
+                }
+            })?),
+            None => None,
+        };
+
+        let distributed = match &self.distributed_stream_gate {
+            Some(gate) => Some(gate.try_acquire().await.map_err(|err| {
+                match err {
+                    DistributedConcurrencyError::Saturated { gate, limit } => {
+                        ProxyAdmissionError::Saturated { gate, limit }
+                    }
+                    DistributedConcurrencyError::Unavailable {
+                        gate,
+                        limit,
+                        message,
+                    } => ProxyAdmissionError::Unavailable {
+                        gate,
+                        limit,
+                        message,
+                    },
+                    DistributedConcurrencyError::InvalidConfiguration(message) => {
+                        ProxyAdmissionError::Unavailable {
+                            gate: "proxy_streams_distributed",
+                            limit: self
+                                .distributed_stream_gate
+                                .as_ref()
+                                .map(|inner| inner.limit())
+                                .unwrap_or(0),
+                            message,
+                        }
+                    }
+                }
+            })?),
+            None => None,
+        };
+
+        Ok(AdmissionPermit::from_parts(local, distributed))
     }
 }

@@ -3,10 +3,14 @@ use std::collections::BTreeMap;
 use axum::body::Body;
 use axum::http::header::{HeaderName, HeaderValue};
 use axum::http::Response;
+use axum::http::StatusCode;
+use serde_json::json;
 
 use crate::gateway::constants::*;
 use crate::gateway::headers::should_skip_response_header;
-use crate::gateway::{insert_header_if_missing, GatewayControlDecision, GatewayError};
+use crate::gateway::{
+    insert_header_if_missing, GatewayControlDecision, GatewayError, GatewayLocalAuthRejection,
+};
 
 pub(crate) fn build_client_response(
     upstream_response: reqwest::Response,
@@ -89,4 +93,144 @@ pub(crate) fn build_client_response_from_parts(
         }
     }
     Ok(response)
+}
+
+pub(crate) fn insert_candidate_id_header_if_present(
+    headers: &mut http::HeaderMap,
+    candidate_id: Option<&str>,
+) -> Result<(), GatewayError> {
+    let Some(candidate_id) = candidate_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    insert_header_if_missing(headers, CONTROL_CANDIDATE_ID_HEADER, candidate_id)
+}
+
+pub(crate) fn insert_request_id_header_if_present(
+    headers: &mut http::HeaderMap,
+    request_id: Option<&str>,
+) -> Result<(), GatewayError> {
+    let Some(request_id) = request_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    insert_header_if_missing(headers, CONTROL_REQUEST_ID_HEADER, request_id)
+}
+
+pub(crate) fn attach_control_metadata_headers(
+    mut response: Response<Body>,
+    request_id: Option<&str>,
+    candidate_id: Option<&str>,
+) -> Result<Response<Body>, GatewayError> {
+    insert_request_id_header_if_present(response.headers_mut(), request_id)?;
+    insert_candidate_id_header_if_present(response.headers_mut(), candidate_id)?;
+    Ok(response)
+}
+
+pub(crate) fn build_local_balance_denied_response(
+    trace_id: &str,
+    control_decision: Option<&GatewayControlDecision>,
+    balance_remaining: Option<f64>,
+) -> Result<Response<Body>, GatewayError> {
+    let message = match balance_remaining {
+        Some(remaining) => format!("余额不足（剩余: ${remaining:.2}）"),
+        None => "余额不足".to_string(),
+    };
+    let payload = json!({
+        "error": {
+            "type": "balance_exceeded",
+            "message": message,
+            "details": {
+                "balance_type": "USD",
+                "remaining": balance_remaining,
+            }
+        }
+    });
+    let body =
+        serde_json::to_vec(&payload).map_err(|err| GatewayError::Internal(err.to_string()))?;
+    let headers = BTreeMap::from([("content-type".to_string(), "application/json".to_string())]);
+    build_client_response_from_parts(
+        StatusCode::TOO_MANY_REQUESTS.as_u16(),
+        &headers,
+        Body::from(body),
+        trace_id,
+        control_decision,
+    )
+}
+
+pub(crate) fn build_local_http_error_response(
+    trace_id: &str,
+    control_decision: Option<&GatewayControlDecision>,
+    status_code: StatusCode,
+    message: &str,
+) -> Result<Response<Body>, GatewayError> {
+    let payload = json!({
+        "error": {
+            "type": "http_error",
+            "message": message,
+        }
+    });
+    let body =
+        serde_json::to_vec(&payload).map_err(|err| GatewayError::Internal(err.to_string()))?;
+    let headers = BTreeMap::from([("content-type".to_string(), "application/json".to_string())]);
+    build_client_response_from_parts(
+        status_code.as_u16(),
+        &headers,
+        Body::from(body),
+        trace_id,
+        control_decision,
+    )
+}
+
+pub(crate) fn build_local_auth_rejection_response(
+    trace_id: &str,
+    control_decision: Option<&GatewayControlDecision>,
+    rejection: &GatewayLocalAuthRejection,
+) -> Result<Response<Body>, GatewayError> {
+    match rejection {
+        GatewayLocalAuthRejection::InvalidApiKey => build_local_http_error_response(
+            trace_id,
+            control_decision,
+            StatusCode::UNAUTHORIZED,
+            "无效的API密钥",
+        ),
+        GatewayLocalAuthRejection::LockedApiKey => build_local_http_error_response(
+            trace_id,
+            control_decision,
+            StatusCode::FORBIDDEN,
+            "该密钥已被管理员锁定，请联系管理员",
+        ),
+        GatewayLocalAuthRejection::BalanceDenied { remaining } => {
+            build_local_balance_denied_response(trace_id, control_decision, *remaining)
+        }
+    }
+}
+
+pub(crate) fn build_local_overloaded_response(
+    trace_id: &str,
+    control_decision: Option<&GatewayControlDecision>,
+    gate: &str,
+    limit: usize,
+) -> Result<Response<Body>, GatewayError> {
+    let payload = json!({
+        "error": {
+            "type": "overloaded",
+            "message": "服务繁忙，请稍后重试",
+            "details": {
+                "gate": gate,
+                "limit": limit,
+            }
+        }
+    });
+    let body =
+        serde_json::to_vec(&payload).map_err(|err| GatewayError::Internal(err.to_string()))?;
+    let headers = BTreeMap::from([("content-type".to_string(), "application/json".to_string())]);
+    build_client_response_from_parts(
+        StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+        &headers,
+        Body::from(body),
+        trace_id,
+        control_decision,
+    )
 }

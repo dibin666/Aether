@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::io::Error as IoError;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use aether_contracts::{
     ExecutionPlan, ExecutionResult, ExecutionTelemetry, ExecutionTimeouts, ProxySnapshot,
@@ -24,8 +24,8 @@ use crate::gateway::headers::{
     should_skip_upstream_passthrough_header,
 };
 use crate::gateway::{
-    build_client_response, build_client_response_from_parts, cache_executor_auth_context,
-    local_finalize::maybe_build_local_core_sync_finalize_response,
+    attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
+    cache_executor_auth_context, local_finalize::maybe_build_local_core_sync_finalize_response,
     local_stream::maybe_build_local_stream_rewriter, resolve_executor_auth_context, AppState,
     GatewayControlAuthContext, GatewayControlDecision, GatewayError,
 };

@@ -2,9 +2,14 @@
 members = [
     "aether-hub",
     "aether-proxy",
+    "crates/aether-cache",
     "crates/aether-contracts",
+    "crates/aether-data",
     "crates/aether-executor",
     "crates/aether-gateway",
+    "crates/aether-http",
+    "crates/aether-runtime",
+    "crates/aether-testkit",
 ]
 resolver = "2"
 
@@ -14,20 +19,34 @@ license = "LicenseRef-Aether-NonCommercial"
 repository = "https://github.com/fawney19/Aether.git"
 
 [workspace.dependencies]
+aether-hub = { path = "aether-hub" }
+aether-cache = { path = "crates/aether-cache" }
 aether-contracts = { path = "crates/aether-contracts" }
+aether-data = { path = "crates/aether-data" }
+aether-executor = { path = "crates/aether-executor" }
+aether-gateway = { path = "crates/aether-gateway" }
+aether-http = { path = "crates/aether-http" }
+aether-runtime = { path = "crates/aether-runtime" }
+aether-testkit = { path = "crates/aether-testkit" }
 async-stream = "0.3"
+async-trait = "0.1"
+axum = "0.8"
 base64 = "0.22"
 bytes = "1"
 flate2 = "1"
 futures-util = "0.3"
 http = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2"] }
+redis = { version = "0.28", default-features = false, features = ["tokio-comp", "script", "streams"] }
 rustls = { version = "0.23", features = ["ring"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["codec", "io-util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 webpki-roots = "0.26"
 url = "2"

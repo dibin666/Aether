@@ -136,7 +136,7 @@ pub async fn connect_and_run(
     // resetting shared atomic metrics via swap(0))
     let hb_handle = if conn_idx == 0 {
         heartbeat::spawn(
-            Arc::clone(&state.config),
+            Arc::clone(state),
             Arc::clone(server),
             frame_tx.clone(),
             shutdown.clone(),

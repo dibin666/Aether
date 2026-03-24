@@ -3,12 +3,12 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 use std::sync::Arc;
 use std::time::Duration;
 
+use aether_runtime::{BoundedQueueSender, MetricKind, MetricSample, QueueSendError};
 use axum::extract::ws::Message;
 use bytes::Bytes;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{watch, Notify};
 use tracing::{debug, info, warn};
 
@@ -32,13 +32,13 @@ pub struct ConnConfig {
 }
 
 pub struct BoundedOutbound {
-    tx: mpsc::Sender<Message>,
+    tx: BoundedQueueSender<Message>,
     close_tx: watch::Sender<bool>,
     closing: AtomicBool,
 }
 
 impl BoundedOutbound {
-    pub fn new(tx: mpsc::Sender<Message>, close_tx: watch::Sender<bool>) -> Self {
+    pub fn new(tx: BoundedQueueSender<Message>, close_tx: watch::Sender<bool>) -> Self {
         Self {
             tx,
             close_tx,
@@ -53,11 +53,11 @@ impl BoundedOutbound {
 
         match self.tx.try_send(msg) {
             Ok(()) => SendStatus::Queued,
-            Err(TrySendError::Closed(_)) => {
+            Err(QueueSendError::Closed(_)) => {
                 self.mark_closing();
                 SendStatus::Closed
             }
-            Err(TrySendError::Full(_)) => {
+            Err(QueueSendError::Full(_)) => {
                 self.mark_closing();
                 SendStatus::Congested
             }
@@ -92,7 +92,7 @@ impl ProxyConn {
         id: u64,
         node_id: String,
         node_name: String,
-        tx: mpsc::Sender<Message>,
+        tx: BoundedQueueSender<Message>,
         close_tx: watch::Sender<bool>,
         max_streams: usize,
     ) -> Self {
@@ -786,8 +786,35 @@ pub struct HubStats {
     pub active_streams: usize,
 }
 
+impl HubStats {
+    pub fn to_metric_samples(&self) -> Vec<MetricSample> {
+        vec![
+            MetricSample::new(
+                "hub_proxy_connections",
+                "Current number of connected proxy sockets.",
+                MetricKind::Gauge,
+                self.proxy_connections as u64,
+            ),
+            MetricSample::new(
+                "hub_nodes",
+                "Current number of connected logical nodes.",
+                MetricKind::Gauge,
+                self.nodes as u64,
+            ),
+            MetricSample::new(
+                "hub_active_streams",
+                "Current number of active local relay streams.",
+                MetricKind::Gauge,
+                self.active_streams as u64,
+            ),
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use aether_runtime::bounded_queue;
+
     use super::*;
 
     fn build_meta() -> protocol::RequestMeta {
@@ -803,7 +830,7 @@ mod tests {
     async fn cancel_local_stream_notifies_proxy() {
         let hub = HubRouter::new(ControlPlaneClient::disabled());
 
-        let (proxy_tx, mut proxy_rx) = mpsc::channel(8);
+        let (proxy_tx, mut proxy_rx) = bounded_queue(8);
         let (proxy_close_tx, _) = watch::channel(false);
         let proxy = Arc::new(ProxyConn::new(
             100,
@@ -838,7 +865,7 @@ mod tests {
     async fn push_local_request_body_splits_large_payload_and_marks_end() {
         let hub = HubRouter::new(ControlPlaneClient::disabled());
 
-        let (proxy_tx, mut proxy_rx) = mpsc::channel(8);
+        let (proxy_tx, mut proxy_rx) = bounded_queue(8);
         let (proxy_close_tx, _) = watch::channel(false);
         let proxy = Arc::new(ProxyConn::new(
             200,

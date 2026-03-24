@@ -2,6 +2,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use aether_runtime::{maybe_hold_axum_response_permit, AdmissionPermit};
 use async_stream::stream;
 use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, Path, Request, State};
@@ -47,6 +48,43 @@ pub async fn relay_request(
         );
     }
 
+    let request_permit = match state.try_acquire_request_permit().await {
+        Ok(permit) => permit,
+        Err(crate::RequestAdmissionError::Local(aether_runtime::ConcurrencyError::Saturated {
+            ..
+        }))
+        | Err(crate::RequestAdmissionError::Distributed(
+            aether_runtime::DistributedConcurrencyError::Saturated { .. },
+        ))
+        | Err(crate::RequestAdmissionError::Distributed(
+            aether_runtime::DistributedConcurrencyError::Unavailable { .. },
+        )) => {
+            return tunnel_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "overloaded",
+                "hub relay overloaded",
+            );
+        }
+        Err(crate::RequestAdmissionError::Local(aether_runtime::ConcurrencyError::Closed {
+            ..
+        })) => {
+            return tunnel_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "overloaded",
+                "hub relay gate closed",
+            );
+        }
+        Err(crate::RequestAdmissionError::Distributed(
+            aether_runtime::DistributedConcurrencyError::InvalidConfiguration(_),
+        )) => {
+            return tunnel_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "overloaded",
+                "hub relay distributed gate invalid",
+            );
+        }
+    };
+
     let mut body_stream = request.into_body().into_data_stream();
     let mut envelope_buf = BytesMut::new();
     let mut meta: Option<protocol::RequestMeta> = None;
@@ -62,10 +100,13 @@ pub async fn relay_request(
                         .cancel_local_stream(active_stream.id, "failed to read relay request body");
                 }
                 warn!(error = %error, "failed to read local relay request body");
-                return tunnel_error_response(
-                    StatusCode::BAD_GATEWAY,
-                    "relay",
-                    "failed to read relay request body",
+                return release_permit_response(
+                    tunnel_error_response(
+                        StatusCode::BAD_GATEWAY,
+                        "relay",
+                        "failed to read relay request body",
+                    ),
+                    request_permit,
                 );
             }
         };
@@ -75,7 +116,10 @@ pub async fn relay_request(
             let Some((parsed_meta, body_offset)) = (match try_decode_envelope_meta(&envelope_buf) {
                 Ok(result) => result,
                 Err(error) => {
-                    return tunnel_error_response(StatusCode::BAD_REQUEST, "bad_request", &error);
+                    return release_permit_response(
+                        tunnel_error_response(StatusCode::BAD_REQUEST, "bad_request", &error),
+                        request_permit,
+                    );
                 }
             }) else {
                 continue;
@@ -84,10 +128,9 @@ pub async fn relay_request(
             let opened_stream = match state.hub.open_local_stream(&node_id, &parsed_meta) {
                 Ok(stream) => stream,
                 Err(error) => {
-                    return tunnel_error_response(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "connect",
-                        &error,
+                    return release_permit_response(
+                        tunnel_error_response(StatusCode::SERVICE_UNAVAILABLE, "connect", &error),
+                        request_permit,
                     );
                 }
             };
@@ -100,10 +143,9 @@ pub async fn relay_request(
                         .push_local_request_body(opened_stream.id, first_body_chunk, false)
                 {
                     state.hub.cancel_local_stream(opened_stream.id, &error);
-                    return tunnel_error_response(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "connect",
-                        &error,
+                    return release_permit_response(
+                        tunnel_error_response(StatusCode::SERVICE_UNAVAILABLE, "connect", &error),
+                        request_permit,
                     );
                 }
             }
@@ -122,17 +164,23 @@ pub async fn relay_request(
             .push_local_request_body(active_stream.id, chunk, false)
         {
             state.hub.cancel_local_stream(active_stream.id, &error);
-            return tunnel_error_response(StatusCode::SERVICE_UNAVAILABLE, "connect", &error);
+            return release_permit_response(
+                tunnel_error_response(StatusCode::SERVICE_UNAVAILABLE, "connect", &error),
+                request_permit,
+            );
         }
     }
 
     let (meta, stream) = match (meta, stream) {
         (Some(meta), Some(stream)) => (meta, stream),
         _ => {
-            return tunnel_error_response(
-                StatusCode::BAD_REQUEST,
-                "bad_request",
-                "relay envelope metadata truncated",
+            return release_permit_response(
+                tunnel_error_response(
+                    StatusCode::BAD_REQUEST,
+                    "bad_request",
+                    "relay envelope metadata truncated",
+                ),
+                request_permit,
             );
         }
     };
@@ -142,7 +190,10 @@ pub async fn relay_request(
         .push_local_request_body(stream.id, Bytes::new(), true)
     {
         state.hub.cancel_local_stream(stream.id, &error);
-        return tunnel_error_response(StatusCode::SERVICE_UNAVAILABLE, "connect", &error);
+        return release_permit_response(
+            tunnel_error_response(StatusCode::SERVICE_UNAVAILABLE, "connect", &error),
+            request_permit,
+        );
     }
 
     let request_guard = StreamGuard {
@@ -156,7 +207,10 @@ pub async fn relay_request(
         Ok(response) => response,
         Err(error) => {
             state.hub.cancel_local_stream(stream.id, &error);
-            return tunnel_error_response(StatusCode::GATEWAY_TIMEOUT, "timeout", &error);
+            return release_permit_response(
+                tunnel_error_response(StatusCode::GATEWAY_TIMEOUT, "timeout", &error),
+                request_permit,
+            );
         }
     };
 
@@ -164,10 +218,13 @@ pub async fn relay_request(
         state
             .hub
             .cancel_local_stream(stream.id, "missing relay response body receiver");
-        return tunnel_error_response(
-            StatusCode::BAD_GATEWAY,
-            "relay",
-            "missing relay response body receiver",
+        return release_permit_response(
+            tunnel_error_response(
+                StatusCode::BAD_GATEWAY,
+                "relay",
+                "missing relay response body receiver",
+            ),
+            request_permit,
         );
     };
 
@@ -199,16 +256,26 @@ pub async fn relay_request(
         append_headers(headers, &response_head.headers);
     }
     match builder.body(Body::from_stream(body_stream)) {
-        Ok(response) => response,
+        Ok(response) => maybe_hold_axum_response_permit(response, request_permit),
         Err(error) => {
             warn!(error = %error, "failed to build relay response");
-            tunnel_error_response(
-                StatusCode::BAD_GATEWAY,
-                "relay",
-                "failed to build relay response",
+            release_permit_response(
+                tunnel_error_response(
+                    StatusCode::BAD_GATEWAY,
+                    "relay",
+                    "failed to build relay response",
+                ),
+                request_permit,
             )
         }
     }
+}
+
+fn release_permit_response(
+    response: Response<Body>,
+    _request_permit: Option<AdmissionPermit>,
+) -> Response<Body> {
+    response
 }
 
 fn try_decode_envelope_meta(

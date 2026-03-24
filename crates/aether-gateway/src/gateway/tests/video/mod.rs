@@ -1,4 +1,7 @@
 use super::*;
+use aether_data::repository::video_tasks::{
+    InMemoryVideoTaskRepository, UpsertVideoTask, VideoTaskWriteRepository,
+};
 
 mod error;
 mod gemini_sync_create;
@@ -6,6 +9,186 @@ mod gemini_sync_task;
 mod openai_sync_create;
 mod openai_sync_task;
 mod stream;
+
+#[tokio::test]
+async fn gateway_reads_openai_video_task_via_data_read_side_without_hitting_public_route() {
+    let public_hits = Arc::new(Mutex::new(0usize));
+    let public_hits_clone = Arc::clone(&public_hits);
+
+    let upstream = Router::new()
+        .route(
+            "/api/internal/gateway/resolve",
+            any(|_request: Request| async move {
+                Json(json!({
+                    "action": "proxy_public",
+                    "route_class": "ai_public",
+                    "route_family": "openai",
+                    "route_kind": "video",
+                    "auth_endpoint_signature": "openai:video",
+                    "executor_candidate": true,
+                    "auth_context": {
+                        "user_id": "user-video-db-123",
+                        "api_key_id": "key-video-db-123",
+                        "access_allowed": true
+                    },
+                    "public_path": "/v1/videos/task-db-123"
+                }))
+            }),
+        )
+        .route(
+            "/v1/videos/task-db-123",
+            any(move |_request: Request| {
+                let public_hits_inner = Arc::clone(&public_hits_clone);
+                async move {
+                    *public_hits_inner.lock().expect("mutex should lock") += 1;
+                    (StatusCode::IM_A_TEAPOT, Body::from("public-route-hit"))
+                }
+            }),
+        );
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let repository = Arc::new(InMemoryVideoTaskRepository::default());
+    repository
+        .upsert(UpsertVideoTask {
+            id: "task-db-123".to_string(),
+            short_id: Some("short-task-db-123".to_string()),
+            user_id: Some("user-video-db-123".to_string()),
+            external_task_id: Some("ext-video-db-123".to_string()),
+            provider_api_format: Some("openai:video".to_string()),
+            model: Some("sora-2".to_string()),
+            prompt: Some("hello from db".to_string()),
+            size: Some("1280x720".to_string()),
+            status: aether_data::repository::video_tasks::VideoTaskStatus::Processing,
+            progress_percent: 45,
+            created_at_unix_secs: 123,
+            updated_at_unix_secs: 124,
+            error_code: None,
+            error_message: None,
+            video_url: None,
+        })
+        .await
+        .expect("upsert should succeed");
+
+    let gateway = build_router_with_state(
+        AppState::new_with_executor(
+            upstream_url.clone(),
+            Some(upstream_url.clone()),
+            Some(upstream_url.clone()),
+        )
+        .expect("gateway state should build")
+        .with_video_task_data_reader_for_tests(repository),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .get(format!("{gateway_url}/v1/videos/task-db-123"))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.expect("body should parse");
+    assert_eq!(body["id"], "task-db-123");
+    assert_eq!(body["status"], "processing");
+    assert_eq!(body["progress"], 45);
+    assert_eq!(body["created_at"], 123);
+    assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_reads_gemini_video_task_via_data_read_side_without_hitting_public_route() {
+    let public_hits = Arc::new(Mutex::new(0usize));
+    let public_hits_clone = Arc::clone(&public_hits);
+
+    let upstream = Router::new()
+        .route(
+            "/api/internal/gateway/resolve",
+            any(|_request: Request| async move {
+                Json(json!({
+                    "action": "proxy_public",
+                    "route_class": "ai_public",
+                    "route_family": "gemini",
+                    "route_kind": "video",
+                    "auth_endpoint_signature": "gemini:video",
+                    "executor_candidate": true,
+                    "auth_context": {
+                        "user_id": "user-video-db-123",
+                        "api_key_id": "key-video-db-123",
+                        "access_allowed": true
+                    },
+                    "public_path": "/v1beta/models/veo-3/operations/localshort123"
+                }))
+            }),
+        )
+        .route(
+            "/v1beta/models/veo-3/operations/localshort123",
+            any(move |_request: Request| {
+                let public_hits_inner = Arc::clone(&public_hits_clone);
+                async move {
+                    *public_hits_inner.lock().expect("mutex should lock") += 1;
+                    (StatusCode::IM_A_TEAPOT, Body::from("public-route-hit"))
+                }
+            }),
+        );
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let repository = Arc::new(InMemoryVideoTaskRepository::default());
+    repository
+        .upsert(UpsertVideoTask {
+            id: "task-db-456".to_string(),
+            short_id: Some("localshort123".to_string()),
+            user_id: Some("user-video-db-123".to_string()),
+            external_task_id: Some("operations/ext-video-db-123".to_string()),
+            provider_api_format: Some("gemini:video".to_string()),
+            model: Some("veo-3".to_string()),
+            prompt: Some("hello from gemini db".to_string()),
+            size: Some("720p".to_string()),
+            status: aether_data::repository::video_tasks::VideoTaskStatus::Completed,
+            progress_percent: 100,
+            created_at_unix_secs: 223,
+            updated_at_unix_secs: 224,
+            error_code: None,
+            error_message: None,
+            video_url: None,
+        })
+        .await
+        .expect("upsert should succeed");
+
+    let gateway = build_router_with_state(
+        AppState::new_with_executor(
+            upstream_url.clone(),
+            Some(upstream_url.clone()),
+            Some(upstream_url.clone()),
+        )
+        .expect("gateway state should build")
+        .with_video_task_data_reader_for_tests(repository),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{gateway_url}/v1beta/models/veo-3/operations/localshort123"
+        ))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.expect("body should parse");
+    assert_eq!(body["name"], "models/veo-3/operations/localshort123");
+    assert_eq!(body["done"], true);
+    assert_eq!(
+        body["response"]["generateVideoResponse"]["generatedSamples"][0]["video"]["uri"],
+        "/v1beta/files/aev_localshort123:download?alt=media"
+    );
+    assert_eq!(*public_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
 
 #[tokio::test]
 async fn gateway_executes_video_get_route_via_control_sync_endpoint() {

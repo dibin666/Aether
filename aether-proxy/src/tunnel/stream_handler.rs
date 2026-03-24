@@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use aether_runtime::hold_admission_permit_until;
 use bytes::Bytes;
 use futures_util::stream;
 use futures_util::StreamExt;
@@ -72,10 +73,26 @@ pub async fn handle_stream(
     body_rx: mpsc::Receiver<TunnelFrame>,
     frame_tx: FrameSender,
 ) {
+    let permit = match state.try_acquire_stream_permit().await {
+        Ok(permit) => permit,
+        Err(err) => {
+            let message = match err {
+                crate::state::ProxyAdmissionError::Saturated { .. } => "proxy overloaded",
+                crate::state::ProxyAdmissionError::Unavailable { .. } => {
+                    "proxy admission unavailable"
+                }
+            };
+            send_error(&frame_tx, stream_id, message).await;
+            return;
+        }
+    };
+
     server.active_connections.fetch_add(1, Ordering::Release);
 
-    let connect_elapsed =
-        handle_stream_inner(&state, &server, stream_id, meta, body_rx, &frame_tx).await;
+    let connect_elapsed = hold_admission_permit_until(permit, async {
+        handle_stream_inner(&state, &server, stream_id, meta, body_rx, &frame_tx).await
+    })
+    .await;
 
     server.active_connections.fetch_sub(1, Ordering::Release);
     if let Some(d) = connect_elapsed {
@@ -431,7 +448,20 @@ fn build_streaming_request_body(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Once;
+
+    use aether_runtime::{bounded_queue, ConcurrencyGate, DistributedConcurrencyGate};
+    use arc_swap::ArcSwap;
+
     use super::*;
+    use crate::config::Config;
+    use crate::registration::client::AetherClient;
+    use crate::runtime::DynamicConfig;
+    use crate::state::ProxyMetrics;
+    use crate::target_filter::DnsCache;
+    use crate::tunnel::client::build_tls_config;
 
     #[tokio::test]
     async fn streaming_request_body_yields_chunks_and_tracks_size() {
@@ -502,5 +532,180 @@ mod tests {
         assert!(err.to_string().contains("client cancelled"));
         assert!(body.frame().await.is_none());
         assert_eq!(body_size.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn rejects_stream_when_local_admission_gate_is_saturated() {
+        let gate = Arc::new(ConcurrencyGate::new("proxy_streams", 1));
+        let _permit = gate.try_acquire().expect("first permit");
+        let state = sample_state(Some(gate), None);
+        let server = sample_server(&state);
+        let (frame_tx, mut frame_rx) = bounded_queue::<TunnelFrame>(4);
+        let (_body_tx, body_rx) = mpsc::channel(1);
+
+        handle_stream(
+            Arc::clone(&state),
+            server,
+            7,
+            sample_request_meta(),
+            body_rx,
+            frame_tx,
+        )
+        .await;
+
+        let frame = frame_rx.recv().await.expect("overload frame");
+        assert_eq!(frame.stream_id, 7);
+        assert_eq!(frame.msg_type, MsgType::StreamError);
+        assert_eq!(frame.payload, Bytes::from_static(b"proxy overloaded"));
+        assert_eq!(
+            state
+                .stream_gate
+                .as_ref()
+                .expect("stream gate")
+                .snapshot()
+                .rejected,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_stream_when_distributed_admission_gate_is_saturated() {
+        let gate = Arc::new(DistributedConcurrencyGate::new_in_memory(
+            "proxy_streams_distributed",
+            1,
+        ));
+        let _permit = gate.try_acquire().await.expect("first permit");
+        let state = sample_state(None, Some(gate));
+        let server = sample_server(&state);
+        let (frame_tx, mut frame_rx) = bounded_queue::<TunnelFrame>(4);
+        let (_body_tx, body_rx) = mpsc::channel(1);
+
+        handle_stream(
+            Arc::clone(&state),
+            server,
+            9,
+            sample_request_meta(),
+            body_rx,
+            frame_tx,
+        )
+        .await;
+
+        let frame = frame_rx.recv().await.expect("overload frame");
+        assert_eq!(frame.stream_id, 9);
+        assert_eq!(frame.msg_type, MsgType::StreamError);
+        assert_eq!(frame.payload, Bytes::from_static(b"proxy overloaded"));
+        assert_eq!(
+            state
+                .distributed_stream_gate
+                .as_ref()
+                .expect("distributed gate")
+                .snapshot()
+                .await
+                .expect("distributed snapshot")
+                .rejected,
+            1
+        );
+    }
+
+    fn sample_request_meta() -> RequestMeta {
+        RequestMeta {
+            method: "GET".to_string(),
+            url: "https://example.com/ok".to_string(),
+            headers: HashMap::new(),
+            timeout: 30,
+        }
+    }
+
+    fn sample_state(
+        stream_gate: Option<Arc<ConcurrencyGate>>,
+        distributed_stream_gate: Option<Arc<DistributedConcurrencyGate>>,
+    ) -> Arc<AppState> {
+        ensure_rustls_provider();
+        let config = Arc::new(sample_config());
+        let dns_cache = Arc::new(DnsCache::new(Duration::from_secs(60), 128));
+        let upstream_client =
+            upstream_client::build_upstream_client(&config, Arc::clone(&dns_cache));
+        Arc::new(AppState {
+            config,
+            dns_cache,
+            upstream_client,
+            tunnel_tls_config: Arc::new(build_tls_config()),
+            stream_gate,
+            distributed_stream_gate,
+        })
+    }
+
+    fn sample_server(state: &Arc<AppState>) -> Arc<ServerContext> {
+        let config = Arc::clone(&state.config);
+        Arc::new(ServerContext {
+            server_label: "server".to_string(),
+            aether_url: config.aether_url.clone(),
+            management_token: config.management_token.clone(),
+            node_name: config.node_name.clone(),
+            node_id: Arc::new(std::sync::RwLock::new("node-1".to_string())),
+            aether_client: Arc::new(AetherClient::new(
+                &config,
+                &config.aether_url,
+                &config.management_token,
+            )),
+            dynamic: Arc::new(ArcSwap::from_pointee(DynamicConfig::from_config(&config))),
+            active_connections: Arc::new(AtomicU64::new(0)),
+            metrics: Arc::new(ProxyMetrics::new()),
+        })
+    }
+
+    fn sample_config() -> Config {
+        Config {
+            aether_url: "https://aether.example.com".to_string(),
+            management_token: "token".to_string(),
+            public_ip: None,
+            node_name: "proxy-test".to_string(),
+            node_region: None,
+            heartbeat_interval: 30,
+            allowed_ports: vec![80, 443],
+            aether_request_timeout_secs: 10,
+            aether_connect_timeout_secs: 10,
+            aether_pool_max_idle_per_host: 8,
+            aether_pool_idle_timeout_secs: 90,
+            aether_tcp_keepalive_secs: 60,
+            aether_tcp_nodelay: true,
+            aether_http2: true,
+            aether_retry_max_attempts: 3,
+            aether_retry_base_delay_ms: 200,
+            aether_retry_max_delay_ms: 2_000,
+            max_concurrent_connections: None,
+            max_in_flight_streams: None,
+            distributed_stream_limit: None,
+            distributed_stream_redis_url: None,
+            distributed_stream_redis_key_prefix: None,
+            distributed_stream_lease_ttl_ms: 30_000,
+            distributed_stream_renew_interval_ms: 10_000,
+            distributed_stream_command_timeout_ms: 1_000,
+            dns_cache_ttl_secs: 60,
+            dns_cache_capacity: 128,
+            upstream_connect_timeout_secs: 30,
+            upstream_pool_max_idle_per_host: 4,
+            upstream_pool_idle_timeout_secs: 60,
+            upstream_tcp_keepalive_secs: 60,
+            upstream_tcp_nodelay: true,
+            log_level: "info".to_string(),
+            log_json: false,
+            tunnel_reconnect_base_ms: 500,
+            tunnel_reconnect_max_ms: 30_000,
+            tunnel_ping_interval_secs: 15,
+            tunnel_max_streams: Some(8),
+            tunnel_connect_timeout_secs: 15,
+            tunnel_tcp_keepalive_secs: 30,
+            tunnel_tcp_nodelay: true,
+            tunnel_stale_timeout_secs: 45,
+            tunnel_connections: 1,
+        }
+    }
+
+    fn ensure_rustls_provider() {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        });
     }
 }

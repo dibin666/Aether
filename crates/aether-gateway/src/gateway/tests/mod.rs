@@ -10,6 +10,8 @@ pub(super) use http::StatusCode;
 pub(super) use serde_json::json;
 
 mod ai_execute;
+mod audit;
+mod concurrency;
 mod control;
 mod files;
 mod proxy;

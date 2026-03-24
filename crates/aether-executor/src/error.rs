@@ -39,6 +39,12 @@ pub enum ExecutorServiceError {
     BodyEncode(serde_json::Error),
     #[error("failed to build HTTP client: {0}")]
     ClientBuild(reqwest::Error),
+    #[error("failed to read executor request body: {0}")]
+    RequestRead(String),
+    #[error("executor request body is not valid JSON: {0}")]
+    InvalidRequestJson(serde_json::Error),
+    #[error("executor overloaded: gate {gate} saturated at {limit}")]
+    Overloaded { gate: &'static str, limit: usize },
     #[error("failed to execute upstream request: {0}")]
     UpstreamRequest(reqwest::Error),
     #[error("hub relay request failed: {0}")]

@@ -161,34 +161,17 @@ pub(crate) fn build_direct_plan_bypass_cache_key(
 }
 
 pub(crate) fn should_skip_direct_plan(state: &AppState, cache_key: &str) -> bool {
-    let Ok(mut cache) = state.direct_plan_bypass_cache.lock() else {
-        return false;
-    };
-    let Some(cached_at) = cache.get(cache_key).copied() else {
-        return false;
-    };
-    if cached_at.elapsed() > DIRECT_PLAN_BYPASS_TTL {
-        cache.remove(cache_key);
-        return false;
-    }
-    true
+    state
+        .direct_plan_bypass_cache
+        .should_skip(cache_key, DIRECT_PLAN_BYPASS_TTL)
 }
 
 pub(crate) fn mark_direct_plan_bypass(state: &AppState, cache_key: String) {
-    let Ok(mut cache) = state.direct_plan_bypass_cache.lock() else {
-        return;
-    };
-    cache.retain(|_, cached_at| cached_at.elapsed() <= DIRECT_PLAN_BYPASS_TTL);
-    if cache.len() >= DIRECT_PLAN_BYPASS_MAX_ENTRIES {
-        if let Some(oldest_key) = cache
-            .iter()
-            .min_by_key(|(_, cached_at)| *cached_at)
-            .map(|(key, _)| key.clone())
-        {
-            cache.remove(&oldest_key);
-        }
-    }
-    cache.insert(cache_key, Instant::now());
+    state.direct_plan_bypass_cache.mark(
+        cache_key,
+        DIRECT_PLAN_BYPASS_TTL,
+        DIRECT_PLAN_BYPASS_MAX_ENTRIES,
+    );
 }
 
 pub(crate) fn resolve_direct_executor_stream_plan_kind(

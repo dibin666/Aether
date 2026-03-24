@@ -39,6 +39,8 @@ pub(super) async fn execute_executor_sync(
     report_kind: Option<String>,
     report_context: Option<serde_json::Value>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
+    let plan_request_id = plan.request_id.as_str();
+    let plan_candidate_id = plan.candidate_id.as_deref();
     let response = match state
         .client
         .post(format!("{executor_base_url}/v1/execute/sync"))
@@ -55,10 +57,10 @@ pub(super) async fn execute_executor_sync(
     };
 
     if response.status() != http::StatusCode::OK {
-        return Ok(Some(build_client_response(
-            response,
-            trace_id,
-            Some(decision),
+        return Ok(Some(attach_control_metadata_headers(
+            build_client_response(response, trace_id, Some(decision))?,
+            Some(plan_request_id),
+            plan_candidate_id,
         )?));
     }
 
@@ -66,6 +68,10 @@ pub(super) async fn execute_executor_sync(
         .json()
         .await
         .map_err(|err| GatewayError::Internal(err.to_string()))?;
+    let request_id = (!result.request_id.trim().is_empty())
+        .then_some(result.request_id.as_str())
+        .or(Some(plan_request_id));
+    let candidate_id = result.candidate_id.as_deref().or(plan_candidate_id);
     let mut headers = result.headers.clone();
     let (body_bytes, body_json, body_base64) = decode_execution_result_body(&result, &mut headers)?;
     let has_body_bytes = body_base64.is_some();
@@ -119,7 +125,11 @@ pub(super) async fn execute_executor_sync(
                     payload,
                 );
             }
-            return Ok(Some(outcome.response));
+            return Ok(Some(attach_control_metadata_headers(
+                outcome.response,
+                request_id,
+                candidate_id,
+            )?));
         }
         if let Some(outcome) = maybe_build_local_video_success_outcome(
             trace_id,
@@ -145,7 +155,11 @@ pub(super) async fn execute_executor_sync(
                     );
                 }
             }
-            return Ok(Some(outcome.response));
+            return Ok(Some(attach_control_metadata_headers(
+                outcome.response,
+                request_id,
+                candidate_id,
+            )?));
         }
         if let Some(response) =
             maybe_build_local_sync_finalize_response(trace_id, decision, &payload)?
@@ -172,7 +186,11 @@ pub(super) async fn execute_executor_sync(
                     payload,
                 );
             }
-            return Ok(Some(response));
+            return Ok(Some(attach_control_metadata_headers(
+                response,
+                request_id,
+                candidate_id,
+            )?));
         }
         if let Some(response) =
             maybe_build_local_video_error_response(trace_id, decision, &payload)?
@@ -196,7 +214,11 @@ pub(super) async fn execute_executor_sync(
                     payload,
                 );
             }
-            return Ok(Some(response));
+            return Ok(Some(attach_control_metadata_headers(
+                response,
+                request_id,
+                candidate_id,
+            )?));
         }
         if let Some(response) = maybe_build_local_core_error_response(trace_id, decision, &payload)?
         {
@@ -219,13 +241,17 @@ pub(super) async fn execute_executor_sync(
                     payload,
                 );
             }
-            return Ok(Some(response));
+            return Ok(Some(attach_control_metadata_headers(
+                response,
+                request_id,
+                candidate_id,
+            )?));
         }
         let response = submit_sync_finalize(state, control_base_url, trace_id, payload).await?;
-        return Ok(Some(build_client_response(
-            response,
-            trace_id,
-            Some(decision),
+        return Ok(Some(attach_control_metadata_headers(
+            build_client_response(response, trace_id, Some(decision))?,
+            request_id,
+            candidate_id,
         )?));
     }
 
@@ -246,6 +272,23 @@ pub(super) async fn execute_executor_sync(
             control_base_url.to_string(),
             trace_id.to_string(),
             report,
+        );
+    }
+
+    if let Some(request_id) = request_id.map(str::trim).filter(|value| !value.is_empty()) {
+        headers.insert(
+            CONTROL_REQUEST_ID_HEADER.to_string(),
+            request_id.to_string(),
+        );
+    }
+
+    if let Some(candidate_id) = candidate_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.insert(
+            CONTROL_CANDIDATE_ID_HEADER.to_string(),
+            candidate_id.to_string(),
         );
     }
 

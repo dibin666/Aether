@@ -2,7 +2,7 @@
 //!
 //! These are standalone helpers not tied to any specific client or service.
 
-use reqwest::Client;
+use aether_http::{build_http_client, HttpClientConfig};
 use tracing::{debug, info};
 
 /// Auto-detect public IP by querying external services.
@@ -13,9 +13,11 @@ pub async fn detect_public_ip() -> anyhow::Result<String> {
         "https://icanhazip.com",
     ];
 
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()?;
+    let client = build_http_client(&HttpClientConfig {
+        request_timeout_ms: Some(5_000),
+        user_agent: Some("aether-proxy/net".to_string()),
+        ..HttpClientConfig::default()
+    })?;
 
     for endpoint in &endpoints {
         match client.get(*endpoint).send().await {
@@ -48,10 +50,12 @@ pub async fn detect_region(ip: &str) -> Option<String> {
     // Try HTTPS provider first
     let https_url = format!("https://ipinfo.io/{}/country", ip);
 
-    let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .ok()?;
+    let client = build_http_client(&HttpClientConfig {
+        request_timeout_ms: Some(5_000),
+        user_agent: Some("aether-proxy/net".to_string()),
+        ..HttpClientConfig::default()
+    })
+    .ok()?;
 
     // Try ipinfo.io (HTTPS, returns plain text country code)
     if let Ok(resp) = client.get(&https_url).send().await {

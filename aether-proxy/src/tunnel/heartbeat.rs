@@ -10,9 +10,9 @@ use bytes::Bytes;
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
-use crate::config::Config;
 use crate::registration::client::RemoteConfig;
 use crate::runtime;
+use crate::state::AppState;
 use crate::state::ServerContext;
 
 use super::protocol::{Frame, MsgType};
@@ -62,7 +62,7 @@ struct HeartbeatSnapshot {
 
 /// Spawn the heartbeat task. Returns a handle for forwarding ACKs.
 pub fn spawn(
-    _config: Arc<Config>,
+    state: Arc<AppState>,
     server: Arc<ServerContext>,
     frame_tx: FrameSender,
     mut shutdown: watch::Receiver<bool>,
@@ -107,11 +107,12 @@ pub fn spawn(
                     };
 
                     let payload = build_heartbeat_payload(
+                        &state,
                         &server,
                         &heartbeat_session_id,
                         heartbeat_id,
                         snapshot
-                    );
+                    ).await;
                     let frame = Frame::control(MsgType::HeartbeatData, payload);
                     if frame_tx.send(frame).await.is_err() {
                         if let Some((_, snap)) = pending.take() {
@@ -216,7 +217,8 @@ fn restore_snapshot(server: &ServerContext, snap: HeartbeatSnapshot) {
     }
 }
 
-fn build_heartbeat_payload(
+async fn build_heartbeat_payload(
+    state: &AppState,
     server: &ServerContext,
     heartbeat_session_id: &str,
     heartbeat_id: u64,
@@ -228,6 +230,36 @@ fn build_heartbeat_payload(
         Some(snapshot.latency_ns as f64 / snapshot.requests as f64 / 1_000_000.0)
     } else {
         None
+    };
+
+    let local_admission = state.stream_concurrency_snapshot().map(|snapshot| {
+        serde_json::json!({
+            "limit": snapshot.limit,
+            "in_flight": snapshot.in_flight,
+            "available_permits": snapshot.available_permits,
+            "high_watermark": snapshot.high_watermark,
+            "rejected_total": snapshot.rejected,
+        })
+    });
+    let distributed_admission = match state.distributed_stream_concurrency_snapshot().await {
+        Ok(Some(snapshot)) => Some(serde_json::json!({
+            "limit": snapshot.limit,
+            "in_flight": snapshot.in_flight,
+            "available_permits": snapshot.available_permits,
+            "high_watermark": snapshot.high_watermark,
+            "rejected_total": snapshot.rejected,
+        })),
+        Ok(None) => None,
+        Err(err) => Some(serde_json::json!({
+            "error": err.to_string(),
+        })),
+    };
+    let admission = match (local_admission, distributed_admission) {
+        (None, None) => None,
+        (local, distributed) => Some(serde_json::json!({
+            "local_streams": local,
+            "distributed_streams": distributed,
+        })),
     };
 
     let payload = serde_json::json!({
@@ -242,6 +274,7 @@ fn build_heartbeat_payload(
         "stream_errors": snapshot.stream_errors,
         "proxy_metadata": {
             "version": CURRENT_VERSION,
+            "admission": admission,
         },
     });
 

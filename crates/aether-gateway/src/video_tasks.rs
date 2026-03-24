@@ -2682,6 +2682,7 @@ mod tests {
             api_key_id: "key-123".to_string(),
             balance_remaining: None,
             access_allowed: true,
+            local_rejection: None,
         }
     }
 

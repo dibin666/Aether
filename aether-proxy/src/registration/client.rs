@@ -1,5 +1,4 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
+use aether_http::{build_http_client, jittered_delay_for_retry, HttpClientConfig, HttpRetryConfig};
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
@@ -49,44 +48,40 @@ pub struct AetherClient {
     http: Client,
     base_url: String,
     token: String,
-    retry_max_attempts: u32,
-    retry_base_delay: Duration,
-    retry_max_delay: Duration,
+    retry: HttpRetryConfig,
 }
 
 impl AetherClient {
     pub fn new(config: &Config, aether_url: &str, management_token: &str) -> Self {
-        let mut builder = Client::builder()
-            .timeout(Duration::from_secs(config.aether_request_timeout_secs))
-            .connect_timeout(Duration::from_secs(config.aether_connect_timeout_secs))
-            .pool_max_idle_per_host(config.aether_pool_max_idle_per_host)
-            .pool_idle_timeout(Duration::from_secs(config.aether_pool_idle_timeout_secs))
-            .tcp_nodelay(config.aether_tcp_nodelay);
+        let http = build_http_client(&HttpClientConfig {
+            connect_timeout_ms: Some(config.aether_connect_timeout_secs.saturating_mul(1_000)),
+            request_timeout_ms: Some(config.aether_request_timeout_secs.saturating_mul(1_000)),
+            pool_idle_timeout_ms: Some(config.aether_pool_idle_timeout_secs.saturating_mul(1_000)),
+            pool_max_idle_per_host: Some(config.aether_pool_max_idle_per_host),
+            tcp_keepalive_ms: if config.aether_tcp_keepalive_secs > 0 {
+                Some(config.aether_tcp_keepalive_secs.saturating_mul(1_000))
+            } else {
+                None
+            },
+            tcp_nodelay: config.aether_tcp_nodelay,
+            http2_adaptive_window: config.aether_http2,
+            user_agent: Some(format!("aether-proxy/{}", env!("CARGO_PKG_VERSION"))),
+            ..HttpClientConfig::default()
+        })
+        .expect("failed to create HTTP client");
 
-        if config.aether_tcp_keepalive_secs > 0 {
-            builder =
-                builder.tcp_keepalive(Some(Duration::from_secs(config.aether_tcp_keepalive_secs)));
-        } else {
-            builder = builder.tcp_keepalive(None);
+        let retry = HttpRetryConfig {
+            max_attempts: config.aether_retry_max_attempts,
+            base_delay_ms: config.aether_retry_base_delay_ms,
+            max_delay_ms: config.aether_retry_max_delay_ms,
         }
-
-        if config.aether_http2 {
-            builder = builder.http2_adaptive_window(true);
-        }
-
-        let http = builder.build().expect("failed to create HTTP client");
-
-        let retry_base_delay = Duration::from_millis(config.aether_retry_base_delay_ms);
-        let retry_max_delay =
-            Duration::from_millis(config.aether_retry_max_delay_ms).max(retry_base_delay);
+        .normalized();
 
         Self {
             http,
             base_url: aether_url.trim_end_matches('/').to_string(),
             token: management_token.to_string(),
-            retry_max_attempts: config.aether_retry_max_attempts.max(1),
-            retry_base_delay,
-            retry_max_delay,
+            retry,
         }
     }
 
@@ -193,15 +188,14 @@ impl AetherClient {
         F: FnMut() -> reqwest::RequestBuilder,
     {
         let mut attempt: u32 = 0;
-        let mut delay = self.retry_base_delay;
 
         loop {
             attempt = attempt.saturating_add(1);
             let resp = make_req().send().await;
             match resp {
                 Ok(resp) => {
-                    if should_retry_status(resp.status()) && attempt < self.retry_max_attempts {
-                        let sleep_for = jitter_delay(delay);
+                    if should_retry_status(resp.status()) && attempt < self.retry.max_attempts {
+                        let sleep_for = jittered_delay_for_retry(self.retry, attempt - 1);
                         debug!(
                             attempt,
                             status = %resp.status(),
@@ -210,15 +204,13 @@ impl AetherClient {
                             "Aether request retrying"
                         );
                         sleep(sleep_for).await;
-                        let next_delay = delay.checked_mul(2).unwrap_or(self.retry_max_delay);
-                        delay = std::cmp::min(next_delay, self.retry_max_delay);
                         continue;
                     }
                     return Ok(resp);
                 }
                 Err(e) => {
-                    if attempt < self.retry_max_attempts {
-                        let sleep_for = jitter_delay(delay);
+                    if attempt < self.retry.max_attempts {
+                        let sleep_for = jittered_delay_for_retry(self.retry, attempt - 1);
                         debug!(
                             attempt,
                             error = %e,
@@ -227,8 +219,6 @@ impl AetherClient {
                             "Aether request retrying"
                         );
                         sleep(sleep_for).await;
-                        let next_delay = delay.checked_mul(2).unwrap_or(self.retry_max_delay);
-                        delay = std::cmp::min(next_delay, self.retry_max_delay);
                         continue;
                     }
                     return Err(e);
@@ -242,16 +232,4 @@ fn should_retry_status(status: StatusCode) -> bool {
     status.is_server_error()
         || status == StatusCode::TOO_MANY_REQUESTS
         || status == StatusCode::REQUEST_TIMEOUT
-}
-
-fn jitter_delay(base: Duration) -> Duration {
-    if base.is_zero() {
-        return base;
-    }
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u64)
-        .unwrap_or(0);
-    let jitter_ms = nanos % 100;
-    base + Duration::from_millis(jitter_ms)
 }

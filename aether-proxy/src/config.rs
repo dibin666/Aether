@@ -146,6 +146,46 @@ pub struct Config {
     #[arg(long, env = "AETHER_PROXY_MAX_CONCURRENT_CONNECTIONS")]
     pub max_concurrent_connections: Option<u64>,
 
+    /// Maximum in-flight tunneled streams accepted by this proxy instance.
+    #[arg(long, env = "AETHER_PROXY_MAX_IN_FLIGHT_STREAMS")]
+    pub max_in_flight_streams: Option<usize>,
+
+    /// Maximum in-flight tunneled streams admitted across all proxy instances.
+    #[arg(long, env = "AETHER_PROXY_DISTRIBUTED_STREAM_LIMIT")]
+    pub distributed_stream_limit: Option<usize>,
+
+    /// Redis URL used for cross-instance stream admission.
+    #[arg(long, env = "AETHER_PROXY_DISTRIBUTED_STREAM_REDIS_URL")]
+    pub distributed_stream_redis_url: Option<String>,
+
+    /// Optional key prefix for cross-instance stream admission state.
+    #[arg(long, env = "AETHER_PROXY_DISTRIBUTED_STREAM_REDIS_KEY_PREFIX")]
+    pub distributed_stream_redis_key_prefix: Option<String>,
+
+    /// Lease TTL in milliseconds for distributed stream admission permits.
+    #[arg(
+        long,
+        env = "AETHER_PROXY_DISTRIBUTED_STREAM_LEASE_TTL_MS",
+        default_value_t = 30_000
+    )]
+    pub distributed_stream_lease_ttl_ms: u64,
+
+    /// Renew interval in milliseconds for distributed stream admission permits.
+    #[arg(
+        long,
+        env = "AETHER_PROXY_DISTRIBUTED_STREAM_RENEW_INTERVAL_MS",
+        default_value_t = 10_000
+    )]
+    pub distributed_stream_renew_interval_ms: u64,
+
+    /// Command timeout in milliseconds for distributed stream admission Redis calls.
+    #[arg(
+        long,
+        env = "AETHER_PROXY_DISTRIBUTED_STREAM_COMMAND_TIMEOUT_MS",
+        default_value_t = 1_000
+    )]
+    pub distributed_stream_command_timeout_ms: u64,
+
     /// DNS cache TTL in seconds
     #[arg(long, env = "AETHER_PROXY_DNS_CACHE_TTL", default_value_t = 60)]
     pub dns_cache_ttl_secs: u64,
@@ -290,6 +330,31 @@ impl Config {
         }
         if self.upstream_connect_timeout_secs == 0 {
             anyhow::bail!("upstream_connect_timeout_secs must be > 0");
+        }
+        if matches!(self.max_in_flight_streams, Some(0)) {
+            anyhow::bail!("max_in_flight_streams must be > 0");
+        }
+        if matches!(self.distributed_stream_limit, Some(0)) {
+            anyhow::bail!("distributed_stream_limit must be > 0");
+        }
+        if self.distributed_stream_limit.is_some() && self.distributed_stream_redis_url.is_none() {
+            anyhow::bail!(
+                "distributed_stream_redis_url must be set when distributed_stream_limit is enabled"
+            );
+        }
+        if self.distributed_stream_lease_ttl_ms == 0 {
+            anyhow::bail!("distributed_stream_lease_ttl_ms must be > 0");
+        }
+        if self.distributed_stream_renew_interval_ms == 0 {
+            anyhow::bail!("distributed_stream_renew_interval_ms must be > 0");
+        }
+        if self.distributed_stream_renew_interval_ms >= self.distributed_stream_lease_ttl_ms {
+            anyhow::bail!(
+                "distributed_stream_renew_interval_ms must be < distributed_stream_lease_ttl_ms"
+            );
+        }
+        if self.distributed_stream_command_timeout_ms == 0 {
+            anyhow::bail!("distributed_stream_command_timeout_ms must be > 0");
         }
         Ok(())
     }

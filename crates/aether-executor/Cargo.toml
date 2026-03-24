@@ -8,6 +8,8 @@ description = "Rust executor scaffold for Aether request execution"
 
 [dependencies]
 aether-contracts.workspace = true
+aether-http.workspace = true
+aether-runtime.workspace = true
 async-stream.workspace = true
 axum = { version = "0.8" }
 base64.workspace = true
@@ -22,6 +24,5 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing.workspace = true
 webpki-roots.workspace = true

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use aether_contracts::{
     ExecutionPlan, ExecutionResult, ExecutionTelemetry, ProxySnapshot, ResponseBody,
 };
+use aether_http::{apply_http_client_config, HttpClientConfig};
 use base64::Engine as _;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -256,10 +257,14 @@ fn gzip_bytes(body_bytes: &[u8]) -> Result<Vec<u8>, ExecutorServiceError> {
 fn build_relay_client(
     timeouts: Option<&aether_contracts::ExecutionTimeouts>,
 ) -> Result<reqwest::Client, ExecutorServiceError> {
-    let mut builder = reqwest::Client::builder();
-    if let Some(connect_ms) = timeouts.and_then(|timeouts| timeouts.connect_ms) {
-        builder = builder.connect_timeout(Duration::from_millis(connect_ms));
-    }
+    let builder = apply_http_client_config(
+        reqwest::Client::builder(),
+        &HttpClientConfig {
+            connect_timeout_ms: timeouts.and_then(|timeouts| timeouts.connect_ms),
+            use_rustls_tls: false,
+            ..HttpClientConfig::default()
+        },
+    );
     builder.build().map_err(ExecutorServiceError::ClientBuild)
 }
 
@@ -339,10 +344,13 @@ fn build_client(
     proxy: Option<&ProxySnapshot>,
     tls_profile: Option<&str>,
 ) -> Result<reqwest::Client, ExecutorServiceError> {
-    let mut builder = reqwest::Client::builder().use_rustls_tls();
-    if let Some(connect_ms) = timeouts.and_then(|timeouts| timeouts.connect_ms) {
-        builder = builder.connect_timeout(Duration::from_millis(connect_ms));
-    }
+    let mut builder = apply_http_client_config(
+        reqwest::Client::builder(),
+        &HttpClientConfig {
+            connect_timeout_ms: timeouts.and_then(|timeouts| timeouts.connect_ms),
+            ..HttpClientConfig::default()
+        },
+    );
     builder = apply_tls_profile(builder, tls_profile);
     if let Some(proxy_url) = resolve_proxy_url(proxy)? {
         let proxy = reqwest::Proxy::all(&proxy_url).map_err(ExecutorServiceError::InvalidProxy)?;

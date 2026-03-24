@@ -251,6 +251,17 @@ async fn maybe_build_local_video_task_read_response(
     let read_response = state
         .video_tasks
         .read_response(decision.route_family.as_deref(), parts.uri.path());
+    let read_response = match read_response {
+        Some(read_response) => Some(read_response),
+        None => {
+            state
+                .read_data_backed_video_task_response(
+                    decision.route_family.as_deref(),
+                    parts.uri.path(),
+                )
+                .await?
+        }
+    };
     let Some(read_response) = read_response else {
         return Ok(None);
     };

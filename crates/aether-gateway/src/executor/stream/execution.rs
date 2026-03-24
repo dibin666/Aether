@@ -1,5 +1,6 @@
 use base64::Engine as _;
 use futures_util::TryStreamExt;
+use tracing::debug;
 
 use super::super::submission::{
     maybe_build_local_core_error_response, resolve_core_error_background_report_kind,
@@ -26,6 +27,8 @@ pub(super) async fn execute_executor_stream(
     report_kind: Option<String>,
     report_context: Option<serde_json::Value>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
+    let request_id = plan.request_id.as_str();
+    let candidate_id = plan.candidate_id.as_deref();
     let response = match state
         .client
         .post(format!("{executor_base_url}/v1/execute/stream"))
@@ -42,10 +45,10 @@ pub(super) async fn execute_executor_stream(
     };
 
     if response.status() != http::StatusCode::OK {
-        return Ok(Some(build_client_response(
-            response,
-            trace_id,
-            Some(decision),
+        return Ok(Some(attach_control_metadata_headers(
+            build_client_response(response, trace_id, Some(decision))?,
+            Some(request_id),
+            candidate_id,
         )?));
     }
 
@@ -116,22 +119,30 @@ pub(super) async fn execute_executor_stream(
                         payload,
                     );
                 }
-                return Ok(Some(response));
+                return Ok(Some(attach_control_metadata_headers(
+                    response,
+                    Some(request_id),
+                    candidate_id,
+                )?));
             }
             let response = submit_sync_finalize(state, control_base_url, trace_id, payload).await?;
-            return Ok(Some(build_client_response(
-                response,
-                trace_id,
-                Some(decision),
+            return Ok(Some(attach_control_metadata_headers(
+                build_client_response(response, trace_id, Some(decision))?,
+                Some(request_id),
+                candidate_id,
             )?));
         }
-        return Ok(Some(build_executor_error_response(
-            trace_id,
-            decision,
-            plan_kind,
-            status_code,
-            headers,
-            error_body,
+        return Ok(Some(attach_control_metadata_headers(
+            build_executor_error_response(
+                trace_id,
+                decision,
+                plan_kind,
+                status_code,
+                headers,
+                error_body,
+            )?,
+            Some(request_id),
+            candidate_id,
         )?));
     }
 
@@ -216,15 +227,19 @@ pub(super) async fn execute_executor_stream(
                                         payload,
                                     );
                                 }
-                                return Ok(Some(response));
+                                return Ok(Some(attach_control_metadata_headers(
+                                    response,
+                                    Some(request_id),
+                                    candidate_id,
+                                )?));
                             }
                             let response =
                                 submit_sync_finalize(state, control_base_url, trace_id, payload)
                                     .await?;
-                            return Ok(Some(build_client_response(
-                                response,
-                                trace_id,
-                                Some(decision),
+                            return Ok(Some(attach_control_metadata_headers(
+                                build_client_response(response, trace_id, Some(decision))?,
+                                Some(request_id),
+                                candidate_id,
                             )?));
                         }
                         StreamPrefetchInspection::NeedMore => {}
@@ -278,6 +293,7 @@ pub(super) async fn execute_executor_stream(
         let mut buffered_body = prefetched_body_for_report;
         let mut telemetry: Option<ExecutionTelemetry> = initial_telemetry;
         let reached_eof = initial_reached_eof;
+        let mut downstream_dropped = false;
 
         if !reached_eof {
             loop {
@@ -334,6 +350,7 @@ pub(super) async fn execute_executor_stream(
                                 trace_id = %trace_id_owned,
                                 "gateway stream downstream dropped; stopping executor stream forwarding"
                             );
+                            downstream_dropped = true;
                             break;
                         }
                     }
@@ -354,7 +371,12 @@ pub(super) async fn execute_executor_stream(
             }
         }
 
-        if let Some(rewriter) = local_stream_rewriter.as_mut() {
+        if downstream_dropped {
+            debug!(
+                trace_id = %trace_id_owned,
+                "gateway skipped local stream flush after downstream disconnect"
+            );
+        } else if let Some(rewriter) = local_stream_rewriter.as_mut() {
             match rewriter.finish() {
                 Ok(flushed_chunk) if !flushed_chunk.is_empty() => {
                     buffered_body.extend_from_slice(&flushed_chunk);
@@ -363,6 +385,7 @@ pub(super) async fn execute_executor_stream(
                             trace_id = %trace_id_owned,
                             "gateway stream downstream dropped while flushing local stream rewrite"
                         );
+                        downstream_dropped = true;
                     }
                 }
                 Ok(_) => {}
@@ -373,6 +396,14 @@ pub(super) async fn execute_executor_stream(
         }
 
         drop(tx);
+
+        if downstream_dropped {
+            debug!(
+                trace_id = %trace_id_owned,
+                "gateway skipped stream report because downstream disconnected before completion"
+            );
+            return;
+        }
 
         if let Some(report_kind) = report_kind_owned {
             let report = GatewayStreamReportRequest {
@@ -406,6 +437,21 @@ pub(super) async fn execute_executor_stream(
             yield item;
         }
     };
+
+    headers.insert(
+        CONTROL_REQUEST_ID_HEADER.to_string(),
+        request_id.to_string(),
+    );
+
+    if let Some(candidate_id) = candidate_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.insert(
+            CONTROL_CANDIDATE_ID_HEADER.to_string(),
+            candidate_id.to_string(),
+        );
+    }
 
     Ok(Some(build_client_response_from_parts(
         status_code,

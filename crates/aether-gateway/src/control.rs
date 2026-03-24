@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, Bytes};
 use axum::http::{Response, StatusCode, Uri};
@@ -10,7 +10,7 @@ use crate::gateway::constants::*;
 use crate::gateway::headers::{
     collect_control_headers, header_equals, header_value_str, header_value_u64, is_json_request,
 };
-use crate::gateway::{build_client_response, AppState, CachedAuthContextEntry, GatewayError};
+use crate::gateway::{build_client_response, AppState, GatewayError};
 
 const AUTH_CONTEXT_CACHE_TTL: Duration = Duration::from_secs(60);
 const AUTH_CONTEXT_CACHE_MAX_ENTRIES: usize = 256;
@@ -72,6 +72,15 @@ pub(crate) struct GatewayControlAuthContext {
     pub(crate) api_key_id: String,
     pub(crate) balance_remaining: Option<f64>,
     pub(crate) access_allowed: bool,
+    #[serde(skip)]
+    pub(crate) local_rejection: Option<GatewayLocalAuthRejection>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum GatewayLocalAuthRejection {
+    InvalidApiKey,
+    LockedApiKey,
+    BalanceDenied { remaining: Option<f64> },
 }
 
 #[derive(Debug, Clone)]
@@ -116,7 +125,28 @@ pub(crate) async fn resolve_control_route(
     };
     decision.public_query_string = uri.query().map(ToOwned::to_owned);
 
+    if let Some(auth_context) = resolve_data_backed_auth_context(
+        state,
+        headers,
+        decision.auth_endpoint_signature.as_deref(),
+    )
+    .await?
+    {
+        if let Some(cache_key) = decision
+            .auth_endpoint_signature
+            .as_deref()
+            .and_then(|signature| build_auth_context_cache_key(headers, uri, signature))
+        {
+            put_cached_auth_context(state, cache_key, auth_context.clone());
+        }
+        decision.auth_context = Some(auth_context);
+    }
+
     if state.executor_base_url.is_some() && decision.executor_candidate {
+        return Ok(Some(decision));
+    }
+
+    if decision.auth_context.is_some() {
         return Ok(Some(decision));
     }
 
@@ -170,6 +200,13 @@ pub(crate) async fn resolve_executor_auth_context(
         return Ok(Some(auth_context));
     }
 
+    if let Some(auth_context) =
+        resolve_data_backed_auth_context(state, headers, Some(auth_endpoint_signature)).await?
+    {
+        put_cached_auth_context(state, cache_key, auth_context.clone());
+        return Ok(Some(auth_context));
+    }
+
     Ok(None)
 }
 
@@ -188,6 +225,19 @@ pub(crate) fn cache_executor_auth_context(
         return;
     };
     put_cached_auth_context(state, cache_key, auth_context);
+}
+
+pub(crate) fn trusted_auth_local_rejection(
+    decision: Option<&GatewayControlDecision>,
+    _headers: &http::HeaderMap,
+) -> Option<GatewayLocalAuthRejection> {
+    let decision = decision?;
+    if decision.route_class.as_deref() != Some("ai_public") {
+        return None;
+    }
+
+    let auth_context = decision.auth_context.as_ref()?;
+    auth_context.local_rejection.clone()
 }
 
 async fn fetch_auth_context(
@@ -334,13 +384,9 @@ fn build_auth_context_cache_key(
 }
 
 fn get_cached_auth_context(state: &AppState, cache_key: &str) -> Option<GatewayControlAuthContext> {
-    let mut cache = state.auth_context_cache.lock().ok()?;
-    let entry = cache.get(cache_key)?.clone();
-    if entry.cached_at.elapsed() > AUTH_CONTEXT_CACHE_TTL {
-        cache.remove(cache_key);
-        return None;
-    }
-    Some(entry.auth_context)
+    state
+        .auth_context_cache
+        .get_fresh(cache_key, AUTH_CONTEXT_CACHE_TTL)
 }
 
 fn put_cached_auth_context(
@@ -348,28 +394,100 @@ fn put_cached_auth_context(
     cache_key: String,
     auth_context: GatewayControlAuthContext,
 ) {
-    let Ok(mut cache) = state.auth_context_cache.lock() else {
-        return;
+    state.auth_context_cache.insert(
+        cache_key,
+        auth_context,
+        AUTH_CONTEXT_CACHE_TTL,
+        AUTH_CONTEXT_CACHE_MAX_ENTRIES,
+    );
+}
+
+async fn resolve_data_backed_auth_context(
+    state: &AppState,
+    headers: &http::HeaderMap,
+    auth_endpoint_signature: Option<&str>,
+) -> Result<Option<GatewayControlAuthContext>, GatewayError> {
+    let Some(signature) = auth_endpoint_signature
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let _ = signature;
+
+    let Some(user_id) =
+        header_value_str(headers, TRUSTED_AUTH_USER_ID_HEADER).filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let Some(api_key_id) =
+        header_value_str(headers, TRUSTED_AUTH_API_KEY_ID_HEADER).filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
     };
 
-    cache.retain(|_, entry| entry.cached_at.elapsed() <= AUTH_CONTEXT_CACHE_TTL);
-    if cache.len() >= AUTH_CONTEXT_CACHE_MAX_ENTRIES {
-        if let Some(oldest_key) = cache
-            .iter()
-            .min_by_key(|(_, entry)| entry.cached_at)
-            .map(|(key, _)| key.clone())
-        {
-            cache.remove(&oldest_key);
-        }
-    }
+    let snapshot = state
+        .read_auth_api_key_snapshot(&user_id, &api_key_id, current_unix_secs())
+        .await?;
+    let Some(snapshot) = snapshot else {
+        return Ok(None);
+    };
 
-    cache.insert(
-        cache_key,
-        CachedAuthContextEntry {
-            auth_context,
-            cached_at: Instant::now(),
-        },
-    );
+    let header_access_allowed = header_value_str(headers, TRUSTED_AUTH_ACCESS_ALLOWED_HEADER)
+        .as_deref()
+        .and_then(parse_bool_header);
+    let invalid_api_key = !snapshot.user_is_active
+        || snapshot.user_is_deleted
+        || !snapshot.api_key_is_active
+        || snapshot
+            .api_key_expires_at_unix_secs
+            .is_some_and(|expires_at| expires_at < current_unix_secs());
+    let locked_api_key = snapshot.api_key_is_locked && !snapshot.api_key_is_standalone;
+    let access_allowed = header_access_allowed
+        .map(|value| value && snapshot.currently_usable)
+        .unwrap_or(snapshot.currently_usable);
+    let local_rejection = if invalid_api_key {
+        Some(GatewayLocalAuthRejection::InvalidApiKey)
+    } else if locked_api_key {
+        Some(GatewayLocalAuthRejection::LockedApiKey)
+    } else if header_access_allowed.is_some_and(|value| !value) && snapshot.currently_usable {
+        Some(GatewayLocalAuthRejection::BalanceDenied {
+            remaining: header_value_str(headers, TRUSTED_AUTH_BALANCE_HEADER)
+                .as_deref()
+                .and_then(parse_f64_header),
+        })
+    } else {
+        None
+    };
+
+    Ok(Some(GatewayControlAuthContext {
+        user_id: snapshot.user_id,
+        api_key_id: snapshot.api_key_id,
+        balance_remaining: header_value_str(headers, TRUSTED_AUTH_BALANCE_HEADER)
+            .as_deref()
+            .and_then(parse_f64_header),
+        access_allowed,
+        local_rejection,
+    }))
+}
+
+fn parse_bool_header(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" => Some(true),
+        "false" | "0" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_f64_header(value: &str) -> Option<f64> {
+    value.trim().parse::<f64>().ok()
+}
+
+fn current_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn classify_control_route(

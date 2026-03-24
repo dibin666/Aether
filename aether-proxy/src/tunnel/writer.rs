@@ -7,8 +7,8 @@
 
 use std::time::Duration;
 
+use aether_runtime::{bounded_queue, BoundedQueueSender};
 use futures_util::SinkExt;
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, trace};
@@ -16,7 +16,7 @@ use tracing::{debug, error, trace};
 use super::protocol::Frame;
 
 /// Sender half — cloned by stream handlers and heartbeat.
-pub type FrameSender = mpsc::Sender<Frame>;
+pub type FrameSender = BoundedQueueSender<Frame>;
 
 /// Spawn the writer task. Returns the sender and a JoinHandle for cleanup.
 ///
@@ -26,7 +26,7 @@ pub fn spawn_writer<S>(mut sink: S, ping_interval: Duration) -> (FrameSender, Jo
 where
     S: SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin + Send + 'static,
 {
-    let (tx, mut rx) = mpsc::channel::<Frame>(256);
+    let (tx, mut rx) = bounded_queue::<Frame>(256);
 
     let handle = tokio::spawn(async move {
         let mut ping_ticker = tokio::time::interval(ping_interval);

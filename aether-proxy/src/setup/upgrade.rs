@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use aether_http::{apply_http_client_config, HttpClientConfig};
 use sha2::{Digest, Sha256};
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
@@ -56,11 +57,15 @@ fn build_github_client() -> anyhow::Result<reqwest::Client> {
         reqwest::header::HeaderValue::from_static("application/vnd.github+json"),
     );
 
-    Ok(reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
-        .user_agent(format!("aether-proxy/{}", CURRENT_VERSION))
-        .default_headers(headers)
-        .build()?)
+    Ok(apply_http_client_config(
+        reqwest::Client::builder().default_headers(headers),
+        &HttpClientConfig {
+            request_timeout_ms: Some(300_000),
+            user_agent: Some(format!("aether-proxy/{}", CURRENT_VERSION)),
+            ..HttpClientConfig::default()
+        },
+    )
+    .build()?)
 }
 
 // ── Release fetching ─────────────────────────────────────────────────────────

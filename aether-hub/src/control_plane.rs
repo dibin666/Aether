@@ -1,3 +1,4 @@
+use aether_http::{build_http_client, HttpClientConfig};
 use reqwest::Client;
 
 #[derive(Clone)]
@@ -8,10 +9,12 @@ pub struct ControlPlaneClient {
 
 impl ControlPlaneClient {
     pub fn new(base_url: String) -> Self {
-        let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .ok();
+        let client = build_http_client(&HttpClientConfig {
+            request_timeout_ms: Some(10_000),
+            user_agent: Some("aether-hub/control-plane".to_string()),
+            ..HttpClientConfig::default()
+        })
+        .ok();
         Self { client, base_url }
     }
 

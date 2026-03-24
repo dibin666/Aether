@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use aether_runtime::{maybe_hold_axum_response_permit, AdmissionPermit};
 use axum::body::{to_bytes, Body};
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::header::{HeaderName, HeaderValue};
@@ -15,16 +16,42 @@ use crate::gateway::headers::{
     extract_or_generate_trace_id, header_value_str, is_json_request, should_skip_request_header,
 };
 use crate::gateway::{
-    build_client_response, maybe_execute_via_control, maybe_execute_via_executor_stream,
-    maybe_execute_via_executor_sync, resolve_control_route, AppState, GatewayControlDecision,
-    GatewayError,
+    build_client_response, build_local_auth_rejection_response, build_local_overloaded_response,
+    maybe_execute_via_control, maybe_execute_via_executor_stream, maybe_execute_via_executor_sync,
+    record_shadow_result_non_blocking, resolve_control_route, trusted_auth_local_rejection,
+    AppState, GatewayControlDecision, GatewayError,
 };
 
 pub(crate) async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    let request_concurrency = state.request_concurrency_snapshot().map(|snapshot| {
+        json!({
+            "limit": snapshot.limit,
+            "in_flight": snapshot.in_flight,
+            "available_permits": snapshot.available_permits,
+            "high_watermark": snapshot.high_watermark,
+            "rejected": snapshot.rejected,
+        })
+    });
+    let distributed_request_concurrency = state
+        .distributed_request_concurrency_snapshot()
+        .await
+        .ok()
+        .flatten()
+        .map(|snapshot| {
+            json!({
+                "limit": snapshot.limit,
+                "in_flight": snapshot.in_flight,
+                "available_permits": snapshot.available_permits,
+                "high_watermark": snapshot.high_watermark,
+                "rejected": snapshot.rejected,
+            })
+        });
     Json(json!({
         "status": "ok",
         "component": "aether-gateway",
         "control_api_enabled": state.control_base_url.is_some(),
+        "request_concurrency": request_concurrency,
+        "distributed_request_concurrency": distributed_request_concurrency,
     }))
 }
 
@@ -34,6 +61,66 @@ pub(crate) async fn proxy_request(
     request: Request,
 ) -> Result<Response<Body>, GatewayError> {
     let started_at = Instant::now();
+    let mut request_permit = match state.try_acquire_request_permit().await {
+        Ok(permit) => permit,
+        Err(crate::gateway::RequestAdmissionError::Local(
+            aether_runtime::ConcurrencyError::Saturated { gate, limit },
+        )) => {
+            let trace_id = extract_or_generate_trace_id(request.headers());
+            let response = build_local_overloaded_response(&trace_id, None, gate, limit)?;
+            return Ok(finalize_gateway_response(
+                &state,
+                response,
+                &trace_id,
+                &remote_addr,
+                request.method(),
+                request
+                    .uri()
+                    .path_and_query()
+                    .map(|value| value.as_str())
+                    .unwrap_or("/"),
+                None,
+                EXECUTION_PATH_LOCAL_OVERLOADED,
+                &started_at,
+                None,
+            ));
+        }
+        Err(crate::gateway::RequestAdmissionError::Local(
+            aether_runtime::ConcurrencyError::Closed { gate },
+        )) => {
+            return Err(GatewayError::Internal(format!(
+                "gateway request concurrency gate {gate} is closed"
+            )));
+        }
+        Err(crate::gateway::RequestAdmissionError::Distributed(
+            aether_runtime::DistributedConcurrencyError::Saturated { gate, limit },
+        ))
+        | Err(crate::gateway::RequestAdmissionError::Distributed(
+            aether_runtime::DistributedConcurrencyError::Unavailable { gate, limit, .. },
+        )) => {
+            let trace_id = extract_or_generate_trace_id(request.headers());
+            let response = build_local_overloaded_response(&trace_id, None, gate, limit)?;
+            return Ok(finalize_gateway_response(
+                &state,
+                response,
+                &trace_id,
+                &remote_addr,
+                request.method(),
+                request
+                    .uri()
+                    .path_and_query()
+                    .map(|value| value.as_str())
+                    .unwrap_or("/"),
+                None,
+                EXECUTION_PATH_DISTRIBUTED_OVERLOADED,
+                &started_at,
+                None,
+            ));
+        }
+        Err(crate::gateway::RequestAdmissionError::Distributed(
+            aether_runtime::DistributedConcurrencyError::InvalidConfiguration(message),
+        )) => return Err(GatewayError::Internal(message)),
+    };
     let (parts, body) = request.into_parts();
     let method = parts.method.clone();
     let path_and_query = parts
@@ -46,6 +133,23 @@ pub(crate) async fn proxy_request(
     let trace_id = extract_or_generate_trace_id(&parts.headers);
     let control_decision =
         resolve_control_route(&state, &method, &parts.uri, &parts.headers, &trace_id).await?;
+    if let Some(rejection) = trusted_auth_local_rejection(control_decision.as_ref(), &parts.headers)
+    {
+        let response =
+            build_local_auth_rejection_response(&trace_id, control_decision.as_ref(), &rejection)?;
+        return Ok(finalize_gateway_response(
+            &state,
+            response,
+            &trace_id,
+            &remote_addr,
+            &method,
+            path_and_query,
+            control_decision.as_ref(),
+            EXECUTION_PATH_LOCAL_AUTH_DENIED,
+            &started_at,
+            request_permit.take(),
+        ));
+    }
     let upstream_path_and_query = control_decision
         .as_ref()
         .map(|decision| decision.proxy_path_and_query())
@@ -152,6 +256,7 @@ pub(crate) async fn proxy_request(
             .await?
             {
                 return Ok(finalize_gateway_response(
+                    &state,
                     executor_response,
                     &trace_id,
                     &remote_addr,
@@ -160,6 +265,7 @@ pub(crate) async fn proxy_request(
                     control_decision.as_ref(),
                     EXECUTION_PATH_EXECUTOR_STREAM,
                     &started_at,
+                    request_permit.take(),
                 ));
             }
         }
@@ -173,6 +279,7 @@ pub(crate) async fn proxy_request(
         .await?
         {
             return Ok(finalize_gateway_response(
+                &state,
                 executor_response,
                 &trace_id,
                 &remote_addr,
@@ -181,6 +288,7 @@ pub(crate) async fn proxy_request(
                 control_decision.as_ref(),
                 EXECUTION_PATH_EXECUTOR_SYNC,
                 &started_at,
+                request_permit.take(),
             ));
         }
         if parts.method != http::Method::POST {
@@ -194,6 +302,7 @@ pub(crate) async fn proxy_request(
             .await?
             {
                 return Ok(finalize_gateway_response(
+                    &state,
                     executor_response,
                     &trace_id,
                     &remote_addr,
@@ -202,6 +311,7 @@ pub(crate) async fn proxy_request(
                     control_decision.as_ref(),
                     EXECUTION_PATH_EXECUTOR_STREAM,
                     &started_at,
+                    request_permit.take(),
                 ));
             }
         }
@@ -216,6 +326,7 @@ pub(crate) async fn proxy_request(
             .await?
             {
                 return Ok(finalize_gateway_response(
+                    &state,
                     control_response,
                     &trace_id,
                     &remote_addr,
@@ -228,6 +339,7 @@ pub(crate) async fn proxy_request(
                         EXECUTION_PATH_CONTROL_EXECUTE_SYNC
                     },
                     &started_at,
+                    request_permit.take(),
                 ));
             }
         }
@@ -263,6 +375,7 @@ pub(crate) async fn proxy_request(
 
     let response = build_client_response(upstream_response, &trace_id, control_decision.as_ref())?;
     Ok(finalize_gateway_response(
+        &state,
         response,
         &trace_id,
         &remote_addr,
@@ -275,6 +388,7 @@ pub(crate) async fn proxy_request(
             EXECUTION_PATH_PUBLIC_PROXY_PASSTHROUGH
         },
         &started_at,
+        request_permit.take(),
     ))
 }
 
@@ -292,6 +406,7 @@ fn request_wants_stream(parts: &http::request::Parts, body: &axum::body::Bytes) 
 }
 
 fn finalize_gateway_response(
+    state: &AppState,
     mut response: Response<Body>,
     trace_id: &str,
     remote_addr: &std::net::SocketAddr,
@@ -300,6 +415,7 @@ fn finalize_gateway_response(
     control_decision: Option<&GatewayControlDecision>,
     execution_path: &'static str,
     started_at: &Instant,
+    request_permit: Option<AdmissionPermit>,
 ) -> Response<Body> {
     response.headers_mut().insert(
         HeaderName::from_static(EXECUTION_PATH_HEADER),
@@ -321,5 +437,15 @@ fn finalize_gateway_response(
         "gateway completed request"
     );
 
-    response
+    record_shadow_result_non_blocking(
+        state.clone(),
+        trace_id,
+        method,
+        path_and_query,
+        control_decision,
+        execution_path,
+        &response,
+    );
+
+    maybe_hold_axum_response_permit(response, request_permit)
 }

@@ -1,7 +1,13 @@
+#[path = "audit/mod.rs"]
+mod audit;
+#[path = "cache/mod.rs"]
+mod cache;
 #[path = "constants.rs"]
 mod constants;
 #[path = "control.rs"]
 mod control;
+#[path = "data/mod.rs"]
+mod data;
 #[path = "error.rs"]
 mod error;
 #[path = "executor.rs"]
@@ -22,42 +28,57 @@ mod response;
 mod video_tasks;
 
 use aether_contracts::ExecutionResult;
+use aether_http::{build_http_client, HttpClientConfig};
+use aether_runtime::{
+    prometheus_response, service_up_sample, AdmissionPermit, ConcurrencyError, ConcurrencyGate,
+    ConcurrencySnapshot, DistributedConcurrencyError, DistributedConcurrencyGate,
+    DistributedConcurrencySnapshot, MetricKind, MetricLabel, MetricSample,
+};
 use axum::http::header::{HeaderName, HeaderValue};
 use axum::routing::{any, get};
 use axum::Router;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::task::JoinHandle;
 use tracing::warn;
 
+use cache::{AuthContextCache, DirectPlanBypassCache};
+
+pub(crate) use audit::record_shadow_result_non_blocking;
+use audit::{
+    get_auth_api_key_snapshot, get_decision_trace, get_request_audit_bundle,
+    get_request_candidate_trace, get_request_usage_audit, list_recent_shadow_results,
+};
 pub(crate) use control::{
     cache_executor_auth_context, maybe_execute_via_control, resolve_control_route,
-    resolve_executor_auth_context, GatewayControlAuthContext, GatewayControlDecision,
+    resolve_executor_auth_context, trusted_auth_local_rejection, GatewayControlAuthContext,
+    GatewayControlDecision, GatewayLocalAuthRejection,
 };
+pub use data::GatewayDataConfig;
+use data::GatewayDataState;
 pub(crate) use error::GatewayError;
 pub(crate) use executor::{maybe_execute_via_executor_stream, maybe_execute_via_executor_sync};
 use handlers::{health, proxy_request};
-pub(crate) use response::{build_client_response, build_client_response_from_parts};
+pub(crate) use response::{
+    attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
+    build_local_auth_rejection_response, build_local_overloaded_response,
+};
 pub(crate) use video_tasks::VideoTaskService;
 pub use video_tasks::VideoTaskTruthSourceMode;
-
-#[derive(Debug, Clone)]
-pub(crate) struct CachedAuthContextEntry {
-    pub(crate) auth_context: GatewayControlAuthContext,
-    pub(crate) cached_at: Instant,
-}
 
 #[derive(Debug, Clone)]
 pub struct AppState {
     upstream_base_url: String,
     control_base_url: Option<String>,
     executor_base_url: Option<String>,
+    data: Arc<GatewayDataState>,
     video_tasks: Arc<VideoTaskService>,
     video_task_poller: Option<VideoTaskPollerConfig>,
+    request_gate: Option<Arc<ConcurrencyGate>>,
+    distributed_request_gate: Option<Arc<DistributedConcurrencyGate>>,
     client: reqwest::Client,
-    auth_context_cache: Arc<Mutex<HashMap<String, CachedAuthContextEntry>>>,
-    direct_plan_bypass_cache: Arc<Mutex<HashMap<String, Instant>>>,
+    auth_context_cache: Arc<AuthContextCache>,
+    direct_plan_bypass_cache: Arc<DirectPlanBypassCache>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -79,11 +100,12 @@ impl AppState {
         control_base_url: Option<String>,
         executor_base_url: Option<String>,
     ) -> Result<Self, reqwest::Error> {
-        let client = reqwest::Client::builder()
-            .http2_adaptive_window(true)
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(300))
-            .build()?;
+        let client = build_http_client(&HttpClientConfig {
+            connect_timeout_ms: Some(10_000),
+            request_timeout_ms: Some(300_000),
+            http2_adaptive_window: true,
+            ..HttpClientConfig::default()
+        })?;
         Ok(Self {
             upstream_base_url: normalize_upstream_base_url(upstream_base_url.into()),
             control_base_url: control_base_url
@@ -92,14 +114,25 @@ impl AppState {
             executor_base_url: executor_base_url
                 .map(normalize_upstream_base_url)
                 .filter(|value| !value.is_empty()),
+            data: Arc::new(GatewayDataState::disabled()),
             video_tasks: Arc::new(VideoTaskService::new(
                 VideoTaskTruthSourceMode::PythonSyncReport,
             )),
             video_task_poller: None,
+            request_gate: None,
+            distributed_request_gate: None,
             client,
-            auth_context_cache: Arc::new(Mutex::new(HashMap::new())),
-            direct_plan_bypass_cache: Arc::new(Mutex::new(HashMap::new())),
+            auth_context_cache: Arc::new(AuthContextCache::default()),
+            direct_plan_bypass_cache: Arc::new(DirectPlanBypassCache::default()),
         })
+    }
+
+    pub fn with_data_config(
+        mut self,
+        config: GatewayDataConfig,
+    ) -> Result<Self, aether_data::DataLayerError> {
+        self.data = Arc::new(GatewayDataState::from_config(config)?);
+        Ok(self)
     }
 
     pub fn with_video_task_truth_source_mode(mut self, mode: VideoTaskTruthSourceMode) -> Self {
@@ -112,6 +145,308 @@ impl AppState {
             interval,
             batch_size: batch_size.max(1),
         });
+        self
+    }
+
+    pub fn with_request_concurrency_limit(mut self, limit: usize) -> Self {
+        self.request_gate = Some(Arc::new(ConcurrencyGate::new(
+            "gateway_requests",
+            limit.max(1),
+        )));
+        self
+    }
+
+    pub fn with_distributed_request_concurrency_gate(
+        mut self,
+        gate: DistributedConcurrencyGate,
+    ) -> Self {
+        self.distributed_request_gate = Some(Arc::new(gate));
+        self
+    }
+
+    pub fn has_data_backends(&self) -> bool {
+        self.data.has_backends()
+    }
+
+    pub(crate) fn request_concurrency_snapshot(&self) -> Option<ConcurrencySnapshot> {
+        self.request_gate.as_ref().map(|gate| gate.snapshot())
+    }
+
+    pub(crate) async fn distributed_request_concurrency_snapshot(
+        &self,
+    ) -> Result<Option<DistributedConcurrencySnapshot>, DistributedConcurrencyError> {
+        match self.distributed_request_gate.as_ref() {
+            Some(gate) => gate.snapshot().await.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) async fn metric_samples(&self) -> Vec<MetricSample> {
+        let mut samples = vec![service_up_sample("aether-gateway")];
+        if let Some(snapshot) = self.request_concurrency_snapshot() {
+            samples.extend(snapshot.to_metric_samples("gateway_requests"));
+        }
+        if let Some(gate) = self.distributed_request_gate.as_ref() {
+            match gate.snapshot().await {
+                Ok(snapshot) => {
+                    samples.extend(snapshot.to_metric_samples("gateway_requests_distributed"));
+                }
+                Err(_) => samples.push(
+                    MetricSample::new(
+                        "concurrency_unavailable",
+                        "Whether the distributed concurrency gate is currently unavailable.",
+                        MetricKind::Gauge,
+                        1,
+                    )
+                    .with_labels(vec![MetricLabel::new(
+                        "gate",
+                        "gateway_requests_distributed",
+                    )]),
+                ),
+            }
+        }
+        samples
+    }
+
+    pub(crate) async fn try_acquire_request_permit(
+        &self,
+    ) -> Result<Option<AdmissionPermit>, RequestAdmissionError> {
+        let local = self
+            .request_gate
+            .as_ref()
+            .map(|gate| gate.try_acquire())
+            .transpose()
+            .map_err(RequestAdmissionError::Local)?;
+        let distributed = match self.distributed_request_gate.as_ref() {
+            Some(gate) => Some(
+                gate.try_acquire()
+                    .await
+                    .map_err(RequestAdmissionError::Distributed)?,
+            ),
+            None => None,
+        };
+        Ok(AdmissionPermit::from_parts(local, distributed))
+    }
+
+    pub fn has_auth_api_key_data_reader(&self) -> bool {
+        self.data.has_auth_api_key_reader()
+    }
+
+    pub fn has_video_task_data_reader(&self) -> bool {
+        self.data.has_video_task_reader()
+    }
+
+    pub fn has_request_candidate_data_reader(&self) -> bool {
+        self.data.has_request_candidate_reader()
+    }
+
+    pub fn has_provider_catalog_data_reader(&self) -> bool {
+        self.data.has_provider_catalog_reader()
+    }
+
+    pub fn has_usage_data_reader(&self) -> bool {
+        self.data.has_usage_reader()
+    }
+
+    pub fn has_shadow_result_data_writer(&self) -> bool {
+        self.data.has_shadow_result_writer()
+    }
+
+    pub fn has_shadow_result_data_reader(&self) -> bool {
+        self.data.has_shadow_result_reader()
+    }
+
+    pub(crate) async fn read_data_backed_video_task_response(
+        &self,
+        route_family: Option<&str>,
+        request_path: &str,
+    ) -> Result<Option<video_tasks::LocalVideoTaskReadResponse>, GatewayError> {
+        self.data
+            .read_video_task_response(route_family, request_path)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn read_request_candidate_trace(
+        &self,
+        request_id: &str,
+        attempted_only: bool,
+    ) -> Result<Option<data::RequestCandidateTrace>, GatewayError> {
+        self.data
+            .read_request_candidate_trace(request_id, attempted_only)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn read_decision_trace(
+        &self,
+        request_id: &str,
+        attempted_only: bool,
+    ) -> Result<Option<data::DecisionTrace>, GatewayError> {
+        self.data
+            .read_decision_trace(request_id, attempted_only)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn read_request_usage_audit(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<data::RequestUsageAudit>, GatewayError> {
+        self.data
+            .read_request_usage_audit(request_id)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn read_request_audit_bundle(
+        &self,
+        request_id: &str,
+        attempted_only: bool,
+        now_unix_secs: u64,
+    ) -> Result<Option<data::RequestAuditBundle>, GatewayError> {
+        self.data
+            .read_request_audit_bundle(request_id, attempted_only, now_unix_secs)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn read_auth_api_key_snapshot(
+        &self,
+        user_id: &str,
+        api_key_id: &str,
+        now_unix_secs: u64,
+    ) -> Result<Option<data::StoredGatewayAuthApiKeySnapshot>, GatewayError> {
+        self.data
+            .read_auth_api_key_snapshot(user_id, api_key_id, now_unix_secs)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn record_shadow_result_sample(
+        &self,
+        sample: aether_data::repository::shadow_results::RecordShadowResultSample,
+    ) -> Result<Option<aether_data::repository::shadow_results::StoredShadowResult>, GatewayError>
+    {
+        self.data
+            .record_shadow_result_sample(sample)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn list_recent_shadow_results(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<aether_data::repository::shadow_results::StoredShadowResult>, GatewayError>
+    {
+        self.data
+            .list_recent_shadow_results(limit)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_video_task_data_reader_for_tests(
+        mut self,
+        repository: Arc<dyn aether_data::repository::video_tasks::VideoTaskReadRepository>,
+    ) -> Self {
+        self.data = Arc::new(GatewayDataState::with_video_task_reader_for_tests(
+            repository,
+        ));
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_request_candidate_data_reader_for_tests(
+        mut self,
+        repository: Arc<dyn aether_data::repository::candidates::RequestCandidateReadRepository>,
+    ) -> Self {
+        self.data = Arc::new(GatewayDataState::with_request_candidate_reader_for_tests(
+            repository,
+        ));
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_decision_trace_data_readers_for_tests(
+        mut self,
+        request_candidate_repository: Arc<
+            dyn aether_data::repository::candidates::RequestCandidateReadRepository,
+        >,
+        provider_catalog_repository: Arc<
+            dyn aether_data::repository::provider_catalog::ProviderCatalogReadRepository,
+        >,
+    ) -> Self {
+        self.data = Arc::new(GatewayDataState::with_decision_trace_readers_for_tests(
+            request_candidate_repository,
+            provider_catalog_repository,
+        ));
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_request_audit_data_readers_for_tests(
+        mut self,
+        auth_api_key_repository: Arc<dyn aether_data::repository::auth::AuthApiKeyReadRepository>,
+        request_candidate_repository: Arc<
+            dyn aether_data::repository::candidates::RequestCandidateReadRepository,
+        >,
+        provider_catalog_repository: Arc<
+            dyn aether_data::repository::provider_catalog::ProviderCatalogReadRepository,
+        >,
+        usage_repository: Arc<dyn aether_data::repository::usage::UsageReadRepository>,
+    ) -> Self {
+        self.data = Arc::new(GatewayDataState::with_request_audit_readers_for_tests(
+            auth_api_key_repository,
+            request_candidate_repository,
+            provider_catalog_repository,
+            usage_repository,
+        ));
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_auth_api_key_data_reader_for_tests(
+        mut self,
+        repository: Arc<dyn aether_data::repository::auth::AuthApiKeyReadRepository>,
+    ) -> Self {
+        self.data = Arc::new(GatewayDataState::with_auth_api_key_reader_for_tests(
+            repository,
+        ));
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_usage_data_reader_for_tests(
+        mut self,
+        repository: Arc<dyn aether_data::repository::usage::UsageReadRepository>,
+    ) -> Self {
+        self.data = Arc::new(GatewayDataState::with_usage_reader_for_tests(repository));
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_shadow_result_data_writer_for_tests(
+        mut self,
+        repository: Arc<dyn aether_data::repository::shadow_results::ShadowResultWriteRepository>,
+    ) -> Self {
+        self.data = Arc::new(GatewayDataState::with_shadow_result_writer_for_tests(
+            repository,
+        ));
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_shadow_result_data_repository_for_tests<T>(
+        mut self,
+        repository: Arc<T>,
+    ) -> Self
+    where
+        T: aether_data::repository::shadow_results::ShadowResultRepository + 'static,
+    {
+        self.data = Arc::new(GatewayDataState::with_shadow_result_repository_for_tests(
+            repository,
+        ));
         self
     }
 
@@ -250,9 +585,46 @@ pub fn build_router_with_endpoints(
 pub fn build_router_with_state(state: AppState) -> Router {
     Router::new()
         .route("/_gateway/health", get(health))
+        .route("/_gateway/metrics", get(metrics))
+        .route(
+            "/_gateway/audit/auth/users/{user_id}/api-keys/{api_key_id}",
+            get(get_auth_api_key_snapshot),
+        )
+        .route(
+            "/_gateway/audit/decision-trace/{request_id}",
+            get(get_decision_trace),
+        )
+        .route(
+            "/_gateway/audit/request-candidates/{request_id}",
+            get(get_request_candidate_trace),
+        )
+        .route(
+            "/_gateway/audit/request-audit/{request_id}",
+            get(get_request_audit_bundle),
+        )
+        .route(
+            "/_gateway/audit/request-usage/{request_id}",
+            get(get_request_usage_audit),
+        )
+        .route(
+            "/_gateway/audit/shadow-results/recent",
+            get(list_recent_shadow_results),
+        )
         .route("/", any(proxy_request))
         .route("/{*path}", any(proxy_request))
         .with_state(state)
+}
+
+async fn metrics(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> impl axum::response::IntoResponse {
+    prometheus_response(&state.metric_samples().await)
+}
+
+#[derive(Debug)]
+pub(crate) enum RequestAdmissionError {
+    Local(ConcurrencyError),
+    Distributed(DistributedConcurrencyError),
 }
 
 pub async fn serve_tcp(
