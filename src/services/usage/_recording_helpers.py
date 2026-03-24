@@ -52,6 +52,8 @@ METADATA_KEEP_KEYS: frozenset[str] = frozenset(
 
 def _normalize_reasoning_effort(value: Any) -> str | None:
     normalized = str(value or "").strip().lower()
+    if normalized == "max":
+        return "xhigh"
     if normalized in _SUPPORTED_REASONING_EFFORTS:
         return normalized
     return None
@@ -68,6 +70,12 @@ def _extract_reasoning_effort_from_request_body(request_body: Any) -> str | None
     reasoning = request_body.get("reasoning")
     if isinstance(reasoning, dict):
         effort = _normalize_reasoning_effort(reasoning.get("effort"))
+        if effort:
+            return effort
+
+    output_config = request_body.get("output_config")
+    if isinstance(output_config, dict):
+        effort = _normalize_reasoning_effort(output_config.get("effort"))
         if effort:
             return effort
 

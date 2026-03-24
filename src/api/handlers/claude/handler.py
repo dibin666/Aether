@@ -8,8 +8,10 @@ Claude Chat Handler - 基于通用 Chat Handler 基类的简化实现
 from typing import Any
 
 from src.api.handlers.base.chat_handler_base import ChatHandlerBase
+from src.api.handlers.claude.reasoning_suffix import prepare_claude_request_for_dispatch
 from src.core.api_format import ApiFamily, EndpointKind
 from src.core.usage_tokens import extract_cache_creation_tokens_detail
+from src.models.database import GlobalModel
 
 
 class ClaudeChatHandler(ChatHandlerBase):
@@ -66,6 +68,26 @@ class ClaudeChatHandler(ChatHandlerBase):
         result = dict(request_body)
         result["model"] = mapped_model
         return result
+
+    def prepare_request_for_dispatch(
+        self,
+        request_body: dict[str, Any],
+    ) -> tuple[str, str, dict[str, Any]]:
+        return prepare_claude_request_for_dispatch(
+            request_body,
+            model_exists=self._global_model_exists,
+        )
+
+    def _global_model_exists(self, model_name: str) -> bool:
+        return (
+            self.db.query(GlobalModel.id)
+            .filter(
+                GlobalModel.name == model_name,
+                GlobalModel.is_active == True,
+            )
+            .first()
+            is not None
+        )
 
     async def _convert_request(self, request: Any) -> Any:
         """
