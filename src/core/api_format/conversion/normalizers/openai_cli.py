@@ -353,9 +353,6 @@ class OpenAICliNormalizer(FormatNormalizer):
                     effort = level
                     break
         if effort:
-            # xhigh 降级为 high (Responses API 也仅支持 low/medium/high)
-            if effort == "xhigh":
-                effort = "high"
             result["reasoning"] = {"effort": effort}
 
         # parallel_tool_calls
