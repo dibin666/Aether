@@ -3,6 +3,7 @@
 #
 # 用法:
 #   构建镜像:      ./deploy.sh                    (自动检测变化并构建镜像)
+#   指定镜像标签:  ./deploy.sh --tag test-1      (构建 aether-*:test-1)
 #   指定 Hub 版本: ./deploy.sh --hub-tag hub-v0.1.0
 #   更新 Hub:      ./deploy.sh --update-hub       (刷新 Hub 版本并重建 app)
 #   GitHub 镜像:   ./deploy.sh --mirror https://ghfast.top
@@ -25,6 +26,7 @@ usage() {
 Usage: ./deploy.sh [options]
 
 Options:
+  --tag <tag>             指定本地镜像 tag（例如 test-1）
   --hub-tag <hub-vX.Y.Z>  指定 Hub Release tag（例如 hub-v0.1.0）
   --update-hub            强制刷新 Hub 版本标记并重建 app 镜像
   --mirror <url>          GitHub 下载镜像（例如 https://ghfast.top）
@@ -39,10 +41,19 @@ REBUILD_BASE_ONLY=false
 FORCE_UPDATE_HUB=false
 HUB_TAG="${HUB_TAG:-}"
 GITHUB_MIRROR="${GITHUB_MIRROR:-}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
 RESOLVED_HUB_TAG=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --tag)
+            if [ $# -lt 2 ]; then
+                echo "❌ --tag 需要一个值，例如 test-1"
+                exit 1
+            fi
+            IMAGE_TAG="$2"
+            shift 2
+            ;;
         --hub-tag)
             if [ $# -lt 2 ]; then
                 echo "❌ --hub-tag 需要一个值，例如 hub-v0.1.0"
@@ -82,6 +93,19 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+case "$IMAGE_TAG" in
+    ''|*[!A-Za-z0-9._-]*)
+        echo "❌ --tag 仅支持字母、数字、点、下划线和短横线"
+        exit 1
+        ;;
+esac
+
+BASE_IMAGE_REPO="aether-base"
+APP_IMAGE_REPO="aether-app"
+LATEST_BASE_IMAGE="${BASE_IMAGE_REPO}:latest"
+BASE_IMAGE="${BASE_IMAGE_REPO}:${IMAGE_TAG}"
+APP_IMAGE="${APP_IMAGE_REPO}:${IMAGE_TAG}"
 
 if [ -n "$HUB_TAG" ]; then
     case "$HUB_TAG" in
@@ -225,8 +249,11 @@ save_code_hash() { calc_code_hash > "$CODE_HASH_FILE"; }
 
 # 构建基础镜像
 build_base() {
-    echo ">>> Building base image (dependencies)..."
-    docker build --pull=false -f Dockerfile.base.local -t aether-base:latest .
+    echo ">>> Building base image (dependencies): $BASE_IMAGE"
+    docker build --pull=false -f Dockerfile.base.local -t "$BASE_IMAGE" .
+    if [ "$BASE_IMAGE" != "$LATEST_BASE_IMAGE" ]; then
+        docker tag "$BASE_IMAGE" "$LATEST_BASE_IMAGE"
+    fi
     save_deps_hash
 }
 
@@ -251,10 +278,13 @@ EOF
 
 # 构建应用镜像
 build_app() {
-    echo ">>> Building app image (code only)..."
+    echo ">>> Building app image (code only): $APP_IMAGE"
     if [ -z "${RESOLVED_HUB_TAG:-}" ]; then
         echo ">>> RESOLVED_HUB_TAG 为空，无法构建 app 镜像"
         exit 1
+    fi
+    if [ "$BASE_IMAGE" != "$LATEST_BASE_IMAGE" ]; then
+        docker tag "$BASE_IMAGE" "$LATEST_BASE_IMAGE"
     fi
     echo ">>> Build args: HUB_TAG=$RESOLVED_HUB_TAG"
     generate_version_file
@@ -272,13 +302,13 @@ build_app() {
         "${token_args[@]}" \
         "${mirror_args[@]}" \
         -f Dockerfile.app.local \
-        -t aether-app:latest .
+        -t "$APP_IMAGE" .
     save_code_hash
 }
 
 print_built_images() {
     echo ">>> 本地镜像构建完成"
-    for image in aether-base:latest aether-app:latest; do
+    for image in "$BASE_IMAGE" "$APP_IMAGE"; do
         if docker image inspect "$image" >/dev/null 2>&1; then
             echo "$image"
         fi
@@ -314,7 +344,7 @@ BASE_REBUILT=false
 HUB_UPDATED=false
 
 # 检查基础镜像是否存在，或依赖是否变化
-if ! docker image inspect aether-base:latest >/dev/null 2>&1; then
+if ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
     echo ">>> Base image not found, building..."
     build_base
     BASE_REBUILT=true
@@ -334,7 +364,7 @@ else
 fi
 
 # 检查应用镜像相关文件是否变化，或者 base / hub 变化了
-if ! docker image inspect aether-app:latest >/dev/null 2>&1; then
+if ! docker image inspect "$APP_IMAGE" >/dev/null 2>&1; then
     echo ">>> App image not found, building..."
     build_app
 elif [ "$BASE_REBUILT" = true ]; then
