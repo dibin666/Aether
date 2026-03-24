@@ -108,6 +108,23 @@ def _extract_reasoning_effort_from_model_name(model_name: str | None) -> str | N
     return None
 
 
+def _extract_reasoning_effort_from_request_metadata(
+    request_metadata: Any,
+) -> str | None:
+    if not isinstance(request_metadata, dict):
+        return None
+    value = str(request_metadata.get("reasoning_effort") or "").strip().lower()
+    if value in {"medium", "high", "xhigh"}:
+        return value
+    return None
+
+
+def _extract_reasoning_effort(usage_record: Any) -> str | None:
+    return _extract_reasoning_effort_from_request_metadata(
+        getattr(usage_record, "request_metadata", None)
+    ) or _extract_reasoning_effort_from_model_name(getattr(usage_record, "model", None))
+
+
 # ==================== RESTful Routes ====================
 
 
@@ -1130,6 +1147,7 @@ class AdminUsageRecordsAdapter(AdminApiAdapter):
                 Usage.api_format,
                 Usage.endpoint_api_format,
                 Usage.has_format_conversion,
+                Usage.request_metadata,
                 Usage.input_price_per_1m,
                 Usage.output_price_per_1m,
                 Usage.cache_creation_price_per_1m,
@@ -1268,7 +1286,7 @@ class AdminUsageRecordsAdapter(AdminApiAdapter):
                     ),
                     "provider": provider_name,
                     "model": usage.model,
-                    "reasoning_effort": _extract_reasoning_effort_from_model_name(usage.model),
+                    "reasoning_effort": _extract_reasoning_effort(usage),
                     "target_model": usage.target_model,  # 映射后的目标模型名
                     "input_tokens": usage.input_tokens,
                     "output_tokens": usage.output_tokens,

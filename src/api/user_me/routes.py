@@ -89,6 +89,23 @@ def _extract_reasoning_effort_from_model_name(model_name: str | None) -> str | N
     return None
 
 
+def _extract_reasoning_effort_from_request_metadata(
+    request_metadata: Any,
+) -> str | None:
+    if not isinstance(request_metadata, dict):
+        return None
+    value = str(request_metadata.get("reasoning_effort") or "").strip().lower()
+    if value in {"medium", "high", "xhigh"}:
+        return value
+    return None
+
+
+def _extract_reasoning_effort(record: Any) -> str | None:
+    return _extract_reasoning_effort_from_request_metadata(
+        getattr(record, "request_metadata", None)
+    ) or _extract_reasoning_effort_from_model_name(getattr(record, "model", None))
+
+
 def _update_profile_sync(
     user_id: str,
     request: UpdateProfileRequest,
@@ -1512,6 +1529,7 @@ class GetUsageAdapter(AuthenticatedApiAdapter):
                 Usage.api_format,
                 Usage.endpoint_api_format,
                 Usage.has_format_conversion,
+                Usage.request_metadata,
                 Usage.input_price_per_1m,
                 Usage.output_price_per_1m,
                 Usage.cache_creation_price_per_1m,
@@ -1613,7 +1631,7 @@ class GetUsageAdapter(AuthenticatedApiAdapter):
                 {
                     "id": r.id,
                     "model": r.model,
-                    "reasoning_effort": _extract_reasoning_effort_from_model_name(r.model),
+                    "reasoning_effort": _extract_reasoning_effort(r),
                     # 只有管理员可以看到模型映射信息，普通用户只能看到请求的模型
                     "target_model": r.target_model if is_admin else None,
                     "api_format": api_format,

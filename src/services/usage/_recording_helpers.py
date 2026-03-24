@@ -22,6 +22,9 @@ def _parse_format_dimensions(api_format: str | None) -> tuple[str | None, str | 
     return parts[0], None
 
 
+_SUPPORTED_REASONING_EFFORTS: tuple[str, ...] = ("xhigh", "high", "medium")
+
+
 # Metadata pruning configuration (ordered by priority - drop first to last)
 METADATA_PRUNE_KEYS: tuple[str, ...] = (
     "raw_response_ref",
@@ -38,12 +41,56 @@ METADATA_KEEP_KEYS: frozenset[str] = frozenset(
     {
         "billing_snapshot",
         "billing_updated_at",
+        "reasoning_effort",
         "perf",
         "pool_summary",
         "scheduling_audit",
         "_metadata_truncated",
     }
 )
+
+
+def _normalize_reasoning_effort(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized in _SUPPORTED_REASONING_EFFORTS:
+        return normalized
+    return None
+
+
+def _extract_reasoning_effort_from_request_body(request_body: Any) -> str | None:
+    if not isinstance(request_body, dict):
+        return None
+
+    effort = _normalize_reasoning_effort(request_body.get("reasoning_effort"))
+    if effort:
+        return effort
+
+    reasoning = request_body.get("reasoning")
+    if isinstance(reasoning, dict):
+        effort = _normalize_reasoning_effort(reasoning.get("effort"))
+        if effort:
+            return effort
+
+    model_name = str(request_body.get("model") or "").strip()
+    if not model_name:
+        return None
+    for effort in _SUPPORTED_REASONING_EFFORTS:
+        if model_name.endswith(f"-{effort}"):
+            return effort
+    return None
+
+
+def enrich_reasoning_effort_metadata(
+    metadata: dict[str, Any] | None,
+    request_body: Any | None,
+) -> dict[str, Any] | None:
+    effort = _extract_reasoning_effort_from_request_body(request_body)
+    if not effort:
+        return metadata
+
+    enriched = dict(metadata) if isinstance(metadata, dict) else {}
+    enriched.setdefault("reasoning_effort", effort)
+    return enriched
 
 
 def deserialize_body_if_json(value: Any) -> Any:
@@ -109,6 +156,7 @@ def build_usage_params(
     cost: UsageCostInfo,
 ) -> dict[str, Any]:
     """构建 Usage 记录的参数字典（内部方法，避免代码重复）"""
+    metadata = enrich_reasoning_effort_metadata(metadata, request_body)
 
     # 展开成本信息
     input_cost = cost.input_cost
