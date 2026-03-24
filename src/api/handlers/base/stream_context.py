@@ -79,6 +79,7 @@ class StreamContext:
     api_format: str
     api_family: str | None = None  # 协议族（从 Adapter 层透传）
     endpoint_kind: str | None = None  # 端点类型（从 Adapter 层透传）
+    routing_model: str | None = None
 
     # 请求标识信息（CLI handler 需要）
     request_id: str = ""

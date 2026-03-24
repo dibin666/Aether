@@ -109,7 +109,15 @@ class ChatSyncExecutor:
 
         # 转换请求格式
         converted_request = await handler._convert_request(request)
-        model = getattr(converted_request, "model", original_request_body.get("model", "unknown"))
+        requested_model, routing_model, dispatch_request_body = handler.prepare_request_for_dispatch(
+            original_request_body
+        )
+        model = (
+            requested_model
+            if requested_model and requested_model != "unknown"
+            else getattr(converted_request, "model", original_request_body.get("model", "unknown"))
+        )
+        routing_model = routing_model or getattr(converted_request, "model", model)
         api_format = handler.allowed_api_formats[0]
 
         # 提前创建 pending 记录，让前端可以立即看到"处理中"
@@ -122,7 +130,7 @@ class ChatSyncExecutor:
             request_body=original_request_body,
         )
 
-        request_state = MutableRequestBodyState(original_request_body)
+        request_state = MutableRequestBodyState(dispatch_request_body)
 
         # 捕获的上下文变量
         ctx = self._ctx
@@ -138,7 +146,8 @@ class ChatSyncExecutor:
                 endpoint,
                 key,
                 candidate,
-                model=model,
+                model=routing_model,
+                requested_model=model,
                 api_format=api_format,
                 original_headers=original_headers,
                 request_state=request_state,
@@ -149,13 +158,13 @@ class ChatSyncExecutor:
         try:
             # 解析能力需求
             capability_requirements = handler._resolve_capability_requirements(
-                model_name=model,
+                model_name=routing_model,
                 request_headers=original_headers,
-                request_body=original_request_body,
+                request_body=dispatch_request_body,
             )
             preferred_key_ids = await handler._resolve_preferred_key_ids(
-                model_name=model,
-                request_body=original_request_body,
+                model_name=routing_model,
+                request_body=dispatch_request_body,
             )
 
             # 统一入口：总是通过 TaskService
@@ -166,7 +175,7 @@ class ChatSyncExecutor:
                 task_type="chat",
                 task_mode=TaskMode.SYNC,
                 api_format=api_format,
-                model_name=model,
+                model_name=routing_model,
                 user_api_key=handler.api_key,
                 request_func=sync_request_func,
                 request_id=handler.request_id,
@@ -175,7 +184,7 @@ class ChatSyncExecutor:
                 preferred_key_ids=preferred_key_ids or None,
                 request_body_state=request_state,
                 request_headers=original_headers,
-                request_body=original_request_body,
+                request_body=dispatch_request_body,
                 # 预创建失败时，回退到 TaskService 侧创建，避免丢失 pending 状态。
                 create_pending_usage=not pending_usage_created,
             )
@@ -435,6 +444,7 @@ class ChatSyncExecutor:
         candidate: ProviderCandidate,
         *,
         model: str,
+        requested_model: str | None = None,
         api_format: Any,
         original_headers: dict[str, Any],
         request_state: MutableRequestBodyState,
@@ -449,6 +459,7 @@ class ChatSyncExecutor:
         ctx.provider_id = str(provider.id)
         ctx.endpoint_id = str(endpoint.id)
         ctx.key_id = str(key.id)
+        display_model = requested_model or model
         provider_api_format = str(endpoint.api_format or api_format)
         client_api_format = api_format.value if hasattr(api_format, "value") else str(api_format)
 
@@ -533,7 +544,7 @@ class ChatSyncExecutor:
         logger.info(
             f"  [{handler.request_id}] "
             f"发送{'上游流式(聚合)' if upstream_is_stream else '非流式'}请求: "
-            f"Provider={provider.name}, 模型={model} -> {mapped_model or '无映射'}, "
+            f"Provider={provider.name}, 模型={display_model}, 路由={model} -> {mapped_model or '无映射'}, "
             f"代理={_proxy_label}"
         )
         logger.debug(f"  [{handler.request_id}] 请求URL: {redact_url_for_log(url)}")
@@ -618,7 +629,9 @@ class ChatSyncExecutor:
                             apply_kiro_stream_rewrite,
                         )
 
-                        byte_iter = apply_kiro_stream_rewrite(byte_iter, model=str(model or ""))
+                        byte_iter = apply_kiro_stream_rewrite(
+                            byte_iter, model=str(display_model or "")
+                        )
 
                     from src.api.handlers.base.upstream_stream_bridge import (
                         aggregate_upstream_stream_to_internal_response,
@@ -628,7 +641,7 @@ class ChatSyncExecutor:
                         byte_iter,
                         provider_api_format=provider_api_format,
                         provider_name=str(provider.name),
-                        model=str(model or ""),
+                        model=str(display_model or ""),
                         request_id=str(handler.request_id or ""),
                         envelope=envelope,
                         provider_parser=provider_parser,
@@ -643,7 +656,7 @@ class ChatSyncExecutor:
 
                     ctx.response_json = tgt_norm.response_from_internal(
                         internal_resp,
-                        requested_model=model,
+                        requested_model=display_model,
                     )
                     ctx.response_json = (
                         ctx.response_json if isinstance(ctx.response_json, dict) else {}
@@ -717,7 +730,7 @@ class ChatSyncExecutor:
 
         if envelope:
             ctx.response_json = envelope.unwrap_response(ctx.response_json)
-            envelope.postprocess_unwrapped_response(model=model, data=ctx.response_json)
+            envelope.postprocess_unwrapped_response(model=display_model, data=ctx.response_json)
 
         # 检查响应体中的嵌套错误（HTTP 200 但响应体包含错误）
         if isinstance(ctx.response_json, dict):
@@ -746,7 +759,7 @@ class ChatSyncExecutor:
                 ctx.response_json,
                 provider_api_format,
                 client_api_format,
-                requested_model=model,  # 使用用户请求的原始模型名
+                requested_model=display_model,  # 使用用户请求的原始模型名
             )
 
         return ctx.response_json if isinstance(ctx.response_json, dict) else {}

@@ -185,7 +185,16 @@
         <!-- 第一行：模型 + 费用 -->
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0 flex-1">
-            <span class="text-sm font-medium truncate block">{{ record.model }}</span>
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="text-sm font-medium truncate block">{{ getModelDisplayName(record) }}</span>
+              <Badge
+                v-if="getReasoningEffort(record)"
+                variant="secondary"
+                class="h-4 px-1.5 text-[10px] font-medium uppercase flex-shrink-0"
+              >
+                {{ getReasoningEffort(record) }}
+              </Badge>
+            </div>
             <span
               v-if="getActualModel(record)"
               class="text-[11px] text-muted-foreground truncate block"
@@ -390,7 +399,14 @@
               class="flex flex-col text-xs gap-0.5"
             >
               <div class="flex items-center gap-1 truncate">
-                <span class="truncate">{{ record.model }}</span>
+                <span class="truncate">{{ getModelDisplayName(record) }}</span>
+                <Badge
+                  v-if="getReasoningEffort(record)"
+                  variant="secondary"
+                  class="h-4 px-1.5 text-[10px] font-medium uppercase flex-shrink-0"
+                >
+                  {{ getReasoningEffort(record) }}
+                </Badge>
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   viewBox="0 0 20 20"
@@ -409,7 +425,18 @@
             <span
               v-else
               class="truncate block"
-            >{{ record.model }}</span>
+            >
+              <span class="inline-flex items-center gap-1.5 max-w-full">
+                <span class="truncate">{{ getModelDisplayName(record) }}</span>
+                <Badge
+                  v-if="getReasoningEffort(record)"
+                  variant="secondary"
+                  class="h-4 px-1.5 text-[10px] font-medium uppercase flex-shrink-0"
+                >
+                  {{ getReasoningEffort(record) }}
+                </Badge>
+              </span>
+            </span>
           </TableCell>
           <TableCell
             v-if="isAdmin"
@@ -673,6 +700,12 @@ import { formatDateTime } from '../composables'
 import { useRowClick } from '@/composables/useRowClick'
 import { formatApiFormat } from '@/api/endpoints/types/api-format'
 import type { DateRangeParams, UsageRecord } from '../types'
+import {
+  getUsageActualModel,
+  getUsageModelDisplayName,
+  getUsageModelTooltip,
+  getUsageReasoningEffort,
+} from '../utils/model-display'
 import { TimeRangePicker } from '@/components/common'
 import ElapsedTimeText from './ElapsedTimeText.vue'
 
@@ -807,23 +840,19 @@ function getApiFormatTooltip(record: UsageRecord): string {
 // 获取实际使用的模型（优先 target_model，其次列表接口下发的 model_version）
 // 只有当实际模型与请求模型不同时才返回，用于显示映射箭头
 function getActualModel(record: UsageRecord): string | null {
-  // 优先显示模型映射
-  if (record.target_model && record.target_model !== record.model) {
-    return record.target_model
-  }
-  // 其次显示 Provider 返回的实际版本（如 Gemini 的 modelVersion）
-  if (record.model_version && record.model_version !== record.model) {
-    return record.model_version
-  }
-  return null
+  return getUsageActualModel(record)
+}
+
+function getReasoningEffort(record: UsageRecord): UsageRecord['reasoning_effort'] {
+  return getUsageReasoningEffort(record)
+}
+
+function getModelDisplayName(record: UsageRecord): string {
+  return getUsageModelDisplayName(record)
 }
 
 // 获取模型列的 tooltip
 function getModelTooltip(record: UsageRecord): string {
-  const actualModel = getActualModel(record)
-  if (actualModel) {
-    return `${record.model} -> ${actualModel}`
-  }
-  return record.model
+  return getUsageModelTooltip(record)
 }
 </script>

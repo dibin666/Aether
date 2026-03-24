@@ -238,4 +238,5 @@ src/_version.py
 # Analysis folder (third-party code for reference)
 analysis/
 new-api/
+docs/superpowers/
 /aether-proxy/target/

@@ -11,7 +11,9 @@ from src.api.handlers.base.cli_handler_base import (
     CliMessageHandlerBase,
     StreamContext,
 )
+from src.api.handlers.openai.reasoning_suffix import resolve_openai_reasoning_request
 from src.core.api_format import ApiFamily, EndpointKind
+from src.models.database import GlobalModel
 
 
 class OpenAICliMessageHandler(CliMessageHandlerBase):
@@ -52,6 +54,31 @@ class OpenAICliMessageHandler(CliMessageHandlerBase):
         """
         model = request_body.get("model")
         return str(model) if model else "unknown"
+
+    def prepare_request_for_dispatch(
+        self,
+        request_body: dict[str, Any],
+        path_params: dict[str, Any] | None = None,
+    ) -> tuple[str, str, dict[str, Any]]:
+        del path_params
+        resolution = resolve_openai_reasoning_request(
+            request_body=request_body,
+            request_format=self.FORMAT_ID,
+            model_exists=self._model_exists_for_routing,
+        )
+        return (
+            resolution.requested_model,
+            resolution.routing_model,
+            resolution.mutated_body,
+        )
+
+    def _model_exists_for_routing(self, model_name: str) -> bool:
+        return (
+            self.db.query(GlobalModel.id)
+            .filter(GlobalModel.name == model_name, GlobalModel.is_active == True)
+            .first()
+            is not None
+        )
 
     def apply_mapped_model(
         self,

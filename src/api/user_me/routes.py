@@ -79,6 +79,16 @@ def _calculate_token_cache_hit_rate(total_input_context: int, cache_read_tokens:
     return round(cached / context * 100, 2)
 
 
+def _extract_reasoning_effort_from_model_name(model_name: str | None) -> str | None:
+    value = str(model_name or "").strip()
+    if not value:
+        return None
+    for effort in ("xhigh", "medium", "high"):
+        if value.endswith(f"-{effort}"):
+            return effort
+    return None
+
+
 def _update_profile_sync(
     user_id: str,
     request: UpdateProfileRequest,
@@ -1603,6 +1613,7 @@ class GetUsageAdapter(AuthenticatedApiAdapter):
                 {
                     "id": r.id,
                     "model": r.model,
+                    "reasoning_effort": _extract_reasoning_effort_from_model_name(r.model),
                     # 只有管理员可以看到模型映射信息，普通用户只能看到请求的模型
                     "target_model": r.target_model if is_admin else None,
                     "api_format": api_format,

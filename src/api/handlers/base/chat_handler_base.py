@@ -247,6 +247,18 @@ class ChatHandlerBase(BaseMessageHandler, ABC):
         model = request_body.get("model")
         return str(model) if model else "unknown"
 
+    def prepare_request_for_dispatch(
+        self,
+        request_body: dict[str, Any],
+    ) -> tuple[str, str, dict[str, Any]]:
+        """在调度前标准化请求体与模型名。
+
+        返回:
+            (requested_model, routing_model, dispatch_request_body)
+        """
+        requested_model = self.extract_model_from_request(request_body)
+        return requested_model, requested_model, dict(request_body)
+
     def apply_mapped_model(
         self,
         request_body: dict[str, Any],
@@ -484,7 +496,15 @@ class ChatHandlerBase(BaseMessageHandler, ABC):
 
         # 转换请求格式
         converted_request = await self._convert_request(request)
-        model = getattr(converted_request, "model", original_request_body.get("model", "unknown"))
+        requested_model, routing_model, dispatch_request_body = self.prepare_request_for_dispatch(
+            original_request_body
+        )
+        model = (
+            requested_model
+            if requested_model and requested_model != "unknown"
+            else getattr(converted_request, "model", original_request_body.get("model", "unknown"))
+        )
+        routing_model = routing_model or getattr(converted_request, "model", model)
 
         # 提前创建 pending 记录，让前端可以立即看到"处理中"
         pending_usage_created = self._create_pending_usage(
@@ -497,11 +517,12 @@ class ChatHandlerBase(BaseMessageHandler, ABC):
         )
         api_format = self.allowed_api_formats[0]
 
-        request_state = MutableRequestBodyState(original_request_body)
+        request_state = MutableRequestBodyState(dispatch_request_body)
 
         # 创建类型安全的流式上下文
         ctx = StreamContext(
             model=model,
+            routing_model=routing_model,
             api_format=api_format,
             api_family=self.api_family,
             endpoint_kind=self.endpoint_kind,
@@ -552,13 +573,13 @@ class ChatHandlerBase(BaseMessageHandler, ABC):
         try:
             # 解析能力需求
             capability_requirements = self._resolve_capability_requirements(
-                model_name=model,
+                model_name=routing_model,
                 request_headers=original_headers,
-                request_body=original_request_body,
+                request_body=dispatch_request_body,
             )
             preferred_key_ids = await self._resolve_preferred_key_ids(
-                model_name=model,
-                request_body=original_request_body,
+                model_name=routing_model,
+                request_body=dispatch_request_body,
             )
 
             # 统一入口：总是通过 TaskService
@@ -569,7 +590,7 @@ class ChatHandlerBase(BaseMessageHandler, ABC):
                 task_type="chat",
                 task_mode=TaskMode.SYNC,
                 api_format=api_format,
-                model_name=model,
+                model_name=routing_model,
                 user_api_key=self.api_key,
                 request_func=stream_request_func,
                 request_id=self.request_id,
@@ -578,7 +599,7 @@ class ChatHandlerBase(BaseMessageHandler, ABC):
                 preferred_key_ids=preferred_key_ids or None,
                 request_body_state=request_state,
                 request_headers=original_headers,
-                request_body=original_request_body,
+                request_body=dispatch_request_body,
                 # 预创建失败时，回退到 TaskService 侧创建，避免丢失 pending 状态。
                 create_pending_usage=not pending_usage_created,
             )
@@ -900,7 +921,7 @@ class ChatHandlerBase(BaseMessageHandler, ABC):
 
         # 构建 Provider 请求（模型映射、格式转换、envelope 包装）
         prep = await self._prepare_provider_request(
-            model=ctx.model,
+            model=ctx.routing_model or ctx.model,
             provider=provider,
             endpoint=endpoint,
             key=key,

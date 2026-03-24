@@ -114,6 +114,19 @@ class CliRequestMixin:
         model = request_body.get("model")
         return str(model) if model else "unknown"
 
+    def prepare_request_for_dispatch(
+        self: CliHandlerProtocol,
+        request_body: dict[str, Any],
+        path_params: dict[str, Any] | None = None,
+    ) -> tuple[str, str, dict[str, Any]]:
+        """在调度前标准化请求体与模型名。
+
+        返回:
+            (requested_model, routing_model, dispatch_request_body)
+        """
+        requested_model = self.extract_model_from_request(request_body, path_params)
+        return requested_model, requested_model, dict(request_body)
+
     def apply_mapped_model(
         self,
         request_body: dict[str, Any],

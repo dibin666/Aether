@@ -85,6 +85,7 @@ export interface UsageRecord {
   api_key_name?: string
   rate_multiplier?: number
   model: string
+  reasoning_effort?: 'medium' | 'high' | 'xhigh' | null
   target_model?: string | null  // 映射后的目标模型名（若无映射则为空）
   model_version?: string | null  // Provider 返回的实际模型版本（列表轻量字段）
   api_format?: string

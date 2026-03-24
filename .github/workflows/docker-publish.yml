@@ -1,8 +1,11 @@
-name: Build and Publish Docker Image
+name: Build, Test and Publish Docker Image
 
 on:
   push:
+    branches: ['master']
     tags: ['v*']
+  pull_request:
+    branches: ['master']
   workflow_dispatch:
     inputs:
       build_base:
@@ -22,7 +25,47 @@ env:
   # - frontend/package-lock.json
 
 jobs:
+  docker-build-test:
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DOCKER_BUILDKIT: 1
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Get latest hub release tag
+        id: hub-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh release list --repo "${{ env.GITHUB_REPO }}" --limit 50 --json tagName,isDraft,isPrerelease \
+            --jq '[.[] | select(.tagName | startswith("hub-v")) | select(.isDraft == false and .isPrerelease == false)] | .[0].tagName')
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "No hub release found"
+            exit 1
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Hub release tag: $TAG"
+
+      - name: Build base image for CI
+        run: docker build -f Dockerfile.base -t aether-base:latest .
+
+      - name: Build app image for CI
+        run: |
+          docker build \
+            -f Dockerfile.app \
+            -t aether-ci:test \
+            --build-arg HUB_RELEASE_REPO="${{ env.GITHUB_REPO }}" \
+            --build-arg HUB_TAG="${{ steps.hub-tag.outputs.tag }}" \
+            .
+
+      - name: Verify built image
+        run: docker image inspect aether-ci:test >/dev/null
+
   check-base-changes:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -102,7 +145,7 @@ jobs:
 
   build-base:
     needs: check-base-changes
-    if: needs.check-base-changes.outputs.base_changed == 'true'
+    if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')) && needs.check-base-changes.outputs.base_changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -176,6 +219,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
 
   download-hub:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -198,7 +242,7 @@ jobs:
 
   build-app:
     needs: [check-base-changes, build-base, download-hub]
-    if: always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped') && needs.download-hub.result == 'success'
+    if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')) && always() && (needs.build-base.result == 'success' || needs.build-base.result == 'skipped') && needs.download-hub.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read

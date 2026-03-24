@@ -100,7 +100,13 @@ class CliSyncMixin:
         needs_conversion = False  # 是否需要格式转换（由 candidate 决定）
         sync_proxy_info: dict[str, Any] | None = None  # 代理信息
 
-        request_state = MutableRequestBodyState(original_request_body)
+        requested_model, routing_model, dispatch_request_body = self.prepare_request_for_dispatch(
+            original_request_body,
+            path_params,
+        )
+        model = requested_model or model
+        routing_model = routing_model or model
+        request_state = MutableRequestBodyState(dispatch_request_body)
 
         async def sync_request_func(
             provider: "Provider",
@@ -116,7 +122,7 @@ class CliSyncMixin:
             mapped_model = candidate.mapping_matched_model if candidate else None
             if not mapped_model:
                 mapped_model = await self._get_mapped_model(
-                    source_model=model,
+                    source_model=routing_model,
                     provider_id=str(provider.id),
                 )
 
@@ -141,7 +147,7 @@ class CliSyncMixin:
                 query_params=query_params,
                 client_api_format=client_api_format,
                 provider_api_format=provider_api_format,
-                fallback_model=model,
+                fallback_model=routing_model,
                 mapped_model=mapped_model,
                 client_is_stream=False,
                 needs_conversion=needs_conversion,
@@ -172,7 +178,7 @@ class CliSyncMixin:
                 f"  └─ [{self.request_id}] 发送{'上游流式(聚合)' if upstream_is_stream else '非流式'}请求: "
                 f"Provider={provider.name}, Endpoint={endpoint.id[:8] if endpoint.id else 'N/A'}..., "
                 f"Key=***{key.api_key[-4:] if key.api_key else 'N/A'}, "
-                f"原始模型={model}, 映射后={mapped_model or '无映射'}, URL模型={upstream_request.url_model}, "
+                f"原始模型={model}, 路由模型={routing_model}, 映射后={mapped_model or '无映射'}, URL模型={upstream_request.url_model}, "
                 f"代理={_proxy_label}"
             )
 
@@ -260,7 +266,9 @@ class CliSyncMixin:
                                 apply_kiro_stream_rewrite,
                             )
 
-                            byte_iter = apply_kiro_stream_rewrite(byte_iter, model=str(model or ""))
+                            byte_iter = apply_kiro_stream_rewrite(
+                                byte_iter, model=str(model or "")
+                            )
 
                         internal_resp = await aggregate_upstream_stream_to_internal_response(
                             byte_iter,
@@ -368,13 +376,13 @@ class CliSyncMixin:
         try:
             # 解析能力需求
             capability_requirements = self._resolve_capability_requirements(
-                model_name=model,
+                model_name=routing_model,
                 request_headers=original_headers,
-                request_body=original_request_body,
+                request_body=dispatch_request_body,
             )
             preferred_key_ids = await self._resolve_preferred_key_ids(
-                model_name=model,
-                request_body=original_request_body,
+                model_name=routing_model,
+                request_body=dispatch_request_body,
             )
 
             # 统一入口：总是通过 TaskService
@@ -385,7 +393,7 @@ class CliSyncMixin:
                 task_type="cli",
                 task_mode=TaskMode.SYNC,
                 api_format=api_format,
-                model_name=model,
+                model_name=routing_model,
                 user_api_key=self.api_key,
                 request_func=sync_request_func,
                 request_id=self.request_id,
@@ -394,7 +402,7 @@ class CliSyncMixin:
                 preferred_key_ids=preferred_key_ids or None,
                 request_body_state=request_state,
                 request_headers=original_headers,
-                request_body=original_request_body,
+                request_body=dispatch_request_body,
                 # 预创建失败时，回退到 TaskService 侧创建，避免丢失 pending 状态。
                 create_pending_usage=not pending_usage_created,
             )

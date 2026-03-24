@@ -98,6 +98,16 @@ def _calculate_token_cache_hit_rate(
     return round(cached / context * 100, 2)
 
 
+def _extract_reasoning_effort_from_model_name(model_name: str | None) -> str | None:
+    value = str(model_name or "").strip()
+    if not value:
+        return None
+    for effort in ("xhigh", "medium", "high"):
+        if value.endswith(f"-{effort}"):
+            return effort
+    return None
+
+
 # ==================== RESTful Routes ====================
 
 
@@ -1258,6 +1268,7 @@ class AdminUsageRecordsAdapter(AdminApiAdapter):
                     ),
                     "provider": provider_name,
                     "model": usage.model,
+                    "reasoning_effort": _extract_reasoning_effort_from_model_name(usage.model),
                     "target_model": usage.target_model,  # 映射后的目标模型名
                     "input_tokens": usage.input_tokens,
                     "output_tokens": usage.output_tokens,

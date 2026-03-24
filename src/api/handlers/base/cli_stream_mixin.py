@@ -84,11 +84,21 @@ class CliStreamMixin:
             client_content_encoding,
         )
 
-        request_state = MutableRequestBodyState(original_request_body)
+        prepare_request_for_dispatch = getattr(self, "prepare_request_for_dispatch", None)
+        if callable(prepare_request_for_dispatch):
+            requested_model, routing_model, dispatch_request_body = prepare_request_for_dispatch(
+                original_request_body,
+                path_params,
+            )
+        else:
+            requested_model = self.extract_model_from_request(original_request_body, path_params)
+            routing_model = requested_model
+            dispatch_request_body = dict(original_request_body)
+        request_state = MutableRequestBodyState(dispatch_request_body)
 
         # 使用子类实现的方法提取 model（不同 API 格式的 model 位置不同）
-        # 注意：使用 original_request_body，因为整流只修改 messages，不影响 model 字段
-        model = self.extract_model_from_request(original_request_body, path_params)
+        # 注意：usage/pending 展示保留用户原始模型名，调度使用 routing_model
+        model = requested_model
         client_api_format = self.primary_api_format
 
         # 提前创建 pending 记录，让前端可以立即看到"处理中"
@@ -104,6 +114,7 @@ class CliStreamMixin:
         # 创建流上下文
         ctx = StreamContext(
             model=model,
+            routing_model=routing_model or model,
             api_format=client_api_format,
             api_family=self.api_family,
             endpoint_kind=self.endpoint_kind,
@@ -141,13 +152,13 @@ class CliStreamMixin:
         try:
             # 解析能力需求
             capability_requirements = self._resolve_capability_requirements(
-                model_name=ctx.model,
+                model_name=ctx.routing_model or ctx.model,
                 request_headers=original_headers,
-                request_body=original_request_body,
+                request_body=dispatch_request_body,
             )
             preferred_key_ids = await self._resolve_preferred_key_ids(
-                model_name=ctx.model,
-                request_body=original_request_body,
+                model_name=ctx.routing_model or ctx.model,
+                request_body=dispatch_request_body,
             )
 
             # 统一入口：总是通过 TaskService
@@ -158,7 +169,7 @@ class CliStreamMixin:
                 task_type="cli",
                 task_mode=TaskMode.SYNC,
                 api_format=ctx.api_format,
-                model_name=ctx.model,
+                model_name=ctx.routing_model or ctx.model,
                 user_api_key=self.api_key,
                 request_func=stream_request_func,
                 request_id=self.request_id,
@@ -167,7 +178,7 @@ class CliStreamMixin:
                 preferred_key_ids=preferred_key_ids or None,
                 request_body_state=request_state,
                 request_headers=original_headers,
-                request_body=original_request_body,
+                request_body=dispatch_request_body,
                 # 预创建失败时，回退到 TaskService 侧创建，避免丢失 pending 状态。
                 create_pending_usage=not pending_usage_created,
             )
@@ -292,7 +303,7 @@ class CliStreamMixin:
         mapped_model = candidate.mapping_matched_model if candidate else None
         if not mapped_model:
             mapped_model = await self._get_mapped_model(
-                source_model=ctx.model,
+                source_model=ctx.routing_model or ctx.model,
                 provider_id=str(provider.id),
             )
 
@@ -323,7 +334,7 @@ class CliStreamMixin:
             query_params=query_params,
             client_api_format=client_api_format,
             provider_api_format=provider_api_format,
-            fallback_model=ctx.model,
+            fallback_model=ctx.routing_model or ctx.model,
             mapped_model=mapped_model,
             client_is_stream=True,
             needs_conversion=needs_conversion,
