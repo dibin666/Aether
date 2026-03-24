@@ -1,10 +1,10 @@
 #!/bin/bash
-# 智能部署脚本 - 自动检测依赖/代码/迁移变化
+# 本地镜像构建脚本 - 自动检测依赖/代码变化并构建镜像
 #
 # 用法:
-#   部署/更新:     ./deploy.sh                    (自动检测所有变化)
+#   构建镜像:      ./deploy.sh                    (自动检测变化并构建镜像)
 #   指定 Hub 版本: ./deploy.sh --hub-tag hub-v0.1.0
-#   更新 Hub:      ./deploy.sh --update-hub
+#   更新 Hub:      ./deploy.sh --update-hub       (刷新 Hub 版本并重建 app)
 #   GitHub 镜像:   ./deploy.sh --mirror https://ghfast.top
 #   强制重建:      ./deploy.sh --rebuild-base
 #   强制全部重建:  ./deploy.sh --force
@@ -12,27 +12,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# 兼容 docker-compose 和 docker compose
-if command -v docker-compose &> /dev/null; then
-    DC="docker-compose -f docker-compose.build.yml"
-    USE_LEGACY_COMPOSE=true
-else
-    DC="docker compose -f docker-compose.build.yml"
-    USE_LEGACY_COMPOSE=false
-fi
-
-compose_up() {
-    if [ "$USE_LEGACY_COMPOSE" = true ]; then
-        $DC up -d --no-build "$@"
-    else
-        $DC up -d --no-build --pull never "$@"
-    fi
-}
-
 # 缓存文件
 HASH_FILE=".deps-hash"
 CODE_HASH_FILE=".code-hash"
-MIGRATION_HASH_FILE=".migration-hash"
 
 # Hub release 配置
 GITHUB_REPO="fawney19/Aether"
@@ -44,10 +26,10 @@ Usage: ./deploy.sh [options]
 
 Options:
   --hub-tag <hub-vX.Y.Z>  指定 Hub Release tag（例如 hub-v0.1.0）
-  --update-hub            强制刷新 Hub 版本标记（下次构建会重新下载）
+  --update-hub            强制刷新 Hub 版本标记并重建 app 镜像
   --mirror <url>          GitHub 下载镜像（例如 https://ghfast.top）
   --rebuild-base, -r      仅重建 base 镜像
-  --force, -f             强制重建全部（hub/base/app）并重启
+  --force, -f             强制重建全部（hub/base/app）
   -h, --help              显示帮助
 EOF
 }
@@ -144,7 +126,11 @@ calc_deps_hash() {
 calc_code_hash() {
     {
         cat Dockerfile.app.local 2>/dev/null
+        cat alembic.ini 2>/dev/null
+        cat gunicorn_conf.py 2>/dev/null
+        cat entrypoint.sh 2>/dev/null
         find src -type f -name "*.py" 2>/dev/null | sort | xargs cat 2>/dev/null
+        find alembic -type f -name "*.py" 2>/dev/null | sort | xargs cat 2>/dev/null
         find frontend/src -type f \( -name "*.vue" -o -name "*.ts" -o -name "*.tsx" -o -name "*.js" \) 2>/dev/null | sort | xargs cat 2>/dev/null
     } | md5sum | cut -d' ' -f1
 }
@@ -209,11 +195,6 @@ ensure_hub_tag() {
     return 0
 }
 
-# 计算迁移文件的哈希值
-calc_migration_hash() {
-    find alembic/versions -name "*.py" -type f 2>/dev/null | sort | xargs cat 2>/dev/null | md5sum | cut -d' ' -f1
-}
-
 # 检查依赖是否变化
 check_deps_changed() {
     local current_hash=$(calc_deps_hash)
@@ -226,7 +207,7 @@ check_deps_changed() {
     return 0
 }
 
-# 检查代码是否变化
+# 检查应用镜像相关文件是否变化
 check_code_changed() {
     local current_hash=$(calc_code_hash)
     if [ -f "$CODE_HASH_FILE" ]; then
@@ -238,24 +219,9 @@ check_code_changed() {
     return 0
 }
 
-
-
-# 检查迁移是否变化
-check_migration_changed() {
-    local current_hash=$(calc_migration_hash)
-    if [ -f "$MIGRATION_HASH_FILE" ]; then
-        local saved_hash=$(cat "$MIGRATION_HASH_FILE")
-        if [ "$current_hash" = "$saved_hash" ]; then
-            return 1
-        fi
-    fi
-    return 0
-}
-
 # 保存哈希
 save_deps_hash() { calc_deps_hash > "$HASH_FILE"; }
 save_code_hash() { calc_code_hash > "$CODE_HASH_FILE"; }
-save_migration_hash() { calc_migration_hash > "$MIGRATION_HASH_FILE"; }
 
 # 构建基础镜像
 build_base() {
@@ -310,47 +276,13 @@ build_app() {
     save_code_hash
 }
 
-# 运行数据库迁移
-run_migration() {
-    echo ">>> Running database migration..."
-
-    # 尝试运行 upgrade head，捕获错误
-    UPGRADE_OUTPUT=$($DC exec -T app alembic upgrade head 2>&1) && {
-        echo "$UPGRADE_OUTPUT"
-        save_migration_hash
-        return 0
-    }
-
-    # 检查是否是因为找不到旧版本（基线重置场景）
-    if echo "$UPGRADE_OUTPUT" | grep -q "Can't locate revision"; then
-        echo ">>> Detected baseline reset: old revision not found in migrations"
-        echo ">>> Clearing old version and stamping to new baseline..."
-
-        # 先清除旧的版本记录，再 stamp 到新基线
-        $DC exec -T app python -c "
-from sqlalchemy import create_engine, text
-import os
-engine = create_engine(os.environ['DATABASE_URL'])
-with engine.connect() as conn:
-    conn.execute(text('DELETE FROM alembic_version'))
-    conn.commit()
-print('Old version cleared')
-"
-        # 获取最新的迁移版本（匹配 revision_id (head) 格式）
-        LATEST_VERSION=$($DC exec -T app alembic heads 2>/dev/null | grep -oE '^[0-9a-zA-Z_]+' | head -1)
-        if [ -n "$LATEST_VERSION" ]; then
-            $DC exec -T app alembic stamp "$LATEST_VERSION"
-            echo ">>> Database stamped to $LATEST_VERSION"
-            save_migration_hash
-        else
-            echo ">>> ERROR: Could not determine latest migration version"
-            exit 1
+print_built_images() {
+    echo ">>> 本地镜像构建完成"
+    for image in aether-base:latest aether-app:latest; do
+        if docker image inspect "$image" >/dev/null 2>&1; then
+            echo "$image"
         fi
-    else
-        # 其他错误，直接输出并退出
-        echo "$UPGRADE_OUTPUT"
-        exit 1
-    fi
+    done
 }
 
 # 强制全部重建
@@ -362,33 +294,22 @@ if [ "$FORCE_REBUILD_ALL" = true ]; then
     ensure_hub_tag "$HUB_TAG" || true
     build_base
     build_app
-    compose_up --force-recreate
-    sleep 3
-    run_migration
-    docker image prune -f
-    echo ">>> Done!"
-    $DC ps
+    print_built_images
     exit 0
 fi
 
 # 强制重建基础镜像
 if [ "$REBUILD_BASE_ONLY" = true ]; then
     build_base
-    echo ">>> Base image rebuilt. Run ./deploy.sh to deploy."
+    print_built_images
     exit 0
 fi
 
-# 更新 Hub 版本标记
+# 更新 Hub 版本标记后继续正常构建流程
 if [ "$FORCE_UPDATE_HUB" = true ]; then
     rm -f "$HUB_TAG_STATE_FILE"
-    ensure_hub_tag "$HUB_TAG" || true
-    echo ">>> Hub tag updated: $RESOLVED_HUB_TAG"
-    echo ">>> Run ./deploy.sh to build app image with the new Hub release."
-    exit 0
 fi
 
-# 标记是否需要重启
-NEED_RESTART=false
 BASE_REBUILT=false
 HUB_UPDATED=false
 
@@ -397,12 +318,10 @@ if ! docker image inspect aether-base:latest >/dev/null 2>&1; then
     echo ">>> Base image not found, building..."
     build_base
     BASE_REBUILT=true
-    NEED_RESTART=true
 elif check_deps_changed; then
     echo ">>> Dependencies changed, rebuilding base image..."
     build_base
     BASE_REBUILT=true
-    NEED_RESTART=true
 else
     echo ">>> Dependencies unchanged."
 fi
@@ -410,70 +329,25 @@ fi
 # 解析/检查 Hub 版本（构建时由 Dockerfile 从 GitHub Release 下载）
 if ensure_hub_tag "$HUB_TAG"; then
     HUB_UPDATED=true
-    NEED_RESTART=true
 else
     echo ">>> Hub version unchanged."
 fi
 
-# 检查代码或迁移是否变化，或者 base 重建了（app 依赖 base）
-# 注意：迁移文件打包在镜像中，所以迁移变化也需要重建 app 镜像
-MIGRATION_CHANGED=false
-if check_migration_changed; then
-    MIGRATION_CHANGED=true
-fi
-
+# 检查应用镜像相关文件是否变化，或者 base / hub 变化了
 if ! docker image inspect aether-app:latest >/dev/null 2>&1; then
     echo ">>> App image not found, building..."
     build_app
-    NEED_RESTART=true
 elif [ "$BASE_REBUILT" = true ]; then
     echo ">>> Base image rebuilt, rebuilding app image..."
     build_app
-    NEED_RESTART=true
 elif [ "$HUB_UPDATED" = true ]; then
     echo ">>> Hub version updated, rebuilding app image..."
     build_app
-    NEED_RESTART=true
 elif check_code_changed; then
     echo ">>> Code changed, rebuilding app image..."
     build_app
-    NEED_RESTART=true
-elif [ "$MIGRATION_CHANGED" = true ]; then
-    echo ">>> Migration files changed, rebuilding app image..."
-    build_app
-    NEED_RESTART=true
 else
     echo ">>> Code unchanged."
 fi
 
-# 检查容器是否在运行
-CONTAINERS_RUNNING=true
-if [ -z "$($DC ps -q 2>/dev/null)" ]; then
-    CONTAINERS_RUNNING=false
-fi
-
-# 有变化时重启，或容器未运行时启动
-if [ "$NEED_RESTART" = true ]; then
-    echo ">>> Restarting services..."
-    compose_up
-elif [ "$CONTAINERS_RUNNING" = false ]; then
-    echo ">>> Containers not running, starting services..."
-    compose_up
-else
-    echo ">>> No changes detected, skipping restart."
-fi
-
-# 检查迁移变化（如果前面已经检测到变化并重建了镜像，这里直接运行迁移）
-if [ "$MIGRATION_CHANGED" = true ]; then
-    echo ">>> Running database migration..."
-    sleep 3
-    run_migration
-else
-    echo ">>> Migration unchanged."
-fi
-
-# 清理
-docker image prune -f >/dev/null 2>&1 || true
-
-echo ">>> Done!"
-$DC ps
+print_built_images
