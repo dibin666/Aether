@@ -4,6 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import json
 import math
 from typing import Any, Literal
 
@@ -63,6 +64,7 @@ STATUS_OPTION_ORDER = (
     "has_retry",
     "has_fallback",
 )
+SUPPORTED_REASONING_EFFORTS = ("xhigh", "medium", "high", "low")
 
 
 @dataclass(slots=True)
@@ -120,6 +122,79 @@ def _error_category_display_label(value: Any) -> str:
     if not normalized:
         return ERROR_CATEGORY_LABELS[ErrorCategory.UNKNOWN.value]
     return ERROR_CATEGORY_LABELS.get(normalized, normalized.replace("_", " "))
+
+
+def _normalize_analytics_model_name(value: Any) -> str | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    for effort in SUPPORTED_REASONING_EFFORTS:
+        suffix = f"-{effort}"
+        if lowered.endswith(suffix) and len(normalized) > len(suffix):
+            return normalized[: -len(suffix)]
+    return normalized
+
+
+def _normalized_model_name_expr(column: Any) -> Any:
+    normalized_column = func.nullif(column, "")
+    cases = [
+        (
+            func.lower(normalized_column).like(f"%-{effort}"),
+            func.substr(normalized_column, 1, func.length(normalized_column) - len(effort) - 1),
+        )
+        for effort in SUPPORTED_REASONING_EFFORTS
+    ]
+    return case(*cases, else_=normalized_column)
+
+
+def _expand_model_filter_values(model_names: list[str]) -> list[str]:
+    expanded: list[str] = []
+    seen: set[str] = set()
+
+    def _append(value: str | None) -> None:
+        normalized = str(value or "").strip()
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        expanded.append(normalized)
+
+    for raw_name in model_names:
+        model_name = str(raw_name or "").strip()
+        if not model_name:
+            continue
+        _append(model_name)
+        if _normalize_analytics_model_name(model_name) != model_name:
+            continue
+        for effort in SUPPORTED_REASONING_EFFORTS:
+            _append(f"{model_name}-{effort}")
+
+    return expanded
+
+
+def _normalize_reasoning_effort(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized == "max":
+        return "xhigh"
+    if normalized in SUPPORTED_REASONING_EFFORTS:
+        return normalized
+    return None
+
+
+def _extract_reasoning_effort_from_request_metadata(metadata: Any) -> str | None:
+    parsed = metadata
+    if isinstance(parsed, str):
+        stripped = parsed.strip()
+        if stripped:
+            try:
+                parsed = json.loads(stripped)
+            except (TypeError, json.JSONDecodeError):
+                return None
+        else:
+            return None
+    if not isinstance(parsed, dict):
+        return None
+    return _normalize_reasoning_effort(parsed.get("reasoning_effort"))
 
 
 def _percentile(values: list[float], q: float) -> int | None:
@@ -475,7 +550,7 @@ class AnalyticsQueryService:
         if allow_provider_filters and filters.provider_names:
             query = query.filter(Usage.provider_name.in_(filters.provider_names))
         if filters.models:
-            query = query.filter(Usage.model.in_(filters.models))
+            query = query.filter(Usage.model.in_(_expand_model_filter_values(filters.models)))
         if filters.target_models:
             query = query.filter(Usage.target_model.in_(filters.target_models))
         if filters.api_key_ids:
@@ -556,7 +631,9 @@ class AnalyticsQueryService:
         error_case = case((Usage.status == "failed", 1), else_=0)
         stream_case = case((Usage.is_stream.is_(True), 1), else_=0)
         conversion_case = case((Usage.has_format_conversion.is_(True), 1), else_=0)
-        model_name_expr = func.coalesce(func.nullif(Usage.model, ""), func.nullif(Usage.target_model, ""))
+        model_name_expr = _normalized_model_name_expr(
+            func.coalesce(func.nullif(Usage.model, ""), func.nullif(Usage.target_model, ""))
+        )
 
         return [
             func.count(Usage.id).label("requests_total"),
@@ -726,7 +803,7 @@ class AnalyticsQueryService:
                     "_models_used": set(),
                 },
             )
-            model_name = str(row.model or row.target_model or "").strip()
+            model_name = _normalize_analytics_model_name(row.model or row.target_model)
             if model_name:
                 bucket["_models_used"].add(model_name)
             bucket["requests_total"] += 1
@@ -844,7 +921,7 @@ class AnalyticsQueryService:
             )
         else:
             dimension_column = {
-                "model": Usage.model,
+                "model": _normalized_model_name_expr(Usage.model),
                 "provider": Usage.provider_name,
                 "api_format": Usage.api_format,
             }[dimension]
@@ -1086,6 +1163,9 @@ class AnalyticsQueryService:
                     ),
                     "provider_name": usage.provider_name if current_user.role == UserRole.ADMIN else None,
                     "model": usage.model,
+                    "reasoning_effort": _extract_reasoning_effort_from_request_metadata(
+                        getattr(usage, "request_metadata", None)
+                    ),
                     "target_model": usage.target_model,
                     "api_format": usage.api_format,
                     "request_type": usage.request_type,
@@ -1260,6 +1340,17 @@ class AnalyticsQueryService:
             api_key_ids = _distinct_values(query, Usage.api_key_id)
             return cls._resolve_current_api_key_options(db, api_key_ids)
 
+        def _model_pairs(query: Query[Any]) -> list[dict[str, str]]:
+            model_names = _distinct_values(query, _normalized_model_name_expr(Usage.model))
+            display_names = cls._resolve_model_display_names(db, model_names)
+            return [
+                {"value": model_name, "label": display_names.get(model_name, model_name)}
+                for model_name in sorted(
+                    model_names,
+                    key=lambda item: (display_names.get(item, item).lower(), item.lower()),
+                )
+            ]
+
         providers_query = _build_option_query(replace(filters, provider_names=[]))
         models_query = _build_option_query(replace(filters, models=[]))
         target_models_query = _build_option_query(replace(filters, target_models=[]))
@@ -1278,7 +1369,7 @@ class AnalyticsQueryService:
                 if current_user.role == UserRole.ADMIN
                 else []
             ),
-            "models": _pairs(models_query, Usage.model),
+            "models": _model_pairs(models_query),
             "target_models": _pairs(target_models_query, Usage.target_model),
             "api_formats": _pairs(api_formats_query, Usage.api_format),
             "request_types": _pairs(request_types_query, Usage.request_type),

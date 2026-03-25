@@ -65,6 +65,7 @@ export function useUsageData(options: UseUsageDataOptions) {
       api_key_name: record.provider_api_key_name || undefined,
       rate_multiplier: record.rate_multiplier,
       model: record.model,
+      reasoning_effort: record.reasoning_effort ?? undefined,
       target_model: record.target_model,
       api_format: record.api_format || undefined,
       endpoint_api_format: undefined,

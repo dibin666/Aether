@@ -145,6 +145,7 @@ export interface AnalyticsRecord {
   provider_api_key_name: string | null
   provider_name: string | null
   model: string
+  reasoning_effort?: 'medium' | 'high' | 'xhigh' | null
   target_model: string | null
   api_format: string | null
   request_type: string | null

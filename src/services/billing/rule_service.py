@@ -20,6 +20,9 @@ from src.models.database import GlobalModel, Model
 from src.services.billing.cache import BillingCache
 from src.services.billing.default_rules import DefaultBillingRuleGenerator, VirtualBillingRule
 from src.services.billing.rule_templates import CodeBillingRuleTemplateService
+from src.services.model.model_name_resolution import (
+    get_active_global_model_with_reasoning_suffix_fallback,
+)
 
 TaskType = Literal["chat", "cli", "video", "image", "audio"]
 BillingRuleScope = Literal["model", "global", "default"]
@@ -67,13 +70,8 @@ class BillingRuleService:
         if cached is not None:
             return cached
 
-        global_model = (
-            db.query(GlobalModel)
-            .filter(
-                GlobalModel.name == model_name,
-                GlobalModel.is_active == True,  # noqa: E712
-            )
-            .first()
+        global_model, resolved_model_name = get_active_global_model_with_reasoning_suffix_fallback(
+            db, model_name
         )
         if not global_model:
             return None
@@ -97,7 +95,7 @@ class BillingRuleService:
             global_model=global_model,
             model=model_obj,
             provider_id=provider_id,
-            model_name=model_name,
+            model_name=resolved_model_name,
             task_type=effective_task,
         )
         if code_rule is not None:

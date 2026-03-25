@@ -20,6 +20,9 @@ from src.core.api_format.capabilities import (
 )
 from src.core.logger import logger
 from src.models.database import GlobalModel, Model, Provider
+from src.services.model.model_name_resolution import (
+    get_active_global_model_with_reasoning_suffix_fallback,
+)
 from src.services.billing import calculate_request_cost
 
 ProviderRef = str | Provider | None
@@ -164,13 +167,8 @@ class ModelCostService:
 
         if provider_obj:
             # 直接通过 GlobalModel.name 查找
-            global_model = (
-                self.db.query(GlobalModel)
-                .filter(
-                    GlobalModel.name == model,
-                    GlobalModel.is_active == True,
-                )
-                .first()
+            global_model, _resolved_model_name = (
+                get_active_global_model_with_reasoning_suffix_fallback(self.db, model)
             )
 
             if global_model:
@@ -225,13 +223,8 @@ class ModelCostService:
         result = None
 
         if provider_obj:
-            global_model = (
-                self.db.query(GlobalModel)
-                .filter(
-                    GlobalModel.name == model,
-                    GlobalModel.is_active == True,
-                )
-                .first()
+            global_model, _resolved_model_name = (
+                get_active_global_model_with_reasoning_suffix_fallback(self.db, model)
             )
 
             if global_model:
@@ -300,13 +293,8 @@ class ModelCostService:
 
         if provider_obj:
             # 直接通过 GlobalModel.name 查找（用户必须使用标准模型名称）
-            global_model = (
-                self.db.query(GlobalModel)
-                .filter(
-                    GlobalModel.name == model,
-                    GlobalModel.is_active == True,
-                )
-                .first()
+            global_model, _resolved_model_name = (
+                get_active_global_model_with_reasoning_suffix_fallback(self.db, model)
             )
             if global_model:
                 model_obj = (
@@ -392,13 +380,8 @@ class ModelCostService:
         output_price = None
 
         if provider_obj:
-            global_model = (
-                self.db.query(GlobalModel)
-                .filter(
-                    GlobalModel.name == model,
-                    GlobalModel.is_active == True,
-                )
-                .first()
+            global_model, _resolved_model_name = (
+                get_active_global_model_with_reasoning_suffix_fallback(self.db, model)
             )
             if global_model:
                 model_obj = (
@@ -475,13 +458,8 @@ class ModelCostService:
 
         if provider_obj:
             # 直接通过 GlobalModel.name 查找（用户必须使用标准模型名称）
-            global_model = (
-                self.db.query(GlobalModel)
-                .filter(
-                    GlobalModel.name == model,
-                    GlobalModel.is_active == True,
-                )
-                .first()
+            global_model, _resolved_model_name = (
+                get_active_global_model_with_reasoning_suffix_fallback(self.db, model)
             )
 
             # 查找该 Provider 的 Model 实现
@@ -549,13 +527,8 @@ class ModelCostService:
 
         if provider_obj:
             # 直接通过 GlobalModel.name 查找（用户必须使用标准模型名称）
-            global_model = (
-                self.db.query(GlobalModel)
-                .filter(
-                    GlobalModel.name == model,
-                    GlobalModel.is_active == True,
-                )
-                .first()
+            global_model, _resolved_model_name = (
+                get_active_global_model_with_reasoning_suffix_fallback(self.db, model)
             )
 
             # 查找该 Provider 的 Model 实现
@@ -595,13 +568,8 @@ class ModelCostService:
         price_per_request = None
 
         if provider_obj:
-            global_model = (
-                self.db.query(GlobalModel)
-                .filter(
-                    GlobalModel.name == model,
-                    GlobalModel.is_active == True,
-                )
-                .first()
+            global_model, _resolved_model_name = (
+                get_active_global_model_with_reasoning_suffix_fallback(self.db, model)
             )
 
             if global_model:
