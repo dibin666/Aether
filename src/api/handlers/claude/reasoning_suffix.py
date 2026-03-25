@@ -6,7 +6,7 @@ from typing import Any
 
 from src.core.api_format.conversion.field_mappings import REASONING_EFFORT_TO_CLAUDE_EFFORT
 
-_REASONING_SUFFIX_RE = re.compile(r"^(?P<base>.+)-(?P<effort>xhigh|high|medium)$")
+_REASONING_SUFFIX_RE = re.compile(r"^(?P<base>.+)-(?P<effort>xhigh|high|medium|low)$")
 
 
 def prepare_claude_request_for_dispatch(

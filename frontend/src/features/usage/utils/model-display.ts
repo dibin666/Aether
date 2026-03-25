@@ -1,6 +1,6 @@
 import type { UsageRecord } from '../types'
 
-const REASONING_SUFFIXES = ['xhigh', 'medium', 'high'] as const
+const REASONING_SUFFIXES = ['xhigh', 'medium', 'high', 'low'] as const
 
 type ReasoningEffort = NonNullable<UsageRecord['reasoning_effort']>
 

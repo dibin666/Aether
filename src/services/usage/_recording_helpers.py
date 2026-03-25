@@ -22,7 +22,7 @@ def _parse_format_dimensions(api_format: str | None) -> tuple[str | None, str | 
     return parts[0], None
 
 
-_SUPPORTED_REASONING_EFFORTS: tuple[str, ...] = ("xhigh", "high", "medium")
+_SUPPORTED_REASONING_EFFORTS: tuple[str, ...] = ("xhigh", "high", "medium", "low")
 
 
 # Metadata pruning configuration (ordered by priority - drop first to last)
