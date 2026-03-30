@@ -55,6 +55,43 @@ class ErrorHandlerService:
         self.adaptive_manager = adaptive_manager or get_adaptive_rpm_manager()
         self.cache_scheduler = cache_scheduler
 
+    @staticmethod
+    def _extract_proxy_node_meta(key: ProviderAPIKey | None) -> tuple[str | None, str | None]:
+        proxy_cfg = getattr(key, "proxy", None) if key else None
+        if not isinstance(proxy_cfg, dict):
+            return None, None
+        proxy_node_id = str(proxy_cfg.get("node_id") or "").strip() or None
+        proxy_node_name = str(proxy_cfg.get("name") or proxy_cfg.get("node_name") or "").strip() or None
+        return proxy_node_id, proxy_node_name
+
+    async def _maybe_delete_access_token_key_for_http400(
+        self,
+        *,
+        http_error: httpx.HTTPStatusError,
+        converted_error: Exception,
+        error_response_text: str | None,
+        provider: Provider,
+        key: ProviderAPIKey | None,
+        api_format: str,
+        request_id: str | None,
+    ) -> bool:
+        status_code = int(getattr(getattr(http_error, "response", None), "status_code", 0) or 0)
+        if status_code != 400 or key is None:
+            return False
+        proxy_node_id, proxy_node_name = self._extract_proxy_node_meta(key)
+        return await delete_access_token_only_key_on_http400(
+            db=self.db,
+            provider=provider,
+            key_id=str(key.id),
+            status_code=status_code,
+            endpoint_sig=api_format,
+            request_id=request_id,
+            error_message=str(getattr(converted_error, "message", "") or ""),
+            raw_error_excerpt=error_response_text,
+            proxy_node_id=proxy_node_id,
+            proxy_node_name=proxy_node_name,
+        )
+
     async def handle_rate_limit(
         self,
         key: ProviderAPIKey,
@@ -145,30 +182,19 @@ class ErrorHandlerService:
         kind = str(getattr(endpoint, "endpoint_kind", "")).strip().lower()
         provider_format_str = make_signature_key(fam, kind) if fam and kind else client_format_str
 
+        if await self._maybe_delete_access_token_key_for_http400(
+            http_error=http_error,
+            converted_error=converted_error,
+            error_response_text=error_response_text,
+            provider=provider,
+            key=key,
+            api_format=api_format,
+            request_id=request_id,
+        ):
+            return
+
         # 客户端请求错误：不失效缓存，不记录健康失败
         if isinstance(converted_error, UpstreamClientException):
-            status_code = int(getattr(getattr(http_error, "response", None), "status_code", 0) or 0)
-            proxy_cfg = getattr(key, "proxy", None) if key else None
-            proxy_node_id = None
-            proxy_node_name = None
-            if isinstance(proxy_cfg, dict):
-                proxy_node_id = str(proxy_cfg.get("node_id") or "").strip() or None
-                proxy_node_name = (
-                    str(proxy_cfg.get("name") or proxy_cfg.get("node_name") or "").strip() or None
-                )
-            if key is not None:
-                await delete_access_token_only_key_on_http400(
-                    db=self.db,
-                    provider=provider,
-                    key_id=str(key.id),
-                    status_code=status_code,
-                    endpoint_sig=api_format,
-                    request_id=request_id,
-                    error_message=str(getattr(converted_error, "message", "") or ""),
-                    raw_error_excerpt=error_response_text,
-                    proxy_node_id=proxy_node_id,
-                    proxy_node_name=proxy_node_name,
-                )
             return
 
         can_invalidate = bool(endpoint and key and self.cache_scheduler is not None)

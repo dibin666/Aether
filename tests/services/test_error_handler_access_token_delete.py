@@ -6,7 +6,11 @@ from typing import Any
 import httpx
 import pytest
 
-from src.core.exceptions import ProviderAuthException, UpstreamClientException
+from src.core.exceptions import (
+    ProviderAuthException,
+    ProviderNotAvailableException,
+    UpstreamClientException,
+)
 from src.services.orchestration.error_handler import ErrorHandlerService
 
 
@@ -103,3 +107,51 @@ async def test_handle_http_error_skips_access_token_delete_for_non_400(
     )
 
     assert called['count'] == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_http_error_triggers_access_token_delete_for_generic_http400(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ErrorHandlerService(db=SimpleNamespace())
+    provider = SimpleNamespace(id='p1', name='Codex Pool', provider_type='codex')
+    endpoint = SimpleNamespace(api_family='openai', endpoint_kind='cli')
+    key = SimpleNamespace(id='k1', provider_id='p1', auth_type='oauth', proxy=None)
+
+    request = httpx.Request('POST', 'https://example.test/v1/chat/completions')
+    response = httpx.Response(400, request=request, text='<html>400 Bad Request</html>')
+    http_error = httpx.HTTPStatusError('400', request=request, response=response)
+    converted = ProviderNotAvailableException(
+        message='上游服务返回错误: 400',
+        provider_name='Codex Pool',
+        upstream_status=400,
+        upstream_response='<html>400 Bad Request</html>',
+    )
+
+    called: dict[str, Any] = {}
+
+    async def _fake_delete(**kwargs: Any) -> bool:
+        called.update(kwargs)
+        return True
+
+    monkeypatch.setattr(
+        'src.services.orchestration.error_handler.delete_access_token_only_key_on_http400',
+        _fake_delete,
+    )
+
+    await service.handle_http_error(
+        http_error=http_error,
+        converted_error=converted,
+        error_response_text='<html>400 Bad Request</html>',
+        provider=provider,
+        endpoint=endpoint,
+        key=key,
+        affinity_key='affinity-1',
+        api_format='openai:cli',
+        global_model_id='gpt-5.2',
+        request_id='req-2',
+        captured_key_concurrent=None,
+    )
+
+    assert called['key_id'] == 'k1'
+    assert called['status_code'] == 400

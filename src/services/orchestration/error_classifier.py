@@ -569,12 +569,6 @@ class ErrorClassifier:
         if error_response_text:
             extra_data["error_response"] = error_response_text
 
-        if isinstance(converted_error, UpstreamClientException):
-            logger.warning(
-                f"  [{request_id}] 客户端请求错误，不进行重试: {converted_error.message}"
-            )
-            return extra_data
-
         # 副作用（委托给 ErrorHandlerService）
         await self._error_handler.handle_http_error(
             http_error,
@@ -589,6 +583,12 @@ class ErrorClassifier:
             request_id=request_id,
             captured_key_concurrent=captured_key_concurrent,
         )
+
+        if isinstance(converted_error, UpstreamClientException):
+            logger.warning(
+                f"  [{request_id}] 客户端请求错误，不进行重试: {converted_error.message}"
+            )
+            return extra_data
 
         return extra_data
 
