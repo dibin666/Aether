@@ -303,6 +303,7 @@ export interface AnalyticsActiveRequest {
   provider?: string | null
   provider_name?: string | null
   api_key_name?: string | null
+  provider_api_key_deleted?: boolean | null
   api_format?: string | null
   endpoint_api_format?: string | null
   has_format_conversion?: boolean | null

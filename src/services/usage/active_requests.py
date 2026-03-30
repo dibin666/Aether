@@ -9,11 +9,29 @@ from sqlalchemy.orm import Session
 from src.core.api_format.metadata import can_passthrough_endpoint
 from src.core.api_format.signature import normalize_signature_key
 from src.core.logger import logger
-from src.models.database import RequestCandidate, Usage
+from src.models.database import AccessTokenDeleteLog, RequestCandidate, Usage
 
 
 class UsageActiveRequestsMixin:
     """活跃请求管理方法"""
+
+    @staticmethod
+    def _resolve_deleted_provider_api_key_display_map(
+        db: Session,
+        provider_api_key_ids: list[str],
+    ) -> dict[str, str]:
+        if not provider_api_key_ids:
+            return {}
+        rows = (
+            db.query(AccessTokenDeleteLog.deleted_key_id, AccessTokenDeleteLog.oauth_email)
+            .filter(AccessTokenDeleteLog.deleted_key_id.in_(provider_api_key_ids))
+            .all()
+        )
+        return {
+            str(key_id): str(oauth_email).strip()
+            for key_id, oauth_email in rows
+            if key_id and str(oauth_email or "").strip()
+        }
 
     @staticmethod
     def _find_completed_request_ids(
@@ -292,6 +310,7 @@ class UsageActiveRequestsMixin:
             Usage.first_byte_time_ms,  # 首字时间 (TTFB)
             Usage.created_at,
             Usage.provider_endpoint_id,
+            Usage.provider_api_key_id,
             # API 格式 / 格式转换（streaming 状态时已可确定）
             Usage.api_format,
             Usage.endpoint_api_format,
@@ -325,6 +344,18 @@ class UsageActiveRequestsMixin:
             query = query.order_by(Usage.created_at.desc()).limit(50)
 
         records = query.all()
+        deleted_provider_api_key_display_map = (
+            cls._resolve_deleted_provider_api_key_display_map(
+                db,
+                [
+                    str(record.provider_api_key_id)
+                    for record in records
+                    if getattr(record, "provider_api_key_id", None)
+                ],
+            )
+            if include_admin_fields
+            else {}
+        )
         should_maintain_status = maintain_status if maintain_status is not None else not ids
 
         # 检查超时的 pending/streaming 请求
@@ -432,8 +463,14 @@ class UsageActiveRequestsMixin:
             if r.target_model:
                 item["target_model"] = r.target_model
             if include_admin_fields:
+                deleted_provider_account_display = deleted_provider_api_key_display_map.get(
+                    str(getattr(r, "provider_api_key_id", "") or "")
+                )
                 item["provider"] = r.provider_name
-                item["api_key_name"] = r.api_key_name
+                item["api_key_name"] = r.api_key_name or deleted_provider_account_display
+                item["provider_api_key_deleted"] = (
+                    r.api_key_name is None and deleted_provider_account_display is not None
+                )
             result.append(item)
 
         return result

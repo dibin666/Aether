@@ -254,6 +254,8 @@ export function useUsageData(options: UseUsageDataOptions) {
           endpoint_api_format: existing.endpoint_api_format || record.endpoint_api_format,
           has_format_conversion: existing.has_format_conversion ?? record.has_format_conversion,
           api_key_name: existing.api_key_name || record.api_key_name,
+          provider_api_key_deleted:
+            existing.provider_api_key_deleted ?? record.provider_api_key_deleted,
           rate_multiplier: existing.rate_multiplier ?? record.rate_multiplier,
           target_model: existing.target_model || record.target_model
         }
