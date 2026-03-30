@@ -2132,6 +2132,13 @@ class AccessTokenDeleteLog(Base):
     request_id = Column(String(255), nullable=True)
     error_message = Column(Text, nullable=True)
     raw_error_excerpt = Column(Text, nullable=True)
+    snapshot_api_key = Column(Text, nullable=True)
+    snapshot_auth_config = Column(Text, nullable=True)
+    snapshot_payload = Column(JSON, nullable=True)
+    restore_status = Column(String(20), nullable=False, default="legacy", index=True)
+    restored_key_id = Column(String(36), nullable=True, index=True)
+    restored_at = Column(DateTime(timezone=True), nullable=True)
+    restore_error = Column(Text, nullable=True)
     deleted_by = Column(String(64), nullable=False)
     deleted_at = Column(
         DateTime(timezone=True),

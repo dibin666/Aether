@@ -68,3 +68,47 @@ def test_access_token_deletion_list_route_passes_filters(
         'limit': 20,
         'offset': 0,
     }
+
+
+def test_access_token_deletion_restore_route_returns_restored_key(
+    admin_access_token_deletions_app: tuple[TestClient, MagicMock],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _db = admin_access_token_deletions_app
+
+    async def _fake_restore(db, log_id: str):
+        return {'id': 'key-restored-1', 'name': 'restored-key'}
+
+    monkeypatch.setattr(
+        'src.api.admin.access_token_deletions.restore_access_token_delete_log',
+        _fake_restore,
+    )
+
+    response = client.post('/api/admin/access-token-deletions/log-1/restore')
+
+    assert response.status_code == 200
+    assert response.json() == {
+        'message': '撤销删除成功',
+        'key': {'id': 'key-restored-1', 'name': 'restored-key'},
+    }
+
+
+def test_access_token_deletion_restore_route_maps_conflict_error(
+    admin_access_token_deletions_app: tuple[TestClient, MagicMock],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _db = admin_access_token_deletions_app
+
+    async def _fake_restore(db, log_id: str):
+        from src.services.provider_keys.access_token_auto_delete import RestoreConflictError
+
+        raise RestoreConflictError('legacy')
+
+    monkeypatch.setattr(
+        'src.api.admin.access_token_deletions.restore_access_token_delete_log',
+        _fake_restore,
+    )
+
+    response = client.post('/api/admin/access-token-deletions/log-legacy/restore')
+
+    assert response.status_code == 409

@@ -24,6 +24,11 @@ export interface AccessTokenDeletionItem {
   raw_error_excerpt?: string | null
   deleted_by?: string | null
   deleted_at: string
+  restore_status?: string | null
+  restored_key_id?: string | null
+  restored_at?: string | null
+  restore_error?: string | null
+  can_restore?: boolean
 }
 
 export interface AccessTokenDeletionListParams {
@@ -39,6 +44,11 @@ export interface AccessTokenDeletionListResponse {
   items: AccessTokenDeletionItem[]
 }
 
+export interface AccessTokenDeletionRestoreResponse {
+  message: string
+  key: Record<string, unknown>
+}
+
 export async function getAccessTokenDeletionSummary(): Promise<AccessTokenDeletionSummary> {
   const response = await client.get('/api/admin/access-token-deletions/summary')
   return response.data
@@ -48,5 +58,12 @@ export async function getAccessTokenDeletionList(
   params: AccessTokenDeletionListParams
 ): Promise<AccessTokenDeletionListResponse> {
   const response = await client.get('/api/admin/access-token-deletions', { params })
+  return response.data
+}
+
+export async function restoreAccessTokenDeletion(
+  logId: string
+): Promise<AccessTokenDeletionRestoreResponse> {
+  const response = await client.post(`/api/admin/access-token-deletions/${logId}/restore`)
   return response.data
 }

@@ -11,6 +11,8 @@ from src.services.provider_keys.access_token_auto_delete import (
     delete_access_token_only_key_on_http400,
     is_access_token_only_oauth_key,
     reset_access_token_only_key_http400_counter,
+    restore_access_token_delete_log,
+    RestoreConflictError,
 )
 
 
@@ -66,7 +68,20 @@ def test_build_delete_log_payload_keeps_display_fields() -> None:
 def test_access_token_delete_log_model_has_expected_columns() -> None:
     columns = {column.name for column in AccessTokenDeleteLog.__table__.columns}
 
-    assert {'deleted_key_id', 'provider_id', 'oauth_email', 'trigger_status_code', 'deleted_at'} <= columns
+    assert {
+        'deleted_key_id',
+        'provider_id',
+        'oauth_email',
+        'trigger_status_code',
+        'deleted_at',
+        'snapshot_api_key',
+        'snapshot_auth_config',
+        'snapshot_payload',
+        'restore_status',
+        'restored_key_id',
+        'restored_at',
+        'restore_error',
+    } <= columns
 
 
 class _FakeDB:
@@ -102,6 +117,7 @@ async def test_delete_access_token_only_key_on_http400_deletes_key_and_records_l
         is_active=True,
         api_key='enc-access',
         auth_config='enc-config',
+        api_formats=['openai:cli'],
         allowed_models=['gpt-5.2'],
         upstream_metadata={},
     )
@@ -172,6 +188,10 @@ async def test_delete_access_token_only_key_on_http400_deletes_key_and_records_l
     assert db.commit_count == 1
     assert len(db.added) == 1
     assert db.added[0].deleted_key_id == 'k1'
+    assert db.added[0].snapshot_api_key == 'enc-access'
+    assert db.added[0].snapshot_auth_config == 'enc-config'
+    assert db.added[0].snapshot_payload['api_formats'] == ['openai:cli']
+    assert db.added[0].restore_status == 'pending'
 
 
 @pytest.mark.asyncio
@@ -217,6 +237,83 @@ async def test_delete_access_token_only_key_on_http400_skips_refresh_token_and_n
     )
 
     assert deleted is False
+
+
+@pytest.mark.asyncio
+async def test_restore_access_token_delete_log_recreates_key_and_marks_log_restored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log = SimpleNamespace(
+        id='log-1',
+        provider_id='p1',
+        key_name='demo-key',
+        auth_type='oauth',
+        snapshot_api_key='enc-access',
+        snapshot_auth_config='enc-config',
+        snapshot_payload={
+            'api_formats': ['openai:cli'],
+            'name': 'demo-key',
+            'allowed_models': ['gpt-5.2'],
+            'proxy': {'node_id': 'node-1'},
+            'fingerprint': {'ua': 'demo'},
+            'expires_at': '2026-04-01T00:00:00+00:00',
+            'upstream_metadata': {'codex': {'custom': 'keep-me'}},
+        },
+        restore_status='pending',
+        restored_key_id=None,
+        restored_at=None,
+        restore_error=None,
+    )
+    provider = SimpleNamespace(id='p1', provider_type='codex')
+    db = _FakeDB()
+    monkeypatch.setattr(
+        'src.services.provider_keys.access_token_auto_delete._get_delete_log_for_restore',
+        lambda db, log_id: log,
+    )
+    monkeypatch.setattr(
+        'src.services.provider_keys.access_token_auto_delete._get_provider_for_restore',
+        lambda db, provider_id: provider,
+    )
+    monkeypatch.setattr(
+        'src.services.provider_keys.access_token_auto_delete.run_create_key_side_effects',
+        lambda **kwargs: None,
+    )
+
+    result = await restore_access_token_delete_log(db=db, log_id='log-1')
+
+    assert result.id == log.restored_key_id
+    assert db.commit_count == 1
+    assert len(db.added) == 1
+    restored_key = db.added[0]
+    assert restored_key.provider_id == 'p1'
+    assert restored_key.api_key == 'enc-access'
+    assert restored_key.auth_config == 'enc-config'
+    assert restored_key.allowed_models == ['gpt-5.2']
+    assert restored_key.proxy == {'node_id': 'node-1'}
+    assert restored_key.upstream_metadata == {'codex': {'custom': 'keep-me'}}
+    assert log.restore_status == 'restored'
+    assert log.restore_error is None
+
+
+@pytest.mark.asyncio
+async def test_restore_access_token_delete_log_rejects_legacy_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log = SimpleNamespace(
+        id='log-legacy',
+        provider_id='p1',
+        restore_status='legacy',
+        snapshot_api_key=None,
+        snapshot_auth_config=None,
+        snapshot_payload=None,
+    )
+    monkeypatch.setattr(
+        'src.services.provider_keys.access_token_auto_delete._get_delete_log_for_restore',
+        lambda db, log_id: log,
+    )
+
+    with pytest.raises(RestoreConflictError):
+        await restore_access_token_delete_log(db=SimpleNamespace(), log_id='log-legacy')
 
 
 def test_reset_access_token_only_key_http400_counter_clears_existing_counter(

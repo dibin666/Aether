@@ -130,6 +130,9 @@
                 状态码
               </TableHead>
               <TableHead class="h-12 font-semibold">
+                恢复状态
+              </TableHead>
+              <TableHead class="h-12 font-semibold">
                 错误摘要
               </TableHead>
             </TableRow>
@@ -159,6 +162,11 @@
               <TableCell class="py-4">
                 <Badge variant="destructive">
                   {{ item.trigger_status_code }}
+                </Badge>
+              </TableCell>
+              <TableCell class="py-4">
+                <Badge :variant="getRestoreBadgeVariant(item.restore_status)">
+                  {{ getRestoreStatusLabel(item.restore_status) }}
                 </Badge>
               </TableCell>
               <TableCell
@@ -218,6 +226,21 @@
           <Separator />
 
           <div>
+            <Label>恢复状态</Label>
+            <div class="mt-1 flex items-center gap-2">
+              <Badge :variant="getRestoreBadgeVariant(selected.restore_status)">
+                {{ getRestoreStatusLabel(selected.restore_status) }}
+              </Badge>
+              <span
+                v-if="selected.restored_at"
+                class="text-xs text-muted-foreground"
+              >
+                {{ formatDateTime(selected.restored_at) }}
+              </span>
+            </div>
+          </div>
+
+          <div>
             <Label>账号邮箱</Label>
             <p class="mt-1 text-sm">
               {{ selected.oauth_email || '-' }}
@@ -261,6 +284,13 @@
           </div>
 
           <div>
+            <Label>恢复后 Key ID</Label>
+            <p class="mt-1 text-sm">
+              {{ selected.restored_key_id || '-' }}
+            </p>
+          </div>
+
+          <div>
             <Label>错误摘要</Label>
             <p class="mt-1 text-sm text-destructive">
               {{ selected.error_message || '-' }}
@@ -268,8 +298,25 @@
           </div>
 
           <div>
+            <Label>最近恢复错误</Label>
+            <p class="mt-1 text-sm text-destructive">
+              {{ selected.restore_error || '-' }}
+            </p>
+          </div>
+
+          <div>
             <Label>原始错误片段</Label>
             <pre class="mt-1 text-xs bg-muted p-3 rounded-md overflow-x-auto whitespace-pre-wrap">{{ selected.raw_error_excerpt || '-' }}</pre>
+          </div>
+
+          <div class="flex justify-end gap-2">
+            <Button
+              v-if="selected.can_restore"
+              :disabled="restoringLogId === selected.id"
+              @click="handleRestore(selected)"
+            >
+              {{ restoringLogId === selected.id ? '撤销中...' : '撤销删除' }}
+            </Button>
           </div>
         </div>
       </Card>
@@ -303,13 +350,16 @@ import {
 import {
   getAccessTokenDeletionList,
   getAccessTokenDeletionSummary,
+  restoreAccessTokenDeletion,
   type AccessTokenDeletionItem,
   type AccessTokenDeletionSummary,
 } from '@/api/endpoints/accessTokenDeletions'
+import { useToast } from '@/composables/useToast'
 import { log } from '@/utils/logger'
 import { FilterX, Search, Trash2, X } from 'lucide-vue-next'
 
 const loading = ref(false)
+const restoringLogId = ref<string | null>(null)
 const items = ref<AccessTokenDeletionItem[]>([])
 const selected = ref<AccessTokenDeletionItem | null>(null)
 const summary = ref<AccessTokenDeletionSummary>({
@@ -327,12 +377,46 @@ const filters = ref({
 
 let searchTimeout: number | null = null
 let listRequestId = 0
+const { success: showSuccess, error: showError } = useToast()
 
 const hasActiveFilters = computed(() => filters.value.email.trim() !== '' || filters.value.days !== '7')
 
 function formatDateTime(value?: string | null): string {
   if (!value) return '-'
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
+}
+
+function getRestoreStatusLabel(status?: string | null): string {
+  switch (status) {
+    case 'pending':
+      return '可恢复'
+    case 'restored':
+      return '已恢复'
+    case 'failed':
+      return '恢复失败'
+    case 'legacy':
+      return '旧记录'
+    default:
+      return '-'
+  }
+}
+
+function getRestoreBadgeVariant(status?: string | null): 'default' | 'secondary' | 'outline' | 'destructive' {
+  switch (status) {
+    case 'restored':
+      return 'default'
+    case 'failed':
+      return 'destructive'
+    case 'pending':
+      return 'secondary'
+    default:
+      return 'outline'
+  }
+}
+
+function syncSelectedItem() {
+  if (!selected.value) return
+  selected.value = items.value.find((item) => item.id === selected.value?.id) ?? selected.value
 }
 
 async function loadSummary() {
@@ -353,6 +437,7 @@ async function loadItems() {
     if (requestId !== listRequestId) return
     items.value = data.items || []
     totalRecords.value = data.total ?? items.value.length
+    syncSelectedItem()
   } catch (error) {
     if (requestId !== listRequestId) return
     log.error('获取 access token 删除历史失败:', error)
@@ -367,6 +452,37 @@ async function loadItems() {
 
 async function reload() {
   await Promise.all([loadSummary(), loadItems()])
+}
+
+function extractErrorMessage(error: unknown): string {
+  if (typeof error === 'object' && error && 'response' in error) {
+    const response = (error as { response?: { data?: { detail?: string } } }).response
+    if (typeof response?.data?.detail === 'string' && response.data.detail.trim() !== '') {
+      return response.data.detail
+    }
+  }
+  if (error instanceof Error && error.message.trim() !== '') {
+    return error.message
+  }
+  return '撤销删除失败'
+}
+
+async function handleRestore(item: AccessTokenDeletionItem) {
+  if (!item.can_restore || restoringLogId.value) return
+  restoringLogId.value = item.id
+  try {
+    await restoreAccessTokenDeletion(item.id)
+    showSuccess('账号已恢复')
+    await reload()
+    selected.value = items.value.find((entry) => entry.id === item.id) ?? selected.value
+  } catch (error) {
+    log.error('撤销删除失败:', error)
+    showError(extractErrorMessage(error))
+    await loadItems()
+    selected.value = items.value.find((entry) => entry.id === item.id) ?? selected.value
+  } finally {
+    restoringLogId.value = null
+  }
 }
 
 function resetAndLoad() {
