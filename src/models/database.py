@@ -2112,6 +2112,35 @@ class ProviderAPIKey(ExportMixin, Base):
     provider = relationship("Provider", back_populates="api_keys")
 
 
+class AccessTokenDeleteLog(Base):
+    """access_token-only 账号因 HTTP 400 被自动删除的历史记录。"""
+
+    __tablename__ = "access_token_delete_logs"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    deleted_key_id = Column(String(36), nullable=False, unique=True, index=True)
+    provider_id = Column(String(36), nullable=False, index=True)
+    provider_name = Column(String(255), nullable=True)
+    key_name = Column(String(255), nullable=True)
+    oauth_email = Column(String(255), nullable=True, index=True)
+    provider_type = Column(String(50), nullable=False)
+    auth_type = Column(String(20), nullable=False)
+    trigger_status_code = Column(Integer, nullable=False)
+    endpoint_sig = Column(String(100), nullable=True)
+    proxy_node_id = Column(String(36), nullable=True)
+    proxy_node_name = Column(String(255), nullable=True)
+    request_id = Column(String(255), nullable=True)
+    error_message = Column(Text, nullable=True)
+    raw_error_excerpt = Column(Text, nullable=True)
+    deleted_by = Column(String(64), nullable=False)
+    deleted_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+
 _PROVIDER_API_KEY_STATUS_SNAPSHOT_FIELDS: tuple[str, ...] = (
     "auth_type",
     "auth_config",
