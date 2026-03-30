@@ -19,6 +19,7 @@ __all__ = [
     "batch_delete_endpoint_keys_response",
     "clear_oauth_invalid_response",
     "create_provider_key_response",
+    "delete_access_token_only_key_on_http400",
     "delete_endpoint_key_response",
     "update_endpoint_key_response",
     "reveal_endpoint_key_payload",
@@ -61,6 +62,15 @@ async def delete_endpoint_key_response(db: Session, key_id: str) -> dict[str, st
     from src.services.provider_keys.key_command_service import delete_endpoint_key_response as _impl
 
     return await _impl(db=db, key_id=key_id)
+
+
+async def delete_access_token_only_key_on_http400(**kwargs: Any) -> bool:
+    """命中 HTTP 400 时删除 access_token-only Key（惰性导入实现）。"""
+    from src.services.provider_keys.access_token_auto_delete import (
+        delete_access_token_only_key_on_http400 as _impl,
+    )
+
+    return await _impl(**kwargs)
 
 
 async def update_endpoint_key_response(
