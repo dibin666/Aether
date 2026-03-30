@@ -17,12 +17,14 @@ def _make_candidate(
     is_skipped: bool = False,
     upstream_metadata: dict | None = None,
     oauth_invalid_reason: str | None = None,
+    auth_type: str = "api_key",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         key=SimpleNamespace(
             id=key_id,
             upstream_metadata=upstream_metadata,
             oauth_invalid_reason=oauth_invalid_reason,
+            auth_type=auth_type,
         ),
         is_skipped=is_skipped,
         skip_reason=None,
@@ -170,6 +172,40 @@ async def test_reorder_account_blocked_keys_are_skipped() -> None:
     assert result[0].key.id == "key-2"
     assert c1._pool_extra_data["pool_skip"]["type"] == "account_blocked"
     assert c1._pool_extra_data["pool_skip"]["account_block_label"] == "账号封禁"
+
+
+@pytest.mark.asyncio
+async def test_reorder_codex_oauth_expired_keys_are_not_skipped() -> None:
+    pool = PoolManager("provider-1", PoolConfig(), provider_type="codex")
+    c1 = _make_candidate(
+        "key-1",
+        oauth_invalid_reason="[OAUTH_EXPIRED] Your authentication token has been invalidated.",
+        auth_type="oauth",
+    )
+    c2 = _make_candidate("key-2")
+
+    with (
+        patch(
+            "src.services.provider.pool.redis_ops.get_sticky_binding",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "src.services.provider.pool.redis_ops.batch_get_cooldowns",
+            new_callable=AsyncMock,
+            return_value={"key-1": None, "key-2": None},
+        ),
+        patch(
+            "src.services.provider.pool.redis_ops.get_lru_scores",
+            new_callable=AsyncMock,
+            return_value={},
+        ),
+    ):
+        result = await pool.reorder_candidates(None, [c1, c2])
+
+    assert c1.is_skipped is False
+    assert c1.skip_reason is None
+    assert [candidate.key.id for candidate in result] == ["key-1", "key-2"]
 
 
 @pytest.mark.asyncio

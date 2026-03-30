@@ -30,6 +30,21 @@ if TYPE_CHECKING:
     from src.services.scheduling.schemas import ProviderCandidate
 
 
+def _should_bypass_account_block_for_scheduling(
+    provider_type: str | None,
+    key: Any,
+    account_state: Any,
+) -> bool:
+    normalized_provider = str(provider_type or "").strip().lower()
+    auth_type = str(getattr(key, "auth_type", "") or "").strip().lower()
+    state_code = str(getattr(account_state, "code", "") or "").strip().lower()
+    return (
+        normalized_provider == "codex"
+        and auth_type == "oauth"
+        and state_code == "oauth_expired"
+    )
+
+
 class PoolManager:
     """Coordinate pool-level scheduling for a single Provider."""
 
@@ -262,7 +277,11 @@ class PoolManager:
 
             # Account blocked?
             account_state = account_states[kid]
-            if account_state.blocked:
+            if account_state.blocked and not _should_bypass_account_block_for_scheduling(
+                provider_type,
+                c.key,
+                account_state,
+            ):
                 c.is_skipped = True
                 skip_reason = account_state.reason or account_state.label or "account blocked"
                 c.skip_reason = f"pool account blocked: {skip_reason}"

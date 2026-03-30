@@ -10,12 +10,14 @@ def _make_key(
     upstream_metadata: dict,
     allowed_models: list[str] | None = None,
     capabilities: dict[str, bool] | None = None,
+    auth_type: str = "api_key",
 ) -> MagicMock:
     key = MagicMock()
     key.id = "k1234567890"
     key.allowed_models = allowed_models
     key.capabilities = capabilities or {}
     key.upstream_metadata = upstream_metadata
+    key.auth_type = auth_type
     return key
 
 
@@ -99,6 +101,31 @@ def test_codex_5h_quota_exhausted_skips(mock_get_health_monitor: MagicMock) -> N
 
     assert ok is False
     assert reason == "Codex 5H 限额剩余 0%"
+
+
+@patch("src.services.scheduling.candidate_builder.get_health_monitor")
+def test_codex_oauth_quota_exhausted_still_allows(mock_get_health_monitor: MagicMock) -> None:
+    mock_get_health_monitor.return_value.get_circuit_breaker_status.return_value = (True, None)
+    scheduler = CacheAwareScheduler()
+    key = _make_key(
+        upstream_metadata={
+            "codex": {
+                "primary_used_percent": 100.0,
+                "secondary_used_percent": 100.0,
+            }
+        },
+        auth_type="oauth",
+    )
+
+    ok, reason, _mapped = scheduler._candidate_builder._check_key_availability(
+        key,
+        api_format="openai:cli",
+        model_name="any-model",
+        provider_type="codex",
+    )
+
+    assert ok is True
+    assert reason is None
 
 
 @patch("src.services.scheduling.candidate_builder.get_health_monitor")
