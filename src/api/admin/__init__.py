@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from .access_token_deletions import router as access_token_deletions_router
 from .adaptive import router as adaptive_router
 from .api_keys import router as api_keys_router
 from .billing import router as billing_router
@@ -24,6 +25,7 @@ from .video_tasks import router as video_tasks_router
 from .wallets import router as wallets_router
 
 router = APIRouter()
+router.include_router(access_token_deletions_router)
 router.include_router(system_router)
 router.include_router(users_router)
 router.include_router(providers_router)
