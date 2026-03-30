@@ -7,6 +7,7 @@ import pytest
 
 from src.models.database import AccessTokenDeleteLog
 from src.services.provider_keys.access_token_auto_delete import (
+    _has_other_inflight_requests_for_key,
     build_delete_log_payload,
     delete_access_token_only_key_on_http400,
     is_access_token_only_oauth_key,
@@ -85,8 +86,9 @@ def test_access_token_delete_log_model_has_expected_columns() -> None:
 
 
 class _FakeDB:
-    def __init__(self, key: Any | None = None) -> None:
+    def __init__(self, key: Any | None = None, *, active_requests: list[Any] | None = None) -> None:
         self.key = key
+        self.active_requests = active_requests or []
         self.deleted: list[Any] = []
         self.added: list[Any] = []
         self.commit_count = 0
@@ -103,6 +105,22 @@ class _FakeDB:
 
     def rollback(self) -> None:
         self.rollback_count += 1
+
+
+def test_has_other_inflight_requests_for_key_ignores_current_request() -> None:
+    db = _FakeDB(
+        active_requests=[
+            {'provider_api_key_id': 'k1', 'request_id': 'req-3', 'status': 'pending'},
+        ]
+    )
+
+    has_other = _has_other_inflight_requests_for_key(
+        db=db,
+        key_id='k1',
+        current_request_id='req-3',
+    )
+
+    assert has_other is False
 
 
 @pytest.mark.asyncio
@@ -192,6 +210,89 @@ async def test_delete_access_token_only_key_on_http400_deletes_key_and_records_l
     assert db.added[0].snapshot_auth_config == 'enc-config'
     assert db.added[0].snapshot_payload['api_formats'] == ['openai:cli']
     assert db.added[0].restore_status == 'pending'
+
+
+@pytest.mark.asyncio
+async def test_delete_access_token_only_key_on_http400_skips_delete_when_other_requests_inflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    key = SimpleNamespace(
+        id='k1',
+        provider_id='p1',
+        name='demo-key',
+        auth_type='oauth',
+        is_active=True,
+        api_key='enc-access',
+        auth_config='enc-config',
+        api_formats=['openai:cli'],
+        allowed_models=['gpt-5.2'],
+        upstream_metadata={},
+    )
+    provider = SimpleNamespace(id='p1', name='Codex Pool', provider_type='codex')
+    db = _FakeDB(
+        key,
+        active_requests=[
+            {'provider_api_key_id': 'k1', 'request_id': 'req-legacy', 'status': 'streaming'},
+        ],
+    )
+
+    monkeypatch.setattr(
+        'src.services.provider_keys.access_token_auto_delete.crypto_service.decrypt',
+        lambda value: {
+            'enc-access': 'access-token',
+            'enc-config': '{"email": "demo@test.local"}',
+        }[value],
+    )
+    monkeypatch.setattr(
+        'src.services.provider_keys.access_token_auto_delete._get_key_for_delete',
+        lambda db, key_id: key,
+    )
+
+    await delete_access_token_only_key_on_http400(
+        db=db,
+        provider=provider,
+        key_id='k1',
+        status_code=400,
+        endpoint_sig='openai:cli',
+        request_id='req-1',
+        error_message='400 Bad Request',
+        raw_error_excerpt='<html>400</html>',
+        proxy_node_id='node-1',
+        proxy_node_name='CF-1',
+    )
+    await delete_access_token_only_key_on_http400(
+        db=db,
+        provider=provider,
+        key_id='k1',
+        status_code=400,
+        endpoint_sig='openai:cli',
+        request_id='req-2',
+        error_message='400 Bad Request',
+        raw_error_excerpt='<html>400</html>',
+        proxy_node_id='node-1',
+        proxy_node_name='CF-1',
+    )
+    deleted = await delete_access_token_only_key_on_http400(
+        db=db,
+        provider=provider,
+        key_id='k1',
+        status_code=400,
+        endpoint_sig='openai:cli',
+        request_id='req-3',
+        error_message='400 Bad Request',
+        raw_error_excerpt='<html>400</html>',
+        proxy_node_id='node-1',
+        proxy_node_name='CF-1',
+    )
+
+    assert deleted is False
+    assert db.deleted == []
+    assert db.commit_count == 0
+    assert len(db.added) == 0
+    assert (
+        key.upstream_metadata['codex']['access_token_delete_http400_count']
+        == 3
+    )
 
 
 @pytest.mark.asyncio

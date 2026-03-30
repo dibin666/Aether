@@ -10,7 +10,7 @@ from sqlalchemy import func
 
 from src.core.crypto import crypto_service
 from src.core.exceptions import NotFoundException
-from src.models.database import AccessTokenDeleteLog, Provider, ProviderAPIKey
+from src.models.database import AccessTokenDeleteLog, Provider, ProviderAPIKey, Usage
 from src.services.provider_keys.key_side_effects import (
     cleanup_key_references,
     run_create_key_side_effects,
@@ -210,6 +210,48 @@ def _get_key_for_delete(db: Any, key_id: str) -> Any | None:
     return getattr(db, "key", None)
 
 
+def _is_active_usage_status(status: Any) -> bool:
+    return str(status or "").strip().lower() in {"pending", "streaming"}
+
+
+def _has_other_inflight_requests_for_key(
+    *,
+    db: Any,
+    key_id: str,
+    current_request_id: str | None,
+) -> bool:
+    active_requests = getattr(db, "active_requests", None)
+    if isinstance(active_requests, list):
+        for item in active_requests:
+            provider_api_key_id = (
+                item.get("provider_api_key_id")
+                if isinstance(item, dict)
+                else getattr(item, "provider_api_key_id", None)
+            )
+            request_id = (
+                item.get("request_id") if isinstance(item, dict) else getattr(item, "request_id", None)
+            )
+            status = item.get("status") if isinstance(item, dict) else getattr(item, "status", None)
+            if str(provider_api_key_id or "").strip() != key_id:
+                continue
+            if current_request_id and str(request_id or "").strip() == current_request_id:
+                continue
+            if _is_active_usage_status(status):
+                return True
+        return False
+
+    if not hasattr(db, "query"):
+        return False
+
+    query = db.query(Usage.id).filter(
+        Usage.provider_api_key_id == key_id,
+        Usage.status.in_(["pending", "streaming"]),
+    )
+    if current_request_id:
+        query = query.filter(Usage.request_id != current_request_id)
+    return query.first() is not None
+
+
 def _get_delete_log_for_restore(db: Any, log_id: str) -> Any | None:
     if hasattr(db, "query"):
         return db.query(AccessTokenDeleteLog).filter(AccessTokenDeleteLog.id == log_id).first()
@@ -262,6 +304,12 @@ async def delete_access_token_only_key_on_http400(
     observed_count = _get_http400_counter(key) + 1
     _set_http400_counter(key, count=observed_count, observed_at=observed_at)
     if observed_count < HTTP400_DELETE_THRESHOLD:
+        return False
+    if _has_other_inflight_requests_for_key(
+        db=db,
+        key_id=str(key_id),
+        current_request_id=request_id,
+    ):
         return False
 
     auth_config = _safe_json_dict(crypto_service.decrypt(getattr(key, "auth_config", "") or "{}"))
