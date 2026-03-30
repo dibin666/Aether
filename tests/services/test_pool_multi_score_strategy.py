@@ -160,6 +160,37 @@ def test_multi_score_preset_recent_refresh_prefers_nearer_reset() -> None:
     assert s2 < s1
 
 
+def test_multi_score_codex_access_token_only_ignores_recent_refresh() -> None:
+    strategy = MultiScoreStrategy()
+    cfg = PoolConfig(
+        scheduling_mode="multi_score",
+        scheduling_presets=(SchedulingPreset(preset="recent_refresh", enabled=True),),
+    )
+    ctx = {
+        "provider_type": "codex",
+        "all_key_ids": ["k1", "k2"],
+        "lru_scores": {"k1": 100.0, "k2": 200.0},
+        "keys_by_id": {
+            "k1": _key_with_metadata(
+                {"codex": {"primary_reset_seconds": 600}},
+                auth_type="oauth",
+                auth_config="{}",
+            ),
+            "k2": _key_with_metadata(
+                {"codex": {"primary_reset_seconds": 120}},
+                auth_type="oauth",
+                auth_config="{}",
+            ),
+        },
+    }
+
+    s1 = strategy.compute_score(key_id="k1", config=cfg, context=ctx)
+    s2 = strategy.compute_score(key_id="k2", config=cfg, context=ctx)
+
+    assert s1 is not None and s2 is not None
+    assert s1 < s2
+
+
 def test_multi_score_preset_recent_refresh_uses_codex_weekly_reset() -> None:
     strategy = MultiScoreStrategy()
     cfg = PoolConfig(

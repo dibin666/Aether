@@ -39,6 +39,7 @@ from src.services.provider.format import normalize_endpoint_signature
 from src.services.provider.pool.account_state import (
     resolve_pool_account_state as _resolve_pool_account_state,
 )
+from src.services.provider_keys.access_token_only import is_access_token_only_codex_oauth_key
 from src.services.scheduling.quota_skipper import is_key_quota_exhausted
 from src.services.scheduling.utils import release_db_connection_before_await
 
@@ -365,11 +366,12 @@ class CandidateBuilder:
             - mapping_matched_model: 通过映射匹配到的模型名（用于实际请求）
         """
         # 检查熔断器状态（使用详细状态方法获取更丰富的跳过原因，按 API 格式）
-        is_available, circuit_reason = get_health_monitor().get_circuit_breaker_status(
-            key, api_format=api_format
-        )
-        if not is_available:
-            return False, circuit_reason or "熔断器已打开", None
+        if not is_access_token_only_codex_oauth_key(provider_type=provider_type, key=key):
+            is_available, circuit_reason = get_health_monitor().get_circuit_breaker_status(
+                key, api_format=api_format
+            )
+            if not is_available:
+                return False, circuit_reason or "熔断器已打开", None
 
         # 模型权限检查：使用 allowed_models 白名单
         # None = 允许所有模型，[] = 拒绝所有模型，["a","b"] = 只允许指定模型

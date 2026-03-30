@@ -11,6 +11,7 @@ def _make_key(
     allowed_models: list[str] | None = None,
     capabilities: dict[str, bool] | None = None,
     auth_type: str = "api_key",
+    auth_config: str | None = None,
 ) -> MagicMock:
     key = MagicMock()
     key.id = "k1234567890"
@@ -18,6 +19,7 @@ def _make_key(
     key.capabilities = capabilities or {}
     key.upstream_metadata = upstream_metadata
     key.auth_type = auth_type
+    key.auth_config = auth_config
     return key
 
 
@@ -115,6 +117,58 @@ def test_codex_oauth_quota_exhausted_still_allows(mock_get_health_monitor: Magic
             }
         },
         auth_type="oauth",
+        auth_config="{}",
+    )
+
+    ok, reason, _mapped = scheduler._candidate_builder._check_key_availability(
+        key,
+        api_format="openai:cli",
+        model_name="any-model",
+        provider_type="codex",
+    )
+
+    assert ok is True
+    assert reason is None
+
+
+@patch("src.services.scheduling.candidate_builder.get_health_monitor")
+def test_codex_oauth_with_refresh_token_still_respects_quota_skip(
+    mock_get_health_monitor: MagicMock,
+) -> None:
+    mock_get_health_monitor.return_value.get_circuit_breaker_status.return_value = (True, None)
+    scheduler = CacheAwareScheduler()
+    key = _make_key(
+        upstream_metadata={
+            "codex": {
+                "primary_used_percent": 100.0,
+                "secondary_used_percent": 100.0,
+            }
+        },
+        auth_type="oauth",
+        auth_config='{"refresh_token":"rt-1"}',
+    )
+
+    ok, reason, _mapped = scheduler._candidate_builder._check_key_availability(
+        key,
+        api_format="openai:cli",
+        model_name="any-model",
+        provider_type="codex",
+    )
+
+    assert ok is False
+    assert reason == "Codex 周限额剩余 0%，5H 限额剩余 0%"
+
+
+@patch("src.services.scheduling.candidate_builder.get_health_monitor")
+def test_codex_access_token_only_bypasses_circuit_breaker(
+    mock_get_health_monitor: MagicMock,
+) -> None:
+    mock_get_health_monitor.return_value.get_circuit_breaker_status.return_value = (False, "熔断中")
+    scheduler = CacheAwareScheduler()
+    key = _make_key(
+        upstream_metadata={},
+        auth_type="oauth",
+        auth_config="{}",
     )
 
     ok, reason, _mapped = scheduler._candidate_builder._check_key_availability(

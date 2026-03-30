@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import src.services.provider.pool.dimensions  # noqa: F401
+from src.services.provider_keys.access_token_only import is_access_token_only_codex_oauth_key
 from src.services.provider.pool.dimensions import get_preset_dimension, get_preset_names
 from src.services.provider.pool.dimensions._helpers import rank_ascending, safe_float
 from src.services.provider.pool.strategy import register_pool_strategy
@@ -107,6 +108,30 @@ def _normalize_presets_from_config(
     return tuple((preset_name, mode) for _anchor, _idx, preset_name, mode in ordered_enabled)
 
 
+def _all_access_token_only_codex_keys(
+    *,
+    provider_type: str | None,
+    all_key_ids: list[str],
+    keys_by_id: dict[str, Any],
+) -> bool:
+    normalized_provider = str(provider_type or "").strip().lower()
+    if normalized_provider != "codex" or not all_key_ids or not isinstance(keys_by_id, dict):
+        return False
+
+    found_any = False
+    for key_id in all_key_ids:
+        key_obj = keys_by_id.get(key_id)
+        if key_obj is None:
+            return False
+        if not is_access_token_only_codex_oauth_key(
+            provider_type=normalized_provider,
+            key=key_obj,
+        ):
+            return False
+        found_any = True
+    return found_any
+
+
 class MultiScoreStrategy:
     name = "multi_score"
 
@@ -145,6 +170,16 @@ class MultiScoreStrategy:
             config,
             provider_type=context.get("provider_type"),
         )
+        if _all_access_token_only_codex_keys(
+            provider_type=context.get("provider_type"),
+            all_key_ids=all_key_ids,
+            keys_by_id=keys_by_id,
+        ):
+            presets = tuple(
+                (preset_name, mode)
+                for preset_name, mode in presets
+                if preset_name not in {"recent_refresh", "quota_balanced"}
+            )
         lru_enabled = bool(getattr(config, "lru_enabled", True))
         if presets:
             return self._compute_preset_score(
@@ -156,6 +191,12 @@ class MultiScoreStrategy:
                 keys_by_id=keys_by_id,
                 context=context,
             )
+        if _all_access_token_only_codex_keys(
+            provider_type=context.get("provider_type"),
+            all_key_ids=all_key_ids,
+            keys_by_id=keys_by_id,
+        ):
+            return rank_ascending(key_id, lru_scores, all_key_ids)
 
         weights = getattr(config, "scoring_weights", None)
         w_lru = safe_float(getattr(weights, "lru", 0.3)) or 0.0

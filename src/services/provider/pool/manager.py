@@ -24,6 +24,7 @@ from src.services.provider.pool.account_state import resolve_pool_account_state
 from src.services.provider.pool.config import PoolConfig
 from src.services.provider.pool.health_cache import get_health_scores
 from src.services.provider.pool.trace import PoolCandidateTrace, PoolSchedulingTrace
+from src.services.provider_keys.access_token_only import is_access_token_only_codex_oauth_key
 
 if TYPE_CHECKING:
     from src.models.database import ProviderAPIKey
@@ -35,13 +36,10 @@ def _should_bypass_account_block_for_scheduling(
     key: Any,
     account_state: Any,
 ) -> bool:
-    normalized_provider = str(provider_type or "").strip().lower()
-    auth_type = str(getattr(key, "auth_type", "") or "").strip().lower()
     state_code = str(getattr(account_state, "code", "") or "").strip().lower()
-    return (
-        normalized_provider == "codex"
-        and auth_type == "oauth"
-        and state_code == "oauth_expired"
+    return state_code == "oauth_expired" and is_access_token_only_codex_oauth_key(
+        provider_type=provider_type,
+        key=key,
     )
 
 
