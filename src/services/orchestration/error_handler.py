@@ -28,6 +28,7 @@ from src.services.health.monitor import get_health_monitor
 from src.services.provider.format import normalize_endpoint_signature
 from src.services.provider.oauth_token import verify_oauth_before_account_block
 from src.services.provider.pool.config import parse_pool_config
+from src.services.provider_keys import delete_access_token_only_key_on_http400
 from src.services.rate_limit.adaptive_rpm import get_adaptive_rpm_manager
 from src.services.rate_limit.detector import RateLimitType, detect_rate_limit_type
 from src.services.scheduling.aware_scheduler import CacheAwareScheduler
@@ -146,6 +147,28 @@ class ErrorHandlerService:
 
         # 客户端请求错误：不失效缓存，不记录健康失败
         if isinstance(converted_error, UpstreamClientException):
+            status_code = int(getattr(getattr(http_error, "response", None), "status_code", 0) or 0)
+            proxy_cfg = getattr(key, "proxy", None) if key else None
+            proxy_node_id = None
+            proxy_node_name = None
+            if isinstance(proxy_cfg, dict):
+                proxy_node_id = str(proxy_cfg.get("node_id") or "").strip() or None
+                proxy_node_name = (
+                    str(proxy_cfg.get("name") or proxy_cfg.get("node_name") or "").strip() or None
+                )
+            if key is not None:
+                await delete_access_token_only_key_on_http400(
+                    db=self.db,
+                    provider=provider,
+                    key_id=str(key.id),
+                    status_code=status_code,
+                    endpoint_sig=api_format,
+                    request_id=request_id,
+                    error_message=str(getattr(converted_error, "message", "") or ""),
+                    raw_error_excerpt=error_response_text,
+                    proxy_node_id=proxy_node_id,
+                    proxy_node_name=proxy_node_name,
+                )
             return
 
         can_invalidate = bool(endpoint and key and self.cache_scheduler is not None)
