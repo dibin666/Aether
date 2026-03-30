@@ -17,6 +17,9 @@ from src.utils.database_helpers import escape_like_pattern
 
 
 SYSTEM_DELETE_ACTOR = "system:auto-delete-http400"
+HTTP400_DELETE_THRESHOLD = 3
+HTTP400_COUNTER_FIELD = "access_token_delete_http400_count"
+HTTP400_LAST_AT_FIELD = "access_token_delete_last_http400_at"
 
 
 def _safe_json_dict(raw: str | None) -> dict[str, Any]:
@@ -25,6 +28,45 @@ def _safe_json_dict(raw: str | None) -> dict[str, Any]:
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _safe_dict(raw: Any) -> dict[str, Any]:
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _copy_codex_metadata(key: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    root = _safe_dict(getattr(key, "upstream_metadata", None))
+    codex_meta = _safe_dict(root.get("codex"))
+    return root, codex_meta
+
+
+def _write_codex_metadata(
+    key: Any,
+    *,
+    root: dict[str, Any],
+    codex_meta: dict[str, Any],
+) -> None:
+    if codex_meta:
+        root["codex"] = codex_meta
+    elif "codex" in root:
+        root.pop("codex")
+    key.upstream_metadata = root or {}
+
+
+def _get_http400_counter(key: Any) -> int:
+    _, codex_meta = _copy_codex_metadata(key)
+    return int(codex_meta.get(HTTP400_COUNTER_FIELD) or 0)
+
+
+def _set_http400_counter(key: Any, *, count: int, observed_at: str | None) -> None:
+    root, codex_meta = _copy_codex_metadata(key)
+    if count > 0:
+        codex_meta[HTTP400_COUNTER_FIELD] = count
+        codex_meta[HTTP400_LAST_AT_FIELD] = observed_at
+    else:
+        codex_meta.pop(HTTP400_COUNTER_FIELD, None)
+        codex_meta.pop(HTTP400_LAST_AT_FIELD, None)
+    _write_codex_metadata(key, root=root, codex_meta=codex_meta)
 
 
 def is_access_token_only_oauth_key(*, provider: Any, key: Any, decrypt: Callable[[str], str]) -> bool:
@@ -82,6 +124,14 @@ def _get_key_for_delete(db: Any, key_id: str) -> Any | None:
     return getattr(db, "key", None)
 
 
+def reset_access_token_only_key_http400_counter(*, db: Any, key_id: str) -> bool:
+    key = _get_key_for_delete(db, key_id)
+    if key is None or _get_http400_counter(key) <= 0:
+        return False
+    _set_http400_counter(key, count=0, observed_at=None)
+    return True
+
+
 async def _maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
@@ -108,6 +158,12 @@ async def delete_access_token_only_key_on_http400(
     if key is None:
         return False
     if not is_access_token_only_oauth_key(provider=provider, key=key, decrypt=crypto_service.decrypt):
+        return False
+
+    observed_at = datetime.now(timezone.utc).isoformat()
+    observed_count = _get_http400_counter(key) + 1
+    _set_http400_counter(key, count=observed_count, observed_at=observed_at)
+    if observed_count < HTTP400_DELETE_THRESHOLD:
         return False
 
     auth_config = _safe_json_dict(crypto_service.decrypt(getattr(key, "auth_config", "") or "{}"))

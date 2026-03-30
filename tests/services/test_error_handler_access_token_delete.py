@@ -155,3 +155,45 @@ async def test_handle_http_error_triggers_access_token_delete_for_generic_http40
 
     assert called['key_id'] == 'k1'
     assert called['status_code'] == 400
+
+
+@pytest.mark.asyncio
+async def test_handle_http_error_resets_http400_counter_for_non_400(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ErrorHandlerService(db=SimpleNamespace())
+    provider = SimpleNamespace(id='p1', name='Codex Pool', provider_type='codex')
+    endpoint = SimpleNamespace(api_family='openai', endpoint_kind='cli')
+    key = SimpleNamespace(id='k1', provider_id='p1', auth_type='oauth', proxy=None)
+
+    request = httpx.Request('POST', 'https://example.test/v1/chat/completions')
+    response = httpx.Response(401, request=request, text='unauthorized')
+    http_error = httpx.HTTPStatusError('401', request=request, response=response)
+    converted = ProviderAuthException(provider_name='Codex Pool')
+
+    reset_calls: list[str] = []
+
+    monkeypatch.setattr(
+        'src.services.orchestration.error_handler.reset_access_token_only_key_http400_counter',
+        lambda db, key_id: reset_calls.append(key_id),
+    )
+    monkeypatch.setattr(
+        'src.services.orchestration.error_handler.get_health_monitor',
+        lambda: SimpleNamespace(record_failure=lambda **kwargs: None),
+    )
+
+    await service.handle_http_error(
+        http_error=http_error,
+        converted_error=converted,
+        error_response_text='unauthorized',
+        provider=provider,
+        endpoint=endpoint,
+        key=key,
+        affinity_key='affinity-1',
+        api_format='openai:cli',
+        global_model_id='gpt-5.2',
+        request_id='req-3',
+        captured_key_concurrent=None,
+    )
+
+    assert reset_calls == ['k1']

@@ -28,7 +28,10 @@ from src.services.health.monitor import get_health_monitor
 from src.services.provider.format import normalize_endpoint_signature
 from src.services.provider.oauth_token import verify_oauth_before_account_block
 from src.services.provider.pool.config import parse_pool_config
-from src.services.provider_keys import delete_access_token_only_key_on_http400
+from src.services.provider_keys.access_token_auto_delete import (
+    delete_access_token_only_key_on_http400,
+    reset_access_token_only_key_http400_counter,
+)
 from src.services.rate_limit.adaptive_rpm import get_adaptive_rpm_manager
 from src.services.rate_limit.detector import RateLimitType, detect_rate_limit_type
 from src.services.scheduling.aware_scheduler import CacheAwareScheduler
@@ -181,6 +184,10 @@ class ErrorHandlerService:
         fam = str(getattr(endpoint, "api_family", "")).strip().lower()
         kind = str(getattr(endpoint, "endpoint_kind", "")).strip().lower()
         provider_format_str = make_signature_key(fam, kind) if fam and kind else client_format_str
+        status_code = int(getattr(getattr(http_error, "response", None), "status_code", 0) or 0)
+
+        if status_code != 400 and key is not None:
+            reset_access_token_only_key_http400_counter(db=self.db, key_id=str(key.id))
 
         if await self._maybe_delete_access_token_key_for_http400(
             http_error=http_error,
@@ -322,6 +329,9 @@ class ErrorHandlerService:
         fam = str(getattr(endpoint, "api_family", "")).strip().lower()
         kind = str(getattr(endpoint, "endpoint_kind", "")).strip().lower()
         provider_format_str = make_signature_key(fam, kind) if fam and kind else client_format_str
+
+        if key:
+            reset_access_token_only_key_http400_counter(db=self.db, key_id=str(key.id))
 
         # 限流错误
         if isinstance(error, ProviderRateLimitException) and key:

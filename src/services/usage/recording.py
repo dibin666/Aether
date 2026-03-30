@@ -19,6 +19,9 @@ from src.models.database import (
     UserModelUsageCount,
 )
 from src.services.billing.precision import to_money_decimal
+from src.services.provider_keys.access_token_auto_delete import (
+    reset_access_token_only_key_http400_counter,
+)
 from src.services.provider_keys.codex_quota_sync_dispatcher import (
     dispatch_codex_quota_sync_from_response_headers,
 )
@@ -101,6 +104,8 @@ def _increment_provider_api_key_totals(
     """原子更新 ProviderAPIKey 统计并刷新最后使用时间。"""
     if not provider_api_key_id:
         return
+
+    reset_access_token_only_key_http400_counter(db=db, key_id=provider_api_key_id)
 
     from sqlalchemy import func as sql_func
 

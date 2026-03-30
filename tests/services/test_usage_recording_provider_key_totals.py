@@ -59,6 +59,21 @@ def test_increment_provider_api_key_totals_skips_when_key_id_missing() -> None:
     db.execute.assert_not_called()
 
 
+def test_increment_provider_api_key_totals_resets_http400_counter(monkeypatch: Any) -> None:
+    db = MagicMock()
+    reset = MagicMock()
+    monkeypatch.setattr(recording_module, "reset_access_token_only_key_http400_counter", reset)
+
+    recording_module._increment_provider_api_key_totals(
+        db,
+        "provider-key-reset",
+        total_tokens=10,
+        total_cost=0.2,
+    )
+
+    reset.assert_called_once_with(db=db, key_id="provider-key-reset")
+
+
 @pytest.mark.asyncio
 async def test_record_usage_updates_provider_key_totals(monkeypatch: Any) -> None:
     db = MagicMock()
