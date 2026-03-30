@@ -28,7 +28,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from redis.asyncio import Redis
 from sqlalchemy.orm import Session
 
@@ -149,7 +149,11 @@ def _mark_refresh_failed_sync(key_id: str, reason: str) -> None:
         key = db.query(ProviderAPIKey).filter(ProviderAPIKey.id == key_id).first()
         if not key:
             raise NotFoundException("Key 不存在", "key")
+        from src.services.provider.oauth_token import is_account_level_block
+
         current_reason = str(getattr(key, "oauth_invalid_reason", None) or "").strip()
+        if is_account_level_block(current_reason):
+            return
         merged_reason = _merge_refresh_failure_reason(current_reason, reason)
         if merged_reason is None:
             return
@@ -1577,10 +1581,97 @@ def _coerce_import_str(value: Any) -> str | None:
     return normalized or None
 
 
+def _coerce_import_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return None
+    return normalized if normalized > 0 else None
+
+
+def _decode_unverified_import_jwt_payload(token: str | None) -> dict[str, Any] | None:
+    token_text = _coerce_import_str(token)
+    if not token_text:
+        return None
+    parts = token_text.split(".")
+    if len(parts) != 3:
+        return None
+    payload = parts[1]
+    padding = "=" * ((4 - len(payload) % 4) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload + padding)
+        claims = json.loads(decoded)
+    except Exception:
+        return None
+    return claims if isinstance(claims, dict) else None
+
+
+def _looks_like_access_token_candidate(token: str | None) -> bool:
+    claims = _decode_unverified_import_jwt_payload(token)
+    return bool(
+        isinstance(claims, dict)
+        and any(key in claims for key in ("exp", "iat", "iss", "sub", "email"))
+    )
+
+
+def _extract_import_expires_at(*values: Any) -> int | None:
+    for value in values:
+        normalized = _coerce_import_int(value)
+        if normalized:
+            return normalized
+
+        token_text = _coerce_import_str(value)
+        if not token_text:
+            continue
+        claims = _decode_unverified_import_jwt_payload(token_text)
+        if not isinstance(claims, dict):
+            continue
+        exp_value = _coerce_import_int(claims.get("exp"))
+        if exp_value:
+            return exp_value
+    return None
+
+
+def _build_standard_oauth_import_auth_config(
+    *,
+    provider_type: str,
+    token_response: dict[str, Any],
+) -> dict[str, Any]:
+    access_token = _coerce_import_str(
+        token_response.get("access_token") or token_response.get("accessToken")
+    )
+    id_token = _coerce_import_str(token_response.get("id_token") or token_response.get("idToken"))
+    refresh_token = _coerce_import_str(
+        token_response.get("refresh_token") or token_response.get("refreshToken")
+    )
+    token_type = _coerce_import_str(
+        token_response.get("token_type") or token_response.get("tokenType")
+    )
+
+    return {
+        "provider_type": provider_type,
+        "token_type": token_type or ("Bearer" if access_token else None),
+        "refresh_token": refresh_token or None,
+        "expires_at": _extract_import_expires_at(
+            token_response.get("expires_at"),
+            token_response.get("expiresAt"),
+            token_response.get("exp"),
+            access_token,
+            id_token,
+        ),
+        "scope": token_response.get("scope"),
+        "updated_at": int(time.time()),
+    }
+
+
 def _extract_standard_oauth_import_entry(item: Any) -> dict[str, Any] | None:
     if isinstance(item, str):
         token = _coerce_import_str(item)
         if token:
+            if _looks_like_access_token_candidate(token):
+                return {"access_token": token}
             return {"refresh_token": token}
         return None
     if not isinstance(item, dict):
@@ -1589,10 +1680,35 @@ def _extract_standard_oauth_import_entry(item: Any) -> dict[str, Any] | None:
     refresh_token = _coerce_import_str(item.get("refresh_token")) or _coerce_import_str(
         item.get("refreshToken")
     )
-    if not refresh_token:
+    access_token = _coerce_import_str(item.get("access_token")) or _coerce_import_str(
+        item.get("accessToken")
+    )
+    if not refresh_token and not access_token:
         return None
 
-    entry: dict[str, Any] = {"refresh_token": refresh_token}
+    entry: dict[str, Any] = {}
+    if refresh_token:
+        entry["refresh_token"] = refresh_token
+    if access_token:
+        entry["access_token"] = access_token
+
+    id_token = _coerce_import_str(item.get("id_token")) or _coerce_import_str(item.get("idToken"))
+    if id_token:
+        entry["id_token"] = id_token
+
+    expires_at = _extract_import_expires_at(
+        item.get("expires_at"),
+        item.get("expiresAt"),
+        item.get("exp"),
+        access_token,
+        id_token,
+    )
+    if expires_at:
+        entry["expires_at"] = expires_at
+
+    name = _coerce_import_str(item.get("name"))
+    if name:
+        entry["name"] = name
 
     account_id = (
         _coerce_import_str(item.get("account_id"))
@@ -1630,7 +1746,7 @@ def _extract_standard_oauth_import_entry(item: Any) -> dict[str, Any] | None:
     if user_id:
         entry["user_id"] = user_id
 
-    email = _coerce_import_str(item.get("email"))
+    email = _coerce_import_str(item.get("email")) or _coerce_import_str(item.get("oauth_email"))
     if email:
         entry["email"] = email
 
@@ -1678,14 +1794,24 @@ def _parse_standard_oauth_import_entries(raw_input: str) -> list[dict[str, Any]]
     for line in raw.splitlines():
         token = line.strip()
         if token and not token.startswith("#"):
-            result.append({"refresh_token": token})
+            if _looks_like_access_token_candidate(token):
+                result.append({"access_token": token})
+            else:
+                result.append({"refresh_token": token})
 
     return result
 
 
 def _parse_tokens_input(raw_input: str) -> list[str]:
-    """兼容旧逻辑：仅返回 refresh_token 列表。"""
-    return [entry["refresh_token"] for entry in _parse_standard_oauth_import_entries(raw_input)]
+    """兼容旧逻辑：返回 refresh_token；若无则回退 access_token。"""
+    tokens: list[str] = []
+    for entry in _parse_standard_oauth_import_entries(raw_input):
+        token = _coerce_import_str(entry.get("refresh_token")) or _coerce_import_str(
+            entry.get("access_token")
+        )
+        if token:
+            tokens.append(token)
+    return tokens
 
 
 def _parse_kiro_import_input(raw_input: str) -> list[dict[str, Any]]:
@@ -1788,12 +1914,26 @@ def _parse_kiro_import_input(raw_input: str) -> list[dict[str, Any]]:
 
 
 class ImportRefreshTokenRequest(BaseModel):
-    refresh_token: str = Field(..., min_length=1, description="Refresh Token")
+    refresh_token: str | None = Field(None, min_length=1, description="Refresh Token")
+    access_token: str | None = Field(None, min_length=1, description="Access Token")
+    id_token: str | None = Field(None, description="ID Token（可选）")
+    account_id: str | None = Field(None, description="账号 ID（可选）")
+    account_user_id: str | None = Field(None, description="账号用户 ID（可选）")
+    plan_type: str | None = Field(None, description="套餐类型（可选）")
+    user_id: str | None = Field(None, description="用户 ID（可选）")
+    email: str | None = Field(None, description="邮箱（可选）")
+    expires_at: int | None = Field(None, description="过期时间戳（可选）")
     name: str | None = Field(None, max_length=100, description="账号名称（可选）")
     proxy_node_id: str | None = Field(
         None,
         description="代理节点 ID（可选）。设置后导入验证及后续所有操作均走该代理",
     )
+
+    @model_validator(mode="after")
+    def validate_token_presence(self) -> "ImportRefreshTokenRequest":
+        if _coerce_import_str(self.refresh_token) or _coerce_import_str(self.access_token):
+            return self
+        raise ValueError("refresh_token 或 access_token 至少提供一个")
 
 
 class BatchImportRequest(BaseModel):
@@ -1967,6 +2107,60 @@ async def import_refresh_token(
     proxy_config, key_proxy = _resolve_proxy_for_oauth(
         getattr(provider, "proxy", None), payload.proxy_node_id
     )
+
+    imported_access_token = _coerce_import_str(payload.access_token)
+    if imported_access_token:
+        import_entry = payload.model_dump(exclude_none=True)
+        auth_config = _build_standard_oauth_import_auth_config(
+            provider_type=provider_type,
+            token_response=import_entry,
+        )
+
+        auth_config = await enrich_auth_config(
+            provider_type=provider_type,
+            auth_config=auth_config,
+            token_response=import_entry,
+            access_token=imported_access_token,
+            proxy_config=proxy_config,
+        )
+
+        if provider_type == ProviderType.CODEX.value:
+            _apply_codex_import_hints(auth_config, import_entry)
+
+        existing_key = _check_duplicate_oauth_account(db, provider_id, auth_config)
+        replaced = False
+
+        if existing_key:
+            new_key = _update_existing_oauth_key(
+                db, existing_key, imported_access_token, auth_config, proxy=key_proxy
+            )
+            replaced = True
+        else:
+            name = (payload.name or "").strip()
+            if not name:
+                name = auth_config.get("email") or f"账号_{int(time.time())}"
+
+            new_key = _create_oauth_key(
+                db,
+                provider_id=provider_id,
+                name=name,
+                access_token=imported_access_token,
+                auth_config=auth_config,
+                api_formats=_get_provider_api_formats(provider),
+                proxy=key_proxy,
+            )
+
+        response = ProviderCompleteOAuthResponse(
+            key_id=str(new_key.id),
+            provider_type=provider_type,
+            expires_at=auth_config.get("expires_at"),
+            has_refresh_token=bool(auth_config.get("refresh_token")),
+            email=auth_config.get("email"),
+            replaced=replaced,
+        )
+
+        safe_create_task(_refresh_quota_after_import(provider_id, provider_type, [str(new_key.id)]))
+        return response
 
     if provider_type == ProviderType.KIRO.value:
         raw_import = payload.refresh_token.strip()
@@ -2305,8 +2499,98 @@ async def _batch_import_standard_oauth_internal(
 
         async with sem:
             try:
-                refresh_token = import_entry.get("refresh_token", "")
-                if not refresh_token or len(refresh_token) < 10:
+                access_token = _coerce_import_str(import_entry.get("access_token"))
+                refresh_token = _coerce_import_str(import_entry.get("refresh_token")) or ""
+                if access_token:
+                    auth_config = _build_standard_oauth_import_auth_config(
+                        provider_type=provider_type,
+                        token_response=import_entry,
+                    )
+
+                    try:
+                        _release_batch_import_db_connection_before_await(db)
+                        auth_config = await enrich_auth_config(
+                            provider_type=provider_type,
+                            auth_config=auth_config,
+                            token_response=import_entry,
+                            access_token=access_token,
+                            proxy_config=proxy_config,
+                        )
+                    except Exception as exc:
+                        logger.warning("批量导入: enrich_auth_config 失败 (index={}): {}", idx, exc)
+
+                    if provider_type == ProviderType.CODEX.value:
+                        _apply_codex_import_hints(auth_config, import_entry)
+
+                    async with db_lock:
+                        try:
+                            existing_key = _check_duplicate_oauth_account(
+                                db, provider_id, auth_config
+                            )
+                        except InvalidRequestException as exc:
+                            result_item = BatchImportResultItem(
+                                index=idx,
+                                status="error",
+                                error=str(exc),
+                            )
+                            failed_count += 1
+                            processed_count += 1
+                            results[idx] = result_item
+                            if progress_hook is not None:
+                                _release_batch_import_db_connection_before_await(db)
+                                await progress_hook(
+                                    total,
+                                    processed_count,
+                                    success_count,
+                                    failed_count,
+                                    result_item,
+                                )
+                            return
+
+                        replaced = False
+                        if existing_key:
+                            new_key = _update_existing_oauth_key(
+                                db,
+                                existing_key,
+                                access_token,
+                                auth_config,
+                                flush_only=True,
+                                proxy=key_proxy,
+                            )
+                            name = existing_key.name
+                            replaced = True
+                        else:
+                            name = _coerce_import_str(import_entry.get("name")) or str(
+                                auth_config.get("email") or f"{provider_type}_{int(time.time())}_{idx}"
+                            )
+                            if len(name) > 100:
+                                name = name[:100]
+
+                            new_key = _create_oauth_key(
+                                db,
+                                provider_id=provider_id,
+                                name=name,
+                                access_token=access_token,
+                                auth_config=auth_config,
+                                api_formats=api_formats,
+                                flush_only=True,
+                                proxy=key_proxy,
+                            )
+
+                        pending_success_writes += 1
+                        pending_success_writes = _commit_batch_import_writes_if_needed(
+                            db, pending_success_writes
+                        )
+
+                    result_item = BatchImportResultItem(
+                        index=idx,
+                        status="success",
+                        key_id=str(new_key.id),
+                        key_name=name,
+                        replaced=replaced,
+                    )
+                    success_count += 1
+                elif not refresh_token or len(refresh_token) < 10:
                     result_item = BatchImportResultItem(
                         index=idx,
                         status="error",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -9,6 +10,16 @@ import pytest
 
 from src.api.admin import provider_oauth as module
 from src.core.exceptions import InvalidRequestException
+
+
+def _build_unsigned_jwt(payload: dict[str, object]) -> str:
+    header = base64.urlsafe_b64encode(
+        json.dumps({"alg": "none", "typ": "JWT"}, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    body = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    return f"{header}.{body}."
 
 
 def test_parse_standard_oauth_import_entries_keeps_codex_hints() -> None:
@@ -26,6 +37,49 @@ def test_parse_standard_oauth_import_entries_keeps_codex_hints() -> None:
             "email": "u@example.com",
         }
     ]
+
+
+def test_parse_standard_oauth_import_entries_supports_access_token_payload() -> None:
+    access_token = _build_unsigned_jwt({"exp": 1893456000, "sub": "user-1"})
+
+    entries = module._parse_standard_oauth_import_entries(
+        json.dumps(
+            [
+                {
+                    "accessToken": access_token,
+                    "refreshToken": "rt_1",
+                    "idToken": "id_1",
+                    "accountId": "acc-1",
+                    "chatgptAccountUserId": "u-1__acc-1",
+                    "planType": "TEAM",
+                    "userId": "u-1",
+                    "email": "u@example.com",
+                }
+            ]
+        )
+    )
+
+    assert entries == [
+        {
+            "access_token": access_token,
+            "refresh_token": "rt_1",
+            "id_token": "id_1",
+            "expires_at": 1893456000,
+            "account_id": "acc-1",
+            "account_user_id": "u-1__acc-1",
+            "plan_type": "team",
+            "user_id": "u-1",
+            "email": "u@example.com",
+        }
+    ]
+
+
+def test_parse_standard_oauth_import_entries_treats_raw_jwt_as_access_token() -> None:
+    access_token = _build_unsigned_jwt({"exp": 1893456000, "sub": "user-1"})
+
+    entries = module._parse_standard_oauth_import_entries(access_token)
+
+    assert entries == [{"access_token": access_token}]
 
 
 def test_parse_tokens_input_compatibility_wrapper() -> None:

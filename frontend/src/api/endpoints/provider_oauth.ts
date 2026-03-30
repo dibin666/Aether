@@ -94,7 +94,19 @@ export async function completeProviderLevelOAuth(
 
 export async function importProviderRefreshToken(
   providerId: string,
-  data: { refresh_token: string; name?: string; proxy_node_id?: string }
+  data: {
+    refresh_token?: string
+    access_token?: string
+    id_token?: string
+    account_id?: string
+    account_user_id?: string
+    plan_type?: string
+    user_id?: string
+    email?: string
+    expires_at?: number
+    name?: string
+    proxy_node_id?: string
+  }
 ): Promise<ProviderOAuthCompleteResponseWithKey> {
   const resp = await client.post(`/api/admin/provider-oauth/providers/${providerId}/import-refresh-token`, data)
   return resp.data

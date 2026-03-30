@@ -410,8 +410,8 @@
             :reset-key="importInputResetKey"
             drop-title="拖入授权文件或点击选择"
             drop-hint="支持 .json / .txt，可多选"
-            manual-placeholder="粘贴 Refresh Token 或 JSON 内容"
-            paste-toggle-text="或手动粘贴 Refresh Token"
+            manual-placeholder="粘贴 Access Token / Refresh Token / JSON 内容"
+            paste-toggle-text="或手动粘贴 Token"
             file-toggle-text="或选择 JSON 文件导入"
             textarea-class="min-h-[200px] text-xs font-mono break-all !rounded-xl"
             @error="handleImportInputError"
@@ -670,6 +670,7 @@ const importPolling = ref(false)
 const isOpen = computed(() => props.open)
 
 const isKiroProvider = computed(() => (props.providerType || '').toLowerCase() === 'kiro')
+const isCodexProvider = computed(() => (props.providerType || '').toLowerCase() === 'codex')
 
 const deviceCountdownFormatted = computed(() => {
   const s = deviceCountdown.value
@@ -893,7 +894,33 @@ function isBatchImport(text: string): boolean {
   return lines.length > 1
 }
 
-function parseImportText(text: string): { refresh_token: string; name?: string } | null {
+function looksLikeJwtToken(text: string): boolean {
+  const parts = text.split('.')
+  if (parts.length !== 3) return false
+  try {
+    const payload = parts[1]
+    const padding = '='.repeat((4 - payload.length % 4) % 4)
+    const decoded = JSON.parse(atob((payload + padding).replace(/-/g, '+').replace(/_/g, '/')))
+    return typeof decoded === 'object' && decoded !== null && (
+      'exp' in decoded || 'iat' in decoded || 'sub' in decoded || 'email' in decoded
+    )
+  } catch {
+    return false
+  }
+}
+
+function parseImportText(text: string): {
+  refresh_token?: string
+  access_token?: string
+  id_token?: string
+  account_id?: string
+  account_user_id?: string
+  plan_type?: string
+  user_id?: string
+  email?: string
+  expires_at?: number
+  name?: string
+} | null {
   const trimmed = text.trim()
   if (!trimmed) return null
 
@@ -906,11 +933,43 @@ function parseImportText(text: string): { refresh_token: string; name?: string }
     const parsed: unknown = JSON.parse(trimmed)
     if (typeof parsed === 'object' && parsed !== null) {
       const obj = parsed as Record<string, unknown>
-      const refreshToken = obj.refresh_token
-      if (typeof refreshToken === 'string' && refreshToken.trim()) {
+      const refreshToken = typeof obj.refresh_token === 'string'
+        ? obj.refresh_token
+        : (typeof obj.refreshToken === 'string' ? obj.refreshToken : '')
+      const accessToken = typeof obj.access_token === 'string'
+        ? obj.access_token
+        : (typeof obj.accessToken === 'string' ? obj.accessToken : '')
+      if (refreshToken.trim() || accessToken.trim()) {
+        const expiresAtRaw = obj.expires_at ?? obj.expiresAt ?? obj.exp
+        const expiresAt = typeof expiresAtRaw === 'number'
+          ? expiresAtRaw
+          : (typeof expiresAtRaw === 'string' && /^\d+$/.test(expiresAtRaw) ? Number(expiresAtRaw) : undefined)
+
         return {
-          refresh_token: refreshToken.trim(),
-          name: (typeof obj.name === 'string' ? obj.name : undefined) || (typeof obj.oauth_email === 'string' ? obj.oauth_email : undefined),
+          refresh_token: refreshToken.trim() || undefined,
+          access_token: accessToken.trim() || undefined,
+          id_token: typeof obj.id_token === 'string'
+            ? obj.id_token.trim() || undefined
+            : (typeof obj.idToken === 'string' ? obj.idToken.trim() || undefined : undefined),
+          account_id: typeof obj.account_id === 'string'
+            ? obj.account_id.trim() || undefined
+            : (typeof obj.chatgpt_account_id === 'string' ? obj.chatgpt_account_id.trim() || undefined : undefined),
+          account_user_id: typeof obj.account_user_id === 'string'
+            ? obj.account_user_id.trim() || undefined
+            : (typeof obj.chatgpt_account_user_id === 'string' ? obj.chatgpt_account_user_id.trim() || undefined : undefined),
+          plan_type: typeof obj.plan_type === 'string'
+            ? obj.plan_type.trim() || undefined
+            : (typeof obj.chatgpt_plan_type === 'string' ? obj.chatgpt_plan_type.trim() || undefined : undefined),
+          user_id: typeof obj.user_id === 'string'
+            ? obj.user_id.trim() || undefined
+            : (typeof obj.chatgpt_user_id === 'string' ? obj.chatgpt_user_id.trim() || undefined : undefined),
+          email: typeof obj.email === 'string'
+            ? obj.email.trim() || undefined
+            : (typeof obj.oauth_email === 'string' ? obj.oauth_email.trim() || undefined : undefined),
+          expires_at: expiresAt,
+          name: (typeof obj.name === 'string' ? obj.name : undefined)
+            || (typeof obj.oauth_email === 'string' ? obj.oauth_email : undefined)
+            || (typeof obj.email === 'string' ? obj.email : undefined),
         }
       }
       return null
@@ -919,6 +978,9 @@ function parseImportText(text: string): { refresh_token: string; name?: string }
     // Not JSON: treat as raw token.
   }
 
+  if (isCodexProvider.value && looksLikeJwtToken(trimmed)) {
+    return { access_token: trimmed }
+  }
   return { refresh_token: trimmed }
 }
 
