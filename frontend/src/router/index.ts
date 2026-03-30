@@ -238,6 +238,11 @@ const routes: RouteRecordRaw[] = [
         component: () => importWithRetry(() => import('@/views/admin/AuditLogs.vue'))
       },
       {
+        path: 'access-token-deletions',
+        name: 'AccessTokenDeletions',
+        component: () => importWithRetry(() => import('@/views/admin/AccessTokenDeletions.vue'))
+      },
+      {
         path: 'cache-monitoring',
         name: 'CacheMonitoring',
         component: () => importWithRetry(() => import('@/views/admin/CacheMonitoring.vue'))

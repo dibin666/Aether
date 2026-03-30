@@ -377,6 +377,7 @@ import {
   Zap,
   FileUp,
   Server,
+  Trash2,
   type LucideIcon,
 } from 'lucide-vue-next'
 
@@ -540,6 +541,7 @@ const navigation = computed(() => {
   const systemItems: { name: string; href: string; icon: LucideIcon }[] = [
     { name: '公告管理', href: '/admin/announcements', icon: Megaphone },
     { name: '缓存监控', href: '/admin/cache-monitoring', icon: Gauge },
+    { name: '删除账号历史', href: '/admin/access-token-deletions', icon: Trash2 },
   ]
 
   // 动态添加已激活模块的菜单项
