@@ -14,6 +14,7 @@ from sqlalchemy.orm import Query, Session
 from src.core.enums import ErrorCategory, UserRole
 from src.core.model_permissions import match_model_with_pattern
 from src.models.database import (
+    AccessTokenDeleteLog,
     ApiKey,
     GlobalModel,
     Model,
@@ -1130,6 +1131,18 @@ class AnalyticsQueryService:
             if current_user.role == UserRole.ADMIN
             else {}
         )
+        deleted_provider_api_key_display_map = (
+            cls._resolve_deleted_provider_api_key_display_map(
+                db,
+                [
+                    str(usage.provider_api_key_id)
+                    for usage in rows
+                    if getattr(usage, "provider_api_key_id", None)
+                ],
+            )
+            if current_user.role == UserRole.ADMIN
+            else {}
+        )
 
         items = []
         for usage in rows:
@@ -1145,6 +1158,17 @@ class AnalyticsQueryService:
                 and getattr(usage, "provider_api_key_id", None)
                 else None
             )
+            deleted_provider_account_display = (
+                deleted_provider_api_key_display_map.get(str(usage.provider_api_key_id))
+                if current_user.role == UserRole.ADMIN
+                and getattr(usage, "provider_api_key_id", None)
+                else None
+            )
+            provider_api_key_deleted = (
+                current_user.role == UserRole.ADMIN
+                and resolved_provider_api_key_name is None
+                and deleted_provider_account_display is not None
+            )
             items.append(
                 {
                     "id": usage.id,
@@ -1159,8 +1183,14 @@ class AnalyticsQueryService:
                     or usage.api_key_name
                     or (DELETED_API_KEY_LABEL if usage.api_key_id is None else None),
                     "provider_api_key_name": (
-                        resolved_provider_api_key_name if current_user.role == UserRole.ADMIN else None
+                        (
+                            resolved_provider_api_key_name
+                            or deleted_provider_account_display
+                        )
+                        if current_user.role == UserRole.ADMIN
+                        else None
                     ),
+                    "provider_api_key_deleted": provider_api_key_deleted,
                     "provider_name": usage.provider_name if current_user.role == UserRole.ADMIN else None,
                     "model": usage.model,
                     "reasoning_effort": _extract_reasoning_effort_from_request_metadata(
@@ -1266,6 +1296,25 @@ class AnalyticsQueryService:
             .all()
         )
         return cls._serialize_option_rows(rows)
+
+    @classmethod
+    def _resolve_deleted_provider_api_key_display_map(
+        cls,
+        db: Session,
+        api_key_ids: list[str],
+    ) -> dict[str, str]:
+        if not api_key_ids:
+            return {}
+        rows = (
+            db.query(AccessTokenDeleteLog.deleted_key_id, AccessTokenDeleteLog.oauth_email)
+            .filter(AccessTokenDeleteLog.deleted_key_id.in_(api_key_ids))
+            .all()
+        )
+        return {
+            str(key_id): str(oauth_email).strip()
+            for key_id, oauth_email in rows
+            if key_id and str(oauth_email or "").strip()
+        }
 
     @classmethod
     def filter_options(

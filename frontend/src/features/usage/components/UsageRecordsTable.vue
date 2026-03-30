@@ -455,15 +455,24 @@
               <div class="flex flex-col text-xs gap-0.5">
                 <span>{{ formatProviderLabel(record.provider) }}</span>
                 <span
-                  v-if="record.api_key_name"
-                  class="text-muted-foreground truncate"
-                  :title="record.api_key_name"
+                  v-if="getProviderKeyDisplay(record).label"
+                  class="text-muted-foreground min-w-0"
+                  :title="getProviderKeyDisplay(record).label || undefined"
                 >
-                  {{ record.api_key_name }}
-                  <span
-                    v-if="record.rate_multiplier && record.rate_multiplier !== 1.0"
-                    class="text-foreground/60"
-                  >({{ record.rate_multiplier }}x)</span>
+                  <span class="inline-flex items-center gap-1 max-w-full">
+                    <span class="truncate">{{ getProviderKeyDisplay(record).label }}</span>
+                    <Badge
+                      v-if="getProviderKeyDisplay(record).showDeletedBadge"
+                      variant="outline"
+                      class="h-4 px-1.5 text-[10px] font-medium shrink-0"
+                    >
+                      已删除
+                    </Badge>
+                    <span
+                      v-if="record.rate_multiplier && record.rate_multiplier !== 1.0"
+                      class="text-foreground/60 shrink-0"
+                    >({{ record.rate_multiplier }}x)</span>
+                  </span>
                 </span>
               </div>
               <!-- 故障转移图标（优先显示） -->
@@ -710,6 +719,7 @@ import { useRowClick } from '@/composables/useRowClick'
 import { formatApiFormat } from '@/api/endpoints/types/api-format'
 import type { AnalyticsFilterOption } from '@/api/analytics'
 import type { DateRangeParams, UsageRecord } from '../types'
+import { buildProviderKeyDisplay } from '../providerKeyDisplay'
 import {
   getUsageActualModel,
   getUsageModelDisplayName,
@@ -822,6 +832,10 @@ function getUserApiKeyLabel(record: UsageRecord): string | null {
   const name = record.api_key?.name?.trim()
   if (name) return name
   return record.api_key?.id ? null : '已删除Key'
+}
+
+function getProviderKeyDisplay(record: UsageRecord) {
+  return buildProviderKeyDisplay(record)
 }
 
 // 使用复用的行点击逻辑

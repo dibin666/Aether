@@ -63,6 +63,7 @@ export function useUsageData(options: UseUsageDataOptions) {
       },
       provider: record.provider_name,
       api_key_name: record.provider_api_key_name || undefined,
+      provider_api_key_deleted: record.provider_api_key_deleted ?? undefined,
       rate_multiplier: record.rate_multiplier,
       model: record.model,
       reasoning_effort: record.reasoning_effort ?? undefined,

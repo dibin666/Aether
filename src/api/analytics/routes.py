@@ -191,6 +191,8 @@ def _redact_sensitive_cost_fields(payload: object) -> object:
             redacted["provider_name"] = None
         if "provider_api_key_name" in redacted:
             redacted["provider_api_key_name"] = None
+        if "provider_api_key_deleted" in redacted:
+            redacted["provider_api_key_deleted"] = False
         if "rate_multiplier" in redacted:
             redacted["rate_multiplier"] = 1.0
         for key in list(redacted.keys()):

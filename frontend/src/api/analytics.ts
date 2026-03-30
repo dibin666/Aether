@@ -143,6 +143,7 @@ export interface AnalyticsRecord {
   api_key_id: string | null
   api_key_name: string | null
   provider_api_key_name: string | null
+  provider_api_key_deleted?: boolean | null
   provider_name: string | null
   model: string
   reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | null

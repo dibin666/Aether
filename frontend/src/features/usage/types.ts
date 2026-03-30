@@ -12,6 +12,7 @@ export interface UsageRecord {
   } | null
   provider?: string  // 仅管理员可见
   api_key_name?: string  // 提供商 Key 名称（管理员列使用）
+  provider_api_key_deleted?: boolean
   rate_multiplier?: number
   model: string
   reasoning_effort?: 'low' | 'medium' | 'high' | 'xhigh' | null
