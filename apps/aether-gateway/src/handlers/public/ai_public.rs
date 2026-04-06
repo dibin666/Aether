@@ -2,7 +2,7 @@ use crate::async_task::CancelVideoTaskError;
 use crate::control::GatewayControlDecision;
 use crate::control::GatewayPublicRequestContext;
 use crate::{AppState, GatewayError};
-use aether_data::repository::video_tasks::{
+use aether_data_contracts::repository::video_tasks::{
     StoredVideoTask, VideoTaskQueryFilter, VideoTaskStatus,
 };
 use axum::body::{Body, Bytes};

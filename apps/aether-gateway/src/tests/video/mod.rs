@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use aether_data::repository::video_tasks::{
-    InMemoryVideoTaskRepository, UpsertVideoTask, VideoTaskLookupKey, VideoTaskReadRepository,
-    VideoTaskWriteRepository,
+use aether_data::repository::video_tasks::InMemoryVideoTaskRepository;
+use aether_data_contracts::repository::video_tasks::{
+    UpsertVideoTask, VideoTaskLookupKey, VideoTaskReadRepository, VideoTaskWriteRepository,
 };
 use axum::body::{to_bytes, Body, Bytes};
 use axum::response::Response;

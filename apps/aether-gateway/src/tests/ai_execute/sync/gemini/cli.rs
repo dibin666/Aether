@@ -831,12 +831,12 @@ async fn gateway_executes_gemini_cli_sync_via_local_decision_gate_after_oauth_re
     let (refresh_url, refresh_handle) = start_server(refresh).await;
     let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
     let oauth_refresh =
-        crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(
-            vec![Arc::new(
+        crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(vec![
+            Arc::new(
                 crate::provider_transport::oauth_refresh::GenericOAuthRefreshAdapter::default()
                     .with_token_url_for_tests("gemini_cli", format!("{refresh_url}/oauth/token")),
-            )],
-        );
+            ),
+        ]);
     let gateway_state = build_state_with_execution_runtime_override(execution_runtime_url.clone())
     .with_data_state_for_tests(
         crate::data::GatewayDataState::with_auth_candidate_selection_provider_catalog_and_request_candidate_repository_for_tests(
@@ -1802,12 +1802,12 @@ async fn gateway_executes_antigravity_gemini_cli_sync_via_local_decision_gate_af
     let (refresh_url, refresh_handle) = start_server(refresh).await;
     let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
     let oauth_refresh =
-        crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(
-            vec![Arc::new(
+        crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(vec![
+            Arc::new(
                 crate::provider_transport::oauth_refresh::GenericOAuthRefreshAdapter::default()
                     .with_token_url_for_tests("antigravity", format!("{refresh_url}/oauth/token")),
-            )],
-        );
+            ),
+        ]);
     let gateway_state = build_state_with_execution_runtime_override(execution_runtime_url.clone())
     .with_data_state_for_tests(
         crate::data::GatewayDataState::with_auth_candidate_selection_provider_catalog_and_request_candidate_repository_for_tests(

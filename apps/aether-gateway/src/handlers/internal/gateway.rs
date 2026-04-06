@@ -10,24 +10,18 @@ use super::{
 };
 use crate::ai_pipeline::finalize::maybe_build_sync_finalize_outcome;
 use crate::ai_pipeline::planner as ai_planner;
-use crate::ai_pipeline::planner::{
-    maybe_build_stream_plan_payload, maybe_build_sync_plan_payload,
-};
+use crate::ai_pipeline::planner::{maybe_build_stream_plan_payload, maybe_build_sync_plan_payload};
 use crate::constants::{
     CONTROL_EXECUTED_HEADER, EXECUTION_PATH_EXECUTION_RUNTIME_STREAM,
     EXECUTION_PATH_EXECUTION_RUNTIME_SYNC,
 };
 use crate::control::GatewayControlDecision;
 use crate::control::GatewayPublicRequestContext;
-use crate::execution_runtime::{
-    execute_execution_runtime_stream, execute_execution_runtime_sync,
-};
-use crate::handlers::{
+use crate::execution_runtime::{execute_execution_runtime_stream, execute_execution_runtime_sync};
+use crate::handlers::shared::{
     InternalGatewayAuthContextRequest, InternalGatewayExecuteRequest, InternalGatewayResolveRequest,
 };
-use crate::tunnel::{
-    is_tunnel_heartbeat_path, is_tunnel_node_status_path, TUNNEL_ROUTE_FAMILY,
-};
+use crate::tunnel::{is_tunnel_heartbeat_path, is_tunnel_node_status_path, TUNNEL_ROUTE_FAMILY};
 use crate::{AppState, GatewayError};
 use aether_data::repository::proxy_nodes::{
     ProxyNodeHeartbeatMutation, ProxyNodeTunnelStatusMutation,
@@ -680,10 +674,9 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                         "invalid internal gateway report-sync payload",
                     )));
                 };
-                let payload = match serde_json::from_slice::<
-                    crate::usage::GatewaySyncReportRequest,
-                >(request_body)
-                {
+                let payload = match serde_json::from_slice::<crate::usage::GatewaySyncReportRequest>(
+                    request_body,
+                ) {
                     Ok(payload) => payload,
                     Err(_) => {
                         return Ok(Some(build_internal_control_error_response(
@@ -705,10 +698,9 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                         "invalid internal gateway report-stream payload",
                     )));
                 };
-                let payload = match serde_json::from_slice::<
-                    crate::usage::GatewayStreamReportRequest,
-                >(request_body)
-                {
+                let payload = match serde_json::from_slice::<crate::usage::GatewayStreamReportRequest>(
+                    request_body,
+                ) {
                     Ok(payload) => payload,
                     Err(_) => {
                         return Ok(Some(build_internal_control_error_response(
@@ -730,10 +722,9 @@ pub(crate) async fn maybe_build_local_internal_proxy_response_impl(
                         "invalid internal gateway finalize-sync payload",
                     )));
                 };
-                let payload = match serde_json::from_slice::<
-                    crate::usage::GatewaySyncReportRequest,
-                >(request_body)
-                {
+                let payload = match serde_json::from_slice::<crate::usage::GatewaySyncReportRequest>(
+                    request_body,
+                ) {
                     Ok(payload) => payload,
                     Err(_) => {
                         return Ok(Some(build_internal_control_error_response(

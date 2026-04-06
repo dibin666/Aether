@@ -1,5 +1,6 @@
 use std::io::Write;
 
+use aether_data_contracts::DataLayerError;
 use chrono::{DateTime, Utc};
 use flate2::{write::GzEncoder, Compression};
 use serde_json::Value;
@@ -21,7 +22,7 @@ use super::{
 
 pub(super) async fn perform_usage_cleanup_once(
     data: &GatewayDataState,
-) -> Result<UsageCleanupSummary, aether_data::DataLayerError> {
+) -> Result<UsageCleanupSummary, DataLayerError> {
     let Some(pool) = data.postgres_pool() else {
         return Ok(UsageCleanupSummary::default());
     };
@@ -76,14 +77,15 @@ async fn delete_old_usage_records(
     pool: &aether_data::postgres::PostgresPool,
     cutoff_time: DateTime<Utc>,
     batch_size: usize,
-) -> Result<usize, aether_data::DataLayerError> {
+) -> Result<usize, DataLayerError> {
     let mut total_deleted = 0usize;
     loop {
         let deleted = sqlx::query(DELETE_OLD_USAGE_RECORDS_SQL)
             .bind(cutoff_time)
             .bind(i64::try_from(batch_size).unwrap_or(i64::MAX))
             .execute(pool)
-            .await?
+            .await
+            .map_err(postgres_error)?
             .rows_affected();
         let deleted = usize::try_from(deleted).unwrap_or(usize::MAX);
         total_deleted += deleted;
@@ -99,7 +101,7 @@ async fn cleanup_usage_header_fields(
     cutoff_time: DateTime<Utc>,
     batch_size: usize,
     newer_than: Option<DateTime<Utc>>,
-) -> Result<usize, aether_data::DataLayerError> {
+) -> Result<usize, DataLayerError> {
     if matches!(newer_than, Some(value) if value >= cutoff_time) {
         warn!(
             cutoff_time = %cutoff_time,
@@ -116,10 +118,11 @@ async fn cleanup_usage_header_fields(
             .bind(newer_than)
             .bind(i64::try_from(batch_size).unwrap_or(i64::MAX))
             .fetch_all(pool)
-            .await?
+            .await
+            .map_err(postgres_error)?
             .into_iter()
-            .map(|row| row.try_get::<String, _>("id"))
-            .collect::<Result<Vec<_>, sqlx::Error>>()?;
+            .map(|row| row.try_get::<String, _>("id").map_err(postgres_error))
+            .collect::<Result<Vec<_>, DataLayerError>>()?;
         if ids.is_empty() {
             break;
         }
@@ -127,7 +130,8 @@ async fn cleanup_usage_header_fields(
         let cleaned = sqlx::query(CLEAR_USAGE_HEADER_FIELDS_SQL)
             .bind(ids)
             .execute(pool)
-            .await?
+            .await
+            .map_err(postgres_error)?
             .rows_affected();
         let cleaned = usize::try_from(cleaned).unwrap_or(usize::MAX);
         total_cleaned += cleaned;
@@ -143,7 +147,7 @@ async fn cleanup_usage_stale_body_fields(
     cutoff_time: DateTime<Utc>,
     batch_size: usize,
     newer_than: Option<DateTime<Utc>>,
-) -> Result<usize, aether_data::DataLayerError> {
+) -> Result<usize, DataLayerError> {
     if matches!(newer_than, Some(value) if value >= cutoff_time) {
         warn!(
             cutoff_time = %cutoff_time,
@@ -160,10 +164,11 @@ async fn cleanup_usage_stale_body_fields(
             .bind(newer_than)
             .bind(i64::try_from(batch_size).unwrap_or(i64::MAX))
             .fetch_all(pool)
-            .await?
+            .await
+            .map_err(postgres_error)?
             .into_iter()
-            .map(|row| row.try_get::<String, _>("id"))
-            .collect::<Result<Vec<_>, sqlx::Error>>()?;
+            .map(|row| row.try_get::<String, _>("id").map_err(postgres_error))
+            .collect::<Result<Vec<_>, DataLayerError>>()?;
         if ids.is_empty() {
             break;
         }
@@ -171,7 +176,8 @@ async fn cleanup_usage_stale_body_fields(
         let cleaned = sqlx::query(CLEAR_USAGE_BODY_FIELDS_SQL)
             .bind(ids)
             .execute(pool)
-            .await?
+            .await
+            .map_err(postgres_error)?
             .rows_affected();
         let cleaned = usize::try_from(cleaned).unwrap_or(usize::MAX);
         total_cleaned += cleaned;
@@ -187,7 +193,7 @@ async fn compress_usage_body_fields(
     cutoff_time: DateTime<Utc>,
     batch_size: usize,
     newer_than: Option<DateTime<Utc>>,
-) -> Result<usize, aether_data::DataLayerError> {
+) -> Result<usize, DataLayerError> {
     if matches!(newer_than, Some(value) if value >= cutoff_time) {
         warn!(
             cutoff_time = %cutoff_time,
@@ -206,20 +212,27 @@ async fn compress_usage_body_fields(
             .bind(newer_than)
             .bind(i64::try_from(batch_size).unwrap_or(i64::MAX))
             .fetch_all(pool)
-            .await?
+            .await
+            .map_err(postgres_error)?
             .into_iter()
             .map(|row| {
                 Ok(UsageBodyCompressionRow {
-                    id: row.try_get::<String, _>("id")?,
-                    request_body: row.try_get::<Option<Value>, _>("request_body")?,
-                    response_body: row.try_get::<Option<Value>, _>("response_body")?,
+                    id: row.try_get::<String, _>("id").map_err(postgres_error)?,
+                    request_body: row
+                        .try_get::<Option<Value>, _>("request_body")
+                        .map_err(postgres_error)?,
+                    response_body: row
+                        .try_get::<Option<Value>, _>("response_body")
+                        .map_err(postgres_error)?,
                     provider_request_body: row
-                        .try_get::<Option<Value>, _>("provider_request_body")?,
+                        .try_get::<Option<Value>, _>("provider_request_body")
+                        .map_err(postgres_error)?,
                     client_response_body: row
-                        .try_get::<Option<Value>, _>("client_response_body")?,
+                        .try_get::<Option<Value>, _>("client_response_body")
+                        .map_err(postgres_error)?,
                 })
             })
-            .collect::<Result<Vec<_>, sqlx::Error>>()?;
+            .collect::<Result<Vec<_>, DataLayerError>>()?;
         if rows.is_empty() {
             break;
         }
@@ -239,7 +252,8 @@ async fn compress_usage_body_fields(
                 .bind(compressed.2)
                 .bind(compressed.3)
                 .execute(pool)
-                .await?
+                .await
+                .map_err(postgres_error)?
                 .rows_affected();
             if updated > 0 {
                 batch_success += 1;
@@ -273,16 +287,19 @@ fn compress_usage_json_value(value: Option<&Value>) -> Option<Vec<u8>> {
 async fn cleanup_expired_api_keys(
     pool: &aether_data::postgres::PostgresPool,
     auto_delete_expired_keys: bool,
-) -> Result<usize, aether_data::DataLayerError> {
+) -> Result<usize, DataLayerError> {
     let expired_keys = sqlx::query(SELECT_EXPIRED_ACTIVE_API_KEYS_SQL)
         .fetch_all(pool)
-        .await?;
+        .await
+        .map_err(postgres_error)?;
     let mut cleaned = 0usize;
     for row in &expired_keys {
-        let api_key_id = row.try_get::<String, _>("id")?;
+        let api_key_id = row.try_get::<String, _>("id").map_err(postgres_error)?;
         let key = ExpiredApiKeyRow {
             id: api_key_id.as_str(),
-            auto_delete_on_expiry: row.try_get::<Option<bool>, _>("auto_delete_on_expiry")?,
+            auto_delete_on_expiry: row
+                .try_get::<Option<bool>, _>("auto_delete_on_expiry")
+                .map_err(postgres_error)?,
         };
         let should_delete = key
             .auto_delete_on_expiry
@@ -293,7 +310,8 @@ async fn cleanup_expired_api_keys(
             let deleted = sqlx::query(DELETE_EXPIRED_API_KEY_SQL)
                 .bind(key.id)
                 .execute(pool)
-                .await?
+                .await
+                .map_err(postgres_error)?
                 .rows_affected();
             if deleted > 0 {
                 cleaned += 1;
@@ -303,7 +321,8 @@ async fn cleanup_expired_api_keys(
                 .bind(key.id)
                 .bind(Utc::now())
                 .execute(pool)
-                .await?
+                .await
+                .map_err(postgres_error)?
                 .rows_affected();
             if updated > 0 {
                 cleaned += 1;
@@ -316,13 +335,14 @@ async fn cleanup_expired_api_keys(
 async fn nullify_expired_api_key_usage_refs(
     pool: &aether_data::postgres::PostgresPool,
     api_key_id: &str,
-) -> Result<(), aether_data::DataLayerError> {
+) -> Result<(), DataLayerError> {
     loop {
         let updated = sqlx::query(NULLIFY_USAGE_API_KEY_BATCH_SQL)
             .bind(api_key_id)
             .bind(i64::try_from(EXPIRED_API_KEY_PRE_CLEAN_BATCH_SIZE).unwrap_or(i64::MAX))
             .execute(pool)
-            .await?
+            .await
+            .map_err(postgres_error)?
             .rows_affected();
         let updated = usize::try_from(updated).unwrap_or(usize::MAX);
         if updated < EXPIRED_API_KEY_PRE_CLEAN_BATCH_SIZE {
@@ -335,13 +355,14 @@ async fn nullify_expired_api_key_usage_refs(
 async fn nullify_expired_api_key_candidate_refs(
     pool: &aether_data::postgres::PostgresPool,
     api_key_id: &str,
-) -> Result<(), aether_data::DataLayerError> {
+) -> Result<(), DataLayerError> {
     loop {
         let updated = sqlx::query(NULLIFY_REQUEST_CANDIDATE_API_KEY_BATCH_SQL)
             .bind(api_key_id)
             .bind(i64::try_from(EXPIRED_API_KEY_PRE_CLEAN_BATCH_SIZE).unwrap_or(i64::MAX))
             .execute(pool)
-            .await?
+            .await
+            .map_err(postgres_error)?
             .rows_affected();
         let updated = usize::try_from(updated).unwrap_or(usize::MAX);
         if updated < EXPIRED_API_KEY_PRE_CLEAN_BATCH_SIZE {
@@ -349,4 +370,8 @@ async fn nullify_expired_api_key_candidate_refs(
         }
     }
     Ok(())
+}
+
+fn postgres_error(error: sqlx::Error) -> DataLayerError {
+    DataLayerError::postgres(error)
 }

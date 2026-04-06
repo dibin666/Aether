@@ -3,14 +3,11 @@ use serde_json::Value;
 use crate::ai_pipeline::adaptation::private_envelope::transform_provider_private_stream_line as transform_envelope_line;
 use crate::ai_pipeline::adaptation::surfaces::provider_adaptation_should_unwrap_stream_envelope;
 use crate::GatewayError;
-
-use super::common::CanonicalStreamFrame;
-use super::{ClientStreamEmitter, ProviderStreamParser};
+use aether_ai_pipeline::finalize::standard::stream_core::StreamingStandardFormatMatrix;
 
 #[derive(Default)]
 pub(crate) struct StreamingStandardConversionState {
-    provider: Option<ProviderStreamParser>,
-    client: Option<ClientStreamEmitter>,
+    matrix: StreamingStandardFormatMatrix,
 }
 
 impl StreamingStandardConversionState {
@@ -19,7 +16,6 @@ impl StreamingStandardConversionState {
         report_context: &Value,
         line: Vec<u8>,
     ) -> Result<Vec<u8>, GatewayError> {
-        self.ensure_initialized(report_context)?;
         let line = if should_unwrap_envelope(report_context) {
             transform_envelope_line(report_context, line)?
         } else {
@@ -28,59 +24,13 @@ impl StreamingStandardConversionState {
         if line.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(provider) = self.provider.as_mut() else {
-            return Ok(Vec::new());
-        };
-        let frames = provider.push_line(report_context, line)?;
-        self.emit_frames(frames)
+        self.matrix
+            .transform_line(report_context, line)
+            .map_err(Into::into)
     }
 
     pub(crate) fn finish(&mut self, report_context: &Value) -> Result<Vec<u8>, GatewayError> {
-        self.ensure_initialized(report_context)?;
-        let Some(provider) = self.provider.as_mut() else {
-            return Ok(Vec::new());
-        };
-        let frames = provider.finish(report_context)?;
-        let mut out = self.emit_frames(frames)?;
-        if let Some(client) = self.client.as_mut() {
-            out.extend(client.finish()?);
-        }
-        Ok(out)
-    }
-
-    fn ensure_initialized(&mut self, report_context: &Value) -> Result<(), GatewayError> {
-        if self.provider.is_some() && self.client.is_some() {
-            return Ok(());
-        }
-
-        let provider_api_format = report_context
-            .get("provider_api_format")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase();
-        let client_api_format = report_context
-            .get("client_api_format")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase();
-
-        self.provider = ProviderStreamParser::for_api_format(provider_api_format.as_str());
-        self.client = ClientStreamEmitter::for_api_format(client_api_format.as_str());
-
-        Ok(())
-    }
-
-    fn emit_frames(&mut self, frames: Vec<CanonicalStreamFrame>) -> Result<Vec<u8>, GatewayError> {
-        let Some(client) = self.client.as_mut() else {
-            return Ok(Vec::new());
-        };
-        let mut out = Vec::new();
-        for frame in frames {
-            out.extend(client.emit(frame)?);
-        }
-        Ok(out)
+        self.matrix.finish(report_context).map_err(Into::into)
     }
 }
 

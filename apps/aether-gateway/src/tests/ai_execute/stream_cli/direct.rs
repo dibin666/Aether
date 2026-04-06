@@ -7,16 +7,17 @@ use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY}
 use aether_data::repository::auth::{
     InMemoryAuthApiKeySnapshotRepository, StoredAuthApiKeySnapshot,
 };
-use aether_data::repository::candidate_selection::{
-    InMemoryMinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-    StoredProviderModelMapping,
+use aether_data::repository::candidate_selection::InMemoryMinimalCandidateSelectionReadRepository;
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::candidate_selection::{
+    StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
 };
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateReadRepository, RequestCandidateStatus,
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateReadRepository, RequestCandidateStatus,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider,
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
 use sha2::{Digest, Sha256};
 
@@ -30,6 +31,7 @@ async fn gateway_executes_codex_cli_stream_via_local_decision_gate_after_oauth_r
         stream: bool,
         accept: String,
         authorization: String,
+        x_client_request_id: String,
     }
 
     #[derive(Debug, Clone)]
@@ -370,6 +372,12 @@ async fn gateway_executes_codex_cli_stream_via_local_decision_gate_after_oauth_r
                             .and_then(|value| value.as_str())
                             .unwrap_or_default()
                             .to_string(),
+                        x_client_request_id: payload
+                            .get("headers")
+                            .and_then(|value| value.get("x-client-request-id"))
+                            .and_then(|value| value.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
                     });
                 let frames = concat!(
                     "{\"type\":\"headers\",\"payload\":{\"kind\":\"headers\",\"status_code\":200,\"headers\":{\"content-type\":\"text/event-stream\"}}}\n",
@@ -413,12 +421,12 @@ async fn gateway_executes_codex_cli_stream_via_local_decision_gate_after_oauth_r
     let (refresh_url, refresh_handle) = start_server(refresh).await;
     let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
     let oauth_refresh =
-        crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(
-            vec![Arc::new(
+        crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(vec![
+            Arc::new(
                 crate::provider_transport::oauth_refresh::GenericOAuthRefreshAdapter::default()
                     .with_token_url_for_tests("codex", format!("{refresh_url}/oauth/token")),
-            )],
-        );
+            ),
+        ]);
     let gateway_state = build_state_with_execution_runtime_override(execution_runtime_url.clone())
     .with_data_state_for_tests(
         crate::data::GatewayDataState::with_auth_candidate_selection_provider_catalog_and_request_candidate_repository_for_tests(
@@ -490,6 +498,10 @@ async fn gateway_executes_codex_cli_stream_via_local_decision_gate_after_oauth_r
     assert_eq!(
         seen_execution_runtime_request.authorization,
         "Bearer refreshed-codex-stream-access-token"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.x_client_request_id,
+        "trace-codex-cli-stream-local-123"
     );
 
     let stored_candidates = request_candidate_repository

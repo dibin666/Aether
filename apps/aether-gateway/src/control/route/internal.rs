@@ -1,7 +1,5 @@
 use super::{classified, ClassifiedRoute};
-use crate::tunnel::{
-    is_tunnel_heartbeat_path, is_tunnel_node_status_path, TUNNEL_ROUTE_FAMILY,
-};
+use crate::tunnel::{is_tunnel_heartbeat_path, is_tunnel_node_status_path, TUNNEL_ROUTE_FAMILY};
 
 pub(super) fn classify_internal_route(
     method: &http::Method,

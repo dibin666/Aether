@@ -1,20 +1,29 @@
-#[derive(Debug, thiserror::Error)]
-pub enum DataLayerError {
-    #[error("invalid configuration: {0}")]
-    InvalidConfiguration(String),
+pub use aether_data_contracts::DataLayerError;
 
-    #[error("invalid input: {0}")]
-    InvalidInput(String),
+pub(crate) fn postgres_error(error: impl std::fmt::Display) -> DataLayerError {
+    DataLayerError::postgres(error)
+}
 
-    #[error("postgres error: {0}")]
-    Postgres(#[from] sqlx::Error),
+pub(crate) fn redis_error(error: impl std::fmt::Display) -> DataLayerError {
+    DataLayerError::redis(error)
+}
 
-    #[error("redis error: {0}")]
-    Redis(#[from] redis::RedisError),
+pub(crate) trait SqlxResultExt<T> {
+    fn map_postgres_err(self) -> Result<T, DataLayerError>;
+}
 
-    #[error("operation timed out: {0}")]
-    TimedOut(String),
+impl<T> SqlxResultExt<T> for Result<T, sqlx::Error> {
+    fn map_postgres_err(self) -> Result<T, DataLayerError> {
+        self.map_err(postgres_error)
+    }
+}
 
-    #[error("unexpected database value: {0}")]
-    UnexpectedValue(String),
+pub(crate) trait RedisResultExt<T> {
+    fn map_redis_err(self) -> Result<T, DataLayerError>;
+}
+
+impl<T> RedisResultExt<T> for Result<T, redis::RedisError> {
+    fn map_redis_err(self) -> Result<T, DataLayerError> {
+        self.map_err(redis_error)
+    }
 }

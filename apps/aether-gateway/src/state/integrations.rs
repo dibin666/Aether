@@ -1,17 +1,17 @@
 use std::time::Duration;
 
 use aether_contracts::{ExecutionPlan, ExecutionResult, ProxySnapshot};
-use aether_data::repository::candidate_selection::StoredMinimalCandidateSelectionRow;
-use aether_data::repository::candidates::{StoredRequestCandidate, UpsertRequestCandidateRecord};
-use aether_data::repository::global_models::{
+use aether_data_contracts::repository::candidates::{
+    StoredRequestCandidate, UpsertRequestCandidateRecord,
+};
+use aether_data_contracts::repository::global_models::{
     AdminGlobalModelListQuery, AdminProviderModelListQuery, StoredAdminGlobalModelPage,
     StoredAdminProviderModel, UpsertAdminProviderModelRecord,
 };
-use aether_data::repository::provider_catalog::{
+use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
-use aether_data::repository::quota::StoredProviderQuotaSnapshot;
-use aether_data::DataLayerError;
+use aether_data_contracts::repository::quota::StoredProviderQuotaSnapshot;
 use aether_model_fetch::{
     aggregate_models_for_cache, model_fetch_interval_minutes, ModelFetchAssociationStore,
     ModelFetchTransportRuntime,
@@ -27,10 +27,10 @@ use crate::provider_transport::{
     resolve_transport_proxy_snapshot_with_tunnel_affinity, GatewayProviderTransportSnapshot,
     LocalResolvedOAuthRequestAuth,
 };
-use crate::scheduler::{
-    GatewayMinimalCandidateSelectionCandidate, SchedulerCandidateSelectionRowSource,
-    SchedulerRequestCandidateRuntimeState, SchedulerRuntimeState,
+use crate::request_candidate_runtime::{
+    RequestCandidateRuntimeReader, RequestCandidateRuntimeWriter,
 };
+use crate::scheduler::state::SchedulerRuntimeState;
 use crate::{execution_runtime, provider_transport};
 
 #[async_trait]
@@ -237,16 +237,19 @@ impl ModelFetchAssociationStore for AppState {
 }
 
 #[async_trait]
-impl SchedulerRequestCandidateRuntimeState for AppState {
-    fn has_request_candidate_data_writer(&self) -> bool {
-        AppState::has_request_candidate_data_writer(self)
-    }
-
+impl RequestCandidateRuntimeReader for AppState {
     async fn read_request_candidates_by_request_id(
         &self,
         request_id: &str,
     ) -> Result<Vec<StoredRequestCandidate>, GatewayError> {
         AppState::read_request_candidates_by_request_id(self, request_id).await
+    }
+}
+
+#[async_trait]
+impl RequestCandidateRuntimeWriter for AppState {
+    fn has_request_candidate_data_writer(&self) -> bool {
+        AppState::has_request_candidate_data_writer(self)
     }
 
     async fn upsert_request_candidate(
@@ -254,28 +257,6 @@ impl SchedulerRequestCandidateRuntimeState for AppState {
         candidate: UpsertRequestCandidateRecord,
     ) -> Result<Option<StoredRequestCandidate>, GatewayError> {
         AppState::upsert_request_candidate(self, candidate).await
-    }
-}
-
-#[async_trait]
-impl SchedulerCandidateSelectionRowSource for AppState {
-    async fn read_minimal_candidate_selection_rows_for_api_format_and_global_model(
-        &self,
-        api_format: &str,
-        global_model_name: &str,
-    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
-        self.data
-            .list_minimal_candidate_selection_rows(api_format, global_model_name)
-            .await
-    }
-
-    async fn read_minimal_candidate_selection_rows_for_api_format(
-        &self,
-        api_format: &str,
-    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
-        self.data
-            .list_minimal_candidate_selection_rows_for_api_format(api_format)
-            .await
     }
 }
 
@@ -307,23 +288,6 @@ impl SchedulerRuntimeState for AppState {
         limit: usize,
     ) -> Result<Vec<StoredRequestCandidate>, GatewayError> {
         AppState::read_recent_request_candidates(self, limit).await
-    }
-
-    async fn read_minimal_candidate_selection(
-        &self,
-        api_format: &str,
-        global_model_name: &str,
-        require_streaming: bool,
-        auth_snapshot: Option<&crate::data::auth::GatewayAuthApiKeySnapshot>,
-    ) -> Result<Vec<GatewayMinimalCandidateSelectionCandidate>, GatewayError> {
-        AppState::read_minimal_candidate_selection(
-            self,
-            api_format,
-            global_model_name,
-            require_streaming,
-            auth_snapshot,
-        )
-        .await
     }
 
     fn provider_key_rpm_reset_at(&self, key_id: &str, now_unix_secs: u64) -> Option<u64> {

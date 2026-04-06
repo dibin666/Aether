@@ -1,11 +1,11 @@
 use std::sync::{Arc, Mutex};
 
 use aether_crypto::DEVELOPMENT_ENCRYPTION_KEY;
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository,
-};
-use aether_data::repository::video_tasks::{
-    InMemoryVideoTaskRepository, UpsertVideoTask, VideoTaskStatus, VideoTaskWriteRepository,
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data::repository::video_tasks::InMemoryVideoTaskRepository;
+use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
+use aether_data_contracts::repository::video_tasks::{
+    UpsertVideoTask, VideoTaskStatus, VideoTaskWriteRepository,
 };
 use axum::body::{to_bytes, Body, Bytes};
 use axum::response::Response;
@@ -25,7 +25,7 @@ use crate::constants::{
 };
 use crate::control::resolve_public_request_context;
 use crate::data::GatewayDataState;
-use crate::handlers::admin::maybe_build_local_admin_video_tasks_response;
+use crate::handlers::admin::features::maybe_build_local_admin_video_tasks_response;
 
 fn trusted_admin_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();

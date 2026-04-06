@@ -13,6 +13,7 @@ use aether_runtime::{
     DistributedConcurrencyError, DistributedConcurrencyGate, DistributedConcurrencySnapshot,
     MetricKind, MetricLabel, MetricSample,
 };
+use aether_scheduler_core::PROVIDER_KEY_RPM_WINDOW_SECS;
 use tokio::task::JoinHandle;
 
 use super::{AppState, FrontdoorCorsConfig, LocalExecutionRuntimeMissDiagnostic};
@@ -20,18 +21,18 @@ use super::{AppState, FrontdoorCorsConfig, LocalExecutionRuntimeMissDiagnostic};
 use super::super::async_task::{
     spawn_video_task_poller, VideoTaskPollerConfig, VideoTaskService, VideoTaskTruthSourceMode,
 };
-use super::super::fallback_metrics;
-use super::super::fallback_metrics::{GatewayFallbackMetricKind, GatewayFallbackReason};
 use super::super::cache::{
     AuthApiKeyLastUsedCache, AuthContextCache, DirectPlanBypassCache, SchedulerAffinityCache,
     SchedulerAffinityTarget,
 };
 use super::super::data::{GatewayDataConfig, GatewayDataState};
+use super::super::fallback_metrics;
+use super::super::fallback_metrics::{GatewayFallbackMetricKind, GatewayFallbackReason};
 use super::super::model_fetch::spawn_model_fetch_worker;
 use super::super::rate_limit::{FrontdoorUserRpmConfig, FrontdoorUserRpmLimiter};
 use super::super::router::RequestAdmissionError;
 use super::super::{control::GatewayControlDecision, error::GatewayError};
-use super::super::{provider_transport, scheduler, usage};
+use super::super::{provider_transport, usage};
 
 use crate::maintenance::spawn_audit_cleanup_worker;
 use crate::maintenance::spawn_db_maintenance_worker;
@@ -265,7 +266,7 @@ impl AppState {
             .provider_key_rpm_resets
             .lock()
             .expect("provider key rpm reset cache should lock");
-        let min_kept = now_unix_secs.saturating_sub(scheduler::PROVIDER_KEY_RPM_WINDOW_SECS);
+        let min_kept = now_unix_secs.saturating_sub(PROVIDER_KEY_RPM_WINDOW_SECS);
         resets.retain(|_, reset_at| *reset_at >= min_kept);
         resets.insert(key_id.to_string(), now_unix_secs);
     }
@@ -279,7 +280,7 @@ impl AppState {
             .provider_key_rpm_resets
             .lock()
             .expect("provider key rpm reset cache should lock");
-        let min_kept = now_unix_secs.saturating_sub(scheduler::PROVIDER_KEY_RPM_WINDOW_SECS);
+        let min_kept = now_unix_secs.saturating_sub(PROVIDER_KEY_RPM_WINDOW_SECS);
         resets.retain(|_, reset_at| *reset_at >= min_kept);
         resets.get(key_id).copied()
     }
@@ -323,8 +324,7 @@ impl AppState {
 
     pub(crate) async fn list_system_config_entries(
         &self,
-    ) -> Result<Vec<crate::data::state::StoredSystemConfigEntry>, GatewayError>
-    {
+    ) -> Result<Vec<crate::data::state::StoredSystemConfigEntry>, GatewayError> {
         self.data
             .list_system_config_entries()
             .await

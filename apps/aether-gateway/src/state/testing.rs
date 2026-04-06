@@ -1,6 +1,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 
+use aether_data_contracts::repository::candidates::RequestCandidateReadRepository;
+use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
+use aether_data_contracts::repository::usage::{UsageReadRepository, UsageRepository};
+use aether_data_contracts::repository::video_tasks::{
+    VideoTaskReadRepository, VideoTaskRepository,
+};
 use serde_json::json;
 
 use super::{AppState, GatewayDataState};
@@ -20,18 +26,14 @@ impl AppState {
     ) -> Self {
         self.tunnel = crate::tunnel::EmbeddedTunnelState::with_data_and_directory(
             Arc::clone(&self.data),
-            crate::tunnel::TunnelAttachmentDirectory::for_tests(
-                instance_id,
-                relay_base_url,
-                90,
-            ),
+            crate::tunnel::TunnelAttachmentDirectory::for_tests(instance_id, relay_base_url, 90),
         );
         self
     }
 
     pub(crate) fn with_video_task_data_reader_for_tests(
         mut self,
-        repository: Arc<dyn aether_data::repository::video_tasks::VideoTaskReadRepository>,
+        repository: Arc<dyn VideoTaskReadRepository>,
     ) -> Self {
         self.replace_data_state(Arc::new(
             GatewayDataState::with_video_task_reader_for_tests(repository),
@@ -41,7 +43,7 @@ impl AppState {
 
     pub(crate) fn with_video_task_data_repository_for_tests<T>(mut self, repository: Arc<T>) -> Self
     where
-        T: aether_data::repository::video_tasks::VideoTaskRepository + 'static,
+        T: VideoTaskRepository + 'static,
     {
         self.replace_data_state(Arc::new(
             GatewayDataState::with_video_task_repository_for_tests(repository),
@@ -52,13 +54,11 @@ impl AppState {
     pub(crate) fn with_video_task_repository_and_provider_transport_for_tests<T>(
         mut self,
         repository: Arc<T>,
-        provider_catalog_repository: Arc<
-            dyn aether_data::repository::provider_catalog::ProviderCatalogReadRepository,
-        >,
+        provider_catalog_repository: Arc<dyn ProviderCatalogReadRepository>,
         encryption_key: impl Into<String>,
     ) -> Self
     where
-        T: aether_data::repository::video_tasks::VideoTaskRepository + 'static,
+        T: VideoTaskRepository + 'static,
     {
         self.replace_data_state(Arc::new(
             GatewayDataState::with_video_task_repository_and_provider_transport_for_tests(
@@ -72,7 +72,7 @@ impl AppState {
 
     pub(crate) fn with_request_candidate_data_reader_for_tests(
         mut self,
-        repository: Arc<dyn aether_data::repository::candidates::RequestCandidateReadRepository>,
+        repository: Arc<dyn RequestCandidateReadRepository>,
     ) -> Self {
         self.replace_data_state(Arc::new(
             GatewayDataState::with_request_candidate_reader_for_tests(repository),
@@ -82,12 +82,8 @@ impl AppState {
 
     pub(crate) fn with_decision_trace_data_readers_for_tests(
         mut self,
-        request_candidate_repository: Arc<
-            dyn aether_data::repository::candidates::RequestCandidateReadRepository,
-        >,
-        provider_catalog_repository: Arc<
-            dyn aether_data::repository::provider_catalog::ProviderCatalogReadRepository,
-        >,
+        request_candidate_repository: Arc<dyn RequestCandidateReadRepository>,
+        provider_catalog_repository: Arc<dyn ProviderCatalogReadRepository>,
     ) -> Self {
         self.replace_data_state(Arc::new(
             GatewayDataState::with_decision_trace_readers_for_tests(
@@ -101,13 +97,9 @@ impl AppState {
     pub(crate) fn with_request_audit_data_readers_for_tests(
         mut self,
         auth_api_key_repository: Arc<dyn aether_data::repository::auth::AuthApiKeyReadRepository>,
-        request_candidate_repository: Arc<
-            dyn aether_data::repository::candidates::RequestCandidateReadRepository,
-        >,
-        provider_catalog_repository: Arc<
-            dyn aether_data::repository::provider_catalog::ProviderCatalogReadRepository,
-        >,
-        usage_repository: Arc<dyn aether_data::repository::usage::UsageReadRepository>,
+        request_candidate_repository: Arc<dyn RequestCandidateReadRepository>,
+        provider_catalog_repository: Arc<dyn ProviderCatalogReadRepository>,
+        usage_repository: Arc<dyn UsageReadRepository>,
     ) -> Self {
         self.replace_data_state(Arc::new(
             GatewayDataState::with_request_audit_readers_for_tests(
@@ -141,7 +133,7 @@ impl AppState {
 
     pub(crate) fn with_usage_data_reader_for_tests(
         mut self,
-        repository: Arc<dyn aether_data::repository::usage::UsageReadRepository>,
+        repository: Arc<dyn UsageReadRepository>,
     ) -> Self {
         self.replace_data_state(Arc::new(GatewayDataState::with_usage_reader_for_tests(
             repository,
@@ -161,7 +153,7 @@ impl AppState {
 
     pub(crate) fn with_usage_data_repository_for_tests<T>(mut self, repository: Arc<T>) -> Self
     where
-        T: aether_data::repository::usage::UsageRepository + 'static,
+        T: UsageRepository + 'static,
     {
         self.replace_data_state(Arc::new(GatewayDataState::with_usage_repository_for_tests(
             repository,

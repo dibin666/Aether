@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::time::Duration;
 
+use crate::error::RedisResultExt;
 use crate::redis::{RedisClient, RedisKeyspace};
 use crate::DataLayerError;
 use uuid::Uuid;
@@ -92,7 +93,11 @@ impl RedisLockRunner {
         let token = format!("{owner}:{}", Uuid::new_v4());
 
         self.run_with_timeout("redis lock acquire", async {
-            let mut connection = self.client.get_multiplexed_async_connection().await?;
+            let mut connection = self
+                .client
+                .get_multiplexed_async_connection()
+                .await
+                .map_redis_err()?;
             let status = redis::cmd("SET")
                 .arg(&key.0)
                 .arg(&token)
@@ -100,7 +105,8 @@ impl RedisLockRunner {
                 .arg("PX")
                 .arg(ttl_ms)
                 .query_async::<Option<String>>(&mut connection)
-                .await?;
+                .await
+                .map_redis_err()?;
 
             Ok(status.map(|_| RedisLockLease {
                 key: key.clone(),
@@ -115,7 +121,11 @@ impl RedisLockRunner {
     pub async fn release(&self, lease: &RedisLockLease) -> Result<bool, DataLayerError> {
         validate_lease(lease)?;
         self.run_with_timeout("redis lock release", async {
-            let mut connection = self.client.get_multiplexed_async_connection().await?;
+            let mut connection = self
+                .client
+                .get_multiplexed_async_connection()
+                .await
+                .map_redis_err()?;
             let deleted = redis::Script::new(
                 "if redis.call('get', KEYS[1]) == ARGV[1] then \
                      return redis.call('del', KEYS[1]) \
@@ -126,7 +136,8 @@ impl RedisLockRunner {
             .key(&lease.key.0)
             .arg(&lease.token)
             .invoke_async::<i32>(&mut connection)
-            .await?;
+            .await
+            .map_redis_err()?;
             Ok(deleted > 0)
         })
         .await
@@ -141,7 +152,11 @@ impl RedisLockRunner {
         let ttl_ms = self.resolve_ttl_ms(ttl_ms)?;
 
         self.run_with_timeout("redis lock renew", async {
-            let mut connection = self.client.get_multiplexed_async_connection().await?;
+            let mut connection = self
+                .client
+                .get_multiplexed_async_connection()
+                .await
+                .map_redis_err()?;
             let renewed = redis::Script::new(
                 "if redis.call('get', KEYS[1]) == ARGV[1] then \
                      return redis.call('pexpire', KEYS[1], ARGV[2]) \
@@ -153,7 +168,8 @@ impl RedisLockRunner {
             .arg(&lease.token)
             .arg(ttl_ms)
             .invoke_async::<i32>(&mut connection)
-            .await?;
+            .await
+            .map_redis_err()?;
             Ok(renewed > 0)
         })
         .await

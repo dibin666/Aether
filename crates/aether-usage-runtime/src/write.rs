@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use aether_contracts::{ExecutionPlan, ExecutionTelemetry};
-use aether_data::repository::usage::UpsertUsageRecord;
-use aether_data::DataLayerError;
+use aether_data_contracts::repository::usage::UpsertUsageRecord;
+use aether_data_contracts::DataLayerError;
 use base64::Engine as _;
 use serde_json::{Map, Value};
 

@@ -1,5 +1,5 @@
 use super::enabled_key_capability_short_names;
-use crate::handlers::{json_string_list, unix_secs_to_rfc3339};
+use crate::handlers::shared::{json_string_list, unix_secs_to_rfc3339};
 use crate::AppState;
 use serde_json::json;
 use std::collections::{BTreeMap, HashMap};

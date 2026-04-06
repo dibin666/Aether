@@ -1,9 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use aether_data::repository::global_models::InMemoryGlobalModelReadRepository;
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint,
-};
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogEndpoint;
 use axum::body::Body;
 use axum::routing::any;
 use axum::{extract::Request, Router};
@@ -243,6 +242,27 @@ async fn gateway_handles_admin_provider_query_test_model_failover_locally_with_t
             assert_eq!(payload["success"], json!(false));
             assert_eq!(payload["tested"], json!(false));
             assert!(payload["provider_id"].as_str().is_some());
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn gateway_handles_admin_provider_query_test_model_failover_with_single_model_name_alias() {
+    assert_admin_provider_query_route(
+        "/api/admin/provider-query/test-model-failover",
+        json!({
+            "provider_id": "provider-openai",
+            "model_name": "gpt-4.1"
+        }),
+        StatusCode::OK,
+        |payload| {
+            assert_eq!(payload["success"], json!(false));
+            assert_eq!(payload["tested"], json!(false));
+            assert_eq!(payload["model"], json!("gpt-4.1"));
+            assert_eq!(payload["failover_models"], json!(["gpt-4.1"]));
+            assert_eq!(payload["attempts"], json!([]));
+            assert_eq!(payload["total_attempts"], json!(0));
         },
     )
     .await;

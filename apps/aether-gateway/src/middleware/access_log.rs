@@ -11,6 +11,7 @@ use crate::constants::{
     CONTROL_REQUEST_ID_HEADER, CONTROL_ROUTE_CLASS_HEADER, EXECUTION_PATH_HEADER, TRACE_ID_HEADER,
 };
 use crate::headers::extract_or_generate_trace_id;
+use crate::log_ids::short_request_id;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RequestLogEmitted;
@@ -60,6 +61,7 @@ pub(crate) async fn access_log_middleware(request: Request<Body>, next: Next) ->
             .and_then(|value| value.to_str().ok())
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("-");
+        let request_id = short_request_id(request_id);
         let status_code = response.status().as_u16();
         let elapsed_ms = started_at.elapsed().as_millis() as u64;
         if response.status().is_server_error() {
@@ -210,6 +212,58 @@ mod tests {
         assert_eq!(logs[1]["request_id"], "req-123");
         assert_eq!(logs[1]["route_class"], "local");
         assert_eq!(logs[1]["execution_path"], "local_route");
+    }
+
+    #[tokio::test]
+    async fn access_log_shortens_long_request_ids() {
+        let writer = SharedBuffer::default();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .flatten_event(true)
+                .with_current_span(false)
+                .with_span_list(false)
+                .with_writer(writer.clone()),
+        );
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let _guard = tracing::dispatcher::set_default(&dispatch);
+
+        let app = Router::new()
+            .route(
+                "/ok",
+                get(|| async {
+                    let mut response = Response::new(Body::empty());
+                    response.headers_mut().insert(
+                        CONTROL_ROUTE_CLASS_HEADER,
+                        "local".parse().expect("header should parse"),
+                    );
+                    response.headers_mut().insert(
+                        EXECUTION_PATH_HEADER,
+                        "local_route".parse().expect("header should parse"),
+                    );
+                    response.headers_mut().insert(
+                        CONTROL_REQUEST_ID_HEADER,
+                        "d07e1e94-41b8-409f-a18a-27993ae7ecb1"
+                            .parse()
+                            .expect("header should parse"),
+                    );
+                    response
+                }),
+            )
+            .layer(axum::middleware::from_fn(access_log_middleware));
+
+        let _response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/ok")
+                    .body(Body::empty())
+                    .expect("request should build"),
+            )
+            .await
+            .expect("request should succeed");
+
+        let logs = writer.lines();
+        assert_eq!(logs[1]["request_id"], "d07e1e94");
     }
 
     #[tokio::test]

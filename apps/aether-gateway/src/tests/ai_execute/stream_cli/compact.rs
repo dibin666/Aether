@@ -8,16 +8,17 @@ use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY}
 use aether_data::repository::auth::{
     InMemoryAuthApiKeySnapshotRepository, StoredAuthApiKeySnapshot,
 };
-use aether_data::repository::candidate_selection::{
-    InMemoryMinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-    StoredProviderModelMapping,
+use aether_data::repository::candidate_selection::InMemoryMinimalCandidateSelectionReadRepository;
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::candidate_selection::{
+    StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
 };
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateReadRepository, RequestCandidateStatus,
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateReadRepository, RequestCandidateStatus,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider,
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
 use sha2::{Digest, Sha256};
 

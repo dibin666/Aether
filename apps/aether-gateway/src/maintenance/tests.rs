@@ -1,13 +1,13 @@
 use std::sync::{Arc, Mutex};
 
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateReadRepository, RequestCandidateStatus,
-    RequestCandidateWriteRepository, UpsertRequestCandidateRecord,
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateReadRepository, RequestCandidateStatus, RequestCandidateWriteRepository,
+    UpsertRequestCandidateRecord,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogProvider,
-};
+use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogProvider;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -82,19 +82,18 @@ async fn gateway_background_request_candidate_cleanup_deletes_expired_entries_in
     seed_candidate(&repository, "cand-expired-2", 2).await;
     seed_candidate(&repository, "cand-active", now_unix_secs()).await;
 
-    let data_state =
-        crate::data::GatewayDataState::with_request_candidate_repository_for_tests(
-            Arc::clone(&repository),
-        )
-        .with_system_config_values_for_tests([
-            ("enable_auto_cleanup".to_string(), json!(true)),
-            ("cleanup_batch_size".to_string(), json!(1)),
-            (
-                "request_candidates_cleanup_batch_size".to_string(),
-                json!(1),
-            ),
-            ("request_candidates_retention_days".to_string(), json!(30)),
-        ]);
+    let data_state = crate::data::GatewayDataState::with_request_candidate_repository_for_tests(
+        Arc::clone(&repository),
+    )
+    .with_system_config_values_for_tests([
+        ("enable_auto_cleanup".to_string(), json!(true)),
+        ("cleanup_batch_size".to_string(), json!(1)),
+        (
+            "request_candidates_cleanup_batch_size".to_string(),
+            json!(1),
+        ),
+        ("request_candidates_retention_days".to_string(), json!(30)),
+    ]);
 
     let gateway_state = AppState::new()
         .expect("gateway state should build")
@@ -227,15 +226,13 @@ async fn gateway_provider_checkin_runs_local_query_balance_for_configured_provid
     let gateway_state = AppState::new()
         .expect("gateway state should build")
         .with_data_state_for_tests(
-        crate::data::GatewayDataState::with_provider_catalog_repository_for_tests(
-            repository,
-        )
-        .with_system_config_values_for_tests([
-            ("enable_provider_checkin".to_string(), json!(true)),
-            ("provider_checkin_time".to_string(), json!("01:05")),
-        ])
-        .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
-    );
+            crate::data::GatewayDataState::with_provider_catalog_repository_for_tests(repository)
+                .with_system_config_values_for_tests([
+                    ("enable_provider_checkin".to_string(), json!(true)),
+                    ("provider_checkin_time".to_string(), json!("01:05")),
+                ])
+                .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+        );
 
     let summary = crate::maintenance::perform_provider_checkin_once(&gateway_state)
         .await
@@ -266,14 +263,12 @@ async fn gateway_provider_checkin_skips_when_disabled_via_system_config() {
     let gateway_state = AppState::new()
         .expect("gateway state should build")
         .with_data_state_for_tests(
-        crate::data::GatewayDataState::with_provider_catalog_repository_for_tests(
-            repository,
-        )
-        .with_system_config_values_for_tests([(
-            "enable_provider_checkin".to_string(),
-            json!(false),
-        )]),
-    );
+            crate::data::GatewayDataState::with_provider_catalog_repository_for_tests(repository)
+                .with_system_config_values_for_tests([(
+                    "enable_provider_checkin".to_string(),
+                    json!(false),
+                )]),
+        );
 
     let summary = crate::maintenance::perform_provider_checkin_once(&gateway_state)
         .await

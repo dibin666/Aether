@@ -275,20 +275,18 @@ fn usage_cleanup_window_uses_non_overlapping_ranges() {
 
 #[tokio::test]
 async fn summarize_postgres_pool_uses_busy_connections_for_usage_rate() {
-    let data = GatewayDataState::from_config(
-        crate::data::GatewayDataConfig::from_postgres_config(
-            aether_data::postgres::PostgresPoolConfig {
-                database_url: "postgres://localhost/aether".to_string(),
-                min_connections: 1,
-                max_connections: 8,
-                acquire_timeout_ms: 1_000,
-                idle_timeout_ms: 5_000,
-                max_lifetime_ms: 30_000,
-                statement_cache_capacity: 64,
-                require_ssl: false,
-            },
-        ),
-    )
+    let data = GatewayDataState::from_config(crate::data::GatewayDataConfig::from_postgres_config(
+        aether_data::postgres::PostgresPoolConfig {
+            database_url: "postgres://localhost/aether".to_string(),
+            min_connections: 1,
+            max_connections: 8,
+            acquire_timeout_ms: 1_000,
+            idle_timeout_ms: 5_000,
+            max_lifetime_ms: 30_000,
+            statement_cache_capacity: 64,
+            require_ssl: false,
+        },
+    ))
     .expect("gateway data state should build");
 
     let summary = summarize_postgres_pool(&data).expect("pool summary should exist");

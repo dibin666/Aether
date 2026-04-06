@@ -126,22 +126,14 @@ fn extract_trusted_auth_headers(headers: &http::HeaderMap) -> Option<GatewayTrus
     if !has_trusted_gateway_marker(headers) {
         return None;
     }
-    let user_id = header_value_str(
-        headers,
-        crate::constants::TRUSTED_AUTH_USER_ID_HEADER,
-    )
-    .filter(|value| !value.is_empty())?;
-    let api_key_id = header_value_str(
-        headers,
-        crate::constants::TRUSTED_AUTH_API_KEY_ID_HEADER,
-    )
-    .filter(|value| !value.is_empty())?;
-    let balance_remaining = header_value_str(
-        headers,
-        crate::constants::TRUSTED_AUTH_BALANCE_HEADER,
-    )
-    .as_deref()
-    .and_then(parse_f64_header);
+    let user_id = header_value_str(headers, crate::constants::TRUSTED_AUTH_USER_ID_HEADER)
+        .filter(|value| !value.is_empty())?;
+    let api_key_id = header_value_str(headers, crate::constants::TRUSTED_AUTH_API_KEY_ID_HEADER)
+        .filter(|value| !value.is_empty())?;
+    let balance_remaining =
+        header_value_str(headers, crate::constants::TRUSTED_AUTH_BALANCE_HEADER)
+            .as_deref()
+            .and_then(parse_f64_header);
     let access_allowed = header_value_str(
         headers,
         crate::constants::TRUSTED_AUTH_ACCESS_ALLOWED_HEADER,
@@ -163,30 +155,21 @@ pub(super) fn extract_trusted_admin_headers(
     if !has_trusted_gateway_marker(headers) {
         return None;
     }
-    let user_id = header_value_str(
-        headers,
-        crate::constants::TRUSTED_ADMIN_USER_ID_HEADER,
-    )?
-    .trim()
-    .to_string();
+    let user_id = header_value_str(headers, crate::constants::TRUSTED_ADMIN_USER_ID_HEADER)?
+        .trim()
+        .to_string();
     if user_id.is_empty() {
         return None;
     }
-    let user_role = header_value_str(
-        headers,
-        crate::constants::TRUSTED_ADMIN_USER_ROLE_HEADER,
-    )?
-    .trim()
-    .to_string();
+    let user_role = header_value_str(headers, crate::constants::TRUSTED_ADMIN_USER_ROLE_HEADER)?
+        .trim()
+        .to_string();
     if !user_role.eq_ignore_ascii_case("admin") {
         return None;
     }
-    let session_id = header_value_str(
-        headers,
-        crate::constants::TRUSTED_ADMIN_SESSION_ID_HEADER,
-    )
-    .map(|value| value.trim().to_string())
-    .filter(|value| !value.is_empty());
+    let session_id = header_value_str(headers, crate::constants::TRUSTED_ADMIN_SESSION_ID_HEADER)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let management_token_id = header_value_str(
         headers,
         crate::constants::TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER,

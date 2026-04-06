@@ -3,12 +3,12 @@ use futures_util::future::BoxFuture;
 use sqlx::{PgPool, Postgres, QueryBuilder, Row};
 use uuid::Uuid;
 
-use super::types::{
+use super::{
     StoredProviderUsageSummary, StoredRequestUsageAudit, UpsertUsageRecord, UsageAuditListQuery,
     UsageReadRepository, UsageWriteRepository,
 };
 use crate::postgres::PostgresTransactionRunner;
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const FIND_BY_REQUEST_ID_SQL: &str = r#"
 SELECT
@@ -497,7 +497,8 @@ impl SqlxUsageReadRepository {
         let row = sqlx::query(FIND_BY_REQUEST_ID_SQL)
             .bind(request_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_usage_row).transpose()
     }
 
@@ -508,7 +509,8 @@ impl SqlxUsageReadRepository {
         let row = sqlx::query(FIND_BY_ID_SQL)
             .bind(id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_usage_row).transpose()
     }
 
@@ -521,14 +523,26 @@ impl SqlxUsageReadRepository {
             .bind(provider_id)
             .bind(since_unix_secs as f64)
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         Ok(StoredProviderUsageSummary {
-            total_requests: row.try_get::<i64, _>("total_requests")?.max(0) as u64,
-            successful_requests: row.try_get::<i64, _>("successful_requests")?.max(0) as u64,
-            failed_requests: row.try_get::<i64, _>("failed_requests")?.max(0) as u64,
-            avg_response_time_ms: row.try_get::<f64, _>("avg_response_time_ms")?,
-            total_cost_usd: row.try_get::<f64, _>("total_cost_usd")?,
+            total_requests: row
+                .try_get::<i64, _>("total_requests")
+                .map_postgres_err()?
+                .max(0) as u64,
+            successful_requests: row
+                .try_get::<i64, _>("successful_requests")
+                .map_postgres_err()?
+                .max(0) as u64,
+            failed_requests: row
+                .try_get::<i64, _>("failed_requests")
+                .map_postgres_err()?
+                .max(0) as u64,
+            avg_response_time_ms: row
+                .try_get::<f64, _>("avg_response_time_ms")
+                .map_postgres_err()?,
+            total_cost_usd: row.try_get::<f64, _>("total_cost_usd").map_postgres_err()?,
         })
     }
 
@@ -573,7 +587,11 @@ impl SqlxUsageReadRepository {
         }
 
         builder.push(" ORDER BY created_at ASC, request_id ASC");
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let rows = builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_usage_row).collect()
     }
 
@@ -593,7 +611,11 @@ impl SqlxUsageReadRepository {
             .push_bind(i64::try_from(limit).map_err(|_| {
                 DataLayerError::InvalidInput(format!("invalid recent usage limit: {limit}"))
             })?);
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let rows = builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_usage_row).collect()
     }
 
@@ -608,12 +630,16 @@ impl SqlxUsageReadRepository {
         let rows = sqlx::query(SUMMARIZE_TOTAL_TOKENS_BY_API_KEY_IDS_SQL)
             .bind(api_key_ids)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         let mut totals = std::collections::BTreeMap::new();
         for row in rows {
-            let api_key_id: String = row.try_get("api_key_id")?;
-            let total_tokens = row.try_get::<i64, _>("total_tokens")?.max(0) as u64;
+            let api_key_id: String = row.try_get("api_key_id").map_postgres_err()?;
+            let total_tokens = row
+                .try_get::<i64, _>("total_tokens")
+                .map_postgres_err()?
+                .max(0) as u64;
             totals.insert(api_key_id, total_tokens);
         }
         Ok(totals)
@@ -689,7 +715,8 @@ impl SqlxUsageReadRepository {
                         .bind(usage.finalized_at_unix_secs.map(|value| value as f64))
                         .bind(usage.created_at_unix_secs.map(|value| value as f64))
                         .fetch_one(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
                     map_usage_row(&row)
                 }) as BoxFuture<'_, Result<StoredRequestUsageAudit, DataLayerError>>
             })
@@ -756,65 +783,71 @@ impl UsageWriteRepository for SqlxUsageReadRepository {
 
 fn map_usage_row(row: &sqlx::postgres::PgRow) -> Result<StoredRequestUsageAudit, DataLayerError> {
     let mut usage = StoredRequestUsageAudit::new(
-        row.try_get("id")?,
-        row.try_get("request_id")?,
-        row.try_get("user_id")?,
-        row.try_get("api_key_id")?,
-        row.try_get("username")?,
-        row.try_get("api_key_name")?,
-        row.try_get("provider_name")?,
-        row.try_get("model")?,
-        row.try_get("target_model")?,
-        row.try_get("provider_id")?,
-        row.try_get("provider_endpoint_id")?,
-        row.try_get("provider_api_key_id")?,
-        row.try_get("request_type")?,
-        row.try_get("api_format")?,
-        row.try_get("api_family")?,
-        row.try_get("endpoint_kind")?,
-        row.try_get("endpoint_api_format")?,
-        row.try_get("provider_api_family")?,
-        row.try_get("provider_endpoint_kind")?,
-        row.try_get("has_format_conversion")?,
-        row.try_get("is_stream")?,
-        row.try_get("input_tokens")?,
-        row.try_get("output_tokens")?,
-        row.try_get("total_tokens")?,
-        row.try_get("total_cost_usd")?,
-        row.try_get("actual_total_cost_usd")?,
-        row.try_get("status_code")?,
-        row.try_get("error_message")?,
-        row.try_get("error_category")?,
-        row.try_get("response_time_ms")?,
-        row.try_get("first_byte_time_ms")?,
-        row.try_get("status")?,
-        row.try_get("billing_status")?,
-        row.try_get("created_at_unix_secs")?,
-        row.try_get("updated_at_unix_secs")?,
-        row.try_get("finalized_at_unix_secs")?,
+        row.try_get("id").map_postgres_err()?,
+        row.try_get("request_id").map_postgres_err()?,
+        row.try_get("user_id").map_postgres_err()?,
+        row.try_get("api_key_id").map_postgres_err()?,
+        row.try_get("username").map_postgres_err()?,
+        row.try_get("api_key_name").map_postgres_err()?,
+        row.try_get("provider_name").map_postgres_err()?,
+        row.try_get("model").map_postgres_err()?,
+        row.try_get("target_model").map_postgres_err()?,
+        row.try_get("provider_id").map_postgres_err()?,
+        row.try_get("provider_endpoint_id").map_postgres_err()?,
+        row.try_get("provider_api_key_id").map_postgres_err()?,
+        row.try_get("request_type").map_postgres_err()?,
+        row.try_get("api_format").map_postgres_err()?,
+        row.try_get("api_family").map_postgres_err()?,
+        row.try_get("endpoint_kind").map_postgres_err()?,
+        row.try_get("endpoint_api_format").map_postgres_err()?,
+        row.try_get("provider_api_family").map_postgres_err()?,
+        row.try_get("provider_endpoint_kind").map_postgres_err()?,
+        row.try_get("has_format_conversion").map_postgres_err()?,
+        row.try_get("is_stream").map_postgres_err()?,
+        row.try_get("input_tokens").map_postgres_err()?,
+        row.try_get("output_tokens").map_postgres_err()?,
+        row.try_get("total_tokens").map_postgres_err()?,
+        row.try_get("total_cost_usd").map_postgres_err()?,
+        row.try_get("actual_total_cost_usd").map_postgres_err()?,
+        row.try_get("status_code").map_postgres_err()?,
+        row.try_get("error_message").map_postgres_err()?,
+        row.try_get("error_category").map_postgres_err()?,
+        row.try_get("response_time_ms").map_postgres_err()?,
+        row.try_get("first_byte_time_ms").map_postgres_err()?,
+        row.try_get("status").map_postgres_err()?,
+        row.try_get("billing_status").map_postgres_err()?,
+        row.try_get("created_at_unix_secs").map_postgres_err()?,
+        row.try_get("updated_at_unix_secs").map_postgres_err()?,
+        row.try_get("finalized_at_unix_secs").map_postgres_err()?,
     )?;
     usage.cache_creation_input_tokens = row
-        .try_get::<Option<i32>, _>("cache_creation_input_tokens")?
+        .try_get::<Option<i32>, _>("cache_creation_input_tokens")
+        .map_postgres_err()?
         .map(|value| to_u64(value, "usage.cache_creation_input_tokens"))
         .transpose()?
         .unwrap_or_default();
     usage.cache_read_input_tokens = row
-        .try_get::<Option<i32>, _>("cache_read_input_tokens")?
+        .try_get::<Option<i32>, _>("cache_read_input_tokens")
+        .map_postgres_err()?
         .map(|value| to_u64(value, "usage.cache_read_input_tokens"))
         .transpose()?
         .unwrap_or_default();
-    usage.cache_creation_cost_usd = row.try_get::<f64, _>("cache_creation_cost_usd")?;
-    usage.cache_read_cost_usd = row.try_get::<f64, _>("cache_read_cost_usd")?;
-    usage.output_price_per_1m = row.try_get("output_price_per_1m")?;
-    usage.request_headers = row.try_get("request_headers")?;
-    usage.request_body = row.try_get("request_body")?;
-    usage.provider_request_headers = row.try_get("provider_request_headers")?;
-    usage.provider_request_body = row.try_get("provider_request_body")?;
-    usage.response_headers = row.try_get("response_headers")?;
-    usage.response_body = row.try_get("response_body")?;
-    usage.client_response_headers = row.try_get("client_response_headers")?;
-    usage.client_response_body = row.try_get("client_response_body")?;
-    usage.request_metadata = row.try_get("request_metadata")?;
+    usage.cache_creation_cost_usd = row
+        .try_get::<f64, _>("cache_creation_cost_usd")
+        .map_postgres_err()?;
+    usage.cache_read_cost_usd = row
+        .try_get::<f64, _>("cache_read_cost_usd")
+        .map_postgres_err()?;
+    usage.output_price_per_1m = row.try_get("output_price_per_1m").map_postgres_err()?;
+    usage.request_headers = row.try_get("request_headers").map_postgres_err()?;
+    usage.request_body = row.try_get("request_body").map_postgres_err()?;
+    usage.provider_request_headers = row.try_get("provider_request_headers").map_postgres_err()?;
+    usage.provider_request_body = row.try_get("provider_request_body").map_postgres_err()?;
+    usage.response_headers = row.try_get("response_headers").map_postgres_err()?;
+    usage.response_body = row.try_get("response_body").map_postgres_err()?;
+    usage.client_response_headers = row.try_get("client_response_headers").map_postgres_err()?;
+    usage.client_response_body = row.try_get("client_response_body").map_postgres_err()?;
+    usage.request_metadata = row.try_get("request_metadata").map_postgres_err()?;
     Ok(usage)
 }
 

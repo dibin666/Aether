@@ -1,4 +1,4 @@
-use aether_data::DataLayerError;
+use aether_data_contracts::DataLayerError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsageRuntimeConfig {

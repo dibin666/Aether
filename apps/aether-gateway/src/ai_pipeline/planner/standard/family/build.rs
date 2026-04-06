@@ -1,11 +1,11 @@
 use tracing::warn;
 
+use crate::ai_pipeline::control_facade::GatewayControlDecision;
 use crate::ai_pipeline::planner::plan_builders::{
     build_gemini_stream_plan_from_decision, build_gemini_sync_plan_from_decision,
     build_standard_stream_plan_from_decision, build_standard_sync_plan_from_decision,
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
-use crate::control::GatewayControlDecision;
 use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
 
 use super::candidates::{

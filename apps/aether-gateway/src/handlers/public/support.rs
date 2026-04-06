@@ -8,11 +8,12 @@ use super::{
     PUBLIC_CAPABILITY_DEFINITIONS,
 };
 use crate::control::GatewayPublicRequestContext;
-use crate::handlers::{
+use crate::handlers::shared::{
     decrypt_catalog_secret_with_fallbacks, encrypt_catalog_secret_with_fallbacks, query_param_bool,
     query_param_optional_bool, query_param_value, unix_secs_to_rfc3339,
 };
 use crate::{AppState, GatewayError};
+use aether_data_contracts::repository::global_models::PublicGlobalModelQuery;
 use axum::body::{Body, Bytes};
 use axum::http::{self, Response};
 use axum::response::IntoResponse;
@@ -317,14 +318,12 @@ pub(crate) async fn maybe_build_local_public_support_response(
                 query_param_value(request_context.request_query_string.as_deref(), "search");
 
             let page = state
-                .list_public_global_models(
-                    &aether_data::repository::global_models::PublicGlobalModelQuery {
-                        offset: skip,
-                        limit,
-                        is_active,
-                        search,
-                    },
-                )
+                .list_public_global_models(&PublicGlobalModelQuery {
+                    offset: skip,
+                    limit,
+                    is_active,
+                    search,
+                })
                 .await
                 .ok()?;
 

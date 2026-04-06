@@ -1,5 +1,5 @@
-use aether_data::repository::candidates::StoredRequestCandidate;
-use aether_data::repository::video_tasks::StoredVideoTask;
+use aether_data_contracts::repository::candidates::StoredRequestCandidate;
+use aether_data_contracts::repository::video_tasks::StoredVideoTask;
 use serde_json::{Map, Value};
 
 pub fn report_context_is_locally_actionable(report_context: Option<&Value>) -> bool {
@@ -105,8 +105,10 @@ fn has_u64(value: &Value, key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use aether_data::repository::candidates::{RequestCandidateStatus, StoredRequestCandidate};
-    use aether_data::repository::video_tasks::{StoredVideoTask, VideoTaskStatus};
+    use aether_data_contracts::repository::candidates::{
+        RequestCandidateStatus, StoredRequestCandidate,
+    };
+    use aether_data_contracts::repository::video_tasks::{StoredVideoTask, VideoTaskStatus};
     use serde_json::{json, Value};
 
     use super::{

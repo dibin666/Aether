@@ -1,4 +1,4 @@
-use crate::provider_transport::url::build_passthrough_path_url;
+use crate::ai_pipeline::provider_transport_facade::url::build_passthrough_path_url;
 
 use super::credentials::DEFAULT_REGION;
 
@@ -34,8 +34,8 @@ pub(crate) fn build_kiro_generate_assistant_response_url(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_kiro_generate_assistant_response_url, resolve_kiro_base_url,
         GENERATE_ASSISTANT_RESPONSE_PATH, KIRO_ENVELOPE_NAME,
+        build_kiro_generate_assistant_response_url, resolve_kiro_base_url,
     };
 
     #[test]

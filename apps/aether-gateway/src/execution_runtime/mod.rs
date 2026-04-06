@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 mod constants;
+mod fallback;
 pub(crate) mod ndjson;
 #[cfg(test)]
 pub(crate) mod remote_compat;
@@ -17,19 +18,24 @@ pub(crate) mod transport;
 pub(crate) use self::constants::{
     MAX_ERROR_BODY_BYTES, MAX_STREAM_PREFETCH_BYTES, MAX_STREAM_PREFETCH_FRAMES,
 };
+pub(crate) use self::fallback::{
+    resolve_core_stream_direct_finalize_report_kind,
+    resolve_core_stream_error_finalize_report_kind, resolve_core_sync_error_finalize_report_kind,
+    should_fallback_to_control_stream, should_fallback_to_control_sync,
+    should_finalize_sync_response, should_retry_next_local_candidate_stream,
+    should_retry_next_local_candidate_sync,
+};
 pub use server::{
     build_execution_runtime_router, build_execution_runtime_router_with_request_concurrency_limit,
     build_execution_runtime_router_with_request_gates, serve_execution_runtime_tcp,
     serve_execution_runtime_unix,
 };
-pub(crate) use stream::{
-    execute_execution_runtime_stream, maybe_execute_via_execution_runtime_stream,
-};
+pub(crate) use stream::execute_execution_runtime_stream;
 pub(crate) use stream_pump::build_direct_execution_frame_stream;
 pub(crate) use sync::{
     execute_execution_runtime_sync, maybe_build_local_sync_finalize_response,
     maybe_build_local_video_error_response, maybe_build_local_video_success_outcome,
-    maybe_execute_via_execution_runtime_sync, resolve_local_sync_error_background_report_kind,
+    resolve_local_sync_error_background_report_kind,
     resolve_local_sync_success_background_report_kind, LocalVideoSyncSuccessOutcome,
 };
 pub(crate) use transport::{

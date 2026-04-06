@@ -7,7 +7,7 @@ use super::{
     normalize_admin_billing_optional_text, normalize_admin_billing_required_text,
 };
 use crate::control::GatewayPublicRequestContext;
-use crate::handlers::unix_secs_to_rfc3339;
+use crate::handlers::admin::shared::unix_secs_to_rfc3339;
 use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
@@ -245,12 +245,12 @@ async fn build_admin_create_billing_rule_response(
         crate::LocalMutationOutcome::Invalid(detail) => {
             Ok(build_admin_billing_bad_request_response(detail))
         }
-        crate::LocalMutationOutcome::NotFound => Ok(
-            build_admin_billing_not_found_response("Billing rule not found"),
-        ),
-        crate::LocalMutationOutcome::Unavailable => Ok(
-            build_admin_billing_read_only_response("当前为只读模式，无法创建计费规则"),
-        ),
+        crate::LocalMutationOutcome::NotFound => Ok(build_admin_billing_not_found_response(
+            "Billing rule not found",
+        )),
+        crate::LocalMutationOutcome::Unavailable => Ok(build_admin_billing_read_only_response(
+            "当前为只读模式，无法创建计费规则",
+        )),
     }
 }
 
@@ -270,15 +270,15 @@ async fn build_admin_update_billing_rule_response(
         crate::LocalMutationOutcome::Applied(record) => {
             Ok(Json(build_admin_billing_rule_payload_from_record(&record)).into_response())
         }
-        crate::LocalMutationOutcome::NotFound => Ok(
-            build_admin_billing_not_found_response("Billing rule not found"),
-        ),
+        crate::LocalMutationOutcome::NotFound => Ok(build_admin_billing_not_found_response(
+            "Billing rule not found",
+        )),
         crate::LocalMutationOutcome::Invalid(detail) => {
             Ok(build_admin_billing_bad_request_response(detail))
         }
-        crate::LocalMutationOutcome::Unavailable => Ok(
-            build_admin_billing_read_only_response("当前为只读模式，无法更新计费规则"),
-        ),
+        crate::LocalMutationOutcome::Unavailable => Ok(build_admin_billing_read_only_response(
+            "当前为只读模式，无法更新计费规则",
+        )),
     }
 }
 

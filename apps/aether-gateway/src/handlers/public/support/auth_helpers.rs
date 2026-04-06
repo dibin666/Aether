@@ -217,8 +217,7 @@ fn auth_non_empty_string(value: Option<String>) -> Option<String> {
 }
 
 pub(super) fn extract_bearer_token(headers: &http::HeaderMap) -> Option<String> {
-    let value =
-        crate::headers::header_value_str(headers, http::header::AUTHORIZATION.as_str())?;
+    let value = crate::headers::header_value_str(headers, http::header::AUTHORIZATION.as_str())?;
     let (scheme, token) = value.split_once(' ')?;
     if !scheme.eq_ignore_ascii_case("bearer") {
         return None;

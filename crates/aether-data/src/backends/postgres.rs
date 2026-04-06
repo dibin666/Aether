@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::error::SqlxResultExt;
 use crate::postgres::{
     PostgresLeaseRunner, PostgresLeaseRunnerConfig, PostgresPool, PostgresPoolConfig,
     PostgresPoolFactory, PostgresTransactionRunner,
@@ -304,10 +305,11 @@ impl PostgresBackend {
         let row = sqlx::query(FIND_SYSTEM_CONFIG_VALUE_SQL)
             .bind(key)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.map(|row| row.try_get("value"))
             .transpose()
-            .map_err(Into::into)
+            .map_postgres_err()
     }
 
     pub async fn upsert_system_config_value(
@@ -322,8 +324,9 @@ impl PostgresBackend {
             .bind(value)
             .bind(description)
             .fetch_one(&self.pool)
-            .await?;
-        row.try_get("value").map_err(Into::into)
+            .await
+            .map_postgres_err()?;
+        row.try_get("value").map_postgres_err()
     }
 
     pub async fn list_system_config_entries(
@@ -331,19 +334,21 @@ impl PostgresBackend {
     ) -> Result<Vec<StoredSystemConfigEntry>, DataLayerError> {
         let rows = sqlx::query(LIST_SYSTEM_CONFIG_ENTRIES_SQL)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.into_iter()
             .map(|row| {
                 Ok(StoredSystemConfigEntry {
-                    key: row.try_get("key")?,
-                    value: row.try_get("value")?,
-                    description: row.try_get("description")?,
+                    key: row.try_get("key").map_postgres_err()?,
+                    value: row.try_get("value").map_postgres_err()?,
+                    description: row.try_get("description").map_postgres_err()?,
                     updated_at_unix_secs: row
-                        .try_get::<Option<i64>, _>("updated_at_unix_secs")?
+                        .try_get::<Option<i64>, _>("updated_at_unix_secs")
+                        .map_postgres_err()?
                         .map(|value| value.max(0) as u64),
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, DataLayerError>>()
     }
 
     pub async fn upsert_system_config_entry(
@@ -358,13 +363,15 @@ impl PostgresBackend {
             .bind(value)
             .bind(description)
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(StoredSystemConfigEntry {
-            key: row.try_get("key")?,
-            value: row.try_get("value")?,
-            description: row.try_get("description")?,
+            key: row.try_get("key").map_postgres_err()?,
+            value: row.try_get("value").map_postgres_err()?,
+            description: row.try_get("description").map_postgres_err()?,
             updated_at_unix_secs: row
-                .try_get::<Option<i64>, _>("updated_at_unix_secs")?
+                .try_get::<Option<i64>, _>("updated_at_unix_secs")
+                .map_postgres_err()?
                 .map(|value| value.max(0) as u64),
         })
     }
@@ -373,19 +380,33 @@ impl PostgresBackend {
         let result = sqlx::query(DELETE_SYSTEM_CONFIG_VALUE_SQL)
             .bind(key)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 
     pub async fn read_admin_system_stats(&self) -> Result<AdminSystemStats, DataLayerError> {
         let row = sqlx::query(READ_ADMIN_SYSTEM_STATS_SQL)
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(AdminSystemStats {
-            total_users: row.try_get::<i64, _>("total_users")?.max(0) as u64,
-            active_users: row.try_get::<i64, _>("active_users")?.max(0) as u64,
-            total_api_keys: row.try_get::<i64, _>("total_api_keys")?.max(0) as u64,
-            total_requests: row.try_get::<i64, _>("total_requests")?.max(0) as u64,
+            total_users: row
+                .try_get::<i64, _>("total_users")
+                .map_postgres_err()?
+                .max(0) as u64,
+            active_users: row
+                .try_get::<i64, _>("active_users")
+                .map_postgres_err()?
+                .max(0) as u64,
+            total_api_keys: row
+                .try_get::<i64, _>("total_api_keys")
+                .map_postgres_err()?
+                .max(0) as u64,
+            total_requests: row
+                .try_get::<i64, _>("total_requests")
+                .map_postgres_err()?
+                .max(0) as u64,
         })
     }
 }

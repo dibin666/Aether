@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use aether_data::repository::video_tasks::{
-    InMemoryVideoTaskRepository, UpsertVideoTask, VideoTaskWriteRepository,
+use aether_data::repository::video_tasks::InMemoryVideoTaskRepository;
+use aether_data_contracts::repository::video_tasks::{
+    UpsertVideoTask, VideoTaskStatus, VideoTaskWriteRepository,
 };
 use axum::body::Body;
 use axum::routing::any;
@@ -72,7 +73,7 @@ async fn gateway_reads_openai_video_task_via_data_read_side_without_hitting_publ
             resolution: Some("720p".to_string()),
             aspect_ratio: Some("16:9".to_string()),
             size: Some("1280x720".to_string()),
-            status: aether_data::repository::video_tasks::VideoTaskStatus::Processing,
+            status: VideoTaskStatus::Processing,
             progress_percent: 45,
             progress_message: Some("working".to_string()),
             retry_count: 0,
@@ -177,7 +178,7 @@ async fn gateway_reads_gemini_video_task_via_data_read_side_without_hitting_publ
             resolution: Some("720p".to_string()),
             aspect_ratio: Some("16:9".to_string()),
             size: Some("720p".to_string()),
-            status: aether_data::repository::video_tasks::VideoTaskStatus::Completed,
+            status: VideoTaskStatus::Completed,
             progress_percent: 100,
             progress_message: None,
             retry_count: 0,

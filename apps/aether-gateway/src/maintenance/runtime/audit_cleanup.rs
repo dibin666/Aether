@@ -1,14 +1,16 @@
+use aether_data_contracts::DataLayerError;
 use chrono::{DateTime, Utc};
 
 use crate::data::GatewayDataState;
 
 use super::{
-    system_config_bool, system_config_u64, system_config_usize, DELETE_AUDIT_LOGS_BEFORE_SQL,
+    postgres_error, system_config_bool, system_config_u64, system_config_usize,
+    DELETE_AUDIT_LOGS_BEFORE_SQL,
 };
 
 pub(crate) async fn cleanup_audit_logs_once(
     data: &GatewayDataState,
-) -> Result<usize, aether_data::DataLayerError> {
+) -> Result<usize, DataLayerError> {
     cleanup_audit_logs_with(data, |cutoff_time, delete_limit| async move {
         let Some(pool) = data.postgres_pool() else {
             return Ok(0);
@@ -17,7 +19,8 @@ pub(crate) async fn cleanup_audit_logs_once(
             .bind(cutoff_time)
             .bind(i64::try_from(delete_limit).unwrap_or(i64::MAX))
             .execute(&pool)
-            .await?
+            .await
+            .map_err(postgres_error)?
             .rows_affected();
         Ok(usize::try_from(deleted).unwrap_or(usize::MAX))
     })
@@ -27,10 +30,10 @@ pub(crate) async fn cleanup_audit_logs_once(
 pub(super) async fn cleanup_audit_logs_with<F, Fut>(
     data: &GatewayDataState,
     mut delete_batch: F,
-) -> Result<usize, aether_data::DataLayerError>
+) -> Result<usize, DataLayerError>
 where
     F: FnMut(DateTime<Utc>, usize) -> Fut,
-    Fut: std::future::Future<Output = Result<usize, aether_data::DataLayerError>>,
+    Fut: std::future::Future<Output = Result<usize, DataLayerError>>,
 {
     if !system_config_bool(data, "enable_auto_cleanup", true).await? {
         return Ok(0);

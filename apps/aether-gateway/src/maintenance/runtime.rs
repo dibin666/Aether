@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use aether_data::repository::provider_catalog::{
+use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogProvider,
 };
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc, Weekday};
@@ -16,7 +16,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::data::GatewayDataState;
-use crate::handlers::admin::provider_ops::admin_provider_ops_local_action_response;
+use crate::handlers::admin::provider::ops::admin_provider_ops_local_action_response;
 use crate::{AppState, GatewayError};
 
 #[path = "runtime/audit_cleanup.rs"]
@@ -61,6 +61,12 @@ use stats_hourly::*;
 use usage_cleanup::*;
 use wallet_daily_usage::*;
 pub(crate) use workers::*;
+
+pub(super) fn postgres_error(
+    error: impl std::fmt::Display,
+) -> aether_data_contracts::DataLayerError {
+    aether_data_contracts::DataLayerError::postgres(error)
+}
 
 const AUDIT_LOG_CLEANUP_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const GEMINI_FILE_MAPPING_CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 60);

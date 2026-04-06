@@ -221,7 +221,7 @@
                       请求: <span class="font-medium text-foreground">{{ (apiKey.total_requests || 0).toLocaleString() }}</span>
                     </div>
                     <div class="text-muted-foreground">
-                      Tokens: <span class="font-medium text-foreground">{{ formatTokens(apiKey.total_tokens || 0) }}</span>
+                      Tokens: <span class="font-medium text-foreground">{{ formatApiKeyTotalTokens(apiKey) }}</span>
                     </div>
                     <div class="flex items-center gap-1 text-muted-foreground">
                       <span>限速:</span>
@@ -464,7 +464,7 @@
                       Tokens
                     </div>
                     <div class="font-semibold text-foreground">
-                      {{ formatTokens(apiKey.total_tokens || 0) }}
+                      {{ formatApiKeyTotalTokens(apiKey) }}
                     </div>
                   </div>
                   <div class="col-span-2 rounded-lg border border-border/50 bg-background/70 p-2.5">
@@ -644,7 +644,7 @@ import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
 import { useClipboard } from '@/composables/useClipboard'
 import { adminApi, type AdminApiKey, type CreateStandaloneApiKeyRequest } from '@/api/admin'
-import { adminWalletApi, type AdminWallet } from '@/api/admin-wallets'
+import type { AdminWallet } from '@/api/admin-wallets'
 import { walletStatusBadge, walletStatusLabel } from '@/utils/walletDisplay'
 import WalletOpsDrawer from '@/features/wallet/components/WalletOpsDrawer.vue'
 
@@ -781,40 +781,42 @@ onMounted(async () => {
   await refreshApiKeys()
 })
 
-async function fetchApiKeyWalletMap(): Promise<Record<string, AdminWallet>> {
-  const wallets = await adminWalletApi.listAllWallets({ owner_type: 'api_key' })
-  return wallets
-    .filter((wallet) => !!wallet.api_key_id)
-    .reduce<Record<string, AdminWallet>>((acc, wallet) => {
-      acc[wallet.api_key_id as string] = wallet
-      return acc
-    }, {})
+function buildAdminWalletFromApiKey(apiKey: AdminApiKey): AdminWallet | null {
+  if (!apiKey.wallet?.id) {
+    return null
+  }
+
+  return {
+    ...apiKey.wallet,
+    id: apiKey.wallet.id,
+    user_id: null,
+    api_key_id: apiKey.id,
+    owner_type: 'api_key',
+    owner_name: apiKey.name || apiKey.key_display || null,
+    created_at: apiKey.created_at || apiKey.wallet.updated_at || '',
+  }
 }
 
-async function loadApiKeyWallets() {
-  try {
-    apiKeyWalletMap.value = await fetchApiKeyWalletMap()
-  } catch (err: unknown) {
-    log.error('加载独立 Key 钱包失败:', err)
-  }
+function buildApiKeyWalletMap(items: AdminApiKey[]): Record<string, AdminWallet> {
+  return items.reduce<Record<string, AdminWallet>>((acc, apiKey) => {
+    const wallet = buildAdminWalletFromApiKey(apiKey)
+    if (wallet) {
+      acc[apiKey.id] = wallet
+    }
+    return acc
+  }, {})
 }
 
 async function refreshApiKeys() {
   loading.value = true
   try {
-    const [response, walletMap] = await Promise.all([
-      adminApi.getAllApiKeys({
-        skip: skip.value,
-        limit: limit.value
-      }),
-      fetchApiKeyWalletMap().catch((err: unknown) => {
-        log.error('加载独立 Key 钱包失败:', err)
-        return apiKeyWalletMap.value
-      })
-    ])
+    const response = await adminApi.getAllApiKeys({
+      skip: skip.value,
+      limit: limit.value
+    })
     apiKeys.value = response.api_keys
     total.value = response.total
-    apiKeyWalletMap.value = walletMap
+    apiKeyWalletMap.value = buildApiKeyWalletMap(response.api_keys)
   } catch (err: unknown) {
     log.error('加载独立Keys失败:', err)
     error(parseApiError(err, '加载独立 Keys 失败'))
@@ -911,6 +913,13 @@ function getApiKeyWalletConsumed(apiKey: AdminApiKey): number {
 
 function getApiKeyWalletStatus(apiKeyId: string): string | null {
   return getApiKeyWallet(apiKeyId)?.status ?? null
+}
+
+function formatApiKeyTotalTokens(apiKey: AdminApiKey): string {
+  if (apiKey.total_tokens == null) {
+    return '未统计'
+  }
+  return formatTokens(apiKey.total_tokens)
 }
 
 function formatWalletAmount(value: number | null, nullLabel = '无限制'): string {
@@ -1064,7 +1073,7 @@ async function handleKeyFormSubmit(data: StandaloneKeyFormData) {
         allowed_api_formats: data.allowed_api_formats,
         allowed_models: data.allowed_models
       }
-      const { message: _, wallet: __, ...updated } = await adminApi.updateApiKey(data.id, updateData)
+      const { message: _, ...updated } = await adminApi.updateApiKey(data.id, updateData)
       // 局部更新：合并字段，避免覆盖丢失列表已有信息
       const index = apiKeys.value.findIndex(k => k.id === data.id)
       if (index !== -1) {
@@ -1072,8 +1081,8 @@ async function handleKeyFormSubmit(data: StandaloneKeyFormData) {
           ...apiKeys.value[index],
           ...updated,
         }
+        apiKeyWalletMap.value = buildApiKeyWalletMap(apiKeys.value)
       }
-      await loadApiKeyWallets()
       success('API Key 更新成功')
     } else {
       // 创建

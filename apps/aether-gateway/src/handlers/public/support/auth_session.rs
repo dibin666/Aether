@@ -5,6 +5,7 @@ use super::{
     extract_client_device_id, extract_cookie_value, http, json, AppState, Body,
     GatewayPublicRequestContext, Response, AUTH_REFRESH_TOKEN_EXPIRATION_DAYS,
 };
+use crate::GatewayUserSessionView;
 use uuid::Uuid;
 
 fn base64url_encode(bytes: &[u8]) -> String {
@@ -495,9 +496,7 @@ pub(super) async fn handle_auth_refresh(
                 user_id,
                 session_id,
                 &session.refresh_token_hash,
-                &crate::data::state::StoredUserSessionRecord::hash_refresh_token(
-                    &new_refresh_token,
-                ),
+                &GatewayUserSessionView::hash_refresh_token(&new_refresh_token),
                 now,
                 now + chrono::Duration::days(AUTH_REFRESH_TOKEN_EXPIRATION_DAYS),
                 None,
@@ -583,14 +582,12 @@ pub(super) async fn build_auth_login_success_response(
             )
         }
     };
-    let session = match crate::data::state::StoredUserSessionRecord::new(
+    let session = match GatewayUserSessionView::new(
         session_id,
         user.id.clone(),
         client_device_id,
         None,
-        crate::data::state::StoredUserSessionRecord::hash_refresh_token(
-            &refresh_token,
-        ),
+        GatewayUserSessionView::hash_refresh_token(&refresh_token),
         None,
         None,
         Some(now),

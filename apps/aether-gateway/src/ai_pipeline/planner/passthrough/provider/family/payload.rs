@@ -1,43 +1,48 @@
 use std::collections::BTreeMap;
 
-use aether_data::repository::candidates::{RequestCandidateStatus, UpsertRequestCandidateRecord};
 use serde_json::json;
 use tracing::warn;
 
-use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
-use crate::headers::collect_control_headers;
-use crate::provider_transport::antigravity::{
+use crate::ai_pipeline::control_facade::collect_control_headers;
+use crate::ai_pipeline::execution_facade::{ConversionMode, ExecutionStrategy};
+use crate::ai_pipeline::planner::candidate_runtime_facade::persist_skipped_local_candidate;
+use crate::ai_pipeline::planner::transport_facade::{
+    read_provider_transport_snapshot, resolve_local_oauth_request_auth,
+    LocalResolvedOAuthRequestAuth,
+};
+use crate::ai_pipeline::provider_transport_facade::antigravity::{
     build_antigravity_safe_v1internal_request, build_antigravity_static_identity_headers,
     classify_local_antigravity_request_support, AntigravityEnvelopeRequestType,
     AntigravityRequestEnvelopeSupport, AntigravityRequestSideSupport,
 };
-use crate::provider_transport::auth::{
+use crate::ai_pipeline::provider_transport_facade::auth::{
     build_openai_passthrough_headers, resolve_local_gemini_auth, resolve_local_standard_auth,
 };
-use crate::provider_transport::claude_code::{
+use crate::ai_pipeline::provider_transport_facade::claude_code::{
     build_claude_code_passthrough_headers, supports_local_claude_code_transport_with_network,
 };
-use crate::provider_transport::kiro::{
+use crate::ai_pipeline::provider_transport_facade::kiro::{
     build_kiro_provider_headers, supports_local_kiro_request_transport_with_network,
     KIRO_ENVELOPE_NAME,
 };
-use crate::provider_transport::policy::{
+use crate::ai_pipeline::provider_transport_facade::policy::{
     supports_local_gemini_transport_with_network, supports_local_standard_transport_with_network,
 };
-use crate::provider_transport::vertex::{
+use crate::ai_pipeline::provider_transport_facade::vertex::{
     resolve_local_vertex_api_key_query_auth,
     supports_local_vertex_api_key_gemini_transport_with_network,
 };
-use crate::provider_transport::{
+use crate::ai_pipeline::provider_transport_facade::{
     apply_local_header_rules, build_passthrough_headers, ensure_upstream_auth_header,
     resolve_transport_execution_timeouts, resolve_transport_proxy_snapshot_with_tunnel_affinity,
-    resolve_transport_tls_profile, LocalResolvedOAuthRequestAuth,
+    resolve_transport_tls_profile,
 };
-use crate::scheduler::{current_unix_secs, GatewayMinimalCandidateSelectionCandidate};
+use crate::clock::current_unix_secs;
 use crate::{
     append_execution_contract_fields_to_value, AppState, GatewayControlSyncDecisionResponse,
     EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
 };
+use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 
 use super::types::{
     LocalSameFormatProviderCandidateAttempt, LocalSameFormatProviderDecisionInput,
@@ -59,13 +64,13 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         candidate_id,
     } = attempt;
 
-    let transport = match state
-        .read_provider_transport_snapshot(
-            &candidate.provider_id,
-            &candidate.endpoint_id,
-            &candidate.key_id,
-        )
-        .await
+    let transport = match read_provider_transport_snapshot(
+        state,
+        &candidate.provider_id,
+        &candidate.endpoint_id,
+        &candidate.key_id,
+    )
+    .await
     {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => {
@@ -169,7 +174,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
             && !is_vertex
             && resolve_local_gemini_auth(&transport).is_none();
     let oauth_auth = if should_try_oauth_auth {
-        match state.resolve_local_oauth_request_auth(&transport).await {
+        match resolve_local_oauth_request_auth(state, &transport).await {
             Ok(Some(LocalResolvedOAuthRequestAuth::Kiro(auth))) => {
                 Some(LocalResolvedOAuthRequestAuth::Kiro(auth))
             }
@@ -528,46 +533,22 @@ pub(super) async fn mark_skipped_local_same_format_provider_candidate(
     state: &AppState,
     input: &LocalSameFormatProviderDecisionInput,
     trace_id: &str,
-    candidate: &GatewayMinimalCandidateSelectionCandidate,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
     candidate_index: u32,
     candidate_id: &str,
     skip_reason: &'static str,
 ) {
-    if let Err(err) = state
-        .upsert_request_candidate(UpsertRequestCandidateRecord {
-            id: candidate_id.to_string(),
-            request_id: trace_id.to_string(),
-            user_id: Some(input.auth_context.user_id.clone()),
-            api_key_id: Some(input.auth_context.api_key_id.clone()),
-            username: None,
-            api_key_name: None,
-            candidate_index,
-            retry_index: 0,
-            provider_id: Some(candidate.provider_id.clone()),
-            endpoint_id: Some(candidate.endpoint_id.clone()),
-            key_id: Some(candidate.key_id.clone()),
-            status: RequestCandidateStatus::Skipped,
-            skip_reason: Some(skip_reason.to_string()),
-            is_cached: Some(false),
-            status_code: None,
-            error_type: None,
-            error_message: None,
-            latency_ms: None,
-            concurrent_requests: None,
-            extra_data: None,
-            required_capabilities: candidate.key_capabilities.clone(),
-            created_at_unix_secs: None,
-            started_at_unix_secs: None,
-            finished_at_unix_secs: Some(current_unix_secs()),
-        })
-        .await
-    {
-        warn!(
-            trace_id = %trace_id,
-            candidate_id = %candidate_id,
-            skip_reason,
-            error = ?err,
-            "gateway local same-format decision failed to persist skipped candidate"
-        );
-    }
+    persist_skipped_local_candidate(
+        state,
+        trace_id,
+        &input.auth_context.user_id,
+        &input.auth_context.api_key_id,
+        candidate,
+        candidate_index,
+        candidate_id,
+        skip_reason,
+        current_unix_secs(),
+        "gateway local same-format decision failed to persist skipped candidate",
+    )
+    .await;
 }

@@ -1,5 +1,10 @@
-use super::super::{admin, internal, public};
+use super::super::{internal, public};
 use crate::control::GatewayPublicRequestContext;
+use crate::handlers::admin::{
+    auth as admin_auth, billing as admin_billing, endpoint as admin_endpoint,
+    features as admin_features, model as admin_model, observability as admin_observability,
+    provider as admin_provider, system as admin_system, users as admin_users,
+};
 use crate::{AppState, GatewayError};
 use axum::body::{Body, Bytes};
 use axum::http::Response;
@@ -34,9 +39,12 @@ pub(super) async fn maybe_build_local_admin_proxy_response(
         return Ok(None);
     }
 
-    if let Some(response) =
-        admin::maybe_build_local_admin_provider_oauth_response(state, request_context, request_body)
-            .await?
+    if let Some(response) = admin_provider::maybe_build_local_admin_provider_oauth_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
     {
         return Ok(Some(response));
     }
@@ -49,19 +57,13 @@ pub(super) async fn maybe_build_local_admin_proxy_response(
     }
 
     if let Some(response) =
-        admin::maybe_build_local_admin_core_response(state, request_context, request_body).await?
-    {
-        return Ok(Some(response));
-    }
-
-    if let Some(response) =
-        admin::maybe_build_local_admin_global_models_response(state, request_context, request_body)
+        admin_system::maybe_build_local_admin_core_response(state, request_context, request_body)
             .await?
     {
         return Ok(Some(response));
     }
 
-    if let Some(response) = admin::maybe_build_local_admin_provider_models_response(
+    if let Some(response) = admin_model::maybe_build_local_admin_global_models_response(
         state,
         request_context,
         request_body,
@@ -71,25 +73,44 @@ pub(super) async fn maybe_build_local_admin_proxy_response(
         return Ok(Some(response));
     }
 
-    if let Some(response) =
-        admin::maybe_build_local_admin_providers_response(state, request_context, request_body)
-            .await?
+    if let Some(response) = admin_provider::maybe_build_local_admin_provider_models_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
     {
         return Ok(Some(response));
     }
-    if let Some(response) =
-        admin::maybe_build_local_admin_provider_ops_response(state, request_context, request_body)
-            .await?
+
+    if let Some(response) = admin_provider::maybe_build_local_admin_providers_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
     {
         return Ok(Some(response));
     }
-    if let Some(response) =
-        admin::maybe_build_local_admin_adaptive_response(state, request_context, request_body)
-            .await?
+    if let Some(response) = admin_provider::maybe_build_local_admin_provider_ops_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
     {
         return Ok(Some(response));
     }
-    if let Some(response) = admin::maybe_build_local_admin_provider_strategy_response(
+    if let Some(response) = admin_system::maybe_build_local_admin_adaptive_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
+    {
+        return Ok(Some(response));
+    }
+    if let Some(response) = admin_provider::maybe_build_local_admin_provider_strategy_response(
         state,
         request_context,
         request_body,
@@ -99,90 +120,116 @@ pub(super) async fn maybe_build_local_admin_proxy_response(
         return Ok(Some(response));
     }
     if let Some(response) =
-        admin::maybe_build_local_admin_pool_response(state, request_context, request_body).await?
+        admin_system::maybe_build_local_admin_pool_response(state, request_context, request_body)
+            .await?
+    {
+        return Ok(Some(response));
+    }
+    if let Some(response) = admin_billing::maybe_build_local_admin_billing_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
+    {
+        return Ok(Some(response));
+    }
+    if let Some(response) = admin_billing::maybe_build_local_admin_payments_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
+    {
+        return Ok(Some(response));
+    }
+    if let Some(response) = admin_provider::maybe_build_local_admin_provider_query_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
     {
         return Ok(Some(response));
     }
     if let Some(response) =
-        admin::maybe_build_local_admin_billing_response(state, request_context, request_body)
+        admin_auth::maybe_build_local_admin_security_response(state, request_context, request_body)
             .await?
     {
         return Ok(Some(response));
     }
     if let Some(response) =
-        admin::maybe_build_local_admin_payments_response(state, request_context, request_body)
+        admin_observability::maybe_build_local_admin_stats_response(state, request_context).await?
+    {
+        return Ok(Some(response));
+    }
+    if let Some(response) =
+        admin_observability::maybe_build_local_admin_monitoring_response(state, request_context)
+            .await?
+    {
+        return Ok(Some(response));
+    }
+    if let Some(response) = admin_observability::maybe_build_local_admin_usage_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
+    {
+        return Ok(Some(response));
+    }
+    if let Some(response) =
+        admin_features::maybe_build_local_admin_video_tasks_response(state, request_context).await?
+    {
+        return Ok(Some(response));
+    }
+    if let Some(response) =
+        admin_system::maybe_build_local_admin_proxy_nodes_response(state, request_context).await?
+    {
+        return Ok(Some(response));
+    }
+    if let Some(response) = admin_billing::maybe_build_local_admin_wallets_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
+    {
+        return Ok(Some(response));
+    }
+    if let Some(response) =
+        admin_auth::maybe_build_local_admin_api_keys_response(state, request_context, request_body)
             .await?
     {
         return Ok(Some(response));
     }
     if let Some(response) =
-        admin::maybe_build_local_admin_provider_query_response(state, request_context, request_body)
+        admin_auth::maybe_build_local_admin_ldap_response(state, request_context, request_body)
             .await?
     {
         return Ok(Some(response));
     }
+    if let Some(response) = admin_features::maybe_build_local_admin_gemini_files_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
+    {
+        return Ok(Some(response));
+    }
     if let Some(response) =
-        admin::maybe_build_local_admin_security_response(state, request_context, request_body)
+        admin_users::maybe_build_local_admin_users_response(state, request_context, request_body)
             .await?
     {
         return Ok(Some(response));
     }
-    if let Some(response) =
-        admin::maybe_build_local_admin_stats_response(state, request_context).await?
-    {
-        return Ok(Some(response));
-    }
-    if let Some(response) =
-        admin::maybe_build_local_admin_monitoring_response(state, request_context).await?
-    {
-        return Ok(Some(response));
-    }
-    if let Some(response) =
-        admin::maybe_build_local_admin_usage_response(state, request_context, request_body).await?
-    {
-        return Ok(Some(response));
-    }
-    if let Some(response) =
-        admin::maybe_build_local_admin_video_tasks_response(state, request_context).await?
-    {
-        return Ok(Some(response));
-    }
-    if let Some(response) =
-        admin::maybe_build_local_admin_proxy_nodes_response(state, request_context).await?
-    {
-        return Ok(Some(response));
-    }
-    if let Some(response) =
-        admin::maybe_build_local_admin_wallets_response(state, request_context, request_body)
-            .await?
-    {
-        return Ok(Some(response));
-    }
-    if let Some(response) =
-        admin::maybe_build_local_admin_api_keys_response(state, request_context, request_body)
-            .await?
-    {
-        return Ok(Some(response));
-    }
-    if let Some(response) =
-        admin::maybe_build_local_admin_ldap_response(state, request_context, request_body).await?
-    {
-        return Ok(Some(response));
-    }
-    if let Some(response) =
-        admin::maybe_build_local_admin_gemini_files_response(state, request_context, request_body)
-            .await?
-    {
-        return Ok(Some(response));
-    }
-    if let Some(response) =
-        admin::maybe_build_local_admin_users_response(state, request_context, request_body).await?
-    {
-        return Ok(Some(response));
-    }
-    if let Some(response) =
-        admin::maybe_build_local_admin_endpoints_response(state, request_context, request_body)
-            .await?
+    if let Some(response) = admin_endpoint::maybe_build_local_admin_endpoints_response(
+        state,
+        request_context,
+        request_body,
+    )
+    .await?
     {
         return Ok(Some(response));
     }

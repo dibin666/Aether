@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{postgres::PgRow, PgPool, Postgres, QueryBuilder, Row};
 
-use super::types::{
+use super::{
     AdminGlobalModelListQuery, AdminProviderModelListQuery, CreateAdminGlobalModelRecord,
     GlobalModelReadRepository, GlobalModelWriteRepository, PublicCatalogModelListQuery,
     PublicCatalogModelSearchQuery, PublicGlobalModelQuery, StoredAdminGlobalModel,
@@ -10,7 +10,7 @@ use super::types::{
     StoredProviderModelStats, StoredPublicCatalogModel, StoredPublicGlobalModel,
     StoredPublicGlobalModelPage, UpdateAdminGlobalModelRecord, UpsertAdminProviderModelRecord,
 };
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const LIST_PUBLIC_GLOBAL_MODELS_PREFIX: &str = r#"
 SELECT
@@ -146,10 +146,15 @@ impl SqlxGlobalModelReadRepository {
     ) -> Result<StoredPublicGlobalModelPage, DataLayerError> {
         let mut count_builder = QueryBuilder::<Postgres>::new(COUNT_PUBLIC_GLOBAL_MODELS_PREFIX);
         apply_public_model_filters(&mut count_builder, query);
-        let count_row = count_builder.build().fetch_one(&self.pool).await?;
+        let count_row = count_builder
+            .build()
+            .fetch_one(&self.pool)
+            .await
+            .map_postgres_err()?;
         let total = count_row
             .try_get::<i64, _>("total")
-            .map(|value| value.max(0) as usize)?;
+            .map(|value| value.max(0) as usize)
+            .map_postgres_err()?;
 
         let mut list_builder = QueryBuilder::<Postgres>::new(LIST_PUBLIC_GLOBAL_MODELS_PREFIX);
         apply_public_model_filters(&mut list_builder, query);
@@ -158,7 +163,11 @@ impl SqlxGlobalModelReadRepository {
             .push_bind(query.offset as i64)
             .push(" LIMIT ")
             .push_bind(query.limit as i64);
-        let rows = list_builder.build().fetch_all(&self.pool).await?;
+        let rows = list_builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?;
         let items = rows.iter().map(map_row).collect::<Result<Vec<_>, _>>()?;
 
         Ok(StoredPublicGlobalModelPage { items, total })
@@ -179,7 +188,8 @@ impl SqlxGlobalModelReadRepository {
         )
         .build()
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         rows.iter().map(map_provider_model_stats_row).collect()
     }
@@ -199,7 +209,8 @@ impl SqlxGlobalModelReadRepository {
         )
         .build()
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         rows.iter()
             .map(map_provider_active_global_model_row)
@@ -222,7 +233,11 @@ impl SqlxGlobalModelReadRepository {
             .push_bind(query.offset as i64)
             .push(" LIMIT ")
             .push_bind(query.limit as i64);
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let rows = builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_admin_provider_model_row).collect()
     }
 
@@ -232,10 +247,15 @@ impl SqlxGlobalModelReadRepository {
     ) -> Result<StoredAdminGlobalModelPage, DataLayerError> {
         let mut count_builder = QueryBuilder::<Postgres>::new(COUNT_ADMIN_GLOBAL_MODELS_PREFIX);
         apply_admin_global_model_filters(&mut count_builder, query);
-        let count_row = count_builder.build().fetch_one(&self.pool).await?;
+        let count_row = count_builder
+            .build()
+            .fetch_one(&self.pool)
+            .await
+            .map_postgres_err()?;
         let total = count_row
             .try_get::<i64, _>("total")
-            .map(|value| value.max(0) as usize)?;
+            .map(|value| value.max(0) as usize)
+            .map_postgres_err()?;
 
         let mut list_builder = QueryBuilder::<Postgres>::new(LIST_ADMIN_GLOBAL_MODELS_PREFIX);
         apply_admin_global_model_filters(&mut list_builder, query);
@@ -244,7 +264,11 @@ impl SqlxGlobalModelReadRepository {
             .push_bind(query.offset as i64)
             .push(" LIMIT ")
             .push_bind(query.limit as i64);
-        let rows = list_builder.build().fetch_all(&self.pool).await?;
+        let rows = list_builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_admin_global_model_row)
@@ -292,7 +316,8 @@ LIMIT 1
         .bind(provider_id)
         .bind(model_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         row.as_ref().map(map_admin_provider_model_row).transpose()
     }
@@ -336,7 +361,8 @@ ORDER BY gm.name ASC, m.created_at DESC, m.id ASC
         )
         .bind(provider_id)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         rows.iter().map(map_admin_provider_model_row).collect()
     }
@@ -366,7 +392,8 @@ LIMIT 1
         )
         .bind(global_model_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         row.as_ref().map(map_admin_global_model_row).transpose()
     }
@@ -396,7 +423,8 @@ LIMIT 1
         )
         .bind(model_name)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         row.as_ref().map(map_admin_global_model_row).transpose()
     }
@@ -438,7 +466,8 @@ ORDER BY m.created_at DESC, m.id ASC
         )
         .bind(global_model_id)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         rows.iter().map(map_admin_provider_model_row).collect()
     }
@@ -490,7 +519,8 @@ RETURNING id
         .bind(record.is_available)
         .bind(record.config.clone())
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         if inserted.is_none() {
             return Ok(None);
@@ -543,7 +573,8 @@ RETURNING id
         .bind(record.is_available)
         .bind(record.config.clone())
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         if updated.is_none() {
             return Ok(None);
@@ -569,7 +600,8 @@ RETURNING id
         .bind(provider_id)
         .bind(model_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         Ok(deleted.is_some())
     }
@@ -605,7 +637,8 @@ RETURNING id
         .bind(record.supported_capabilities.clone())
         .bind(record.config.clone())
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         if inserted.is_none() {
             return Ok(None);
@@ -641,7 +674,8 @@ RETURNING id
         .bind(record.supported_capabilities.clone())
         .bind(record.config.clone())
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         if updated.is_none() {
             return Ok(None);
@@ -663,7 +697,8 @@ RETURNING id
         )
         .bind(global_model_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         Ok(deleted.is_some())
     }
@@ -700,7 +735,8 @@ LIMIT 1
         )
         .bind(model_name)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         row.as_ref().map(map_row).transpose()
     }
@@ -716,7 +752,11 @@ LIMIT 1
             .push_bind(query.offset as i64)
             .push(" LIMIT ")
             .push_bind(query.limit as i64);
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let rows = builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_public_catalog_model_row).collect()
     }
 
@@ -733,7 +773,11 @@ LIMIT 1
         builder
             .push(" ORDER BY p.provider_priority ASC, p.name ASC, COALESCE(gm.name, m.provider_model_name) ASC, m.id ASC LIMIT ")
             .push_bind(query.limit as i64);
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let rows = builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_public_catalog_model_row).collect()
     }
 
@@ -903,16 +947,18 @@ fn apply_admin_global_model_filters(
 }
 
 fn map_row(row: &PgRow) -> Result<StoredPublicGlobalModel, DataLayerError> {
-    let supported_capabilities: Option<Value> = row.try_get("supported_capabilities")?;
+    let supported_capabilities: Option<Value> =
+        row.try_get("supported_capabilities").map_postgres_err()?;
     StoredPublicGlobalModel::new(
-        row.try_get("id")?,
-        row.try_get("name")?,
-        row.try_get("display_name")?,
-        row.try_get("is_active")?,
-        row.try_get("default_price_per_request")?,
-        row.try_get("default_tiered_pricing")?,
+        row.try_get("id").map_postgres_err()?,
+        row.try_get("name").map_postgres_err()?,
+        row.try_get("display_name").map_postgres_err()?,
+        row.try_get("is_active").map_postgres_err()?,
+        row.try_get("default_price_per_request")
+            .map_postgres_err()?,
+        row.try_get("default_tiered_pricing").map_postgres_err()?,
         supported_capabilities,
-        row.try_get("config")?,
+        row.try_get("config").map_postgres_err()?,
         0,
     )
 }
@@ -945,74 +991,87 @@ fn apply_public_catalog_model_filters(
 
 fn map_public_catalog_model_row(row: &PgRow) -> Result<StoredPublicCatalogModel, DataLayerError> {
     StoredPublicCatalogModel::new(
-        row.try_get("id")?,
-        row.try_get("provider_id")?,
-        row.try_get("provider_name")?,
-        row.try_get("provider_model_name")?,
-        row.try_get("name")?,
-        row.try_get("display_name")?,
-        row.try_get("description")?,
-        row.try_get("icon_url")?,
-        row.try_get("input_price_per_1m")?,
-        row.try_get("output_price_per_1m")?,
-        row.try_get("cache_creation_price_per_1m")?,
-        row.try_get("cache_read_price_per_1m")?,
-        row.try_get("supports_vision")?,
-        row.try_get("supports_function_calling")?,
-        row.try_get("supports_streaming")?,
-        row.try_get("is_active")?,
+        row.try_get("id").map_postgres_err()?,
+        row.try_get("provider_id").map_postgres_err()?,
+        row.try_get("provider_name").map_postgres_err()?,
+        row.try_get("provider_model_name").map_postgres_err()?,
+        row.try_get("name").map_postgres_err()?,
+        row.try_get("display_name").map_postgres_err()?,
+        row.try_get("description").map_postgres_err()?,
+        row.try_get("icon_url").map_postgres_err()?,
+        row.try_get("input_price_per_1m").map_postgres_err()?,
+        row.try_get("output_price_per_1m").map_postgres_err()?,
+        row.try_get("cache_creation_price_per_1m")
+            .map_postgres_err()?,
+        row.try_get("cache_read_price_per_1m").map_postgres_err()?,
+        row.try_get("supports_vision").map_postgres_err()?,
+        row.try_get("supports_function_calling")
+            .map_postgres_err()?,
+        row.try_get("supports_streaming").map_postgres_err()?,
+        row.try_get("is_active").map_postgres_err()?,
     )
 }
 
 fn map_admin_provider_model_row(row: &PgRow) -> Result<StoredAdminProviderModel, DataLayerError> {
     let created_at_unix_secs = row
-        .try_get::<Option<i64>, _>("created_at_unix_secs")?
+        .try_get::<Option<i64>, _>("created_at_unix_secs")
+        .map_postgres_err()?
         .map(|value| value.max(0) as u64);
     let updated_at_unix_secs = row
-        .try_get::<Option<i64>, _>("updated_at_unix_secs")?
+        .try_get::<Option<i64>, _>("updated_at_unix_secs")
+        .map_postgres_err()?
         .map(|value| value.max(0) as u64);
     StoredAdminProviderModel::new(
-        row.try_get("id")?,
-        row.try_get("provider_id")?,
-        row.try_get("global_model_id")?,
-        row.try_get("provider_model_name")?,
-        row.try_get("provider_model_mappings")?,
-        row.try_get("price_per_request")?,
-        row.try_get("tiered_pricing")?,
-        row.try_get("supports_vision")?,
-        row.try_get("supports_function_calling")?,
-        row.try_get("supports_streaming")?,
-        row.try_get("supports_extended_thinking")?,
-        row.try_get("supports_image_generation")?,
-        row.try_get("is_active")?,
-        row.try_get("is_available")?,
-        row.try_get("config")?,
+        row.try_get("id").map_postgres_err()?,
+        row.try_get("provider_id").map_postgres_err()?,
+        row.try_get("global_model_id").map_postgres_err()?,
+        row.try_get("provider_model_name").map_postgres_err()?,
+        row.try_get("provider_model_mappings").map_postgres_err()?,
+        row.try_get("price_per_request").map_postgres_err()?,
+        row.try_get("tiered_pricing").map_postgres_err()?,
+        row.try_get("supports_vision").map_postgres_err()?,
+        row.try_get("supports_function_calling")
+            .map_postgres_err()?,
+        row.try_get("supports_streaming").map_postgres_err()?,
+        row.try_get("supports_extended_thinking")
+            .map_postgres_err()?,
+        row.try_get("supports_image_generation")
+            .map_postgres_err()?,
+        row.try_get("is_active").map_postgres_err()?,
+        row.try_get("is_available").map_postgres_err()?,
+        row.try_get("config").map_postgres_err()?,
         created_at_unix_secs,
         updated_at_unix_secs,
-        row.try_get("global_model_name")?,
-        row.try_get("global_model_display_name")?,
-        row.try_get("global_model_default_price_per_request")?,
-        row.try_get("global_model_default_tiered_pricing")?,
-        row.try_get("global_model_config")?,
+        row.try_get("global_model_name").map_postgres_err()?,
+        row.try_get("global_model_display_name")
+            .map_postgres_err()?,
+        row.try_get("global_model_default_price_per_request")
+            .map_postgres_err()?,
+        row.try_get("global_model_default_tiered_pricing")
+            .map_postgres_err()?,
+        row.try_get("global_model_config").map_postgres_err()?,
     )
 }
 
 fn map_admin_global_model_row(row: &PgRow) -> Result<StoredAdminGlobalModel, DataLayerError> {
     let created_at_unix_secs = row
-        .try_get::<Option<i64>, _>("created_at_unix_secs")?
+        .try_get::<Option<i64>, _>("created_at_unix_secs")
+        .map_postgres_err()?
         .map(|value| value.max(0) as u64);
     let updated_at_unix_secs = row
-        .try_get::<Option<i64>, _>("updated_at_unix_secs")?
+        .try_get::<Option<i64>, _>("updated_at_unix_secs")
+        .map_postgres_err()?
         .map(|value| value.max(0) as u64);
     StoredAdminGlobalModel::new(
-        row.try_get("id")?,
-        row.try_get("name")?,
-        row.try_get("display_name")?,
-        row.try_get("is_active")?,
-        row.try_get("default_price_per_request")?,
-        row.try_get("default_tiered_pricing")?,
-        row.try_get("supported_capabilities")?,
-        row.try_get("config")?,
+        row.try_get("id").map_postgres_err()?,
+        row.try_get("name").map_postgres_err()?,
+        row.try_get("display_name").map_postgres_err()?,
+        row.try_get("is_active").map_postgres_err()?,
+        row.try_get("default_price_per_request")
+            .map_postgres_err()?,
+        row.try_get("default_tiered_pricing").map_postgres_err()?,
+        row.try_get("supported_capabilities").map_postgres_err()?,
+        row.try_get("config").map_postgres_err()?,
         created_at_unix_secs,
         updated_at_unix_secs,
     )
@@ -1034,9 +1093,9 @@ fn build_provider_id_list_query<'a>(
 
 fn map_provider_model_stats_row(row: &PgRow) -> Result<StoredProviderModelStats, DataLayerError> {
     StoredProviderModelStats::new(
-        row.try_get("provider_id")?,
-        row.try_get("total_models")?,
-        row.try_get("active_models")?,
+        row.try_get("provider_id").map_postgres_err()?,
+        row.try_get("total_models").map_postgres_err()?,
+        row.try_get("active_models").map_postgres_err()?,
     )
 }
 
@@ -1044,8 +1103,8 @@ fn map_provider_active_global_model_row(
     row: &PgRow,
 ) -> Result<StoredProviderActiveGlobalModel, DataLayerError> {
     StoredProviderActiveGlobalModel::new(
-        row.try_get("provider_id")?,
-        row.try_get("global_model_id")?,
+        row.try_get("provider_id").map_postgres_err()?,
+        row.try_get("global_model_id").map_postgres_err()?,
     )
 }
 

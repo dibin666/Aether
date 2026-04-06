@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 
-use aether_data::repository::global_models::{
+use aether_data_contracts::repository::global_models::{
     AdminGlobalModelListQuery, AdminProviderModelListQuery, StoredAdminGlobalModelPage,
     StoredAdminProviderModel, UpsertAdminProviderModelRecord,
 };
-use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
+use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 use aether_scheduler_core::matches_model_mapping;
 use async_trait::async_trait;
 use serde_json::Value;

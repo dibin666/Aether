@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use url::form_urlencoded;
 
-use crate::provider_transport::url::build_passthrough_path_url;
+use crate::ai_pipeline::provider_transport_facade::url::build_passthrough_path_url;
 
 pub(crate) const VERTEX_API_KEY_BASE_URL: &str = "https://aiplatform.googleapis.com";
 
@@ -66,11 +66,7 @@ fn build_vertex_api_key_query(
         serializer.append_pair(&key, &value);
     }
     let query = serializer.finish();
-    if query.is_empty() {
-        None
-    } else {
-        Some(query)
-    }
+    if query.is_empty() { None } else { Some(query) }
 }
 
 fn merge_query_string(out: &mut BTreeMap<String, String>, query: Option<&str>) {

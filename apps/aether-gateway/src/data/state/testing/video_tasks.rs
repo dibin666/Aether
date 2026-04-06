@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use aether_data_contracts::repository::candidates::RequestCandidateRepository;
+use aether_data_contracts::repository::video_tasks::VideoTaskRepository;
+
 use super::{
     AuthApiKeyReadRepository, GatewayDataConfig, GatewayDataState, ProviderCatalogReadRepository,
     RequestCandidateReadRepository, RequestCandidateWriteRepository, VideoTaskReadRepository,
@@ -59,7 +62,7 @@ impl GatewayDataState {
         repository: Arc<T>,
     ) -> Self
     where
-        T: aether_data::repository::video_tasks::VideoTaskRepository + 'static,
+        T: VideoTaskRepository + 'static,
     {
         let video_task_reader: Arc<dyn VideoTaskReadRepository> = repository.clone();
         let video_task_writer: Arc<dyn VideoTaskWriteRepository> = repository;
@@ -110,7 +113,7 @@ impl GatewayDataState {
     #[cfg(test)]
     pub(crate) fn with_video_task_repository_for_tests<T>(repository: Arc<T>) -> Self
     where
-        T: aether_data::repository::video_tasks::VideoTaskRepository + 'static,
+        T: VideoTaskRepository + 'static,
     {
         let video_task_reader: Arc<dyn VideoTaskReadRepository> = repository.clone();
         let video_task_writer: Arc<dyn VideoTaskWriteRepository> = repository;
@@ -165,7 +168,7 @@ impl GatewayDataState {
         encryption_key: impl Into<String>,
     ) -> Self
     where
-        T: aether_data::repository::video_tasks::VideoTaskRepository + 'static,
+        T: VideoTaskRepository + 'static,
     {
         let video_task_reader: Arc<dyn VideoTaskReadRepository> = repository.clone();
         let video_task_writer: Arc<dyn VideoTaskWriteRepository> = repository;
@@ -219,8 +222,8 @@ impl GatewayDataState {
         request_candidate_repository: Arc<U>,
     ) -> Self
     where
-        T: aether_data::repository::video_tasks::VideoTaskRepository + 'static,
-        U: aether_data::repository::candidates::RequestCandidateRepository + 'static,
+        T: VideoTaskRepository + 'static,
+        U: RequestCandidateRepository + 'static,
     {
         let video_task_reader: Arc<dyn VideoTaskReadRepository> = repository.clone();
         let video_task_writer: Arc<dyn VideoTaskWriteRepository> = repository;
@@ -284,9 +287,9 @@ impl GatewayDataState {
         encryption_key: impl Into<String>,
     ) -> Self
     where
-        T: aether_data::repository::video_tasks::VideoTaskRepository + 'static,
+        T: VideoTaskRepository + 'static,
         U: ProviderCatalogReadRepository + 'static,
-        V: aether_data::repository::candidates::RequestCandidateRepository + 'static,
+        V: RequestCandidateRepository + 'static,
     {
         let video_task_reader: Arc<dyn VideoTaskReadRepository> = repository.clone();
         let video_task_writer: Arc<dyn VideoTaskWriteRepository> = repository;

@@ -1,18 +1,16 @@
 use aether_contracts::{ExecutionPlan, ExecutionResult, ProxySnapshot};
-use aether_data::repository::global_models::{
+use aether_data_contracts::repository::global_models::{
     AdminGlobalModelListQuery, AdminProviderModelListQuery, StoredAdminGlobalModelPage,
     StoredAdminProviderModel, UpsertAdminProviderModelRecord,
 };
-use aether_data::repository::provider_catalog::{
+use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
 use aether_model_fetch::{ModelFetchAssociationStore, ModelFetchTransportRuntime};
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::provider_transport::{
-    GatewayProviderTransportSnapshot, LocalResolvedOAuthRequestAuth,
-};
+use crate::provider_transport::{GatewayProviderTransportSnapshot, LocalResolvedOAuthRequestAuth};
 use crate::{AppState, GatewayError};
 
 #[async_trait]

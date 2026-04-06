@@ -3,7 +3,7 @@ use std::sync::RwLock;
 
 use async_trait::async_trait;
 
-use super::types::{
+use super::{
     ProviderCatalogKeyListQuery, ProviderCatalogReadRepository, ProviderCatalogWriteRepository,
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogKeyPage,
     StoredProviderCatalogKeyStats, StoredProviderCatalogProvider,

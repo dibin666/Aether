@@ -1,60 +1,17 @@
-use crate::provider_transport::auth::{
+use crate::ai_pipeline::provider_transport_facade::auth::{
     resolve_local_gemini_auth, resolve_local_openai_chat_auth, resolve_local_standard_auth,
 };
-use crate::provider_transport::policy::{
+use crate::ai_pipeline::provider_transport_facade::policy::{
     supports_local_openai_chat_transport, supports_local_standard_transport_with_network,
 };
-use crate::provider_transport::{
+use crate::ai_pipeline::provider_transport_facade::{
     supports_local_gemini_transport_with_network, GatewayProviderTransportSnapshot,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RequestConversionKind {
-    ToOpenAIChat,
-    ToOpenAIFamilyCli,
-    ToOpenAICompact,
-    ToClaudeStandard,
-    ToGeminiStandard,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SyncChatResponseConversionKind {
-    ToOpenAIChat,
-    ToClaudeChat,
-    ToGeminiChat,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SyncCliResponseConversionKind {
-    ToOpenAIFamilyCli,
-    ToClaudeCli,
-    ToGeminiCli,
-}
-
-pub(crate) fn request_conversion_kind(
-    client_api_format: &str,
-    provider_api_format: &str,
-) -> Option<RequestConversionKind> {
-    let client_api_format = client_api_format.trim().to_ascii_lowercase();
-    let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
-    if client_api_format == provider_api_format {
-        return None;
-    }
-    if !is_standard_api_format(client_api_format.as_str())
-        || !is_standard_api_format(provider_api_format.as_str())
-    {
-        return None;
-    }
-
-    match provider_api_format.as_str() {
-        "openai:chat" => Some(RequestConversionKind::ToOpenAIChat),
-        "openai:cli" => Some(RequestConversionKind::ToOpenAIFamilyCli),
-        "openai:compact" => Some(RequestConversionKind::ToOpenAICompact),
-        "claude:chat" | "claude:cli" => Some(RequestConversionKind::ToClaudeStandard),
-        "gemini:chat" | "gemini:cli" => Some(RequestConversionKind::ToGeminiStandard),
-        _ => None,
-    }
-}
+pub(crate) use aether_ai_pipeline::conversion::{
+    request_conversion_kind, sync_chat_response_conversion_kind, sync_cli_response_conversion_kind,
+    RequestConversionKind, SyncChatResponseConversionKind, SyncCliResponseConversionKind,
+};
 
 pub(crate) fn request_conversion_transport_supported(
     transport: &GatewayProviderTransportSnapshot,
@@ -98,59 +55,6 @@ pub(crate) fn request_conversion_direct_auth(
         }
         _ => None,
     }
-}
-
-pub(crate) fn sync_chat_response_conversion_kind(
-    provider_api_format: &str,
-    client_api_format: &str,
-) -> Option<SyncChatResponseConversionKind> {
-    let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
-    let client_api_format = client_api_format.trim().to_ascii_lowercase();
-    if provider_api_format == client_api_format {
-        return None;
-    }
-    if !is_standard_api_format(provider_api_format.as_str()) {
-        return None;
-    }
-    match client_api_format.as_str() {
-        "openai:chat" => Some(SyncChatResponseConversionKind::ToOpenAIChat),
-        "claude:chat" => Some(SyncChatResponseConversionKind::ToClaudeChat),
-        "gemini:chat" => Some(SyncChatResponseConversionKind::ToGeminiChat),
-        _ => None,
-    }
-}
-
-pub(crate) fn sync_cli_response_conversion_kind(
-    provider_api_format: &str,
-    client_api_format: &str,
-) -> Option<SyncCliResponseConversionKind> {
-    let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
-    let client_api_format = client_api_format.trim().to_ascii_lowercase();
-    if provider_api_format == client_api_format {
-        return None;
-    }
-    if !is_standard_api_format(provider_api_format.as_str()) {
-        return None;
-    }
-    match client_api_format.as_str() {
-        "openai:cli" | "openai:compact" => Some(SyncCliResponseConversionKind::ToOpenAIFamilyCli),
-        "claude:cli" => Some(SyncCliResponseConversionKind::ToClaudeCli),
-        "gemini:cli" => Some(SyncCliResponseConversionKind::ToGeminiCli),
-        _ => None,
-    }
-}
-
-fn is_standard_api_format(api_format: &str) -> bool {
-    matches!(
-        api_format,
-        "openai:chat"
-            | "openai:cli"
-            | "openai:compact"
-            | "claude:chat"
-            | "claude:cli"
-            | "gemini:chat"
-            | "gemini:cli"
-    )
 }
 
 #[cfg(test)]

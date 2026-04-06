@@ -1,12 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 use tracing::warn;
 
 use super::{
     materialize_local_openai_chat_candidate_attempts,
     maybe_build_local_openai_chat_decision_payload_for_candidate, AppState, GatewayControlDecision,
     GatewayError, LocalExecutionRuntimeMissDiagnostic, LocalOpenAiChatDecisionInput,
+};
+use crate::ai_pipeline::planner::auth_snapshot_facade::{
+    read_auth_api_key_snapshot, GatewayAuthApiKeySnapshot,
 };
 use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
 use crate::ai_pipeline::planner::common::{
@@ -16,9 +20,7 @@ use crate::ai_pipeline::planner::plan_builders::{
     build_openai_chat_stream_plan_from_decision, build_openai_chat_sync_plan_from_decision,
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
-use crate::scheduler::{
-    list_selectable_candidates, GatewayMinimalCandidateSelectionCandidate,
-};
+use crate::ai_pipeline::planner::scheduler_facade::list_selectable_candidates;
 
 pub(super) fn build_local_openai_chat_miss_diagnostic(
     decision: &GatewayControlDecision,
@@ -292,7 +294,7 @@ pub(super) async fn list_local_openai_chat_candidates(
     state: &AppState,
     input: &LocalOpenAiChatDecisionInput,
     require_streaming: bool,
-) -> Result<Vec<GatewayMinimalCandidateSelectionCandidate>, GatewayError> {
+) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
     let now_unix_secs = current_unix_secs();
     let mut combined = Vec::new();
     let mut seen = BTreeSet::new();
@@ -352,9 +354,9 @@ pub(super) async fn list_local_openai_chat_candidates(
 }
 
 fn auth_snapshot_allows_cross_format_openai_chat_candidate(
-    auth_snapshot: &crate::data::auth::GatewayAuthApiKeySnapshot,
+    auth_snapshot: &GatewayAuthApiKeySnapshot,
     requested_model: &str,
-    candidate: &GatewayMinimalCandidateSelectionCandidate,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
 ) -> bool {
     if let Some(allowed_providers) = auth_snapshot.effective_allowed_providers() {
         let provider_allowed = allowed_providers.iter().any(|value| {
@@ -438,13 +440,13 @@ pub(super) async fn resolve_local_openai_chat_decision_input(
     };
 
     let now_unix_secs = current_unix_secs();
-    let auth_snapshot = match state
-        .read_auth_api_key_snapshot(
-            &auth_context.user_id,
-            &auth_context.api_key_id,
-            now_unix_secs,
-        )
-        .await
+    let auth_snapshot = match read_auth_api_key_snapshot(
+        state,
+        &auth_context.user_id,
+        &auth_context.api_key_id,
+        now_unix_secs,
+    )
+    .await
     {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => {

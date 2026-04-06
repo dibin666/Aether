@@ -1,6 +1,7 @@
 use axum::body::Body;
 use axum::http::Response;
 
+use crate::ai_pipeline::planner;
 use crate::ai_pipeline::planner::common::{
     parse_direct_request_body, EXECUTION_RUNTIME_STREAM_DECISION_ACTION,
     EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
@@ -16,12 +17,10 @@ use crate::ai_pipeline::planner::standard::family::{
     build_local_sync_plan_and_reports as build_standard_sync_plan_and_reports, LocalStandardSpec,
 };
 use crate::ai_pipeline::planner::standard::{claude, gemini, openai};
-use crate::ai_pipeline::{planner, runtime};
 use crate::control::GatewayControlDecision;
 use crate::executor::candidate_loop::{
     execute_stream_plan_and_reports, execute_sync_plan_and_reports,
 };
-use crate::intent;
 use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
 
 pub(crate) async fn maybe_execute_sync_local_path(
@@ -31,7 +30,7 @@ pub(crate) async fn maybe_execute_sync_local_path(
     trace_id: &str,
     decision: &GatewayControlDecision,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    intent::maybe_execute_via_sync_intent_path(state, parts, body_bytes, trace_id, decision).await
+    super::maybe_execute_via_sync_decision_path(state, parts, body_bytes, trace_id, decision).await
 }
 
 pub(crate) async fn maybe_execute_stream_local_path(
@@ -41,7 +40,8 @@ pub(crate) async fn maybe_execute_stream_local_path(
     trace_id: &str,
     decision: &GatewayControlDecision,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    intent::maybe_execute_via_stream_intent_path(state, parts, body_bytes, trace_id, decision).await
+    super::maybe_execute_via_stream_decision_path(state, parts, body_bytes, trace_id, decision)
+        .await
 }
 
 pub(crate) async fn maybe_execute_sync_via_local_decision(
@@ -225,10 +225,7 @@ pub(crate) async fn maybe_execute_sync_via_local_standard_decision(
         decision,
         body_json,
         plan_kind,
-        |plan_kind| {
-            claude::chat::resolve_sync_spec(plan_kind)
-                .or_else(|| claude::cli::resolve_sync_spec(plan_kind))
-        },
+        claude::resolve_sync_spec,
     )
     .await?
     {
@@ -242,10 +239,7 @@ pub(crate) async fn maybe_execute_sync_via_local_standard_decision(
         decision,
         body_json,
         plan_kind,
-        |plan_kind| {
-            gemini::chat::resolve_sync_spec(plan_kind)
-                .or_else(|| gemini::cli::resolve_sync_spec(plan_kind))
-        },
+        gemini::resolve_sync_spec,
     )
     .await
 }
@@ -265,10 +259,7 @@ pub(crate) async fn maybe_execute_stream_via_local_standard_decision(
         decision,
         body_json,
         plan_kind,
-        |plan_kind| {
-            claude::chat::resolve_stream_spec(plan_kind)
-                .or_else(|| claude::cli::resolve_stream_spec(plan_kind))
-        },
+        claude::resolve_stream_spec,
     )
     .await?
     {
@@ -282,10 +273,7 @@ pub(crate) async fn maybe_execute_stream_via_local_standard_decision(
         decision,
         body_json,
         plan_kind,
-        |plan_kind| {
-            gemini::chat::resolve_stream_spec(plan_kind)
-                .or_else(|| gemini::cli::resolve_stream_spec(plan_kind))
-        },
+        gemini::resolve_stream_spec,
     )
     .await
 }
@@ -434,7 +422,28 @@ pub(crate) async fn maybe_execute_sync_request(
     trace_id: &str,
     decision: Option<&GatewayControlDecision>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    runtime::maybe_execute_sync_request(state, parts, body_bytes, trace_id, decision).await
+    let Some(decision) = decision else {
+        return Ok(None);
+    };
+    #[cfg(not(test))]
+    {
+        if parts.method != http::Method::POST {
+            return Ok(None);
+        }
+        return maybe_execute_sync_local_path(state, parts, body_bytes, trace_id, decision).await;
+    }
+    #[cfg(test)]
+    {
+        if state
+            .execution_runtime_override_base_url()
+            .unwrap_or_default()
+            .is_empty()
+            && parts.method != http::Method::POST
+        {
+            return Ok(None);
+        }
+        maybe_execute_sync_local_path(state, parts, body_bytes, trace_id, decision).await
+    }
 }
 
 pub(crate) async fn maybe_execute_stream_request(
@@ -444,7 +453,28 @@ pub(crate) async fn maybe_execute_stream_request(
     trace_id: &str,
     decision: Option<&GatewayControlDecision>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
-    runtime::maybe_execute_stream_request(state, parts, body_bytes, trace_id, decision).await
+    let Some(decision) = decision else {
+        return Ok(None);
+    };
+    #[cfg(not(test))]
+    {
+        if parts.method != http::Method::POST {
+            return Ok(None);
+        }
+        return maybe_execute_stream_local_path(state, parts, body_bytes, trace_id, decision).await;
+    }
+    #[cfg(test)]
+    {
+        if state
+            .execution_runtime_override_base_url()
+            .unwrap_or_default()
+            .is_empty()
+            && parts.method != http::Method::POST
+        {
+            return Ok(None);
+        }
+        maybe_execute_stream_local_path(state, parts, body_bytes, trace_id, decision).await
+    }
 }
 
 pub(crate) fn planner_decision_action(action: &str) -> bool {

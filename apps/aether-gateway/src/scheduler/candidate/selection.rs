@@ -1,20 +1,29 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use aether_data::repository::candidates::StoredRequestCandidate;
-use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
+use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 use aether_scheduler_core::{
-    build_provider_concurrent_limit_map, candidate_is_selectable_with_runtime_state,
+    collect_selectable_candidates_from_keys,
     reorder_candidates_by_scheduler_health as reorder_candidates_by_scheduler_health_in_core,
-    SchedulerAffinityTarget,
 };
 
 use crate::data::auth::GatewayAuthApiKeySnapshot;
+use crate::data::candidate_selection::{
+    read_minimal_candidate_selection, MinimalCandidateSelectionRowSource,
+};
+use crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL;
 use crate::GatewayError;
 
-use super::{GatewayMinimalCandidateSelectionCandidate, SchedulerRuntimeState};
+use super::affinity::{
+    build_scheduler_affinity_cache_key, candidate_key, remember_scheduler_affinity,
+};
+use super::runtime::{
+    auth_snapshot_concurrency_limit_reached, is_candidate_selectable,
+    read_candidate_runtime_selection_snapshot,
+};
+use super::{SchedulerMinimalCandidateSelectionCandidate, SchedulerRuntimeState};
 
 pub(super) fn reorder_candidates_by_scheduler_health(
-    candidates: &mut [GatewayMinimalCandidateSelectionCandidate],
+    candidates: &mut [SchedulerMinimalCandidateSelectionCandidate],
     provider_key_rpm_states: &BTreeMap<String, StoredProviderCatalogKey>,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
 ) {
@@ -28,73 +37,89 @@ pub(super) fn reorder_candidates_by_scheduler_health(
     );
 }
 
-pub(super) use aether_scheduler_core::should_skip_provider_quota;
-
-pub(super) async fn is_candidate_selectable(
-    candidate: &GatewayMinimalCandidateSelectionCandidate,
-    recent_candidates: &[StoredRequestCandidate],
-    provider_concurrent_limits: &BTreeMap<String, usize>,
-    provider_key_rpm_states: &BTreeMap<String, StoredProviderCatalogKey>,
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) async fn select_minimal_candidate(
+    selection_row_source: &(impl MinimalCandidateSelectionRowSource + Sync),
+    runtime_state: &impl SchedulerRuntimeState,
+    api_format: &str,
+    global_model_name: &str,
+    require_streaming: bool,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
     now_unix_secs: u64,
-    cached_affinity_target: Option<&SchedulerAffinityTarget>,
-    state: &(impl SchedulerRuntimeState + ?Sized),
-) -> Result<bool, GatewayError> {
-    let provider_quota_blocks_requests = state
-        .read_provider_quota_snapshot(&candidate.provider_id)
-        .await?
-        .as_ref()
-        .is_some_and(|quota| should_skip_provider_quota(quota, now_unix_secs));
-    let rpm_reset_at = state.provider_key_rpm_reset_at(candidate.key_id.as_str(), now_unix_secs);
-
-    Ok(candidate_is_selectable_with_runtime_state(
-        candidate,
-        recent_candidates,
-        provider_concurrent_limits,
-        provider_key_rpm_states,
+) -> Result<Option<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
+    let affinity_cache_key =
+        build_scheduler_affinity_cache_key(auth_snapshot, api_format, global_model_name);
+    let selected = collect_selectable_candidates(
+        selection_row_source,
+        runtime_state,
+        api_format,
+        global_model_name,
+        require_streaming,
+        auth_snapshot,
         now_unix_secs,
-        cached_affinity_target,
-        provider_quota_blocks_requests,
-        rpm_reset_at,
+    )
+    .await?
+    .into_iter()
+    .next();
+    if let Some(candidate) = selected.as_ref() {
+        remember_scheduler_affinity(affinity_cache_key.as_deref(), runtime_state, candidate);
+    }
+    Ok(selected)
+}
+
+pub(super) async fn collect_selectable_candidates(
+    selection_row_source: &(impl MinimalCandidateSelectionRowSource + Sync),
+    runtime_state: &impl SchedulerRuntimeState,
+    api_format: &str,
+    global_model_name: &str,
+    require_streaming: bool,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    now_unix_secs: u64,
+) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
+    let mut candidates = read_minimal_candidate_selection(
+        selection_row_source,
+        api_format,
+        global_model_name,
+        require_streaming,
+        auth_snapshot,
+    )
+    .await
+    .map_err(|err| GatewayError::Internal(err.to_string()))?;
+    let runtime_snapshot =
+        read_candidate_runtime_selection_snapshot(runtime_state, &candidates, now_unix_secs)
+            .await?;
+    reorder_candidates_by_scheduler_health(
+        &mut candidates,
+        &runtime_snapshot.provider_key_rpm_states,
+        auth_snapshot,
+    );
+    let affinity_cache_key =
+        build_scheduler_affinity_cache_key(auth_snapshot, api_format, global_model_name);
+    let cached_affinity_target = affinity_cache_key.as_deref().and_then(|cache_key| {
+        runtime_state.read_cached_scheduler_affinity_target(cache_key, SCHEDULER_AFFINITY_TTL)
+    });
+
+    if auth_snapshot_concurrency_limit_reached(auth_snapshot, &runtime_snapshot, now_unix_secs) {
+        return Ok(Vec::new());
+    }
+
+    let mut selected_keys = BTreeSet::new();
+
+    for candidate in &candidates {
+        if !is_candidate_selectable(
+            candidate,
+            &runtime_snapshot,
+            now_unix_secs,
+            cached_affinity_target.as_ref(),
+        ) {
+            continue;
+        }
+        selected_keys.insert(candidate_key(candidate));
+    }
+
+    Ok(collect_selectable_candidates_from_keys(
+        candidates,
+        &selected_keys,
+        cached_affinity_target.as_ref(),
     ))
-}
-
-pub(super) async fn read_provider_concurrent_limits(
-    state: &(impl SchedulerRuntimeState + ?Sized),
-    candidates: &[GatewayMinimalCandidateSelectionCandidate],
-) -> Result<BTreeMap<String, usize>, GatewayError> {
-    let provider_ids = candidates
-        .iter()
-        .map(|candidate| candidate.provider_id.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    if provider_ids.is_empty() {
-        return Ok(BTreeMap::new());
-    }
-
-    let providers = state
-        .read_provider_catalog_providers_by_ids(&provider_ids)
-        .await?;
-    Ok(build_provider_concurrent_limit_map(providers))
-}
-
-pub(super) async fn read_provider_key_rpm_states(
-    state: &(impl SchedulerRuntimeState + ?Sized),
-    candidates: &[GatewayMinimalCandidateSelectionCandidate],
-) -> Result<BTreeMap<String, StoredProviderCatalogKey>, GatewayError> {
-    let key_ids = candidates
-        .iter()
-        .map(|candidate| candidate.key_id.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    if key_ids.is_empty() {
-        return Ok(BTreeMap::new());
-    }
-
-    let keys = state.read_provider_catalog_keys_by_ids(&key_ids).await?;
-    Ok(keys
-        .into_iter()
-        .map(|key| (key.id.clone(), key))
-        .collect::<BTreeMap<_, _>>())
 }

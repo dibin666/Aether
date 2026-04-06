@@ -12,8 +12,8 @@ use crate::execution_runtime::{
     maybe_build_local_video_success_outcome, resolve_local_sync_error_background_report_kind,
     resolve_local_sync_success_background_report_kind,
 };
-use crate::handlers::admin::provider_oauth_refresh::build_internal_control_error_response;
-use crate::handlers::{
+use crate::handlers::admin::provider::oauth::build_internal_control_error_response;
+use crate::handlers::shared::{
     unix_secs_to_rfc3339, InternalTunnelHeartbeatRequest, InternalTunnelNodeStatusRequest,
 };
 use crate::video_tasks::{
@@ -269,8 +269,7 @@ pub(crate) async fn maybe_build_internal_finalize_video_response(
         }
         match outcome.report_mode {
             crate::video_tasks::VideoTaskSyncReportMode::InlineSync => {
-                crate::usage::submit_sync_report(state, trace_id, outcome.report_payload)
-                    .await?;
+                crate::usage::submit_sync_report(state, trace_id, outcome.report_payload).await?;
             }
             crate::video_tasks::VideoTaskSyncReportMode::Background => {
                 crate::usage::spawn_sync_report(
@@ -314,11 +313,7 @@ pub(crate) async fn maybe_build_internal_finalize_video_response(
         {
             let mut report_payload = payload.clone();
             report_payload.report_kind = success_report_kind.to_string();
-            crate::usage::spawn_sync_report(
-                state.clone(),
-                trace_id.to_string(),
-                report_payload,
-            );
+            crate::usage::spawn_sync_report(state.clone(), trace_id.to_string(), report_payload);
         }
         response.headers_mut().insert(
             HeaderName::from_static(CONTROL_EXECUTED_HEADER),
@@ -334,11 +329,7 @@ pub(crate) async fn maybe_build_internal_finalize_video_response(
         {
             let mut report_payload = payload.clone();
             report_payload.report_kind = error_report_kind.to_string();
-            crate::usage::spawn_sync_report(
-                state.clone(),
-                trace_id.to_string(),
-                report_payload,
-            );
+            crate::usage::spawn_sync_report(state.clone(), trace_id.to_string(), report_payload);
         }
         response.headers_mut().insert(
             HeaderName::from_static(CONTROL_EXECUTED_HEADER),
@@ -408,11 +399,11 @@ pub(crate) fn parse_internal_tunnel_heartbeat_request(
         || payload
             .proxy_version
             .as_deref()
-            .is_some_and(|value| value.chars().count() > 20)
+            .is_some_and(|value: &str| value.chars().count() > 20)
         || payload
             .proxy_metadata
             .as_ref()
-            .is_some_and(|value| !value.is_object())
+            .is_some_and(|value: &serde_json::Value| !value.is_object())
     {
         return Err(build_internal_control_error_response(
             http::StatusCode::BAD_REQUEST,

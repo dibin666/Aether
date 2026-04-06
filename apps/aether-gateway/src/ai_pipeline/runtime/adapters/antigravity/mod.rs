@@ -1,6 +1,6 @@
 #![allow(dead_code, unused_imports)]
 
-pub(crate) use crate::provider_transport::antigravity::{
+pub(crate) use crate::ai_pipeline::provider_transport_facade::antigravity::{
     build_antigravity_safe_v1internal_request, build_antigravity_static_identity_headers,
     build_antigravity_v1internal_url, classify_antigravity_safe_request_body,
     classify_local_antigravity_request_support, AntigravityEnvelopeRequestType,

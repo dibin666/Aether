@@ -1,5 +1,5 @@
-use aether_data::repository::video_tasks::{StoredVideoTask, VideoTaskLookupKey};
-use aether_data::DataLayerError;
+use aether_data_contracts::repository::video_tasks::{StoredVideoTask, VideoTaskLookupKey};
+use aether_data_contracts::DataLayerError;
 use async_trait::async_trait;
 
 use crate::{

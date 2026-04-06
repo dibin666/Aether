@@ -4,10 +4,11 @@ pub(super) use aether_scheduler_core::{
 };
 
 use crate::data::auth::GatewayAuthApiKeySnapshot;
+use crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL;
 
 use super::{
-    GatewayMinimalCandidateSelectionCandidate, SchedulerRuntimeState,
-    SCHEDULER_AFFINITY_MAX_ENTRIES, SCHEDULER_AFFINITY_TTL,
+    SchedulerMinimalCandidateSelectionCandidate, SchedulerRuntimeState,
+    SCHEDULER_AFFINITY_MAX_ENTRIES,
 };
 
 pub(super) fn build_scheduler_affinity_cache_key(
@@ -25,7 +26,7 @@ pub(super) fn build_scheduler_affinity_cache_key(
 pub(super) fn remember_scheduler_affinity(
     affinity_cache_key: Option<&str>,
     state: &(impl SchedulerRuntimeState + ?Sized),
-    candidate: &GatewayMinimalCandidateSelectionCandidate,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
 ) {
     let Some(cache_key) = affinity_cache_key else {
         return;

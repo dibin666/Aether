@@ -1,8 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
-use aether_data::repository::usage::{InMemoryUsageReadRepository, StoredRequestUsageAudit};
+use aether_data::repository::usage::InMemoryUsageReadRepository;
 use aether_data::repository::users::{InMemoryUserReadRepository, StoredUserSummary};
+use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
 use axum::body::{Body, Bytes};
 use axum::routing::{any, get, post};
 use axum::{extract::Request, Router};
@@ -20,7 +21,7 @@ use crate::constants::{
 };
 use crate::control::resolve_public_request_context;
 use crate::data::GatewayDataState;
-use crate::handlers::admin::maybe_build_local_admin_usage_response;
+use crate::handlers::admin::observability::maybe_build_local_admin_usage_response;
 
 const ADMIN_USAGE_DATA_UNAVAILABLE_DETAIL: &str = "Admin usage data unavailable";
 const DAY_1_UNIX_SECS: i64 = 1_711_000_000;

@@ -1,12 +1,15 @@
 use async_trait::async_trait;
 use sqlx::{postgres::PgRow, PgPool, Postgres, QueryBuilder, Row};
 
-use super::types::{
+use super::{
     ProviderCatalogKeyListQuery, ProviderCatalogReadRepository, ProviderCatalogWriteRepository,
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogKeyPage,
     StoredProviderCatalogKeyStats, StoredProviderCatalogProvider,
 };
-use crate::DataLayerError;
+use crate::{
+    error::{postgres_error, SqlxResultExt},
+    DataLayerError,
+};
 
 const LIST_PROVIDERS_BY_IDS_PREFIX: &str = r#"
 SELECT
@@ -271,7 +274,8 @@ impl SqlxProviderCatalogReadRepository {
         )
         .build()
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
         rows.iter().map(map_provider_row).collect()
     }
 
@@ -312,7 +316,8 @@ ORDER BY provider_priority ASC, name ASC
         )
         .bind(active_only)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
         rows.iter().map(map_provider_row).collect()
     }
 
@@ -334,17 +339,16 @@ ORDER BY provider_priority ASC, name ASC
         .await
         {
             Ok(rows) => rows,
-            Err(error) if is_missing_endpoint_health_score_column(&error) => {
-                build_list_query(
-                    LIST_ENDPOINTS_BY_IDS_PREFIX_LEGACY,
-                    endpoint_ids,
-                    " ORDER BY api_format ASC, id ASC",
-                )
-                .build()
-                .fetch_all(&self.pool)
-                .await?
-            }
-            Err(error) => return Err(error.into()),
+            Err(error) if is_missing_endpoint_health_score_column(&error) => build_list_query(
+                LIST_ENDPOINTS_BY_IDS_PREFIX_LEGACY,
+                endpoint_ids,
+                " ORDER BY api_format ASC, id ASC",
+            )
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?,
+            Err(error) => return Err(postgres_error(error)),
         };
         rows.iter().map(map_endpoint_row).collect()
     }
@@ -367,17 +371,16 @@ ORDER BY provider_priority ASC, name ASC
         .await
         {
             Ok(rows) => rows,
-            Err(error) if is_missing_endpoint_health_score_column(&error) => {
-                build_list_query(
-                    LIST_ENDPOINTS_BY_PROVIDER_IDS_PREFIX_LEGACY,
-                    provider_ids,
-                    " ORDER BY provider_id ASC, api_format ASC, id ASC",
-                )
-                .build()
-                .fetch_all(&self.pool)
-                .await?
-            }
-            Err(error) => return Err(error.into()),
+            Err(error) if is_missing_endpoint_health_score_column(&error) => build_list_query(
+                LIST_ENDPOINTS_BY_PROVIDER_IDS_PREFIX_LEGACY,
+                provider_ids,
+                " ORDER BY provider_id ASC, api_format ASC, id ASC",
+            )
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?,
+            Err(error) => return Err(postgres_error(error)),
         };
         rows.iter().map(map_endpoint_row).collect()
     }
@@ -397,7 +400,8 @@ ORDER BY provider_priority ASC, name ASC
         )
         .build()
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
         rows.iter().map(map_key_row).collect()
     }
 
@@ -416,7 +420,8 @@ ORDER BY provider_priority ASC, name ASC
         )
         .build()
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
         rows.iter().map(map_key_row).collect()
     }
 
@@ -462,8 +467,9 @@ WHERE provider_id = $1
         .bind(search_pattern.as_deref())
         .bind(query.is_active)
         .fetch_one(&self.pool)
-        .await?;
-        let total = count_row.try_get::<i64, _>("total")?.max(0) as usize;
+        .await
+        .map_postgres_err()?;
+        let total = row_get::<i64>(&count_row, "total")?.max(0) as usize;
 
         let rows = sqlx::query(
             r#"
@@ -530,7 +536,8 @@ LIMIT $5
         .bind(offset)
         .bind(limit)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_key_row)
@@ -554,7 +561,8 @@ LIMIT $5
         )
         .build()
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
         rows.iter().map(map_key_stats_row).collect()
     }
 
@@ -597,7 +605,8 @@ WHERE id = $1
         .bind(encrypted_auth_config)
         .bind(expires_at_unix_secs.map(|value| value as f64))
         .execute(&self.pool)
-        .await?
+        .await
+        .map_postgres_err()?
         .rows_affected();
 
         Ok(rows_affected > 0)
@@ -634,7 +643,7 @@ WHERE id = $1
             ));
         }
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin().await.map_postgres_err()?;
 
         if let Some(target_priority) = shift_existing_priorities_from {
             sqlx::query(
@@ -647,7 +656,8 @@ WHERE provider_priority IS NOT NULL
             )
             .bind(target_priority)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         }
 
         sqlx::query(
@@ -752,9 +762,10 @@ INSERT INTO providers (
         .bind(provider.created_at_unix_secs.map(|value| value as f64))
         .bind(provider.updated_at_unix_secs.map(|value| value as f64))
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
-        tx.commit().await?;
+        tx.commit().await.map_err(postgres_error)?;
 
         self.list_providers_by_ids(std::slice::from_ref(&provider.id))
             .await?
@@ -871,7 +882,8 @@ WHERE id = $1
         .bind(&provider.config)
         .bind(provider.updated_at_unix_secs.map(|value| value as f64))
         .execute(&self.pool)
-        .await?
+        .await
+        .map_postgres_err()?
         .rows_affected();
 
         if rows_affected == 0 {
@@ -908,7 +920,8 @@ WHERE id = $1
         )
         .bind(provider_id)
         .execute(&self.pool)
-        .await?
+        .await
+        .map_postgres_err()?
         .rows_affected();
 
         Ok(rows_affected > 0)
@@ -926,26 +939,30 @@ WHERE id = $1
             ));
         }
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin().await.map_postgres_err()?;
 
         sqlx::query(
             "UPDATE user_preferences SET default_provider_id = NULL WHERE default_provider_id = $1",
         )
         .bind(provider_id)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_postgres_err()?;
         sqlx::query("UPDATE usage SET provider_id = NULL WHERE provider_id = $1")
             .bind(provider_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         sqlx::query("UPDATE video_tasks SET provider_id = NULL WHERE provider_id = $1")
             .bind(provider_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         sqlx::query("DELETE FROM request_candidates WHERE provider_id = $1")
             .bind(provider_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         for endpoint_id in endpoint_ids {
             sqlx::query(
@@ -953,44 +970,52 @@ WHERE id = $1
             )
             .bind(endpoint_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
             sqlx::query("UPDATE video_tasks SET endpoint_id = NULL WHERE endpoint_id = $1")
                 .bind(endpoint_id)
                 .execute(&mut *tx)
-                .await?;
+                .await
+                .map_postgres_err()?;
             sqlx::query("DELETE FROM request_candidates WHERE endpoint_id = $1")
                 .bind(endpoint_id)
                 .execute(&mut *tx)
-                .await?;
+                .await
+                .map_postgres_err()?;
         }
 
         for key_id in key_ids {
             sqlx::query("DELETE FROM gemini_file_mappings WHERE key_id = $1")
                 .bind(key_id)
                 .execute(&mut *tx)
-                .await?;
+                .await
+                .map_postgres_err()?;
             sqlx::query(
                 "UPDATE usage SET provider_api_key_id = NULL WHERE provider_api_key_id = $1",
             )
             .bind(key_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
             sqlx::query("UPDATE video_tasks SET key_id = NULL WHERE key_id = $1")
                 .bind(key_id)
                 .execute(&mut *tx)
-                .await?;
+                .await
+                .map_postgres_err()?;
         }
 
         sqlx::query("DELETE FROM api_key_provider_mappings WHERE provider_id = $1")
             .bind(provider_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         sqlx::query("DELETE FROM provider_usage_tracking WHERE provider_id = $1")
             .bind(provider_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
-        tx.commit().await?;
+        tx.commit().await.map_err(postgres_error)?;
         Ok(())
     }
 
@@ -1016,7 +1041,8 @@ WHERE id = $1
         )
         .bind(key_id)
         .execute(&self.pool)
-        .await?
+        .await
+        .map_postgres_err()?
         .rows_affected();
 
         Ok(rows_affected > 0)
@@ -1217,7 +1243,8 @@ INSERT INTO provider_api_keys (
         .bind(key.created_at_unix_secs.map(|value| value as f64))
         .bind(key.updated_at_unix_secs.map(|value| value as f64))
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         self.list_keys_by_ids(std::slice::from_ref(&key.id))
             .await?
@@ -1246,7 +1273,7 @@ INSERT INTO provider_api_keys (
             ));
         }
 
-        sqlx::query(
+        match sqlx::query(
             r#"
 INSERT INTO provider_endpoints (
   id,
@@ -1311,7 +1338,77 @@ INSERT INTO provider_endpoints (
         .bind(endpoint.created_at_unix_secs.map(|value| value as f64))
         .bind(endpoint.updated_at_unix_secs.map(|value| value as f64))
         .execute(&self.pool)
-        .await?;
+        .await
+        {
+            Ok(_) => {}
+            Err(error) if is_missing_endpoint_health_score_column(&error) => {
+                sqlx::query(
+                    r#"
+INSERT INTO provider_endpoints (
+  id,
+  provider_id,
+  api_format,
+  api_family,
+  endpoint_kind,
+  is_active,
+  base_url,
+  header_rules,
+  body_rules,
+  max_retries,
+  custom_path,
+  config,
+  format_acceptance_config,
+  proxy,
+  created_at,
+  updated_at
+) VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7,
+  $8,
+  $9,
+  $10,
+  $11,
+  $12,
+  $13,
+  $14,
+  CASE
+    WHEN $15::double precision IS NULL THEN NOW()
+    ELSE TO_TIMESTAMP($15::double precision)
+  END,
+  CASE
+    WHEN $16::double precision IS NULL THEN NOW()
+    ELSE TO_TIMESTAMP($16::double precision)
+  END
+)
+"#,
+                )
+                .bind(&endpoint.id)
+                .bind(&endpoint.provider_id)
+                .bind(&endpoint.api_format)
+                .bind(&endpoint.api_family)
+                .bind(&endpoint.endpoint_kind)
+                .bind(endpoint.is_active)
+                .bind(&endpoint.base_url)
+                .bind(&endpoint.header_rules)
+                .bind(&endpoint.body_rules)
+                .bind(endpoint.max_retries)
+                .bind(&endpoint.custom_path)
+                .bind(&endpoint.config)
+                .bind(&endpoint.format_acceptance_config)
+                .bind(&endpoint.proxy)
+                .bind(endpoint.created_at_unix_secs.map(|value| value as f64))
+                .bind(endpoint.updated_at_unix_secs.map(|value| value as f64))
+                .execute(&self.pool)
+                .await
+                .map_postgres_err()?;
+            }
+            Err(error) => return Err(postgres_error(error)),
+        }
 
         self.list_endpoints_by_ids(std::slice::from_ref(&endpoint.id))
             .await?
@@ -1340,7 +1437,7 @@ INSERT INTO provider_endpoints (
             ));
         }
 
-        let rows_affected = sqlx::query(
+        let rows_affected = match sqlx::query(
             r#"
 UPDATE provider_endpoints
 SET
@@ -1382,8 +1479,54 @@ WHERE id = $1
         .bind(&endpoint.proxy)
         .bind(endpoint.updated_at_unix_secs.map(|value| value as f64))
         .execute(&self.pool)
-        .await?
-        .rows_affected();
+        .await
+        {
+            Ok(result) => result.rows_affected(),
+            Err(error) if is_missing_endpoint_health_score_column(&error) => sqlx::query(
+                r#"
+UPDATE provider_endpoints
+SET
+  provider_id = $2,
+  api_format = $3,
+  api_family = $4,
+  endpoint_kind = $5,
+  is_active = $6,
+  base_url = $7,
+  header_rules = $8,
+  body_rules = $9,
+  max_retries = $10,
+  custom_path = $11,
+  config = $12,
+  format_acceptance_config = $13,
+  proxy = $14,
+  updated_at = CASE
+    WHEN $15::double precision IS NULL THEN NOW()
+    ELSE TO_TIMESTAMP($15::double precision)
+  END
+WHERE id = $1
+"#,
+            )
+            .bind(&endpoint.id)
+            .bind(&endpoint.provider_id)
+            .bind(&endpoint.api_format)
+            .bind(&endpoint.api_family)
+            .bind(&endpoint.endpoint_kind)
+            .bind(endpoint.is_active)
+            .bind(&endpoint.base_url)
+            .bind(&endpoint.header_rules)
+            .bind(&endpoint.body_rules)
+            .bind(endpoint.max_retries)
+            .bind(&endpoint.custom_path)
+            .bind(&endpoint.config)
+            .bind(&endpoint.format_acceptance_config)
+            .bind(&endpoint.proxy)
+            .bind(endpoint.updated_at_unix_secs.map(|value| value as f64))
+            .execute(&self.pool)
+            .await
+            .map_postgres_err()?
+            .rows_affected(),
+            Err(error) => return Err(postgres_error(error)),
+        };
 
         if rows_affected == 0 {
             return Err(DataLayerError::UnexpectedValue(format!(
@@ -1419,7 +1562,8 @@ WHERE id = $1
         )
         .bind(endpoint_id)
         .execute(&self.pool)
-        .await?
+        .await
+        .map_postgres_err()?
         .rows_affected();
 
         Ok(rows_affected > 0)
@@ -1511,7 +1655,8 @@ WHERE id = $1
         .bind(key.is_active)
         .bind(key.updated_at_unix_secs.map(|value| value as f64))
         .execute(&self.pool)
-        .await?
+        .await
+        .map_postgres_err()?
         .rows_affected();
 
         if rows_affected == 0 {
@@ -1548,7 +1693,8 @@ WHERE id = $1
         )
         .bind(key_id)
         .execute(&self.pool)
-        .await?
+        .await
+        .map_postgres_err()?
         .rows_affected();
 
         Ok(rows_affected > 0)
@@ -1583,7 +1729,8 @@ WHERE id = $1
         .bind(health_by_format)
         .bind(circuit_breaker_by_format)
         .execute(&self.pool)
-        .await?
+        .await
+        .map_postgres_err()?
         .rows_affected();
 
         Ok(rows_affected > 0)
@@ -1769,9 +1916,15 @@ fn build_list_query<'a>(
     builder
 }
 
+fn row_get<T>(row: &PgRow, column: &str) -> Result<T, DataLayerError>
+where
+    for<'r> T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+{
+    row.try_get(column).map_postgres_err()
+}
+
 fn map_provider_row(row: &PgRow) -> Result<StoredProviderCatalogProvider, DataLayerError> {
-    let quota_reset_day = row
-        .try_get::<Option<i32>, _>("quota_reset_day")?
+    let quota_reset_day = row_get::<Option<i32>>(row, "quota_reset_day")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1780,8 +1933,7 @@ fn map_provider_row(row: &PgRow) -> Result<StoredProviderCatalogProvider, DataLa
             })
         })
         .transpose()?;
-    let created_at_unix_secs = row
-        .try_get::<Option<i64>, _>("created_at_unix_secs")?
+    let created_at_unix_secs = row_get::<Option<i64>>(row, "created_at_unix_secs")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1790,8 +1942,7 @@ fn map_provider_row(row: &PgRow) -> Result<StoredProviderCatalogProvider, DataLa
             })
         })
         .transpose()?;
-    let updated_at_unix_secs = row
-        .try_get::<Option<i64>, _>("updated_at_unix_secs")?
+    let updated_at_unix_secs = row_get::<Option<i64>>(row, "updated_at_unix_secs")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1801,40 +1952,37 @@ fn map_provider_row(row: &PgRow) -> Result<StoredProviderCatalogProvider, DataLa
         })
         .transpose()?;
     Ok(StoredProviderCatalogProvider::new(
-        row.try_get("id")?,
-        row.try_get("name")?,
-        row.try_get("website")?,
-        row.try_get("provider_type")?,
+        row_get(row, "id")?,
+        row_get(row, "name")?,
+        row_get(row, "website")?,
+        row_get(row, "provider_type")?,
     )?
-    .with_description(row.try_get("description")?)
+    .with_description(row_get(row, "description")?)
     .with_billing_fields(
-        row.try_get("billing_type")?,
-        row.try_get("monthly_quota_usd")?,
-        row.try_get("monthly_used_usd")?,
+        row_get(row, "billing_type")?,
+        row_get(row, "monthly_quota_usd")?,
+        row_get(row, "monthly_used_usd")?,
         quota_reset_day,
-        row.try_get::<Option<i64>, _>("quota_last_reset_at_unix_secs")?
-            .map(|value| value as u64),
-        row.try_get::<Option<i64>, _>("quota_expires_at_unix_secs")?
-            .map(|value| value as u64),
+        row_get::<Option<i64>>(row, "quota_last_reset_at_unix_secs")?.map(|value| value as u64),
+        row_get::<Option<i64>>(row, "quota_expires_at_unix_secs")?.map(|value| value as u64),
     )
-    .with_routing_fields(row.try_get("provider_priority")?)
+    .with_routing_fields(row_get(row, "provider_priority")?)
     .with_transport_fields(
-        row.try_get("is_active")?,
-        row.try_get("keep_priority_on_conversion")?,
-        row.try_get("enable_format_conversion")?,
-        row.try_get("concurrent_limit")?,
-        row.try_get("max_retries")?,
-        row.try_get("proxy")?,
-        row.try_get("request_timeout")?,
-        row.try_get("stream_first_byte_timeout")?,
-        row.try_get("config")?,
+        row_get(row, "is_active")?,
+        row_get(row, "keep_priority_on_conversion")?,
+        row_get(row, "enable_format_conversion")?,
+        row_get(row, "concurrent_limit")?,
+        row_get(row, "max_retries")?,
+        row_get(row, "proxy")?,
+        row_get(row, "request_timeout")?,
+        row_get(row, "stream_first_byte_timeout")?,
+        row_get(row, "config")?,
     )
     .with_timestamps(created_at_unix_secs, updated_at_unix_secs))
 }
 
 fn map_endpoint_row(row: &PgRow) -> Result<StoredProviderCatalogEndpoint, DataLayerError> {
-    let created_at_unix_secs = row
-        .try_get::<Option<i64>, _>("created_at_unix_secs")?
+    let created_at_unix_secs = row_get::<Option<i64>>(row, "created_at_unix_secs")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1843,8 +1991,7 @@ fn map_endpoint_row(row: &PgRow) -> Result<StoredProviderCatalogEndpoint, DataLa
             })
         })
         .transpose()?;
-    let updated_at_unix_secs = row
-        .try_get::<Option<i64>, _>("updated_at_unix_secs")?
+    let updated_at_unix_secs = row_get::<Option<i64>>(row, "updated_at_unix_secs")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1854,12 +2001,12 @@ fn map_endpoint_row(row: &PgRow) -> Result<StoredProviderCatalogEndpoint, DataLa
         })
         .transpose()?;
     StoredProviderCatalogEndpoint::new(
-        row.try_get("id")?,
-        row.try_get("provider_id")?,
-        row.try_get("api_format")?,
-        row.try_get("api_family")?,
-        row.try_get("endpoint_kind")?,
-        row.try_get("is_active")?,
+        row_get(row, "id")?,
+        row_get(row, "provider_id")?,
+        row_get(row, "api_format")?,
+        row_get(row, "api_family")?,
+        row_get(row, "endpoint_kind")?,
+        row_get(row, "is_active")?,
     )?
     .with_timestamps(created_at_unix_secs, updated_at_unix_secs)
     .with_health_score(
@@ -1869,14 +2016,14 @@ fn map_endpoint_row(row: &PgRow) -> Result<StoredProviderCatalogEndpoint, DataLa
             .unwrap_or(1.0),
     )
     .with_transport_fields(
-        row.try_get("base_url")?,
-        row.try_get("header_rules")?,
-        row.try_get("body_rules")?,
-        row.try_get("max_retries")?,
-        row.try_get("custom_path")?,
-        row.try_get("config")?,
-        row.try_get("format_acceptance_config")?,
-        row.try_get("proxy")?,
+        row_get(row, "base_url")?,
+        row_get(row, "header_rules")?,
+        row_get(row, "body_rules")?,
+        row_get(row, "max_retries")?,
+        row_get(row, "custom_path")?,
+        row_get(row, "config")?,
+        row_get(row, "format_acceptance_config")?,
+        row_get(row, "proxy")?,
     )
 }
 
@@ -1893,15 +2040,14 @@ fn is_missing_endpoint_health_score_column(error: &sqlx::Error) -> bool {
 
 fn map_key_stats_row(row: &PgRow) -> Result<StoredProviderCatalogKeyStats, DataLayerError> {
     StoredProviderCatalogKeyStats::new(
-        row.try_get("provider_id")?,
-        row.try_get("total_keys")?,
-        row.try_get("active_keys")?,
+        row_get(row, "provider_id")?,
+        row_get(row, "total_keys")?,
+        row_get(row, "active_keys")?,
     )
 }
 
 fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> {
-    let rpm_limit = row
-        .try_get::<Option<i32>, _>("rpm_limit")?
+    let rpm_limit = row_get::<Option<i32>>(row, "rpm_limit")?
         .map(|value| {
             u32::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1910,8 +2056,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let learned_rpm_limit = row
-        .try_get::<Option<i32>, _>("learned_rpm_limit")?
+    let learned_rpm_limit = row_get::<Option<i32>>(row, "learned_rpm_limit")?
         .map(|value| {
             u32::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1920,8 +2065,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let concurrent_429_count = row
-        .try_get::<Option<i32>, _>("concurrent_429_count")?
+    let concurrent_429_count = row_get::<Option<i32>>(row, "concurrent_429_count")?
         .map(|value| {
             u32::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1930,8 +2074,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let rpm_429_count = row
-        .try_get::<Option<i32>, _>("rpm_429_count")?
+    let rpm_429_count = row_get::<Option<i32>>(row, "rpm_429_count")?
         .map(|value| {
             u32::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1940,8 +2083,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let request_count = row
-        .try_get::<Option<i32>, _>("request_count")?
+    let request_count = row_get::<Option<i32>>(row, "request_count")?
         .map(|value| {
             u32::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1950,8 +2092,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let success_count = row
-        .try_get::<Option<i32>, _>("success_count")?
+    let success_count = row_get::<Option<i32>>(row, "success_count")?
         .map(|value| {
             u32::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1960,8 +2101,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let error_count = row
-        .try_get::<Option<i32>, _>("error_count")?
+    let error_count = row_get::<Option<i32>>(row, "error_count")?
         .map(|value| {
             u32::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1970,8 +2110,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let total_response_time_ms = row
-        .try_get::<Option<i32>, _>("total_response_time_ms")?
+    let total_response_time_ms = row_get::<Option<i32>>(row, "total_response_time_ms")?
         .map(|value| {
             u32::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -1980,28 +2119,27 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let last_probe_increase_at_unix_secs = row
-        .try_get::<Option<i64>, _>("last_probe_increase_at_unix_secs")?
-        .map(|value| {
-            u64::try_from(value).map_err(|_| {
-                DataLayerError::UnexpectedValue(format!(
-                    "invalid provider_api_keys.last_probe_increase_at_unix_secs: {value}"
-                ))
+    let last_probe_increase_at_unix_secs =
+        row_get::<Option<i64>>(row, "last_probe_increase_at_unix_secs")?
+            .map(|value| {
+                u64::try_from(value).map_err(|_| {
+                    DataLayerError::UnexpectedValue(format!(
+                        "invalid provider_api_keys.last_probe_increase_at_unix_secs: {value}"
+                    ))
+                })
             })
-        })
-        .transpose()?;
-    let last_models_fetch_at_unix_secs = row
-        .try_get::<Option<i64>, _>("last_models_fetch_at_unix_secs")?
-        .map(|value| {
-            u64::try_from(value).map_err(|_| {
-                DataLayerError::UnexpectedValue(format!(
-                    "invalid provider_api_keys.last_models_fetch_at_unix_secs: {value}"
-                ))
+            .transpose()?;
+    let last_models_fetch_at_unix_secs =
+        row_get::<Option<i64>>(row, "last_models_fetch_at_unix_secs")?
+            .map(|value| {
+                u64::try_from(value).map_err(|_| {
+                    DataLayerError::UnexpectedValue(format!(
+                        "invalid provider_api_keys.last_models_fetch_at_unix_secs: {value}"
+                    ))
+                })
             })
-        })
-        .transpose()?;
-    let oauth_invalid_at_unix_secs = row
-        .try_get::<Option<i64>, _>("oauth_invalid_at_unix_secs")?
+            .transpose()?;
+    let oauth_invalid_at_unix_secs = row_get::<Option<i64>>(row, "oauth_invalid_at_unix_secs")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -2010,8 +2148,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let last_used_at_unix_secs = row
-        .try_get::<Option<i64>, _>("last_used_at_unix_secs")?
+    let last_used_at_unix_secs = row_get::<Option<i64>>(row, "last_used_at_unix_secs")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -2020,8 +2157,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let created_at_unix_secs = row
-        .try_get::<Option<i64>, _>("created_at_unix_secs")?
+    let created_at_unix_secs = row_get::<Option<i64>>(row, "created_at_unix_secs")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -2030,8 +2166,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let updated_at_unix_secs = row
-        .try_get::<Option<i64>, _>("updated_at_unix_secs")?
+    let updated_at_unix_secs = row_get::<Option<i64>>(row, "updated_at_unix_secs")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
@@ -2042,24 +2177,24 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
         .transpose()?;
 
     StoredProviderCatalogKey::new(
-        row.try_get("id")?,
-        row.try_get("provider_id")?,
-        row.try_get("name")?,
-        row.try_get("auth_type")?,
-        row.try_get("capabilities")?,
-        row.try_get("is_active")?,
+        row_get(row, "id")?,
+        row_get(row, "provider_id")?,
+        row_get(row, "name")?,
+        row_get(row, "auth_type")?,
+        row_get(row, "capabilities")?,
+        row_get(row, "is_active")?,
     )?
     .with_transport_fields(
-        row.try_get("api_formats")?,
-        row.try_get("api_key")?,
-        row.try_get("auth_config")?,
-        row.try_get("rate_multipliers")?,
-        row.try_get("global_priority_by_format")?,
-        row.try_get("allowed_models")?,
-        row.try_get::<Option<i64>, _>("expires_at_unix_secs")?
+        row_get(row, "api_formats")?,
+        row_get(row, "api_key")?,
+        row_get(row, "auth_config")?,
+        row_get(row, "rate_multipliers")?,
+        row_get(row, "global_priority_by_format")?,
+        row_get(row, "allowed_models")?,
+        row_get::<Option<i64>>(row, "expires_at_unix_secs")?
             .and_then(|value| u64::try_from(value).ok()),
-        row.try_get("proxy")?,
-        row.try_get("fingerprint")?,
+        row_get(row, "proxy")?,
+        row_get(row, "fingerprint")?,
     )
     .map(|key| {
         let mut key = key

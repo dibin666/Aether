@@ -3,16 +3,18 @@
 //! This groups the standard planning surface in one place:
 //! request-side conversion, matrix registry, and decision payload builders.
 
-use crate::control::GatewayControlDecision;
+use crate::ai_pipeline::control_facade::GatewayControlDecision;
 use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
 
 pub(crate) mod claude;
+mod codex;
 pub(crate) mod family;
 pub(crate) mod gemini;
 mod matrix;
 mod normalize;
 pub(crate) mod openai;
 
+pub(crate) use self::codex::apply_codex_openai_cli_special_headers;
 pub(crate) use self::matrix::{
     build_standard_request_body, build_standard_upstream_url,
     normalize_standard_request_to_openai_chat_request,

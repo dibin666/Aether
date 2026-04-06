@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
-use super::types::{SettlementWriteRepository, StoredUsageSettlement, UsageSettlementInput};
+use super::{SettlementWriteRepository, StoredUsageSettlement, UsageSettlementInput};
+use crate::error::SqlxResultExt;
 use crate::postgres::PostgresTransactionRunner;
 use crate::DataLayerError;
 
@@ -56,31 +57,42 @@ FOR UPDATE
                     )
                     .bind(&input.request_id)
                     .fetch_optional(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
 
                     let Some(usage_row) = row else {
                         return Ok(None);
                     };
 
-                    let current_billing_status: String = usage_row.try_get("billing_status")?;
+                    let current_billing_status: String =
+                        usage_row.try_get("billing_status").map_postgres_err()?;
                     if current_billing_status == "settled" || current_billing_status == "void" {
                         return Ok(Some(StoredUsageSettlement {
-                            request_id: usage_row.try_get("request_id")?,
-                            wallet_id: usage_row.try_get("wallet_id")?,
+                            request_id: usage_row.try_get("request_id").map_postgres_err()?,
+                            wallet_id: usage_row.try_get("wallet_id").map_postgres_err()?,
                             billing_status: current_billing_status,
-                            wallet_balance_before: usage_row.try_get("wallet_balance_before")?,
-                            wallet_balance_after: usage_row.try_get("wallet_balance_after")?,
+                            wallet_balance_before: usage_row
+                                .try_get("wallet_balance_before")
+                                .map_postgres_err()?,
+                            wallet_balance_after: usage_row
+                                .try_get("wallet_balance_after")
+                                .map_postgres_err()?,
                             wallet_recharge_balance_before: usage_row
-                                .try_get("wallet_recharge_balance_before")?,
+                                .try_get("wallet_recharge_balance_before")
+                                .map_postgres_err()?,
                             wallet_recharge_balance_after: usage_row
-                                .try_get("wallet_recharge_balance_after")?,
+                                .try_get("wallet_recharge_balance_after")
+                                .map_postgres_err()?,
                             wallet_gift_balance_before: usage_row
-                                .try_get("wallet_gift_balance_before")?,
+                                .try_get("wallet_gift_balance_before")
+                                .map_postgres_err()?,
                             wallet_gift_balance_after: usage_row
-                                .try_get("wallet_gift_balance_after")?,
+                                .try_get("wallet_gift_balance_after")
+                                .map_postgres_err()?,
                             provider_monthly_used_usd: None,
                             finalized_at_unix_secs: usage_row
-                                .try_get::<Option<i64>, _>("finalized_at_unix_secs")?
+                                .try_get::<Option<i64>, _>("finalized_at_unix_secs")
+                                .map_postgres_err()?
                                 .map(|value| value as u64),
                         }));
                     }
@@ -136,7 +148,8 @@ LIMIT 1
                             )
                             .bind(api_key_id)
                             .fetch_optional(&mut **tx)
-                            .await?
+                            .await
+                            .map_postgres_err()?
                         } else {
                             None
                         };
@@ -161,16 +174,20 @@ LIMIT 1
                             )
                             .bind(user_id)
                             .fetch_optional(&mut **tx)
-                            .await?
+                            .await
+                            .map_postgres_err()?
                         } else {
                             None
                         };
 
                         if let Some(wallet_row) = wallet_row {
-                            let wallet_id: String = wallet_row.try_get("id")?;
-                            let before_recharge: f64 = wallet_row.try_get("balance")?;
-                            let before_gift: f64 = wallet_row.try_get("gift_balance")?;
-                            let limit_mode: String = wallet_row.try_get("limit_mode")?;
+                            let wallet_id: String = wallet_row.try_get("id").map_postgres_err()?;
+                            let before_recharge: f64 =
+                                wallet_row.try_get("balance").map_postgres_err()?;
+                            let before_gift: f64 =
+                                wallet_row.try_get("gift_balance").map_postgres_err()?;
+                            let limit_mode: String =
+                                wallet_row.try_get("limit_mode").map_postgres_err()?;
                             let before_total = before_recharge + before_gift;
                             let mut after_recharge = before_recharge;
                             let mut after_gift = before_gift;
@@ -196,7 +213,8 @@ WHERE id = $1
                             .bind(after_gift)
                             .bind(input.total_cost_usd)
                             .execute(&mut **tx)
-                            .await?;
+                            .await
+                            .map_postgres_err()?;
 
                             settlement.wallet_id = Some(wallet_id.clone());
                             settlement.wallet_balance_before = Some(before_total);
@@ -229,7 +247,8 @@ WHERE request_id = $1
                             .bind(before_gift)
                             .bind(after_gift)
                             .execute(&mut **tx)
-                            .await?;
+                            .await
+                            .map_postgres_err()?;
                         }
 
                         if let Some(provider_id) = input
@@ -250,7 +269,8 @@ RETURNING CAST(monthly_used_usd AS DOUBLE PRECISION) AS monthly_used_usd
                             .bind(provider_id)
                             .bind(input.actual_total_cost_usd)
                             .fetch_optional(&mut **tx)
-                            .await?;
+                            .await
+                            .map_postgres_err()?;
                             settlement.provider_monthly_used_usd =
                                 quota_row.and_then(|row| row.try_get("monthly_used_usd").ok());
                         }
@@ -261,7 +281,8 @@ RETURNING CAST(monthly_used_usd AS DOUBLE PRECISION) AS monthly_used_usd
                         .bind(final_billing_status)
                         .bind(finalized_at)
                         .execute(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
 
                     Ok(Some(settlement))
                 })

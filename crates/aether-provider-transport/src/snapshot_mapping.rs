@@ -1,8 +1,8 @@
 use aether_crypto::{decrypt_python_fernet_ciphertext, looks_like_python_fernet_ciphertext};
-use aether_data::repository::provider_catalog::{
+use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
-use aether_data::DataLayerError;
+use aether_data_contracts::DataLayerError;
 
 use super::{
     GatewayProviderTransportEndpoint, GatewayProviderTransportKey, GatewayProviderTransportProvider,

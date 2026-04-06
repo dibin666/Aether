@@ -30,6 +30,7 @@ mod async_task;
 mod audit;
 mod auth;
 mod cache;
+mod clock;
 mod constants;
 mod control;
 mod data;
@@ -40,13 +41,14 @@ mod fallback_metrics;
 mod handlers;
 mod headers;
 mod hooks;
-mod intent;
+mod log_ids;
 mod maintenance;
 pub(crate) mod middleware;
 mod model_fetch;
 pub(crate) use aether_provider_transport as provider_transport;
 mod query;
 mod rate_limit;
+mod request_candidate_runtime;
 mod router;
 mod scheduler;
 mod state;
@@ -61,6 +63,7 @@ pub(crate) use self::ai_pipeline::contracts::{
     GEMINI_FILES_DOWNLOAD_PLAN_KIND, OPENAI_VIDEO_CONTENT_PLAN_KIND,
 };
 pub use self::async_task::VideoTaskTruthSourceMode;
+pub use self::data::GatewayDataConfig;
 pub(crate) use self::error::GatewayError;
 pub(crate) use self::execution_runtime::{
     append_execution_contract_fields_to_value, MAX_ERROR_BODY_BYTES, MAX_STREAM_PREFETCH_FRAMES,
@@ -71,7 +74,6 @@ pub use self::execution_runtime::{
     serve_execution_runtime_unix,
 };
 pub(crate) use self::fallback_metrics::{GatewayFallbackMetricKind, GatewayFallbackReason};
-pub use self::data::GatewayDataConfig;
 pub use self::middleware::strip_cf_headers_middleware;
 pub use self::rate_limit::FrontdoorUserRpmConfig;
 pub(crate) use self::rate_limit::FrontdoorUserRpmOutcome;
@@ -79,7 +81,8 @@ pub use self::router::{build_router, build_router_with_state, serve_tcp};
 pub(crate) use self::state::{
     AdminBillingCollectorRecord, AdminBillingCollectorWriteInput, AdminBillingRuleRecord,
     AdminBillingRuleWriteInput, AdminWalletMutationOutcome, AdminWalletPaymentOrderRecord,
-    AdminWalletRefundRecord, AdminWalletTransactionRecord, LocalExecutionRuntimeMissDiagnostic,
+    AdminWalletRefundRecord, AdminWalletTransactionRecord, GatewayAdminPaymentCallbackView,
+    GatewayUserPreferenceView, GatewayUserSessionView, LocalExecutionRuntimeMissDiagnostic,
     LocalMutationOutcome, LocalProviderDeleteTaskState,
 };
 pub use self::state::{AppState, FrontdoorCorsConfig};

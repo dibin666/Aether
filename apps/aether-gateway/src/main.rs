@@ -1,6 +1,7 @@
 use clap::{Args as ClapArgs, Parser, ValueEnum};
 use tracing::{info, warn};
 
+use aether_crypto::warm_python_fernet_secret;
 use aether_data::postgres::PostgresPoolConfig;
 use aether_data::redis::RedisClientConfig;
 use aether_gateway::{
@@ -292,7 +293,10 @@ impl GatewayDataArgs {
         }
 
         match self.effective_encryption_key() {
-            Some(value) => config.with_encryption_key(value),
+            Some(value) => {
+                warm_python_fernet_secret(&value);
+                config.with_encryption_key(value)
+            }
             None => config,
         }
     }

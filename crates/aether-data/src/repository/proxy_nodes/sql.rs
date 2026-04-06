@@ -5,7 +5,10 @@ use super::types::{
     normalize_proxy_metadata, ProxyNodeHeartbeatMutation, ProxyNodeReadRepository,
     ProxyNodeTunnelStatusMutation, ProxyNodeWriteRepository, StoredProxyNode, StoredProxyNodeEvent,
 };
-use crate::DataLayerError;
+use crate::{
+    error::{postgres_error, SqlxResultExt},
+    DataLayerError,
+};
 
 const FIND_PROXY_NODE_SQL: &str = r#"
 SELECT
@@ -142,49 +145,58 @@ impl SqlxProxyNodeRepository {
 
     fn row_to_stored(row: &PgRow) -> Result<StoredProxyNode, DataLayerError> {
         Ok(StoredProxyNode::new(
-            row.try_get("id")?,
-            row.try_get("name")?,
-            row.try_get("ip")?,
-            row.try_get("port")?,
-            row.try_get("is_manual")?,
-            row.try_get("status")?,
-            row.try_get("heartbeat_interval")?,
-            row.try_get("active_connections")?,
-            row.try_get("total_requests")?,
-            row.try_get("failed_requests")?,
-            row.try_get("dns_failures")?,
-            row.try_get("stream_errors")?,
-            row.try_get("tunnel_mode")?,
-            row.try_get("tunnel_connected")?,
-            row.try_get("config_version")?,
+            row.try_get("id").map_postgres_err()?,
+            row.try_get("name").map_postgres_err()?,
+            row.try_get("ip").map_postgres_err()?,
+            row.try_get("port").map_postgres_err()?,
+            row.try_get("is_manual").map_postgres_err()?,
+            row.try_get("status").map_postgres_err()?,
+            row.try_get("heartbeat_interval").map_postgres_err()?,
+            row.try_get("active_connections").map_postgres_err()?,
+            row.try_get("total_requests").map_postgres_err()?,
+            row.try_get("failed_requests").map_postgres_err()?,
+            row.try_get("dns_failures").map_postgres_err()?,
+            row.try_get("stream_errors").map_postgres_err()?,
+            row.try_get("tunnel_mode").map_postgres_err()?,
+            row.try_get("tunnel_connected").map_postgres_err()?,
+            row.try_get("config_version").map_postgres_err()?,
         )?
         .with_manual_proxy_fields(
-            row.try_get("proxy_url")?,
-            row.try_get("proxy_username")?,
-            row.try_get("proxy_password")?,
+            row.try_get("proxy_url").map_postgres_err()?,
+            row.try_get("proxy_username").map_postgres_err()?,
+            row.try_get("proxy_password").map_postgres_err()?,
         )
         .with_runtime_fields(
-            row.try_get("region")?,
-            row.try_get("registered_by")?,
-            Self::optional_unix_secs(row.try_get("last_heartbeat_at_unix_secs")?),
-            row.try_get("avg_latency_ms")?,
-            row.try_get("proxy_metadata")?,
-            row.try_get("hardware_info")?,
-            row.try_get("estimated_max_concurrency")?,
-            Self::optional_unix_secs(row.try_get("tunnel_connected_at_unix_secs")?),
-            row.try_get("remote_config")?,
-            Self::optional_unix_secs(row.try_get("created_at_unix_secs")?),
-            Self::optional_unix_secs(row.try_get("updated_at_unix_secs")?),
+            row.try_get("region").map_postgres_err()?,
+            row.try_get("registered_by").map_postgres_err()?,
+            Self::optional_unix_secs(
+                row.try_get("last_heartbeat_at_unix_secs")
+                    .map_postgres_err()?,
+            ),
+            row.try_get("avg_latency_ms").map_postgres_err()?,
+            row.try_get("proxy_metadata").map_postgres_err()?,
+            row.try_get("hardware_info").map_postgres_err()?,
+            row.try_get("estimated_max_concurrency")
+                .map_postgres_err()?,
+            Self::optional_unix_secs(
+                row.try_get("tunnel_connected_at_unix_secs")
+                    .map_postgres_err()?,
+            ),
+            row.try_get("remote_config").map_postgres_err()?,
+            Self::optional_unix_secs(row.try_get("created_at_unix_secs").map_postgres_err()?),
+            Self::optional_unix_secs(row.try_get("updated_at_unix_secs").map_postgres_err()?),
         ))
     }
 
     fn row_to_event(row: &PgRow) -> Result<StoredProxyNodeEvent, DataLayerError> {
         Ok(StoredProxyNodeEvent {
-            id: row.try_get("id")?,
-            node_id: row.try_get("node_id")?,
-            event_type: row.try_get("event_type")?,
-            detail: row.try_get("detail")?,
-            created_at_unix_secs: Self::optional_unix_secs(row.try_get("created_at_unix_secs")?),
+            id: row.try_get("id").map_postgres_err()?,
+            node_id: row.try_get("node_id").map_postgres_err()?,
+            event_type: row.try_get("event_type").map_postgres_err()?,
+            detail: row.try_get("detail").map_postgres_err()?,
+            created_at_unix_secs: Self::optional_unix_secs(
+                row.try_get("created_at_unix_secs").map_postgres_err()?,
+            ),
         })
     }
 }
@@ -194,7 +206,8 @@ impl ProxyNodeReadRepository for SqlxProxyNodeRepository {
     async fn list_proxy_nodes(&self) -> Result<Vec<StoredProxyNode>, DataLayerError> {
         let rows = sqlx::query(LIST_PROXY_NODES_SQL)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(Self::row_to_stored).collect()
     }
 
@@ -205,7 +218,8 @@ impl ProxyNodeReadRepository for SqlxProxyNodeRepository {
         let row = sqlx::query(FIND_PROXY_NODE_SQL)
             .bind(node_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.map(|row| Self::row_to_stored(&row)).transpose()
     }
 
@@ -218,7 +232,8 @@ impl ProxyNodeReadRepository for SqlxProxyNodeRepository {
             .bind(node_id)
             .bind(i64::try_from(limit).unwrap_or(i64::MAX))
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(Self::row_to_event).collect()
     }
 }
@@ -256,7 +271,8 @@ impl ProxyNodeWriteRepository for SqlxProxyNodeRepository {
             .bind(mutation.dns_failures_delta)
             .bind(mutation.stream_errors_delta)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         self.find_proxy_node(&mutation.node_id).await
     }
@@ -283,7 +299,7 @@ impl ProxyNodeWriteRepository for SqlxProxyNodeRepository {
             )
         });
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin().await.map_postgres_err()?;
 
         if existing
             .tunnel_connected_at_unix_secs
@@ -305,8 +321,9 @@ VALUES (
             .bind(event_type)
             .bind(format!("[stale_ignored] {event_detail}"))
             .execute(&mut *tx)
-            .await?;
-            tx.commit().await?;
+            .await
+            .map_postgres_err()?;
+            tx.commit().await.map_err(postgres_error)?;
             return self.find_proxy_node(&mutation.node_id).await;
         }
 
@@ -334,7 +351,8 @@ WHERE id = $1
         .bind(mutation.connected)
         .bind(observed_at_unix_secs.map(|value| value as f64))
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         sqlx::query(
             r#"
@@ -355,9 +373,10 @@ VALUES (
         .bind(event_detail)
         .bind(observed_at_unix_secs.map(|value| value as f64))
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
-        tx.commit().await?;
+        tx.commit().await.map_err(postgres_error)?;
         self.find_proxy_node(&mutation.node_id).await
     }
 }

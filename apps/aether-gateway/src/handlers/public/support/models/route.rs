@@ -31,6 +31,7 @@ pub(super) async fn maybe_build_local_models_route_response(
         .unwrap_or_default()
         .as_secs();
     let auth_snapshot = state
+        .data
         .read_auth_api_key_snapshot(
             &auth_context.user_id,
             &auth_context.api_key_id,

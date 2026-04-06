@@ -1,10 +1,8 @@
-use aether_data::repository::video_tasks::VideoTaskLookupKey;
-use aether_usage_runtime::{
-    build_locally_actionable_report_context_from_request_candidate,
-    build_locally_actionable_report_context_from_video_task,
-};
+use aether_data_contracts::repository::video_tasks::VideoTaskLookupKey;
+use aether_usage_runtime::build_locally_actionable_report_context_from_video_task;
 use serde_json::Value;
 
+use crate::request_candidate_runtime::resolve_locally_actionable_request_candidate_report_context;
 use crate::video_tasks::{resolve_video_task_report_lookup, VideoTaskReportLookup};
 use crate::AppState;
 
@@ -20,7 +18,7 @@ pub(crate) async fn resolve_locally_actionable_report_context(
     }
 
     if let Some(resolved) =
-        resolve_locally_actionable_report_context_from_request_candidates(state, &context).await
+        resolve_locally_actionable_request_candidate_report_context(state, &context).await
     {
         return Some(resolved);
     }
@@ -30,32 +28,12 @@ pub(crate) async fn resolve_locally_actionable_report_context(
         .unwrap_or(context);
 
     if let Some(resolved) =
-        resolve_locally_actionable_report_context_from_request_candidates(state, &context).await
+        resolve_locally_actionable_request_candidate_report_context(state, &context).await
     {
         return Some(resolved);
     }
 
     report_context_is_locally_actionable(Some(&context)).then_some(context)
-}
-
-async fn resolve_locally_actionable_report_context_from_request_candidates(
-    state: &AppState,
-    context: &Value,
-) -> Option<Value> {
-    let request_id = context
-        .get("request_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    let existing_candidates = state
-        .read_request_candidates_by_request_id(request_id)
-        .await
-        .ok()?;
-    if existing_candidates.len() != 1 {
-        return None;
-    }
-
-    build_locally_actionable_report_context_from_request_candidate(context, &existing_candidates[0])
 }
 
 async fn resolve_locally_actionable_report_context_from_video_task(

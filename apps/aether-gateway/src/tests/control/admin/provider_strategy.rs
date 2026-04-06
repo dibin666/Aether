@@ -1,9 +1,9 @@
 use std::sync::{Arc, Mutex};
 
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository,
-};
-use aether_data::repository::usage::{InMemoryUsageReadRepository, StoredProviderUsageWindow};
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data::repository::usage::InMemoryUsageReadRepository;
+use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
+use aether_data_contracts::repository::usage::StoredProviderUsageWindow;
 use axum::body::Body;
 use axum::routing::any;
 use axum::{extract::Request, Router};
@@ -143,9 +143,7 @@ async fn gateway_handles_admin_provider_strategy_stats_locally_returns_service_u
     let catalog_reader: Arc<dyn ProviderCatalogReadRepository> =
         provider_catalog_repository.clone();
     assert_provider_strategy_route_returns_local_503(
-        crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
-            catalog_reader,
-        ),
+        crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(catalog_reader),
         Method::GET,
         "/api/admin/provider-strategy/providers/provider-openai/stats?hours=1",
         None,
@@ -165,9 +163,7 @@ async fn gateway_handles_admin_provider_strategy_quota_locally_returns_service_u
     let catalog_reader: Arc<dyn ProviderCatalogReadRepository> =
         provider_catalog_repository.clone();
     assert_provider_strategy_route_returns_local_503(
-        crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
-            catalog_reader,
-        ),
+        crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(catalog_reader),
         Method::DELETE,
         "/api/admin/provider-strategy/providers/provider-openai/quota",
         None,

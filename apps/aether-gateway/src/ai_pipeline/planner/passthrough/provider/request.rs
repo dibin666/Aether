@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 use url::form_urlencoded;
 
+use crate::ai_pipeline::planner::transport_facade::GatewayProviderTransportSnapshot;
+
 use super::{
     apply_local_body_rules, build_antigravity_v1internal_url, build_claude_code_messages_url,
     build_claude_messages_url, build_gemini_content_url,
@@ -18,7 +20,7 @@ pub(super) fn build_same_format_provider_request_body(
     spec: LocalSameFormatProviderSpec,
     body_rules: Option<&Value>,
     upstream_is_stream: bool,
-    kiro_auth: Option<&crate::provider_transport::kiro::KiroRequestAuth>,
+    kiro_auth: Option<&crate::ai_pipeline::provider_transport_facade::kiro::KiroRequestAuth>,
     is_claude_code: bool,
 ) -> Option<Value> {
     if let Some(kiro_auth) = kiro_auth {
@@ -60,11 +62,11 @@ pub(super) fn build_same_format_provider_request_body(
 
 pub(super) fn build_same_format_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &GatewayProviderTransportSnapshot,
     mapped_model: &str,
     spec: LocalSameFormatProviderSpec,
     upstream_is_stream: bool,
-    kiro_auth: Option<&crate::provider_transport::kiro::KiroRequestAuth>,
+    kiro_auth: Option<&crate::ai_pipeline::provider_transport_facade::kiro::KiroRequestAuth>,
 ) -> Option<String> {
     if let Some(kiro_auth) = kiro_auth {
         return build_kiro_generate_assistant_response_url(

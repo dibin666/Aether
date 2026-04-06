@@ -1,8 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository,
-};
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
 use axum::body::Body;
 use axum::routing::any;
 use axum::{extract::Request, Router};
@@ -599,9 +598,7 @@ async fn gateway_handles_admin_default_body_rules_locally_with_trusted_admin_pri
     let rules = payload["body_rules"]
         .as_array()
         .expect("body_rules should be an array");
-    assert_eq!(rules.len(), 5);
-    assert_eq!(rules[0]["action"], "drop");
-    assert_eq!(rules[0]["path"], "max_output_tokens");
+    assert!(rules.is_empty());
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();

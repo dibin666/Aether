@@ -1,18 +1,18 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::auth::{
-    build_kiro_request_auth_from_config, resolve_local_kiro_request_auth, KIRO_AUTH_HEADER,
-    PROVIDER_TYPE,
+    KIRO_AUTH_HEADER, PROVIDER_TYPE, build_kiro_request_auth_from_config,
+    resolve_local_kiro_request_auth,
 };
-use super::credentials::{generate_machine_id, KiroAuthConfig};
-use crate::provider_transport::oauth_refresh::{
+use super::credentials::{KiroAuthConfig, generate_machine_id};
+use crate::ai_pipeline::provider_transport_facade::oauth_refresh::{
     CachedOAuthEntry, LocalOAuthRefreshAdapter, LocalOAuthRefreshError,
     LocalResolvedOAuthRequestAuth,
 };
-use crate::provider_transport::snapshot::GatewayProviderTransportSnapshot;
+use crate::ai_pipeline::provider_transport_facade::snapshot::GatewayProviderTransportSnapshot;
 
 const IDC_AMZ_USER_AGENT: &str = "aws-sdk-js/3.738.0 ua/2.1 os/other lang/js md/browser#unknown_unknown api/sso-oidc#3.738.0 m/E KiroIDE";
 
@@ -415,11 +415,11 @@ fn truncate_body(body: &str) -> String {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use super::{KiroOAuthRefreshAdapter, IDC_AMZ_USER_AGENT};
-    use crate::provider_transport::oauth_refresh::{
+    use super::{IDC_AMZ_USER_AGENT, KiroOAuthRefreshAdapter};
+    use crate::ai_pipeline::provider_transport_facade::oauth_refresh::{
         LocalOAuthRefreshAdapter, LocalResolvedOAuthRequestAuth,
     };
-    use crate::provider_transport::snapshot::{
+    use crate::ai_pipeline::provider_transport_facade::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };
@@ -429,7 +429,7 @@ mod tests {
     use axum::routing::any;
     use axum::{Json, Router};
     use http::StatusCode;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use tokio::task::JoinHandle;
 
     #[derive(Debug, Clone)]

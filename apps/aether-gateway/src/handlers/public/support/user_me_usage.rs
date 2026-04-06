@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UsageAuditListQuery};
 use axum::{
     body::Body,
     http,
@@ -85,16 +86,12 @@ fn parse_users_me_usage_ids(query: Option<&str>) -> Option<BTreeSet<String>> {
     (!values.is_empty()).then_some(values)
 }
 
-fn users_me_usage_total_input_context(
-    item: &aether_data::repository::usage::StoredRequestUsageAudit,
-) -> u64 {
+fn users_me_usage_total_input_context(item: &StoredRequestUsageAudit) -> u64 {
     item.input_tokens
         .saturating_add(item.cache_read_input_tokens)
 }
 
-fn users_me_usage_effective_unix_secs(
-    item: &aether_data::repository::usage::StoredRequestUsageAudit,
-) -> u64 {
+fn users_me_usage_effective_unix_secs(item: &StoredRequestUsageAudit) -> u64 {
     item.finalized_at_unix_secs
         .unwrap_or(item.created_at_unix_secs)
 }
@@ -110,10 +107,7 @@ fn users_me_usage_cache_hit_rate(total_input_context: u64, cache_read_tokens: u6
     }
 }
 
-fn users_me_usage_matches_search(
-    item: &aether_data::repository::usage::StoredRequestUsageAudit,
-    search: Option<&str>,
-) -> bool {
+fn users_me_usage_matches_search(item: &StoredRequestUsageAudit, search: Option<&str>) -> bool {
     let Some(search) = search.map(str::trim).filter(|value| !value.is_empty()) else {
         return true;
     };
@@ -130,9 +124,7 @@ fn users_me_usage_matches_search(
     })
 }
 
-fn build_users_me_usage_api_key_payload(
-    item: &aether_data::repository::usage::StoredRequestUsageAudit,
-) -> serde_json::Value {
+fn build_users_me_usage_api_key_payload(item: &StoredRequestUsageAudit) -> serde_json::Value {
     match item.api_key_id.as_deref() {
         Some(api_key_id) => json!({
             "id": api_key_id,
@@ -147,7 +139,7 @@ fn build_users_me_usage_api_key_payload(
 }
 
 fn build_users_me_usage_record_payload(
-    item: &aether_data::repository::usage::StoredRequestUsageAudit,
+    item: &StoredRequestUsageAudit,
     include_actual_cost: bool,
 ) -> serde_json::Value {
     let mut payload = json!({
@@ -187,9 +179,7 @@ fn build_users_me_usage_record_payload(
     payload
 }
 
-fn build_users_me_usage_active_payload(
-    item: &aether_data::repository::usage::StoredRequestUsageAudit,
-) -> serde_json::Value {
+fn build_users_me_usage_active_payload(item: &StoredRequestUsageAudit) -> serde_json::Value {
     let mut payload = json!({
         "id": item.id,
         "status": item.status,
@@ -229,7 +219,7 @@ fn build_users_me_usage_active_payload(
 }
 
 fn build_users_me_usage_summary_by_model(
-    items: &[aether_data::repository::usage::StoredRequestUsageAudit],
+    items: &[StoredRequestUsageAudit],
     include_actual_cost: bool,
 ) -> Vec<serde_json::Value> {
     let mut grouped: BTreeMap<String, serde_json::Value> = BTreeMap::new();
@@ -318,7 +308,7 @@ fn build_users_me_usage_summary_by_model(
 }
 
 fn build_users_me_usage_summary_by_provider(
-    items: &[aether_data::repository::usage::StoredRequestUsageAudit],
+    items: &[StoredRequestUsageAudit],
 ) -> Vec<serde_json::Value> {
     let mut grouped: BTreeMap<String, serde_json::Value> = BTreeMap::new();
     for item in items {
@@ -440,7 +430,7 @@ fn build_users_me_usage_summary_by_provider(
 }
 
 fn build_users_me_usage_summary_by_api_format(
-    items: &[aether_data::repository::usage::StoredRequestUsageAudit],
+    items: &[StoredRequestUsageAudit],
 ) -> Vec<serde_json::Value> {
     let mut grouped: BTreeMap<String, serde_json::Value> = BTreeMap::new();
     for item in items.iter().filter(|item| item.api_format.is_some()) {
@@ -715,7 +705,7 @@ pub(super) async fn handle_users_me_usage_active_get(
     };
     let ids = parse_users_me_usage_ids(request_context.request_query_string.as_deref());
     let items = match state
-        .list_usage_audits(&aether_data::repository::usage::UsageAuditListQuery {
+        .list_usage_audits(&UsageAuditListQuery {
             created_from_unix_secs: None,
             created_until_unix_secs: None,
             user_id: Some(auth.user.id.clone()),
@@ -786,7 +776,7 @@ pub(super) async fn handle_users_me_usage_interval_timeline_get(
     let created_from_unix_secs = now_unix_secs.saturating_sub(u64::from(hours) * 3600);
 
     let mut items = match state
-        .list_usage_audits(&aether_data::repository::usage::UsageAuditListQuery {
+        .list_usage_audits(&UsageAuditListQuery {
             created_from_unix_secs: Some(created_from_unix_secs),
             created_until_unix_secs: None,
             user_id: Some(auth.user.id.clone()),
@@ -870,7 +860,7 @@ pub(super) async fn handle_users_me_usage_heatmap_get(
     .unwrap_or_default();
 
     let items = match state
-        .list_usage_audits(&aether_data::repository::usage::UsageAuditListQuery {
+        .list_usage_audits(&UsageAuditListQuery {
             created_from_unix_secs: Some(created_from_unix_secs),
             created_until_unix_secs: None,
             user_id: Some(auth.user.id.clone()),

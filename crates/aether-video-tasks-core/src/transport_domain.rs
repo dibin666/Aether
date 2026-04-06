@@ -1,5 +1,5 @@
 use aether_contracts::ExecutionPlan;
-use aether_data::repository::video_tasks::{
+use aether_data_contracts::repository::video_tasks::{
     StoredVideoTask, VideoTaskStatus as StoredVideoTaskStatus,
 };
 use serde_json::{Map, Value};

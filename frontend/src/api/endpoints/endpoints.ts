@@ -75,6 +75,6 @@ export async function deleteEndpoint(endpointId: string): Promise<{ message: str
 export async function getDefaultBodyRules(apiFormat: string, providerType?: string): Promise<{ api_format: string; body_rules: BodyRule[] }> {
   const params: Record<string, string> = {}
   if (providerType) params.provider_type = providerType
-  const response = await client.get(`/api/admin/endpoints/defaults/${encodeURIComponent(apiFormat)}/body-rules`, { params })
+  const response = await client.get(`/api/admin/endpoints/defaults/${apiFormat}/body-rules`, { params })
   return response.data
 }

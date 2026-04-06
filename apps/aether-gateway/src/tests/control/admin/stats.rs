@@ -4,10 +4,11 @@ use aether_data::repository::auth::{
     InMemoryAuthApiKeySnapshotRepository, StoredAuthApiKeySnapshot,
 };
 use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
-use aether_data::repository::usage::{InMemoryUsageReadRepository, StoredRequestUsageAudit};
+use aether_data::repository::usage::InMemoryUsageReadRepository;
 use aether_data::repository::users::{
     InMemoryUserReadRepository, StoredUserAuthRecord, StoredUserSummary,
 };
+use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
 use axum::body::Body;
 use axum::routing::{any, get};
 use axum::{extract::Request, Router};

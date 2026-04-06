@@ -12,9 +12,9 @@ use super::{
 use aether_data::repository::auth::{
     InMemoryAuthApiKeySnapshotRepository, StoredAuthApiKeySnapshot,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider,
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
 use sha2::{Digest, Sha256};
 
@@ -373,22 +373,21 @@ async fn gateway_forwards_public_request_to_remote_tunnel_owner_before_fallback_
         sample_auth_snapshot("api-key-affinity-1", "user-affinity-1", "gpt-4.1"),
     )]));
     let observed_at_unix_secs = current_unix_secs();
-    let data_state =
-        crate::data::GatewayDataState::with_provider_transport_reader_for_tests(
-            provider_catalog_repository,
-            "development-key",
-        )
-        .with_auth_api_key_reader(auth_repository)
-        .with_system_config_values_for_tests(vec![(
-            tunnel_attachment_key("node-owner"),
-            serde_json::to_value(crate::tunnel::TunnelAttachmentRecord {
-                gateway_instance_id: "gateway-b".to_string(),
-                relay_base_url: owner_url.clone(),
-                conn_count: 1,
-                observed_at_unix_secs,
-            })
-            .expect("attachment should serialize"),
-        )]);
+    let data_state = crate::data::GatewayDataState::with_provider_transport_reader_for_tests(
+        provider_catalog_repository,
+        "development-key",
+    )
+    .with_auth_api_key_reader(auth_repository)
+    .with_system_config_values_for_tests(vec![(
+        tunnel_attachment_key("node-owner"),
+        serde_json::to_value(crate::tunnel::TunnelAttachmentRecord {
+            gateway_instance_id: "gateway-b".to_string(),
+            relay_base_url: owner_url.clone(),
+            conn_count: 1,
+            observed_at_unix_secs,
+        })
+        .expect("attachment should serialize"),
+    )]);
 
     let mut state = AppState::new().expect("gateway state should build");
     state = state

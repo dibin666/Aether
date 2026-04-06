@@ -1,7 +1,7 @@
 use axum::body::Bytes;
-use base64::Engine as _;
 
-pub(crate) use crate::ai_pipeline::contracts::{
+use crate::ai_pipeline::control_facade::is_json_request;
+pub(crate) use aether_ai_pipeline::contracts::{
     CLAUDE_CHAT_STREAM_PLAN_KIND, CLAUDE_CHAT_SYNC_PLAN_KIND, CLAUDE_CLI_STREAM_PLAN_KIND,
     CLAUDE_CLI_SYNC_PLAN_KIND, EXECUTION_RUNTIME_STREAM_ACTION,
     EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_ACTION,
@@ -15,25 +15,45 @@ pub(crate) use crate::ai_pipeline::contracts::{
     OPENAI_VIDEO_CONTENT_PLAN_KIND, OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND, OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
-use crate::headers::is_json_request;
 
 pub(crate) fn parse_direct_request_body(
     parts: &http::request::Parts,
     body_bytes: &Bytes,
 ) -> Option<(serde_json::Value, Option<String>)> {
-    if is_json_request(&parts.headers) {
-        if body_bytes.is_empty() {
-            Some((serde_json::json!({}), None))
-        } else {
-            serde_json::from_slice::<serde_json::Value>(body_bytes)
-                .ok()
-                .map(|value| (value, None))
-        }
-    } else {
-        Some((
-            serde_json::json!({}),
-            (!body_bytes.is_empty())
-                .then(|| base64::engine::general_purpose::STANDARD.encode(body_bytes)),
-        ))
+    aether_ai_pipeline::planner::common::parse_direct_request_body(
+        is_json_request(&parts.headers),
+        body_bytes.as_ref(),
+    )
+}
+
+pub(crate) fn force_upstream_streaming_for_provider(
+    provider_type: &str,
+    provider_api_format: &str,
+) -> bool {
+    provider_type.trim().eq_ignore_ascii_case("codex")
+        && provider_api_format
+            .trim()
+            .eq_ignore_ascii_case("openai:cli")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::force_upstream_streaming_for_provider;
+
+    #[test]
+    fn forces_streaming_for_codex_openai_cli() {
+        assert!(force_upstream_streaming_for_provider("codex", "openai:cli"));
+    }
+
+    #[test]
+    fn does_not_force_streaming_for_compact_or_other_provider_types() {
+        assert!(!force_upstream_streaming_for_provider(
+            "codex",
+            "openai:compact"
+        ));
+        assert!(!force_upstream_streaming_for_provider(
+            "openai",
+            "openai:cli"
+        ));
     }
 }

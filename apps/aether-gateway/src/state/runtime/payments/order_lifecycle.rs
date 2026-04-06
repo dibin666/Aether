@@ -1,7 +1,5 @@
 use super::admin_payment_gateway_response_map;
-use crate::{
-    AdminWalletMutationOutcome, AdminWalletPaymentOrderRecord, AppState, GatewayError,
-};
+use crate::{AdminWalletMutationOutcome, AdminWalletPaymentOrderRecord, AppState, GatewayError};
 
 impl AppState {
     pub(crate) async fn admin_expire_payment_order(

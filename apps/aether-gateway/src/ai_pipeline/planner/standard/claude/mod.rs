@@ -1,13 +1,23 @@
-use crate::control::GatewayControlDecision;
+use crate::ai_pipeline::control_facade::GatewayControlDecision;
 use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
+
+use aether_ai_pipeline::planner::standard::claude::{
+    resolve_stream_spec as resolve_pipeline_stream_spec,
+    resolve_sync_spec as resolve_pipeline_sync_spec,
+};
 
 use super::family::{
     maybe_build_stream_via_standard_family_payload, maybe_build_sync_via_standard_family_payload,
 };
 pub(crate) use crate::ai_pipeline::conversion::request::normalize_claude_request_to_openai_chat_request;
 
-pub(crate) mod chat;
-pub(crate) mod cli;
+pub(crate) fn resolve_sync_spec(plan_kind: &str) -> Option<super::family::LocalStandardSpec> {
+    resolve_pipeline_sync_spec(plan_kind)
+}
+
+pub(crate) fn resolve_stream_spec(plan_kind: &str) -> Option<super::family::LocalStandardSpec> {
+    resolve_pipeline_stream_spec(plan_kind)
+}
 
 pub(crate) async fn maybe_build_sync_local_claude_decision_payload(
     state: &AppState,
@@ -24,9 +34,7 @@ pub(crate) async fn maybe_build_sync_local_claude_decision_payload(
         decision,
         body_json,
         plan_kind,
-        |plan_kind| {
-            chat::resolve_sync_spec(plan_kind).or_else(|| cli::resolve_sync_spec(plan_kind))
-        },
+        resolve_sync_spec,
     )
     .await
 }
@@ -46,9 +54,7 @@ pub(crate) async fn maybe_build_stream_local_claude_decision_payload(
         decision,
         body_json,
         plan_kind,
-        |plan_kind| {
-            chat::resolve_stream_spec(plan_kind).or_else(|| cli::resolve_stream_spec(plan_kind))
-        },
+        resolve_stream_spec,
     )
     .await
 }

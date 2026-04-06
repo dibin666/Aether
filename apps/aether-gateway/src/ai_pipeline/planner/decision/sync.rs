@@ -2,16 +2,17 @@ use std::collections::BTreeMap;
 
 use url::Url;
 
+use crate::ai_pipeline::control_facade::{
+    resolve_execution_runtime_auth_context, GatewayControlDecision,
+};
+use crate::ai_pipeline::execution_facade::{ConversionMode, ExecutionStrategy};
 use crate::ai_pipeline::planner::common::{
     EXECUTION_RUNTIME_SYNC_DECISION_ACTION, GEMINI_FILES_DELETE_PLAN_KIND,
     GEMINI_FILES_GET_PLAN_KIND, GEMINI_FILES_LIST_PLAN_KIND, GEMINI_VIDEO_CANCEL_SYNC_PLAN_KIND,
     OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND, OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
-use crate::control::resolve_execution_runtime_auth_context;
-use crate::control::GatewayControlDecision;
-use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
-use crate::scheduler::resolve_execution_runtime_sync_plan_kind;
+use crate::ai_pipeline::planner::resolve_execution_runtime_sync_plan_kind;
 use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
 
 pub(crate) async fn maybe_build_sync_decision_payload(

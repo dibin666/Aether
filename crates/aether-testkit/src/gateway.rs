@@ -44,7 +44,7 @@ impl GatewayHarness {
         config: GatewayHarnessConfig,
         port: Option<u16>,
     ) -> Result<Self, String> {
-        let mut state = AppState::new(config.upstream_base_url)
+        let mut state = AppState::new()
             .map_err(|err| format!("failed to build gateway harness state: {err}"))?;
         if let Some(data_config) = config.data_config {
             state = state

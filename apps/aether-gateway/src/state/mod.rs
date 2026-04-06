@@ -1,5 +1,5 @@
-use super::error::GatewayError;
 use super::data::GatewayDataState;
+use super::error::GatewayError;
 
 mod admin_types;
 mod app;
@@ -29,7 +29,8 @@ pub(crate) use self::cache::{
 };
 pub use self::cors::FrontdoorCorsConfig;
 pub(crate) use self::types::{
-    AdminWalletMutationOutcome, LocalExecutionRuntimeMissDiagnostic, LocalMutationOutcome,
+    AdminWalletMutationOutcome, GatewayAdminPaymentCallbackView, GatewayUserPreferenceView,
+    GatewayUserSessionView, LocalExecutionRuntimeMissDiagnostic, LocalMutationOutcome,
     LocalProviderDeleteTaskState,
 };
 use super::provider_transport::provider_transport_snapshot_looks_refreshed;

@@ -3,6 +3,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::data::GatewayDataState;
+use aether_data_contracts::DataLayerError;
 
 use super::{
     stats_hourly_aggregation_target_hour, system_config_bool, SELECT_STATS_HOURLY_AGGREGATE_SQL,
@@ -22,7 +23,7 @@ pub(super) struct StatsHourlyAggregationSummary {
 
 pub(super) async fn perform_stats_hourly_aggregation_once(
     data: &GatewayDataState,
-) -> Result<Option<StatsHourlyAggregationSummary>, aether_data::DataLayerError> {
+) -> Result<Option<StatsHourlyAggregationSummary>, DataLayerError> {
     let Some(pool) = data.postgres_pool() else {
         return Ok(None);
     };
@@ -34,15 +35,20 @@ pub(super) async fn perform_stats_hourly_aggregation_once(
     let hour_utc = stats_hourly_aggregation_target_hour(now_utc);
     let hour_end = hour_utc + chrono::Duration::hours(1);
     let aggregated_at = now_utc;
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin().await.map_err(postgres_error)?;
 
     let row = sqlx::query(SELECT_STATS_HOURLY_AGGREGATE_SQL)
         .bind(hour_utc)
         .bind(hour_end)
         .fetch_one(&mut *tx)
-        .await?;
-    let total_requests = row.try_get::<i64, _>("total_requests")?;
-    let error_requests = row.try_get::<i64, _>("error_requests")?;
+        .await
+        .map_err(postgres_error)?;
+    let total_requests = row
+        .try_get::<i64, _>("total_requests")
+        .map_err(postgres_error)?;
+    let error_requests = row
+        .try_get::<i64, _>("error_requests")
+        .map_err(postgres_error)?;
     let success_requests = total_requests.saturating_sub(error_requests);
     sqlx::query(UPSERT_STATS_HOURLY_SQL)
         .bind(Uuid::new_v4().to_string())
@@ -50,19 +56,41 @@ pub(super) async fn perform_stats_hourly_aggregation_once(
         .bind(total_requests)
         .bind(success_requests)
         .bind(error_requests)
-        .bind(row.try_get::<i64, _>("input_tokens")?)
-        .bind(row.try_get::<i64, _>("output_tokens")?)
-        .bind(row.try_get::<i64, _>("cache_creation_tokens")?)
-        .bind(row.try_get::<i64, _>("cache_read_tokens")?)
-        .bind(row.try_get::<f64, _>("total_cost")?)
-        .bind(row.try_get::<f64, _>("actual_total_cost")?)
-        .bind(row.try_get::<f64, _>("avg_response_time_ms")?)
+        .bind(
+            row.try_get::<i64, _>("input_tokens")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            row.try_get::<i64, _>("output_tokens")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            row.try_get::<i64, _>("cache_creation_tokens")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            row.try_get::<i64, _>("cache_read_tokens")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            row.try_get::<f64, _>("total_cost")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            row.try_get::<f64, _>("actual_total_cost")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            row.try_get::<f64, _>("avg_response_time_ms")
+                .map_err(postgres_error)?,
+        )
         .bind(true)
         .bind(aggregated_at)
         .bind(aggregated_at)
         .bind(aggregated_at)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(postgres_error)?;
 
     let user_rows =
         upsert_stats_hourly_user_rows(&mut tx, hour_utc, hour_end, aggregated_at).await?;
@@ -70,7 +98,7 @@ pub(super) async fn perform_stats_hourly_aggregation_once(
         upsert_stats_hourly_model_rows(&mut tx, hour_utc, hour_end, aggregated_at).await?;
     let provider_rows =
         upsert_stats_hourly_provider_rows(&mut tx, hour_utc, hour_end, aggregated_at).await?;
-    tx.commit().await?;
+    tx.commit().await.map_err(postgres_error)?;
 
     Ok(Some(StatsHourlyAggregationSummary {
         hour_utc,
@@ -86,17 +114,24 @@ async fn upsert_stats_hourly_user_rows(
     hour_utc: DateTime<Utc>,
     hour_end: DateTime<Utc>,
     now_utc: DateTime<Utc>,
-) -> Result<usize, sqlx::Error> {
+) -> Result<usize, DataLayerError> {
     let rows = sqlx::query(SELECT_STATS_HOURLY_USER_AGGREGATES_SQL)
         .bind(hour_utc)
         .bind(hour_end)
         .fetch_all(&mut **tx)
-        .await?;
+        .await
+        .map_err(postgres_error)?;
 
     for row in &rows {
-        let user_id = row.try_get::<String, _>("user_id")?;
-        let total_requests = row.try_get::<i64, _>("total_requests")?;
-        let error_requests = row.try_get::<i64, _>("error_requests")?;
+        let user_id = row
+            .try_get::<String, _>("user_id")
+            .map_err(postgres_error)?;
+        let total_requests = row
+            .try_get::<i64, _>("total_requests")
+            .map_err(postgres_error)?;
+        let error_requests = row
+            .try_get::<i64, _>("error_requests")
+            .map_err(postgres_error)?;
         let success_requests = total_requests.saturating_sub(error_requests);
         sqlx::query(UPSERT_STATS_HOURLY_USER_SQL)
             .bind(Uuid::new_v4().to_string())
@@ -105,13 +140,23 @@ async fn upsert_stats_hourly_user_rows(
             .bind(total_requests)
             .bind(success_requests)
             .bind(error_requests)
-            .bind(row.try_get::<i64, _>("input_tokens")?)
-            .bind(row.try_get::<i64, _>("output_tokens")?)
-            .bind(row.try_get::<f64, _>("total_cost")?)
+            .bind(
+                row.try_get::<i64, _>("input_tokens")
+                    .map_err(postgres_error)?,
+            )
+            .bind(
+                row.try_get::<i64, _>("output_tokens")
+                    .map_err(postgres_error)?,
+            )
+            .bind(
+                row.try_get::<f64, _>("total_cost")
+                    .map_err(postgres_error)?,
+            )
             .bind(now_utc)
             .bind(now_utc)
             .execute(&mut **tx)
-            .await?;
+            .await
+            .map_err(postgres_error)?;
     }
 
     Ok(rows.len())
@@ -122,16 +167,19 @@ async fn upsert_stats_hourly_model_rows(
     hour_utc: DateTime<Utc>,
     hour_end: DateTime<Utc>,
     now_utc: DateTime<Utc>,
-) -> Result<usize, sqlx::Error> {
+) -> Result<usize, DataLayerError> {
     let rows = sqlx::query(SELECT_STATS_HOURLY_MODEL_AGGREGATES_SQL)
         .bind(hour_utc)
         .bind(hour_end)
         .fetch_all(&mut **tx)
-        .await?;
+        .await
+        .map_err(postgres_error)?;
     let mut inserted = 0usize;
 
     for row in &rows {
-        let model = row.try_get::<Option<String>, _>("model")?;
+        let model = row
+            .try_get::<Option<String>, _>("model")
+            .map_err(postgres_error)?;
         let Some(model) = model.filter(|value| !value.is_empty()) else {
             continue;
         };
@@ -139,15 +187,31 @@ async fn upsert_stats_hourly_model_rows(
             .bind(Uuid::new_v4().to_string())
             .bind(hour_utc)
             .bind(model)
-            .bind(row.try_get::<i64, _>("total_requests")?)
-            .bind(row.try_get::<i64, _>("input_tokens")?)
-            .bind(row.try_get::<i64, _>("output_tokens")?)
-            .bind(row.try_get::<f64, _>("total_cost")?)
-            .bind(row.try_get::<f64, _>("avg_response_time_ms")?)
+            .bind(
+                row.try_get::<i64, _>("total_requests")
+                    .map_err(postgres_error)?,
+            )
+            .bind(
+                row.try_get::<i64, _>("input_tokens")
+                    .map_err(postgres_error)?,
+            )
+            .bind(
+                row.try_get::<i64, _>("output_tokens")
+                    .map_err(postgres_error)?,
+            )
+            .bind(
+                row.try_get::<f64, _>("total_cost")
+                    .map_err(postgres_error)?,
+            )
+            .bind(
+                row.try_get::<f64, _>("avg_response_time_ms")
+                    .map_err(postgres_error)?,
+            )
             .bind(now_utc)
             .bind(now_utc)
             .execute(&mut **tx)
-            .await?;
+            .await
+            .map_err(postgres_error)?;
         inserted += 1;
     }
 
@@ -159,16 +223,19 @@ async fn upsert_stats_hourly_provider_rows(
     hour_utc: DateTime<Utc>,
     hour_end: DateTime<Utc>,
     now_utc: DateTime<Utc>,
-) -> Result<usize, sqlx::Error> {
+) -> Result<usize, DataLayerError> {
     let rows = sqlx::query(SELECT_STATS_HOURLY_PROVIDER_AGGREGATES_SQL)
         .bind(hour_utc)
         .bind(hour_end)
         .fetch_all(&mut **tx)
-        .await?;
+        .await
+        .map_err(postgres_error)?;
     let mut inserted = 0usize;
 
     for row in &rows {
-        let provider_name = row.try_get::<Option<String>, _>("provider_name")?;
+        let provider_name = row
+            .try_get::<Option<String>, _>("provider_name")
+            .map_err(postgres_error)?;
         let Some(provider_name) = provider_name.filter(|value| !value.is_empty()) else {
             continue;
         };
@@ -176,16 +243,33 @@ async fn upsert_stats_hourly_provider_rows(
             .bind(Uuid::new_v4().to_string())
             .bind(hour_utc)
             .bind(provider_name)
-            .bind(row.try_get::<i64, _>("total_requests")?)
-            .bind(row.try_get::<i64, _>("input_tokens")?)
-            .bind(row.try_get::<i64, _>("output_tokens")?)
-            .bind(row.try_get::<f64, _>("total_cost")?)
+            .bind(
+                row.try_get::<i64, _>("total_requests")
+                    .map_err(postgres_error)?,
+            )
+            .bind(
+                row.try_get::<i64, _>("input_tokens")
+                    .map_err(postgres_error)?,
+            )
+            .bind(
+                row.try_get::<i64, _>("output_tokens")
+                    .map_err(postgres_error)?,
+            )
+            .bind(
+                row.try_get::<f64, _>("total_cost")
+                    .map_err(postgres_error)?,
+            )
             .bind(now_utc)
             .bind(now_utc)
             .execute(&mut **tx)
-            .await?;
+            .await
+            .map_err(postgres_error)?;
         inserted += 1;
     }
 
     Ok(inserted)
+}
+
+fn postgres_error(error: sqlx::Error) -> DataLayerError {
+    DataLayerError::postgres(error)
 }

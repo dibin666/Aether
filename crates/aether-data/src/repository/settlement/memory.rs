@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 
-use super::types::{SettlementWriteRepository, StoredUsageSettlement, UsageSettlementInput};
+use super::{SettlementWriteRepository, StoredUsageSettlement, UsageSettlementInput};
 use crate::repository::wallet::{InMemoryWalletRepository, StoredWalletSnapshot};
 use crate::DataLayerError;
 

@@ -1,5 +1,7 @@
-use aether_data::repository::candidates::{RequestCandidateStatus, StoredRequestCandidate};
-use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateStatus, StoredRequestCandidate,
+};
+use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 
 const FAILURE_COOLDOWN_WINDOW_SECS: u64 = 60;
 const FAILURE_COOLDOWN_THRESHOLD: usize = 2;
@@ -443,8 +445,10 @@ fn json_value_as_f64(value: &serde_json::Value) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use aether_data::repository::candidates::{RequestCandidateStatus, StoredRequestCandidate};
-    use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
+    use aether_data_contracts::repository::candidates::{
+        RequestCandidateStatus, StoredRequestCandidate,
+    };
+    use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 
     use super::{
         aggregate_provider_key_health_score, count_recent_active_requests_for_api_key,

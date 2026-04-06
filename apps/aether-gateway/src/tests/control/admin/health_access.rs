@@ -3,13 +3,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use aether_crypto::DEVELOPMENT_ENCRYPTION_KEY;
 use aether_data::repository::auth_modules::InMemoryAuthModuleReadRepository;
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateStatus,
-};
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
 use aether_data::repository::management_tokens::InMemoryManagementTokenRepository;
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository,
-};
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::candidates::RequestCandidateStatus;
+use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
 use axum::body::Body;
 use axum::routing::{any, get, patch, put};
 use axum::{extract::Request, Router};

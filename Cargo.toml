@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "apps/aether-proxy",
+    "crates/aether-ai-pipeline",
+    "crates/aether-data-contracts",
     "crates/aether-cache",
     "crates/aether-billing",
     "crates/aether-wallet",
@@ -25,6 +27,8 @@ license = "LicenseRef-Aether-NonCommercial"
 repository = "https://github.com/fawney19/Aether.git"
 
 [workspace.dependencies]
+aether-ai-pipeline = { path = "crates/aether-ai-pipeline" }
+aether-data-contracts = { path = "crates/aether-data-contracts" }
 aether-cache = { path = "crates/aether-cache" }
 aether-billing = { path = "crates/aether-billing" }
 aether-wallet = { path = "crates/aether-wallet" }

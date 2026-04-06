@@ -1,4 +1,5 @@
 use aether_contracts::{ExecutionError, ExecutionPlan, ExecutionTelemetry};
+use aether_data_contracts::repository::candidates::RequestCandidateStatus;
 use axum::body::Body;
 use axum::http::Response;
 use base64::Engine as _;
@@ -6,14 +7,13 @@ use serde_json::{Map, Value};
 use tracing::warn;
 
 use crate::api::response::attach_control_metadata_headers;
+use crate::clock::current_unix_secs as current_request_candidate_unix_secs;
 use crate::control::GatewayControlDecision;
 use crate::execution_runtime::submission::{
     resolve_core_error_background_report_kind, submit_local_core_error_or_sync_finalize,
 };
-use crate::scheduler::{
-    current_unix_secs as current_request_candidate_unix_secs,
-    record_report_request_candidate_status,
-};
+use crate::log_ids::short_request_id;
+use crate::request_candidate_runtime::record_report_request_candidate_status;
 use crate::usage::submit_sync_report;
 use crate::{usage::GatewaySyncReportRequest, AppState, GatewayError};
 
@@ -126,7 +126,7 @@ async fn record_stream_sync_failure(
     record_report_request_candidate_status(
         state,
         report_context,
-        aether_data::repository::candidates::RequestCandidateStatus::Failed,
+        RequestCandidateStatus::Failed,
         Some(failure.status_code),
         Some(failure.error_type.clone()),
         Some(failure.error_message.clone()),
@@ -220,11 +220,12 @@ pub(super) async fn submit_midstream_stream_failure(
     )
     .await;
     if let Err(err) = submit_sync_report(state, trace_id, payload).await {
+        let request_id = short_request_id(plan.request_id.as_str());
         warn!(
             event_name = "execution_report_submit_failed",
             log_type = "ops",
             trace_id = %trace_id,
-            request_id = %plan.request_id,
+            request_id = %request_id,
             candidate_id = ?plan.candidate_id,
             report_scope = "stream_failure",
             error = ?err,

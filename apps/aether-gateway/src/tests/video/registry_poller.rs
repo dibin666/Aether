@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use aether_data::repository::video_tasks::{
-    InMemoryVideoTaskRepository, UpsertVideoTask, VideoTaskLookupKey, VideoTaskReadRepository,
+use aether_data::repository::video_tasks::InMemoryVideoTaskRepository;
+use aether_data_contracts::repository::video_tasks::{
+    UpsertVideoTask, VideoTaskLookupKey, VideoTaskReadRepository, VideoTaskStatus,
     VideoTaskWriteRepository,
 };
 use axum::body::to_bytes;
@@ -36,7 +37,7 @@ fn sample_due_openai_task(upstream_base_url: &str) -> UpsertVideoTask {
         resolution: Some("720p".to_string()),
         aspect_ratio: Some("16:9".to_string()),
         size: Some("1280x720".to_string()),
-        status: aether_data::repository::video_tasks::VideoTaskStatus::Submitted,
+        status: VideoTaskStatus::Submitted,
         progress_percent: 0,
         progress_message: None,
         retry_count: 0,
@@ -194,10 +195,7 @@ async fn gateway_background_video_task_poller_refreshes_due_openai_task_from_rep
         }
     };
 
-    assert_eq!(
-        stored.status,
-        aether_data::repository::video_tasks::VideoTaskStatus::Processing
-    );
+    assert_eq!(stored.status, VideoTaskStatus::Processing);
     assert_eq!(stored.progress_percent, 37);
     assert_eq!(stored.poll_count, 1);
     assert!(
@@ -305,10 +303,7 @@ async fn gateway_background_video_task_poller_refreshes_due_openai_task_from_rep
         }
     };
 
-    assert_eq!(
-        stored.status,
-        aether_data::repository::video_tasks::VideoTaskStatus::Processing
-    );
+    assert_eq!(stored.status, VideoTaskStatus::Processing);
     assert_eq!(stored.progress_percent, 37);
     assert_eq!(stored.poll_count, 1);
     assert!(

@@ -1,7 +1,7 @@
 use super::{build_admin_users_bad_request_response, format_optional_datetime_iso8601};
 use crate::control::GatewayPublicRequestContext;
-use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
-use crate::{AppState, GatewayError};
+use crate::handlers::admin::shared::attach_admin_audit_response;
+use crate::{AppState, GatewayError, GatewayUserSessionView};
 use axum::{
     body::Body,
     http,
@@ -34,9 +34,7 @@ fn admin_user_session_parts(request_path: &str) -> Option<(String, String)> {
     }
 }
 
-fn format_required_session_datetime_iso8601(
-    session: &crate::data::state::StoredUserSessionRecord,
-) -> String {
+fn format_required_session_datetime_iso8601(session: &GatewayUserSessionView) -> String {
     session
         .created_at
         .or(session.updated_at)

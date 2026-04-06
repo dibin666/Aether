@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
-use aether_data::repository::video_tasks::{
-    StoredVideoTask, VideoTaskModelCount, VideoTaskQueryFilter, VideoTaskStatusCount,
+use aether_data_contracts::repository::video_tasks::{
+    StoredVideoTask, VideoTaskModelCount, VideoTaskQueryFilter, VideoTaskStatus,
+    VideoTaskStatusCount,
 };
 use serde::Serialize;
 
@@ -150,9 +151,7 @@ pub(crate) async fn read_video_task_stats(
         .filter(|entry| {
             matches!(
                 entry.status,
-                aether_data::repository::video_tasks::VideoTaskStatus::Submitted
-                    | aether_data::repository::video_tasks::VideoTaskStatus::Queued
-                    | aether_data::repository::video_tasks::VideoTaskStatus::Processing
+                VideoTaskStatus::Submitted | VideoTaskStatus::Queued | VideoTaskStatus::Processing
             )
         })
         .map(|entry| entry.count)
@@ -181,17 +180,17 @@ fn map_model_counts(counts: Vec<VideoTaskModelCount>) -> BTreeMap<String, u64> {
         .collect()
 }
 
-fn status_key(status: aether_data::repository::video_tasks::VideoTaskStatus) -> String {
+fn status_key(status: VideoTaskStatus) -> String {
     match status {
-        aether_data::repository::video_tasks::VideoTaskStatus::Pending => "pending",
-        aether_data::repository::video_tasks::VideoTaskStatus::Submitted => "submitted",
-        aether_data::repository::video_tasks::VideoTaskStatus::Queued => "queued",
-        aether_data::repository::video_tasks::VideoTaskStatus::Processing => "processing",
-        aether_data::repository::video_tasks::VideoTaskStatus::Completed => "completed",
-        aether_data::repository::video_tasks::VideoTaskStatus::Failed => "failed",
-        aether_data::repository::video_tasks::VideoTaskStatus::Cancelled => "cancelled",
-        aether_data::repository::video_tasks::VideoTaskStatus::Expired => "expired",
-        aether_data::repository::video_tasks::VideoTaskStatus::Deleted => "deleted",
+        VideoTaskStatus::Pending => "pending",
+        VideoTaskStatus::Submitted => "submitted",
+        VideoTaskStatus::Queued => "queued",
+        VideoTaskStatus::Processing => "processing",
+        VideoTaskStatus::Completed => "completed",
+        VideoTaskStatus::Failed => "failed",
+        VideoTaskStatus::Cancelled => "cancelled",
+        VideoTaskStatus::Expired => "expired",
+        VideoTaskStatus::Deleted => "deleted",
     }
     .to_string()
 }

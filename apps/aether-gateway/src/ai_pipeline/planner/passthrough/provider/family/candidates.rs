@@ -1,12 +1,14 @@
-use aether_data::repository::candidates::{RequestCandidateStatus, UpsertRequestCandidateRecord};
 use serde_json::json;
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::ai_pipeline::control_facade::GatewayControlDecision;
+use crate::ai_pipeline::execution_facade::{ConversionMode, ExecutionStrategy};
+use crate::ai_pipeline::planner::auth_snapshot_facade::read_auth_api_key_snapshot;
 use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
-use crate::control::GatewayControlDecision;
-use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
-use crate::scheduler::{current_unix_secs, list_selectable_candidates};
+use crate::ai_pipeline::planner::candidate_runtime_facade::persist_available_local_candidate;
+use crate::ai_pipeline::planner::scheduler_facade::list_selectable_candidates;
+use crate::clock::current_unix_secs;
 use crate::{append_execution_contract_fields_to_value, AppState, GatewayError};
 
 use super::types::{
@@ -40,13 +42,13 @@ pub(crate) async fn resolve_local_same_format_provider_decision_input(
         }
     };
 
-    let auth_snapshot = match state
-        .read_auth_api_key_snapshot(
-            &auth_context.user_id,
-            &auth_context.api_key_id,
-            current_unix_secs(),
-        )
-        .await
+    let auth_snapshot = match read_auth_api_key_snapshot(
+        state,
+        &auth_context.user_id,
+        &auth_context.api_key_id,
+        current_unix_secs(),
+    )
+    .await
     {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => return None,
@@ -107,47 +109,19 @@ pub(crate) async fn materialize_local_same_format_provider_candidate_attempts(
             spec.api_format,
         );
 
-        let candidate_id = match state
-            .upsert_request_candidate(UpsertRequestCandidateRecord {
-                id: generated_candidate_id.clone(),
-                request_id: trace_id.to_string(),
-                user_id: Some(input.auth_context.user_id.clone()),
-                api_key_id: Some(input.auth_context.api_key_id.clone()),
-                username: None,
-                api_key_name: None,
-                candidate_index: candidate_index as u32,
-                retry_index: 0,
-                provider_id: Some(candidate.provider_id.clone()),
-                endpoint_id: Some(candidate.endpoint_id.clone()),
-                key_id: Some(candidate.key_id.clone()),
-                status: RequestCandidateStatus::Available,
-                skip_reason: None,
-                is_cached: Some(false),
-                status_code: None,
-                error_type: None,
-                error_message: None,
-                latency_ms: None,
-                concurrent_requests: None,
-                extra_data: Some(extra_data),
-                required_capabilities: candidate.key_capabilities.clone(),
-                created_at_unix_secs: Some(created_at_unix_secs),
-                started_at_unix_secs: None,
-                finished_at_unix_secs: None,
-            })
-            .await
-        {
-            Ok(Some(stored)) => stored.id,
-            Ok(None) => generated_candidate_id.clone(),
-            Err(err) => {
-                warn!(
-                    trace_id = %trace_id,
-                    api_format = spec.api_format,
-                    error = ?err,
-                    "gateway local same-format decision request candidate upsert failed"
-                );
-                generated_candidate_id.clone()
-            }
-        };
+        let candidate_id = persist_available_local_candidate(
+            state,
+            trace_id,
+            &input.auth_context.user_id,
+            &input.auth_context.api_key_id,
+            &candidate,
+            candidate_index as u32,
+            &generated_candidate_id,
+            Some(extra_data),
+            created_at_unix_secs,
+            "gateway local same-format decision request candidate upsert failed",
+        )
+        .await;
 
         attempts.push(LocalSameFormatProviderCandidateAttempt {
             candidate,

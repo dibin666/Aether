@@ -1,5 +1,5 @@
-use crate::provider_transport::snapshot::GatewayProviderTransportSnapshot;
-use crate::provider_transport::{
+use crate::ai_pipeline::provider_transport_facade::snapshot::GatewayProviderTransportSnapshot;
+use crate::ai_pipeline::provider_transport_facade::{
     body_rules_are_locally_supported, header_rules_are_locally_supported,
     resolve_transport_tls_profile, transport_proxy_is_locally_supported,
 };
@@ -105,7 +105,7 @@ fn supports_local_vertex_api_key_same_format_transport(
 mod tests {
     use serde_json::json;
 
-    use crate::provider_transport::snapshot::{
+    use crate::ai_pipeline::provider_transport_facade::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };

@@ -8,7 +8,7 @@ use aether_data::postgres::{
     PostgresPoolConfig, PostgresTransactionOptions,
 };
 use aether_data::redis::{RedisClientConfig, RedisLockRunnerConfig};
-use aether_data::{PostgresBackend, RedisBackend};
+use aether_data::{DataLayerError, PostgresBackend, RedisBackend};
 use aether_testkit::{
     init_test_runtime_for, reserve_local_port, ManagedPostgresServer, ManagedRedisServer,
     TunnelHarness, TunnelHarnessConfig,
@@ -365,7 +365,8 @@ async fn benchmark_postgres_slow_query_recovery(
                     sqlx::query("SELECT pg_sleep($1::double precision)")
                         .bind(postgres_sleep_secs)
                         .execute(&mut **tx)
-                        .await?;
+                        .await
+                        .map_err(DataLayerError::postgres)?;
                     Ok(())
                 }
                 .boxed()

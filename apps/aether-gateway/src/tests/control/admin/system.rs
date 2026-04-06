@@ -9,15 +9,13 @@ use aether_data::repository::auth_modules::{
     InMemoryAuthModuleReadRepository, StoredOAuthProviderModuleConfig,
 };
 use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
-use aether_data::repository::global_models::{
-    InMemoryGlobalModelReadRepository, StoredPublicGlobalModel,
-};
+use aether_data::repository::global_models::InMemoryGlobalModelReadRepository;
 use aether_data::repository::oauth_providers::InMemoryOAuthProviderRepository;
 use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
 use aether_data::repository::proxy_nodes::InMemoryProxyNodeRepository;
 use aether_data::repository::users::{InMemoryUserReadRepository, StoredUserExportRow};
-use aether_data::repository::wallet::InMemoryWalletRepository;
-use aether_data::repository::wallet::StoredWalletSnapshot;
+use aether_data::repository::wallet::{InMemoryWalletRepository, StoredWalletSnapshot};
+use aether_data_contracts::repository::global_models::StoredPublicGlobalModel;
 use axum::body::Body;
 use axum::routing::{any, delete, get, post, put};
 use axum::{extract::Request, Router};

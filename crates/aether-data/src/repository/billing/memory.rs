@@ -3,7 +3,7 @@ use std::sync::RwLock;
 
 use async_trait::async_trait;
 
-use super::types::{BillingReadRepository, StoredBillingModelContext};
+use super::{BillingReadRepository, StoredBillingModelContext};
 use crate::DataLayerError;
 
 type BillingContextKey = (String, String, Option<String>);

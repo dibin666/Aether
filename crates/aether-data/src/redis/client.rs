@@ -1,3 +1,4 @@
+use crate::error::RedisResultExt;
 use crate::redis::RedisKeyspace;
 use crate::DataLayerError;
 
@@ -44,7 +45,7 @@ impl RedisClientFactory {
     }
 
     pub fn connect_lazy(&self) -> Result<RedisClient, DataLayerError> {
-        Ok(RedisClient::open(self.config.url.clone())?)
+        RedisClient::open(self.config.url.clone()).map_redis_err()
     }
 }
 

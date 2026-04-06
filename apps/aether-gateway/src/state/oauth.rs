@@ -64,10 +64,8 @@ impl AppState {
         provider_id: &str,
         endpoint_id: &str,
         key_id: &str,
-    ) -> Result<
-        Option<crate::provider_transport::GatewayProviderTransportSnapshot>,
-        GatewayError,
-    > {
+    ) -> Result<Option<crate::provider_transport::GatewayProviderTransportSnapshot>, GatewayError>
+    {
         self.data
             .read_provider_transport_snapshot(provider_id, endpoint_id, key_id)
             .await
@@ -318,10 +316,8 @@ impl AppState {
         provider_id: &str,
         endpoint_id: &str,
         key_id: &str,
-    ) -> Result<
-        Option<crate::provider_transport::GatewayProviderTransportSnapshot>,
-        GatewayError,
-    > {
+    ) -> Result<Option<crate::provider_transport::GatewayProviderTransportSnapshot>, GatewayError>
+    {
         let Some(cache_key) =
             ProviderTransportSnapshotCacheKey::new(provider_id, endpoint_id, key_id)
         else {

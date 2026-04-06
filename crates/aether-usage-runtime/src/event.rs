@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aether_data::DataLayerError;
+use aether_data_contracts::DataLayerError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

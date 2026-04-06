@@ -1,10 +1,26 @@
-use crate::handlers::{json_string_list, unix_secs_to_rfc3339};
+use crate::handlers::shared::{json_string_list, unix_secs_to_rfc3339};
 use crate::AppState;
 #[cfg(test)]
 use aether_crypto::DEVELOPMENT_ENCRYPTION_KEY;
 use aether_crypto::{decrypt_python_fernet_ciphertext, encrypt_python_fernet_plaintext};
-use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
+use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 use serde_json::json;
+
+pub(crate) fn provider_catalog_key_supports_format(
+    key: &StoredProviderCatalogKey,
+    api_format: &str,
+) -> bool {
+    let Some(value) = key.api_formats.as_ref() else {
+        return true;
+    };
+    let Some(values) = value.as_array() else {
+        return true;
+    };
+    values
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .any(|candidate| candidate.trim().eq_ignore_ascii_case(api_format))
+}
 
 pub(crate) fn decrypt_catalog_secret_with_fallbacks(
     encryption_key: Option<&str>,

@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
-use super::types::{
+use super::{
     ProviderQuotaReadRepository, ProviderQuotaWriteRepository, StoredProviderQuotaSnapshot,
 };
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const FIND_BY_PROVIDER_ID_SQL: &str = r#"
 SELECT
@@ -56,7 +56,8 @@ impl ProviderQuotaReadRepository for SqlxProviderQuotaRepository {
         let row = sqlx::query(FIND_BY_PROVIDER_ID_SQL)
             .bind(provider_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_row).transpose()
     }
 }
@@ -69,21 +70,24 @@ impl ProviderQuotaWriteRepository for SqlxProviderQuotaRepository {
                 DataLayerError::InvalidInput("provider quota reset timestamp overflow".to_string())
             })?)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() as usize)
     }
 }
 
 fn map_row(row: &sqlx::postgres::PgRow) -> Result<StoredProviderQuotaSnapshot, DataLayerError> {
     StoredProviderQuotaSnapshot::new(
-        row.try_get("provider_id")?,
-        row.try_get("billing_type")?,
-        row.try_get("monthly_quota_usd")?,
-        row.try_get("monthly_used_usd")?,
-        row.try_get("quota_reset_day")?,
-        row.try_get("quota_last_reset_at_unix_secs")?,
-        row.try_get("quota_expires_at_unix_secs")?,
-        row.try_get("is_active")?,
+        row.try_get("provider_id").map_postgres_err()?,
+        row.try_get("billing_type").map_postgres_err()?,
+        row.try_get("monthly_quota_usd").map_postgres_err()?,
+        row.try_get("monthly_used_usd").map_postgres_err()?,
+        row.try_get("quota_reset_day").map_postgres_err()?,
+        row.try_get("quota_last_reset_at_unix_secs")
+            .map_postgres_err()?,
+        row.try_get("quota_expires_at_unix_secs")
+            .map_postgres_err()?,
+        row.try_get("is_active").map_postgres_err()?,
     )
 }
 

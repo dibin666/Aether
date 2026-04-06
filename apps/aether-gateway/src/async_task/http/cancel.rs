@@ -1,4 +1,6 @@
-use aether_data::repository::video_tasks::{StoredVideoTask, UpsertVideoTask, VideoTaskStatus};
+use aether_data_contracts::repository::video_tasks::{
+    StoredVideoTask, UpsertVideoTask, VideoTaskStatus,
+};
 use axum::response::IntoResponse;
 use axum::Json;
 use serde_json::{json, Map, Value};
@@ -126,19 +128,16 @@ async fn execute_video_task_cancel_plan(
     trace_id: &str,
     plan: aether_contracts::ExecutionPlan,
 ) -> Result<(), axum::response::Response> {
-    let result = crate::execution_runtime::execute_execution_runtime_sync_plan(
-        state,
-        Some(trace_id),
-        &plan,
-    )
-    .await
-    .map_err(|err| {
-        GatewayError::UpstreamUnavailable {
-            trace_id: trace_id.to_string(),
-            message: format!("{err:?}"),
-        }
-        .into_response()
-    })?;
+    let result =
+        crate::execution_runtime::execute_execution_runtime_sync_plan(state, Some(trace_id), &plan)
+            .await
+            .map_err(|err| {
+                GatewayError::UpstreamUnavailable {
+                    trace_id: trace_id.to_string(),
+                    message: format!("{err:?}"),
+                }
+                .into_response()
+            })?;
 
     if result.status_code >= 400 {
         let status = axum::http::StatusCode::from_u16(result.status_code)

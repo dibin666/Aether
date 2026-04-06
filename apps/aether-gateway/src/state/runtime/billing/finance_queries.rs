@@ -5,10 +5,9 @@ use aether_data::repository::wallet::{
     StoredAdminWalletRefundRequestItem, StoredAdminWalletTransaction,
 };
 
-use crate::state::AdminPaymentCallbackRecord;
 use crate::{
     AdminWalletMutationOutcome, AdminWalletPaymentOrderRecord, AdminWalletRefundRecord, AppState,
-    GatewayError,
+    GatewayAdminPaymentCallbackView, GatewayError,
 };
 
 impl AppState {
@@ -124,7 +123,7 @@ impl AppState {
         payment_method: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> Result<Option<(Vec<AdminPaymentCallbackRecord>, u64)>, GatewayError> {
+    ) -> Result<Option<(Vec<GatewayAdminPaymentCallbackView>, u64)>, GatewayError> {
         #[cfg(test)]
         if let Some(store) = self.admin_payment_callback_store.as_ref() {
             let mut items = store
@@ -147,6 +146,7 @@ impl AppState {
                 .into_iter()
                 .skip(offset)
                 .take(limit)
+                .map(Into::into)
                 .collect::<Vec<_>>();
             return Ok(Some((items, total)));
         }
@@ -160,6 +160,7 @@ impl AppState {
             page.items
                 .into_iter()
                 .map(stored_admin_payment_callback_to_gateway)
+                .map(Into::into)
                 .collect(),
             page.total,
         )))
@@ -415,8 +416,8 @@ fn stored_admin_payment_order_to_gateway(
 
 fn stored_admin_payment_callback_to_gateway(
     record: StoredAdminPaymentCallback,
-) -> AdminPaymentCallbackRecord {
-    AdminPaymentCallbackRecord {
+) -> GatewayAdminPaymentCallbackView {
+    GatewayAdminPaymentCallbackView {
         id: record.id,
         payment_order_id: record.payment_order_id,
         payment_method: record.payment_method,

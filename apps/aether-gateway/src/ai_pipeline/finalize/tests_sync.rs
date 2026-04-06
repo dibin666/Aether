@@ -10,7 +10,10 @@ use super::{
     convert_gemini_chat_response_to_openai_chat, convert_gemini_cli_response_to_openai_cli,
     maybe_build_local_core_sync_finalize_response,
 };
-use crate::control::GatewayControlDecision;
+use crate::ai_pipeline::control_facade::GatewayControlDecision;
+use crate::ai_pipeline::conversion::response::{
+    convert_openai_chat_response_to_openai_cli, convert_openai_cli_response_to_openai_chat,
+};
 use crate::usage::GatewaySyncReportRequest;
 
 fn test_decision() -> GatewayControlDecision {
@@ -369,6 +372,39 @@ fn converts_claude_chat_tool_use_to_openai_chat_tool_calls() {
 }
 
 #[test]
+fn converts_claude_chat_thinking_block_to_openai_reasoning_content() {
+    let result = convert_claude_chat_response_to_openai_chat(
+        &json!({
+            "id": "msg_think_123",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-upstream",
+            "content": [
+                {"type": "thinking", "thinking": "Need to reason first."},
+                {"type": "text", "text": "Final answer"}
+            ],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 5,
+                "output_tokens": 7
+            }
+        }),
+        &json!({
+            "client_api_format": "openai:chat",
+            "provider_api_format": "claude:chat",
+            "model": "gpt-5"
+        }),
+    )
+    .expect("result should exist");
+
+    assert_eq!(
+        result["choices"][0]["message"]["reasoning_content"],
+        "Need to reason first."
+    );
+    assert_eq!(result["choices"][0]["message"]["content"], "Final answer");
+}
+
+#[test]
 fn converts_gemini_chat_response_to_openai_chat_response() {
     let result = convert_gemini_chat_response_to_openai_chat(
         &json!({
@@ -478,6 +514,223 @@ fn converts_gemini_chat_function_call_to_openai_chat_tool_calls() {
                 "total_tokens": 3
             }
         })
+    );
+}
+
+#[test]
+fn converts_gemini_chat_thought_part_to_openai_reasoning_content() {
+    let result = convert_gemini_chat_response_to_openai_chat(
+        &json!({
+            "responseId": "resp_think_123",
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "Internal reasoning.", "thought": true},
+                        {"text": "Visible answer"}
+                    ],
+                    "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0
+            }],
+            "modelVersion": "gemini-2.5-pro-upstream",
+            "usageMetadata": {
+                "promptTokenCount": 1,
+                "candidatesTokenCount": 2,
+                "totalTokenCount": 3
+            }
+        }),
+        &json!({
+            "client_api_format": "openai:chat",
+            "provider_api_format": "gemini:chat",
+            "model": "gpt-5"
+        }),
+    )
+    .expect("result should exist");
+
+    assert_eq!(
+        result["choices"][0]["message"]["reasoning_content"],
+        "Internal reasoning."
+    );
+    assert_eq!(result["choices"][0]["message"]["content"], "Visible answer");
+}
+
+#[test]
+fn converts_gemini_chat_inline_data_to_openai_chat_image_part() {
+    let result = convert_gemini_chat_response_to_openai_chat(
+        &json!({
+            "responseId": "resp_img_123",
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": "iVBORw0KGgo="
+                        }
+                    }],
+                    "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0
+            }],
+            "modelVersion": "gemini-2.5-pro-upstream",
+            "usageMetadata": {
+                "promptTokenCount": 1,
+                "candidatesTokenCount": 2,
+                "totalTokenCount": 3
+            }
+        }),
+        &json!({
+            "client_api_format": "openai:chat",
+            "provider_api_format": "gemini:chat",
+            "model": "gpt-5"
+        }),
+    )
+    .expect("result should exist");
+
+    assert_eq!(
+        result["choices"][0]["message"]["content"],
+        json!([{
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,iVBORw0KGgo="
+            }
+        }])
+    );
+}
+
+#[test]
+fn converts_openai_cli_reasoning_item_to_openai_chat_reasoning_content() {
+    let result = convert_openai_cli_response_to_openai_chat(
+        &json!({
+            "id": "resp_reason_123",
+            "object": "response",
+            "model": "gpt-5",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "summary": [{
+                        "type": "summary_text",
+                        "text": "Thinking summary."
+                    }]
+                },
+                {
+                    "type": "message",
+                    "id": "msg_1",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "Final answer",
+                        "annotations": []
+                    }]
+                }
+            ],
+            "usage": {
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "total_tokens": 8
+            }
+        }),
+        &json!({
+            "client_api_format": "openai:chat",
+            "provider_api_format": "openai:cli",
+            "model": "gpt-5"
+        }),
+    )
+    .expect("result should exist");
+
+    assert_eq!(
+        result["choices"][0]["message"]["reasoning_content"],
+        "Thinking summary."
+    );
+    assert_eq!(result["choices"][0]["message"]["content"], "Final answer");
+}
+
+#[test]
+fn converts_openai_cli_output_image_to_openai_chat_image_part() {
+    let result = convert_openai_cli_response_to_openai_chat(
+        &json!({
+            "id": "resp_img_cli_123",
+            "object": "response",
+            "model": "gpt-5",
+            "output": [{
+                "type": "message",
+                "id": "msg_1",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{
+                    "type": "output_image",
+                    "image_url": "data:image/png;base64,iVBORw0KGgo="
+                }]
+            }],
+            "usage": {
+                "input_tokens": 3,
+                "output_tokens": 5,
+                "total_tokens": 8
+            }
+        }),
+        &json!({
+            "client_api_format": "openai:chat",
+            "provider_api_format": "openai:cli",
+            "model": "gpt-5"
+        }),
+    )
+    .expect("result should exist");
+
+    assert_eq!(
+        result["choices"][0]["message"]["content"],
+        json!([{
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,iVBORw0KGgo="
+            }
+        }])
+    );
+}
+
+#[test]
+fn converts_openai_chat_image_part_to_openai_cli_output_image() {
+    let result = convert_openai_chat_response_to_openai_cli(
+        &json!({
+            "id": "chatcmpl_img_123",
+            "object": "chat.completion",
+            "model": "gpt-5",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "image_url",
+                        "image_url": {
+                            "url": "data:image/png;base64,iVBORw0KGgo="
+                        }
+                    }]
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 3,
+                "completion_tokens": 5,
+                "total_tokens": 8
+            }
+        }),
+        &json!({
+            "client_api_format": "openai:cli",
+            "provider_api_format": "openai:chat",
+            "model": "gpt-5"
+        }),
+        false,
+    )
+    .expect("result should exist");
+
+    assert_eq!(
+        result["output"][0]["content"],
+        json!([{
+            "type": "output_image",
+            "image_url": "data:image/png;base64,iVBORw0KGgo="
+        }])
     );
 }
 
@@ -718,6 +971,49 @@ fn converts_gemini_cli_function_call_to_openai_cli_function_call() {
                 "total_tokens": 10
             }
         })
+    );
+}
+
+#[test]
+fn converts_gemini_cli_inline_data_to_openai_cli_output_image() {
+    let result = convert_gemini_cli_response_to_openai_cli(
+        &json!({
+            "responseId": "resp_cli_img_123",
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": "iVBORw0KGgo="
+                        }
+                    }],
+                    "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0
+            }],
+            "modelVersion": "gemini-cli-upstream",
+            "usageMetadata": {
+                "promptTokenCount": 3,
+                "candidatesTokenCount": 5,
+                "thoughtsTokenCount": 2,
+                "totalTokenCount": 10
+            }
+        }),
+        &json!({
+            "client_api_format": "openai:cli",
+            "provider_api_format": "gemini:cli",
+            "model": "gpt-5"
+        }),
+    )
+    .expect("result should exist");
+
+    assert_eq!(
+        result["output"][0]["content"],
+        json!([{
+            "type": "output_image",
+            "image_url": "data:image/png;base64,iVBORw0KGgo="
+        }])
     );
 }
 

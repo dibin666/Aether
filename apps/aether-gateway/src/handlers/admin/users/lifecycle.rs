@@ -7,8 +7,9 @@ use super::{
     AdminUpdateUserFieldPresence, AdminUpdateUserRequest,
 };
 use crate::control::GatewayPublicRequestContext;
-use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
-use crate::handlers::{query_param_optional_bool, query_param_value};
+use crate::handlers::admin::shared::{
+    attach_admin_audit_response, query_param_optional_bool, query_param_value,
+};
 use crate::{AppState, GatewayError};
 use axum::{
     body::Body,

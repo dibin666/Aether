@@ -1,3 +1,4 @@
+use aether_data_contracts::DataLayerError;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -9,7 +10,7 @@ pub(super) async fn system_config_bool(
     data: &GatewayDataState,
     key: &str,
     default: bool,
-) -> Result<bool, aether_data::DataLayerError> {
+) -> Result<bool, DataLayerError> {
     Ok(match data.find_system_config_value(key).await? {
         Some(Value::Bool(value)) => value,
         Some(Value::Number(value)) => value.as_i64().map(|raw| raw != 0).unwrap_or(default),
@@ -26,7 +27,7 @@ pub(super) async fn system_config_u64(
     data: &GatewayDataState,
     key: &str,
     default: u64,
-) -> Result<u64, aether_data::DataLayerError> {
+) -> Result<u64, DataLayerError> {
     Ok(match data.find_system_config_value(key).await? {
         Some(Value::Number(value)) => value
             .as_u64()
@@ -41,7 +42,7 @@ pub(super) async fn system_config_usize(
     data: &GatewayDataState,
     key: &str,
     default: usize,
-) -> Result<usize, aether_data::DataLayerError> {
+) -> Result<usize, DataLayerError> {
     Ok(match data.find_system_config_value(key).await? {
         Some(Value::Number(value)) => value
             .as_u64()
@@ -62,7 +63,7 @@ pub(super) async fn system_config_string(
     data: &GatewayDataState,
     key: &str,
     default: &str,
-) -> Result<String, aether_data::DataLayerError> {
+) -> Result<String, DataLayerError> {
     Ok(match data.find_system_config_value(key).await? {
         Some(Value::String(value)) => {
             let trimmed = value.trim();
@@ -78,13 +79,13 @@ pub(super) async fn system_config_string(
 
 pub(super) async fn pending_cleanup_timeout_minutes(
     data: &GatewayDataState,
-) -> Result<u64, aether_data::DataLayerError> {
+) -> Result<u64, DataLayerError> {
     system_config_u64(data, "pending_request_timeout_minutes", 10).await
 }
 
 pub(super) async fn pending_cleanup_batch_size(
     data: &GatewayDataState,
-) -> Result<usize, aether_data::DataLayerError> {
+) -> Result<usize, DataLayerError> {
     Ok(system_config_usize(data, "cleanup_batch_size", 1_000)
         .await?
         .max(1)
@@ -93,7 +94,7 @@ pub(super) async fn pending_cleanup_batch_size(
 
 pub(super) async fn usage_cleanup_settings(
     data: &GatewayDataState,
-) -> Result<UsageCleanupSettings, aether_data::DataLayerError> {
+) -> Result<UsageCleanupSettings, DataLayerError> {
     Ok(UsageCleanupSettings {
         detail_retention_days: system_config_u64(data, "detail_log_retention_days", 7).await?,
         compressed_retention_days: system_config_u64(data, "compressed_log_retention_days", 30)

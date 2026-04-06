@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aether_data::repository::video_tasks::VideoTaskLookupKey;
-use aether_data::repository::video_tasks::VideoTaskStatus as StoredVideoTaskStatus;
+use aether_data_contracts::repository::video_tasks::VideoTaskLookupKey;
+use aether_data_contracts::repository::video_tasks::VideoTaskStatus as StoredVideoTaskStatus;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -248,7 +248,7 @@ mod tests {
         resolve_video_task_hydration_lookup_key, resolve_video_task_read_lookup_key,
         resolve_video_task_report_lookup, VideoTaskReportLookup,
     };
-    use aether_data::repository::video_tasks::VideoTaskLookupKey;
+    use aether_data_contracts::repository::video_tasks::VideoTaskLookupKey;
     use serde_json::json;
 
     #[test]

@@ -2,12 +2,15 @@ use std::time::Duration;
 
 use aether_billing::enrich_usage_event_with_billing;
 use aether_contracts::{ExecutionErrorKind, ExecutionResult};
-use aether_data::repository::video_tasks::{StoredVideoTask, UpsertVideoTask, VideoTaskStatus};
+use aether_data_contracts::repository::video_tasks::{
+    StoredVideoTask, UpsertVideoTask, VideoTaskStatus,
+};
 use aether_usage_runtime::{build_upsert_usage_record_from_event, settle_usage_if_needed};
 use serde_json::{Map, Value};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
+use crate::log_ids::short_request_id;
 use crate::usage::event::{UsageEvent, UsageEventData, UsageEventType};
 use crate::video_tasks::{LocalVideoTaskReadRefreshPlan, LocalVideoTaskSnapshot};
 use crate::{AppState, GatewayError};
@@ -98,7 +101,7 @@ async fn poll_video_tasks_once(state: &AppState, batch_size: usize) -> Result<us
                         info!(
                             event_name = "video_task_status_updated",
                             log_type = "event",
-                            request_id = %stored.request_id,
+                            request_id = %short_request_id(stored.request_id.as_str()),
                             task_id = %stored.id,
                             status = ?stored.status,
                             "gateway updated video task status from poll refresh"
@@ -119,7 +122,7 @@ async fn poll_video_tasks_once(state: &AppState, batch_size: usize) -> Result<us
                         info!(
                             event_name = "video_task_status_updated",
                             log_type = "event",
-                            request_id = %stored.request_id,
+                            request_id = %short_request_id(stored.request_id.as_str()),
                             task_id = %stored.id,
                             status = ?stored.status,
                             "gateway updated video task status from poll refresh"
@@ -442,7 +445,7 @@ pub(crate) async fn finalize_video_task_if_terminal(state: &AppState, task: &Sto
         warn!(
             event_name = "video_task_finalize_billing_enrichment_failed",
             log_type = "event",
-            request_id = %task.request_id,
+            request_id = %short_request_id(task.request_id.as_str()),
             error = %err,
             "gateway video task finalize failed to enrich billing"
         );
@@ -454,7 +457,7 @@ pub(crate) async fn finalize_video_task_if_terminal(state: &AppState, task: &Sto
                     warn!(
                         event_name = "video_task_finalize_settlement_failed",
                         log_type = "event",
-                        request_id = %task.request_id,
+                        request_id = %short_request_id(task.request_id.as_str()),
                         error = %err,
                         "gateway video task finalize failed to settle usage"
                     );
@@ -465,7 +468,7 @@ pub(crate) async fn finalize_video_task_if_terminal(state: &AppState, task: &Sto
                 warn!(
                     event_name = "video_task_finalize_usage_upsert_failed",
                     log_type = "event",
-                    request_id = %task.request_id,
+                    request_id = %short_request_id(task.request_id.as_str()),
                     error = %err,
                     "gateway video task finalize failed to upsert usage"
                 );
@@ -475,7 +478,7 @@ pub(crate) async fn finalize_video_task_if_terminal(state: &AppState, task: &Sto
             warn!(
                 event_name = "video_task_finalize_usage_build_failed",
                 log_type = "event",
-                request_id = %task.request_id,
+                request_id = %short_request_id(task.request_id.as_str()),
                 error = %err,
                 "gateway video task finalize failed to build usage record"
             );

@@ -5,9 +5,9 @@ use super::{
     unix_secs_to_rfc3339, validate_auth_register_password, AppState, AuthenticatedLocalUserContext,
     GatewayPublicRequestContext, PUBLIC_CAPABILITY_DEFINITIONS,
 };
-use crate::handlers::admin::endpoints_health_helpers::build_admin_endpoint_health_status_payload;
+use crate::handlers::admin::endpoint::build_admin_endpoint_health_status_payload;
 use crate::handlers::internal::build_management_token_payload;
-use crate::handlers::{
+use crate::handlers::shared::{
     admin_stats_bad_request_response, list_usage_for_optional_range, parse_bounded_u32, round_to,
     AdminStatsTimeRange, AdminStatsUsageFilter,
 };

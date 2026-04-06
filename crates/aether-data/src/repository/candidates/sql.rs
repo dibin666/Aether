@@ -3,13 +3,13 @@ use futures_util::future::BoxFuture;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use super::types::{
+use super::{
     PublicHealthStatusCount, PublicHealthTimelineBucket, RequestCandidateReadRepository,
     RequestCandidateStatus, RequestCandidateWriteRepository, StoredRequestCandidate,
     UpsertRequestCandidateRecord,
 };
 use crate::postgres::PostgresTransactionRunner;
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const LIST_BY_REQUEST_ID_SQL: &str = r#"
 SELECT
@@ -309,7 +309,8 @@ impl SqlxRequestCandidateReadRepository {
         let rows = sqlx::query(LIST_BY_REQUEST_ID_SQL)
             .bind(request_id)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_request_candidate_row).collect()
     }
 
@@ -328,7 +329,8 @@ impl SqlxRequestCandidateReadRepository {
                 ))
             })?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_request_candidate_row).collect()
     }
 
@@ -351,7 +353,8 @@ impl SqlxRequestCandidateReadRepository {
             .bind(provider_id)
             .bind(limit_value)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_request_candidate_row).collect()
     }
 
@@ -374,7 +377,8 @@ impl SqlxRequestCandidateReadRepository {
                 ))
             })?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_request_candidate_row).collect()
     }
 
@@ -391,17 +395,18 @@ impl SqlxRequestCandidateReadRepository {
             .bind(endpoint_ids)
             .bind(since_unix_secs as f64)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         rows.iter()
             .map(|row| {
                 let status = RequestCandidateStatus::from_database(
-                    row.try_get::<String, _>("status")?.as_str(),
+                    row_get::<String>(row, "status")?.as_str(),
                 )?;
                 Ok(PublicHealthStatusCount {
-                    endpoint_id: row.try_get("endpoint_id")?,
+                    endpoint_id: row_get(row, "endpoint_id")?,
                     status,
-                    count: u64::try_from(row.try_get::<i64, _>("count")?).map_err(|_| {
+                    count: u64::try_from(row_get::<i64>(row, "count")?).map_err(|_| {
                         DataLayerError::UnexpectedValue(
                             "public health status count out of range".to_string(),
                         )
@@ -435,11 +440,12 @@ impl SqlxRequestCandidateReadRepository {
             .bind(until_unix_secs as f64)
             .bind(segment_seconds)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         rows.iter()
             .map(|row| {
-                let raw_segment_idx = row.try_get::<i64, _>("segment_idx")?;
+                let raw_segment_idx = row_get::<i64>(row, "segment_idx")?;
                 let segment_idx = if raw_segment_idx < 0 {
                     0
                 } else {
@@ -452,49 +458,53 @@ impl SqlxRequestCandidateReadRepository {
                 .min(segments.saturating_sub(1));
 
                 Ok(PublicHealthTimelineBucket {
-                    endpoint_id: row.try_get("endpoint_id")?,
+                    endpoint_id: row_get(row, "endpoint_id")?,
                     segment_idx,
-                    total_count: u64::try_from(row.try_get::<i64, _>("total_count")?).map_err(
+                    total_count: u64::try_from(row_get::<i64>(row, "total_count")?).map_err(
                         |_| {
                             DataLayerError::UnexpectedValue(
                                 "public health total_count out of range".to_string(),
                             )
                         },
                     )?,
-                    success_count: u64::try_from(row.try_get::<i64, _>("success_count")?).map_err(
+                    success_count: u64::try_from(row_get::<i64>(row, "success_count")?).map_err(
                         |_| {
                             DataLayerError::UnexpectedValue(
                                 "public health success_count out of range".to_string(),
                             )
                         },
                     )?,
-                    failed_count: u64::try_from(row.try_get::<i64, _>("failed_count")?).map_err(
+                    failed_count: u64::try_from(row_get::<i64>(row, "failed_count")?).map_err(
                         |_| {
                             DataLayerError::UnexpectedValue(
                                 "public health failed_count out of range".to_string(),
                             )
                         },
                     )?,
-                    min_created_at_unix_secs: row
-                        .try_get::<Option<i64>, _>("min_created_at_unix_secs")?
-                        .map(|value| {
-                            u64::try_from(value).map_err(|_| {
-                                DataLayerError::UnexpectedValue(format!(
-                                    "public health min_created_at_unix_secs out of range: {value}"
-                                ))
-                            })
+                    min_created_at_unix_secs: row_get::<Option<i64>>(
+                        row,
+                        "min_created_at_unix_secs",
+                    )?
+                    .map(|value| {
+                        u64::try_from(value).map_err(|_| {
+                            DataLayerError::UnexpectedValue(format!(
+                                "public health min_created_at_unix_secs out of range: {value}"
+                            ))
                         })
-                        .transpose()?,
-                    max_created_at_unix_secs: row
-                        .try_get::<Option<i64>, _>("max_created_at_unix_secs")?
-                        .map(|value| {
-                            u64::try_from(value).map_err(|_| {
-                                DataLayerError::UnexpectedValue(format!(
-                                    "public health max_created_at_unix_secs out of range: {value}"
-                                ))
-                            })
+                    })
+                    .transpose()?,
+                    max_created_at_unix_secs: row_get::<Option<i64>>(
+                        row,
+                        "max_created_at_unix_secs",
+                    )?
+                    .map(|value| {
+                        u64::try_from(value).map_err(|_| {
+                            DataLayerError::UnexpectedValue(format!(
+                                "public health max_created_at_unix_secs out of range: {value}"
+                            ))
                         })
-                        .transpose()?,
+                    })
+                    .transpose()?,
                 })
             })
             .collect()
@@ -538,7 +548,8 @@ impl SqlxRequestCandidateReadRepository {
                         .bind(candidate.started_at_unix_secs.map(|value| value as f64))
                         .bind(candidate.finished_at_unix_secs.map(|value| value as f64))
                         .fetch_one(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
                     map_request_candidate_row(&row)
                 }) as BoxFuture<'_, Result<StoredRequestCandidate, DataLayerError>>
             })
@@ -562,7 +573,8 @@ impl SqlxRequestCandidateReadRepository {
                 ))
             })?)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() as usize)
     }
 }
@@ -648,34 +660,40 @@ impl RequestCandidateWriteRepository for SqlxRequestCandidateReadRepository {
 fn map_request_candidate_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<StoredRequestCandidate, DataLayerError> {
-    let status =
-        RequestCandidateStatus::from_database(row.try_get::<String, _>("status")?.as_str())?;
+    let status = RequestCandidateStatus::from_database(row_get::<String>(row, "status")?.as_str())?;
     StoredRequestCandidate::new(
-        row.try_get("id")?,
-        row.try_get("request_id")?,
-        row.try_get("user_id")?,
-        row.try_get("api_key_id")?,
-        row.try_get("username")?,
-        row.try_get("api_key_name")?,
-        row.try_get("candidate_index")?,
-        row.try_get("retry_index")?,
-        row.try_get("provider_id")?,
-        row.try_get("endpoint_id")?,
-        row.try_get("key_id")?,
+        row_get(row, "id")?,
+        row_get(row, "request_id")?,
+        row_get(row, "user_id")?,
+        row_get(row, "api_key_id")?,
+        row_get(row, "username")?,
+        row_get(row, "api_key_name")?,
+        row_get(row, "candidate_index")?,
+        row_get(row, "retry_index")?,
+        row_get(row, "provider_id")?,
+        row_get(row, "endpoint_id")?,
+        row_get(row, "key_id")?,
         status,
-        row.try_get("skip_reason")?,
-        row.try_get("is_cached")?,
-        row.try_get("status_code")?,
-        row.try_get("error_type")?,
-        row.try_get("error_message")?,
-        row.try_get("latency_ms")?,
-        row.try_get("concurrent_requests")?,
-        row.try_get("extra_data")?,
-        row.try_get("required_capabilities")?,
-        row.try_get("created_at_unix_secs")?,
-        row.try_get("started_at_unix_secs")?,
-        row.try_get("finished_at_unix_secs")?,
+        row_get(row, "skip_reason")?,
+        row_get(row, "is_cached")?,
+        row_get(row, "status_code")?,
+        row_get(row, "error_type")?,
+        row_get(row, "error_message")?,
+        row_get(row, "latency_ms")?,
+        row_get(row, "concurrent_requests")?,
+        row_get(row, "extra_data")?,
+        row_get(row, "required_capabilities")?,
+        row_get(row, "created_at_unix_secs")?,
+        row_get(row, "started_at_unix_secs")?,
+        row_get(row, "finished_at_unix_secs")?,
     )
+}
+
+fn row_get<T>(row: &sqlx::postgres::PgRow, column: &str) -> Result<T, DataLayerError>
+where
+    for<'r> T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+{
+    row.try_get(column).map_postgres_err()
 }
 
 fn status_to_database(status: RequestCandidateStatus) -> &'static str {

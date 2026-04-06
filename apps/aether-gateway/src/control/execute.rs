@@ -3,6 +3,7 @@ use axum::http::{HeaderName, HeaderValue, Response};
 
 use crate::constants::CONTROL_EXECUTED_HEADER;
 use crate::control::GatewayControlDecision;
+use crate::executor::{maybe_execute_stream_request, maybe_execute_sync_request};
 use crate::{AppState, GatewayError};
 
 use super::resolve_execution_runtime_auth_context;
@@ -38,23 +39,11 @@ pub(crate) async fn maybe_execute_via_control(
     }
 
     let response = if require_stream {
-        crate::execution_runtime::maybe_execute_via_execution_runtime_stream(
-            state,
-            parts,
-            &body_bytes,
-            trace_id,
-            Some(&local_decision),
-        )
-        .await?
+        maybe_execute_stream_request(state, parts, &body_bytes, trace_id, Some(&local_decision))
+            .await?
     } else {
-        crate::execution_runtime::maybe_execute_via_execution_runtime_sync(
-            state,
-            parts,
-            &body_bytes,
-            trace_id,
-            Some(&local_decision),
-        )
-        .await?
+        maybe_execute_sync_request(state, parts, &body_bytes, trace_id, Some(&local_decision))
+            .await?
     };
 
     Ok(response.map(mark_control_executed))

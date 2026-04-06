@@ -103,7 +103,10 @@
             >
               <span class="flex items-center gap-1">
                 <span class="font-medium text-foreground">ID:</span>
-                <span class="font-mono">{{ detail.request_id || detail.id }}</span>
+                <span
+                  class="font-mono"
+                  :title="fullRequestId"
+                >{{ displayRequestId }}</span>
               </span>
               <span class="opacity-40">|</span>
               <span>{{ formatDateTime(detail.created_at) }}</span>
@@ -698,6 +701,7 @@ import TabsContent from '@/components/ui/tabs-content.vue'
 import { Copy, Check, Maximize2, Minimize2, Columns2, RefreshCw, X, Monitor, Server, MessageSquareText, Code2, Terminal, Play } from 'lucide-vue-next'
 import { dashboardApi, type RequestDetail } from '@/api/dashboard'
 import { formatApiFormat } from '@/api/endpoints/types/api-format'
+import { formatShortRequestId } from '@/utils/format'
 import { log } from '@/utils/logger'
 
 // 子组件
@@ -769,6 +773,9 @@ let loadDetailRequestId = 0
 let bodyLoadRequestId = 0
 let loadDetailInFlight = false
 let timelineMountTimer: ReturnType<typeof setTimeout> | null = null
+
+const fullRequestId = computed(() => detail.value?.request_id || detail.value?.id || '-')
+const displayRequestId = computed(() => formatShortRequestId(fullRequestId.value))
 
 // 监听标签页切换
 watch(activeTab, (newTab) => {

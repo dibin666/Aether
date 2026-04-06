@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
@@ -16,10 +18,14 @@ const SIGNING_KEY_SIZE: usize = 16;
 const ENCRYPTION_KEY_SIZE: usize = 16;
 const MIN_TOKEN_SIZE: usize = 1 + 8 + IV_SIZE + HMAC_SIZE;
 const PBKDF2_ITERATIONS: u32 = 100_000;
+const MAX_CACHED_DERIVED_KEYS: usize = 16;
 
 pub const APP_SALT_SEED: &[u8] = b"aether-v1";
 pub const APP_SALT_HEX: &str = "8797080a7a4b45b4810e934d1af36261";
 pub const DEVELOPMENT_ENCRYPTION_KEY: &str = "dev-encryption-key-do-not-use-in-production";
+
+static RAW_FERNET_KEY_CACHE: LazyLock<Mutex<HashMap<Box<str>, [u8; 32]>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 type Aes128CbcDec = Decryptor<aes::Aes128>;
 type Aes128CbcEnc = Encryptor<aes::Aes128>;
@@ -179,8 +185,21 @@ pub fn encrypt_python_fernet_plaintext(
     PythonFernetCompat::from_secret(secret).encrypt_plaintext(plaintext)
 }
 
+pub fn warm_python_fernet_secret(secret: &str) {
+    let _ = raw_fernet_key(secret);
+}
+
 fn raw_fernet_key(secret: &str) -> [u8; 32] {
     if let Ok(raw_key) = decode_direct_fernet_key(secret) {
+        return raw_key;
+    }
+
+    if let Some(raw_key) = RAW_FERNET_KEY_CACHE
+        .lock()
+        .expect("raw fernet key cache should lock")
+        .get(secret)
+        .copied()
+    {
         return raw_key;
     }
 
@@ -189,6 +208,14 @@ fn raw_fernet_key(secret: &str) -> [u8; 32] {
 
     let mut raw_key = [0u8; 32];
     pbkdf2_hmac::<Sha256>(secret.as_bytes(), &salt, PBKDF2_ITERATIONS, &mut raw_key);
+
+    let mut cache = RAW_FERNET_KEY_CACHE
+        .lock()
+        .expect("raw fernet key cache should lock");
+    if cache.len() >= MAX_CACHED_DERIVED_KEYS && !cache.contains_key(secret) {
+        cache.clear();
+    }
+    cache.insert(secret.into(), raw_key);
     raw_key
 }
 

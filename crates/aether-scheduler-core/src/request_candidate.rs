@@ -1,5 +1,5 @@
 use aether_contracts::{ExecutionError, ExecutionPlan};
-use aether_data::repository::candidates::{
+use aether_data_contracts::repository::candidates::{
     RequestCandidateStatus, StoredRequestCandidate, UpsertRequestCandidateRecord,
 };
 use serde_json::Value;
@@ -444,7 +444,9 @@ mod tests {
     use aether_contracts::{
         ExecutionError, ExecutionErrorKind, ExecutionPhase, ExecutionPlan, RequestBody,
     };
-    use aether_data::repository::candidates::{RequestCandidateStatus, StoredRequestCandidate};
+    use aether_data_contracts::repository::candidates::{
+        RequestCandidateStatus, StoredRequestCandidate,
+    };
     use serde_json::{json, Value};
 
     use super::{

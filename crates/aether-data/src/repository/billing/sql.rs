@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
-use super::types::{BillingReadRepository, StoredBillingModelContext};
-use crate::DataLayerError;
+use super::{BillingReadRepository, StoredBillingModelContext};
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const FIND_MODEL_CONTEXT_SQL: &str = r#"
 SELECT
@@ -58,7 +58,8 @@ impl SqlxBillingReadRepository {
             .bind(global_model_name)
             .bind(provider_api_key_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_row).transpose()
     }
 }
@@ -77,22 +78,26 @@ impl BillingReadRepository for SqlxBillingReadRepository {
 
 fn map_row(row: &sqlx::postgres::PgRow) -> Result<StoredBillingModelContext, DataLayerError> {
     StoredBillingModelContext::new(
-        row.try_get("provider_id")?,
-        row.try_get("provider_billing_type")?,
-        row.try_get("provider_api_key_id")?,
-        row.try_get("provider_api_key_rate_multipliers")?,
-        row.try_get::<Option<i32>, _>("provider_api_key_cache_ttl_minutes")?
+        row.try_get("provider_id").map_postgres_err()?,
+        row.try_get("provider_billing_type").map_postgres_err()?,
+        row.try_get("provider_api_key_id").map_postgres_err()?,
+        row.try_get("provider_api_key_rate_multipliers")
+            .map_postgres_err()?,
+        row.try_get::<Option<i32>, _>("provider_api_key_cache_ttl_minutes")
+            .map_postgres_err()?
             .map(i64::from),
-        row.try_get("global_model_id")?,
-        row.try_get("global_model_name")?,
-        row.try_get("global_model_config")?,
-        row.try_get("default_price_per_request")?,
-        row.try_get("default_tiered_pricing")?,
-        row.try_get("model_id")?,
-        row.try_get("model_provider_model_name")?,
-        row.try_get("model_config")?,
-        row.try_get("model_price_per_request")?,
-        row.try_get("model_tiered_pricing")?,
+        row.try_get("global_model_id").map_postgres_err()?,
+        row.try_get("global_model_name").map_postgres_err()?,
+        row.try_get("global_model_config").map_postgres_err()?,
+        row.try_get("default_price_per_request")
+            .map_postgres_err()?,
+        row.try_get("default_tiered_pricing").map_postgres_err()?,
+        row.try_get("model_id").map_postgres_err()?,
+        row.try_get("model_provider_model_name")
+            .map_postgres_err()?,
+        row.try_get("model_config").map_postgres_err()?,
+        row.try_get("model_price_per_request").map_postgres_err()?,
+        row.try_get("model_tiered_pricing").map_postgres_err()?,
     )
 }
 

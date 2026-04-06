@@ -1,6 +1,6 @@
 #![allow(dead_code, unused_imports)]
 
-pub(crate) use crate::provider_transport::vertex::{
+pub(crate) use crate::ai_pipeline::provider_transport_facade::vertex::{
     build_vertex_api_key_gemini_content_url, build_vertex_api_key_imagen_content_url,
     resolve_local_vertex_api_key_query_auth, supports_local_vertex_api_key_gemini_transport,
     supports_local_vertex_api_key_gemini_transport_with_network,

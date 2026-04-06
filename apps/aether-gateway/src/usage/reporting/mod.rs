@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 
 use aether_contracts::ExecutionError;
+use aether_data_contracts::repository::candidates::RequestCandidateStatus;
+use aether_scheduler_core::execution_error_details;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use crate::scheduler::{
-    current_unix_secs, execution_error_details, record_report_request_candidate_status,
-};
+use crate::clock::current_unix_secs;
+use crate::log_ids::short_request_id;
+use crate::request_candidate_runtime::record_report_request_candidate_status;
 use crate::{AppState, GatewayError};
 
 mod context;
@@ -33,7 +35,7 @@ fn log_local_report_handled(
         trace_id = %trace_id,
         report_scope,
         report_kind = %report_kind,
-        report_request_id = report_request_id(report_context),
+        report_request_id = %short_request_id(report_request_id(report_context)),
         has_report_context = report_context.is_some(),
         "gateway handled execution report locally"
     );
@@ -52,7 +54,7 @@ fn log_dropped_report(
         trace_id = %trace_id,
         report_scope,
         report_kind = %report_kind,
-        report_request_id = report_request_id(report_context),
+        report_request_id = %short_request_id(report_request_id(report_context)),
         has_report_context = report_context.is_some(),
         "gateway dropped execution report because local handling context was not actionable"
     );
@@ -111,6 +113,8 @@ pub(crate) fn spawn_sync_report(
     trace_id: String,
     payload: GatewaySyncReportRequest,
 ) {
+    let report_request_id_for_log =
+        short_request_id(report_request_id(payload.report_context.as_ref()));
     tokio::spawn(async move {
         if let Err(err) = submit_sync_report(&state, &trace_id, payload).await {
             warn!(
@@ -118,6 +122,7 @@ pub(crate) fn spawn_sync_report(
                 log_type = "ops",
                 trace_id = %trace_id,
                 report_scope = "sync",
+                report_request_id = %report_request_id_for_log,
                 error = ?err,
                 "gateway failed to submit sync execution report"
             );
@@ -187,9 +192,9 @@ async fn handle_local_sync_report(state: &AppState, payload: &GatewaySyncReportR
     let (error_type, error_message) =
         execution_error_details(None::<&ExecutionError>, payload.body_json.as_ref());
     let status = if sync_report_represents_failure(payload, error_type.as_deref()) {
-        aether_data::repository::candidates::RequestCandidateStatus::Failed
+        RequestCandidateStatus::Failed
     } else {
-        aether_data::repository::candidates::RequestCandidateStatus::Success
+        RequestCandidateStatus::Success
     };
     let latency_ms = payload
         .telemetry
@@ -218,7 +223,7 @@ async fn handle_local_stream_report(state: &AppState, payload: &GatewayStreamRep
     record_report_request_candidate_status(
         state,
         payload.report_context.as_ref(),
-        aether_data::repository::candidates::RequestCandidateStatus::Success,
+        RequestCandidateStatus::Success,
         Some(payload.status_code),
         None,
         None,
@@ -272,7 +277,7 @@ async fn apply_local_gemini_file_mapping_side_effect(
                         event_name = "gemini_file_mapping_store_failed",
                         log_type = "ops",
                         report_kind = %payload.report_kind,
-                        report_request_id = report_request_id(payload.report_context.as_ref()),
+                        report_request_id = %short_request_id(report_request_id(payload.report_context.as_ref())),
                         file_name = %entry.file_name,
                         error = ?err,
                         "gateway failed to persist gemini file mapping locally"
@@ -296,7 +301,7 @@ async fn apply_local_gemini_file_mapping_side_effect(
                     event_name = "gemini_file_mapping_delete_failed",
                     log_type = "ops",
                     report_kind = %payload.report_kind,
-                    report_request_id = report_request_id(payload.report_context.as_ref()),
+                    report_request_id = %short_request_id(report_request_id(payload.report_context.as_ref())),
                     file_name = %file_name,
                     error = ?err,
                     "gateway failed to delete gemini file mapping locally"
@@ -366,16 +371,17 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use aether_data::repository::candidates::{
-        InMemoryRequestCandidateRepository, RequestCandidateReadRepository, RequestCandidateStatus,
-        StoredRequestCandidate,
-    };
+    use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
     use aether_data::repository::gemini_file_mappings::{
         GeminiFileMappingReadRepository, InMemoryGeminiFileMappingRepository,
     };
     use aether_data::repository::usage::InMemoryUsageReadRepository;
-    use aether_data::repository::video_tasks::{
-        InMemoryVideoTaskRepository, UpsertVideoTask, VideoTaskStatus, VideoTaskWriteRepository,
+    use aether_data::repository::video_tasks::InMemoryVideoTaskRepository;
+    use aether_data_contracts::repository::candidates::{
+        RequestCandidateReadRepository, RequestCandidateStatus, StoredRequestCandidate,
+    };
+    use aether_data_contracts::repository::video_tasks::{
+        UpsertVideoTask, VideoTaskStatus, VideoTaskWriteRepository,
     };
     use serde_json::json;
 

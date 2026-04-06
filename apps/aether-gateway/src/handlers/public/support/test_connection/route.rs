@@ -190,12 +190,10 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
     let oauth_auth = match format_value.as_str() {
         "openai:chat" | "claude:chat" => {
             match state.resolve_local_oauth_request_auth(&transport).await {
-                Ok(Some(
-                    crate::provider_transport::LocalResolvedOAuthRequestAuth::Header {
-                        name,
-                        value,
-                    },
-                )) => Some((name, value)),
+                Ok(Some(crate::provider_transport::LocalResolvedOAuthRequestAuth::Header {
+                    name,
+                    value,
+                })) => Some((name, value)),
                 _ => None,
             }
         }
@@ -207,13 +205,9 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
             crate::provider_transport::auth::resolve_local_openai_chat_auth(&transport)
                 .or(oauth_auth.clone())
         }
-        "claude:chat" => {
-            crate::provider_transport::auth::resolve_local_standard_auth(&transport)
-                .or(oauth_auth.clone())
-        }
-        "gemini:chat" => {
-            crate::provider_transport::auth::resolve_local_gemini_auth(&transport)
-        }
+        "claude:chat" => crate::provider_transport::auth::resolve_local_standard_auth(&transport)
+            .or(oauth_auth.clone()),
+        "gemini:chat" => crate::provider_transport::auth::resolve_local_gemini_auth(&transport),
         _ => None,
     };
     let Some((auth_header, auth_value)) = auth else {
@@ -244,26 +238,22 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
                     &["key"],
                 )
             }
-            ("openai:chat", None) => Some(
-                crate::provider_transport::url::build_openai_chat_url(
+            ("openai:chat", None) => Some(crate::provider_transport::url::build_openai_chat_url(
+                &transport.endpoint.base_url,
+                None,
+            )),
+            ("claude:chat", None) => {
+                Some(crate::provider_transport::url::build_claude_messages_url(
                     &transport.endpoint.base_url,
                     None,
-                ),
-            ),
-            ("claude:chat", None) => Some(
-                crate::provider_transport::url::build_claude_messages_url(
-                    &transport.endpoint.base_url,
-                    None,
-                ),
-            ),
-            ("gemini:chat", None) => {
-                crate::provider_transport::url::build_gemini_content_url(
-                    &transport.endpoint.base_url,
-                    &model,
-                    false,
-                    None,
-                )
+                ))
             }
+            ("gemini:chat", None) => crate::provider_transport::url::build_gemini_content_url(
+                &transport.endpoint.base_url,
+                &model,
+                false,
+                None,
+            ),
             _ => None,
         }
     };

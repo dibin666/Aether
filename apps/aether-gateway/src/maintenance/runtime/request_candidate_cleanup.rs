@@ -1,3 +1,4 @@
+use aether_data_contracts::DataLayerError;
 use tracing::info;
 
 use crate::data::GatewayDataState;
@@ -6,7 +7,7 @@ use super::{now_unix_secs, system_config_bool, system_config_u64, system_config_
 
 pub(crate) async fn cleanup_request_candidates_once(
     data: &GatewayDataState,
-) -> Result<usize, aether_data::DataLayerError> {
+) -> Result<usize, DataLayerError> {
     if !system_config_bool(data, "enable_auto_cleanup", true).await? {
         return Ok(0);
     }
@@ -45,7 +46,7 @@ pub(crate) async fn cleanup_request_candidates_once(
 
 pub(super) async fn run_request_candidate_cleanup_once(
     data: &GatewayDataState,
-) -> Result<(), aether_data::DataLayerError> {
+) -> Result<(), DataLayerError> {
     let deleted = cleanup_request_candidates_once(data).await?;
     if deleted > 0 {
         info!(deleted, "gateway deleted expired request candidates");

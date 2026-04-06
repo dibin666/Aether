@@ -2,16 +2,19 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateStatus,
-};
-use aether_data::repository::global_models::{
-    GlobalModelReadRepository, InMemoryGlobalModelReadRepository,
-};
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository,
-};
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+use aether_data::repository::global_models::InMemoryGlobalModelReadRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
 use aether_data::repository::quota::InMemoryProviderQuotaRepository;
+use aether_data_contracts::repository::candidates::RequestCandidateStatus;
+use aether_data_contracts::repository::global_models::{
+    GlobalModelReadRepository, StoredAdminGlobalModel, StoredAdminProviderModel,
+    StoredProviderActiveGlobalModel, StoredProviderModelStats, StoredPublicGlobalModel,
+};
+use aether_data_contracts::repository::provider_catalog::{
+    ProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
+    StoredProviderCatalogProvider,
+};
 use axum::body::{Body, Bytes};
 use axum::routing::any;
 use axum::{extract::Request, Router};
@@ -31,7 +34,7 @@ use crate::constants::{
 };
 use crate::control::resolve_public_request_context;
 use crate::data::GatewayDataState;
-use crate::handlers::admin::maybe_build_local_admin_providers_response;
+use crate::handlers::admin::provider::maybe_build_local_admin_providers_response;
 
 const ADMIN_PROVIDERS_DATA_UNAVAILABLE_DETAIL: &str = "Admin provider catalog data unavailable";
 
@@ -952,16 +955,8 @@ async fn gateway_creates_admin_provider_locally_with_trusted_admin_principal() {
             .and_then(serde_json::Value::as_str),
         Some("force_stream")
     );
-    assert!(cli_endpoint
-        .body_rules
-        .as_ref()
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|rules| !rules.is_empty()));
-    assert!(compact_endpoint
-        .body_rules
-        .as_ref()
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|rules| !rules.is_empty()));
+    assert!(cli_endpoint.body_rules.is_none());
+    assert!(compact_endpoint.body_rules.is_none());
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();
@@ -1319,7 +1314,7 @@ async fn gateway_submits_admin_provider_delete_task_locally_with_trusted_admin_p
     assert!(remaining_keys.is_empty());
     let remaining_models = global_model_repository
         .list_admin_provider_models(
-            &aether_data::repository::global_models::AdminProviderModelListQuery {
+            &aether_data_contracts::repository::global_models::AdminProviderModelListQuery {
                 provider_id: "provider-openai".to_string(),
                 offset: 0,
                 limit: 100,

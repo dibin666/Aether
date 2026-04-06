@@ -1,11 +1,11 @@
 mod memory;
 mod sql;
-mod types;
 
-pub use memory::InMemoryProviderCatalogReadRepository;
-pub use sql::SqlxProviderCatalogReadRepository;
-pub use types::{
+#[allow(unused_imports)]
+pub(crate) use aether_data_contracts::repository::provider_catalog::{
     ProviderCatalogKeyListQuery, ProviderCatalogReadRepository, ProviderCatalogWriteRepository,
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogKeyPage,
     StoredProviderCatalogKeyStats, StoredProviderCatalogProvider,
 };
+pub use memory::InMemoryProviderCatalogReadRepository;
+pub use sql::SqlxProviderCatalogReadRepository;

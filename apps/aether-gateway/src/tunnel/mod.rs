@@ -23,8 +23,8 @@ use tracing::warn;
 use self::embedded::{AppState as TunnelAppState, ConnConfig, ControlPlaneClient};
 use super::api::response::{build_client_response, build_local_http_error_response};
 use super::constants::TRACE_ID_HEADER;
-use super::error::GatewayError;
 use super::data::GatewayDataState;
+use super::error::GatewayError;
 use super::headers::{extract_or_generate_trace_id, should_skip_request_header};
 use super::AppState;
 

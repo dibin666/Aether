@@ -2,7 +2,7 @@
 
 #[path = "../../../adaptation/kiro/mod.rs"]
 mod stream;
-pub(crate) use crate::provider_transport::kiro::{
+pub(crate) use crate::ai_pipeline::provider_transport_facade::kiro::{
     apply_local_body_rules, apply_local_header_rules, body_rules_are_locally_supported,
     build_generate_assistant_headers, build_kiro_generate_assistant_response_url,
     build_kiro_provider_headers, build_kiro_provider_request_body,

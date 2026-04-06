@@ -20,10 +20,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "aether-ai-pipeline"
+version = "0.1.0"
+dependencies = [
+ "aether-provider-transport",
+ "base64",
+ "http",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "aether-billing"
 version = "0.1.0"
 dependencies = [
- "aether-data",
+ "aether-data-contracts",
  "aether-usage-runtime",
  "async-trait",
  "serde",
@@ -66,6 +77,7 @@ name = "aether-data"
 version = "0.1.0"
 dependencies = [
  "aether-cache",
+ "aether-data-contracts",
  "aether-wallet",
  "async-trait",
  "chrono",
@@ -82,14 +94,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "aether-data-contracts"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "aether-gateway"
 version = "0.1.0"
 dependencies = [
+ "aether-ai-pipeline",
  "aether-billing",
  "aether-cache",
  "aether-contracts",
  "aether-crypto",
  "aether-data",
+ "aether-data-contracts",
  "aether-http",
  "aether-model-fetch",
  "aether-provider-transport",
@@ -120,6 +144,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sha1",
  "sha2",
  "sqlx",
  "thiserror 2.0.18",
@@ -147,7 +172,7 @@ name = "aether-model-fetch"
 version = "0.1.0"
 dependencies = [
  "aether-contracts",
- "aether-data",
+ "aether-data-contracts",
  "aether-provider-transport",
  "aether-scheduler-core",
  "async-trait",
@@ -164,6 +189,7 @@ dependencies = [
  "aether-contracts",
  "aether-crypto",
  "aether-data",
+ "aether-data-contracts",
  "aether-video-tasks-core",
  "async-trait",
  "axum",
@@ -246,7 +272,7 @@ name = "aether-scheduler-core"
 version = "0.1.0"
 dependencies = [
  "aether-contracts",
- "aether-data",
+ "aether-data-contracts",
  "aether-wallet",
  "regex",
  "serde",
@@ -282,6 +308,7 @@ version = "0.1.0"
 dependencies = [
  "aether-contracts",
  "aether-data",
+ "aether-data-contracts",
  "async-trait",
  "base64",
  "serde",
@@ -295,7 +322,7 @@ name = "aether-video-tasks-core"
 version = "0.1.0"
 dependencies = [
  "aether-contracts",
- "aether-data",
+ "aether-data-contracts",
  "async-trait",
  "serde",
  "serde_json",

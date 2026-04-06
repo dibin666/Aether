@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::converter::convert_claude_messages_to_conversation_state;
 use super::credentials::KiroAuthConfig;
 use super::headers::build_generate_assistant_headers;
-use crate::provider_transport::should_skip_upstream_passthrough_header;
+use crate::ai_pipeline::provider_transport_facade::should_skip_upstream_passthrough_header;
 
-pub(crate) use crate::provider_transport::rules::{
+pub(crate) use crate::ai_pipeline::provider_transport_facade::rules::{
     apply_local_body_rules, apply_local_header_rules, body_rules_are_locally_supported,
     header_rules_are_locally_supported,
 };

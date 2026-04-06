@@ -28,11 +28,14 @@ use aether_data::repository::management_tokens::{
     InMemoryManagementTokenRepository, StoredManagementToken, StoredManagementTokenUserSummary,
     StoredManagementTokenWithUser,
 };
-use aether_data::repository::usage::{InMemoryUsageReadRepository, StoredRequestUsageAudit};
+use aether_data::repository::usage::InMemoryUsageReadRepository;
 use aether_data::repository::users::{
     InMemoryUserReadRepository, StoredUserAuthRecord, StoredUserExportRow,
 };
 use aether_data::repository::wallet::{InMemoryWalletRepository, StoredWalletSnapshot};
+use aether_data_contracts::repository::global_models::StoredProviderActiveGlobalModel;
+use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
+use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UsageRepository};
 use axum::response::IntoResponse;
 use chrono::Utc;
 
@@ -309,10 +312,10 @@ async fn gateway_creates_announcement_locally_with_trusted_admin_principal() {
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_announcement_repository_for_tests(
-                Arc::clone(&announcement_repository),
+                crate::data::GatewayDataState::with_announcement_repository_for_tests(Arc::clone(
+                    &announcement_repository,
+                )),
             ),
-        ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
@@ -399,10 +402,10 @@ async fn gateway_updates_announcement_locally_with_trusted_admin_principal() {
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_announcement_repository_for_tests(
-                Arc::clone(&announcement_repository),
+                crate::data::GatewayDataState::with_announcement_repository_for_tests(Arc::clone(
+                    &announcement_repository,
+                )),
             ),
-        ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
@@ -488,10 +491,10 @@ async fn gateway_deletes_announcement_locally_with_trusted_admin_principal() {
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_announcement_repository_for_tests(
-                Arc::clone(&announcement_repository),
+                crate::data::GatewayDataState::with_announcement_repository_for_tests(Arc::clone(
+                    &announcement_repository,
+                )),
             ),
-        ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
@@ -659,11 +662,12 @@ async fn gateway_handles_public_catalog_site_info_without_proxying_upstream() {
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-                crate::data::GatewayDataState::disabled()
-                    .with_system_config_values_for_tests(vec![
+                crate::data::GatewayDataState::disabled().with_system_config_values_for_tests(
+                    vec![
                         ("site_name".to_string(), json!("Aether Local")),
                         ("site_subtitle".to_string(), json!("Rust Only")),
-                    ]),
+                    ],
+                ),
             ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
@@ -732,10 +736,10 @@ async fn gateway_handles_public_catalog_providers_without_proxying_upstream() {
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
-                provider_catalog_repository,
+                crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
+                    provider_catalog_repository,
+                ),
             ),
-        ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
@@ -1305,17 +1309,16 @@ async fn gateway_handles_auth_registration_settings_without_proxying_upstream() 
         }),
     );
 
-    let data_state =
-        crate::data::GatewayDataState::with_auth_module_reader_for_tests(
-            Arc::new(InMemoryAuthModuleReadRepository::seed(Vec::new(), None)),
-        )
-        .with_system_config_values_for_tests(vec![
-            ("enable_registration".to_string(), json!(true)),
-            ("require_email_verification".to_string(), json!(true)),
-            ("smtp_host".to_string(), json!("smtp.example.com")),
-            ("smtp_from_email".to_string(), json!("noreply@example.com")),
-            ("password_policy_level".to_string(), json!("strong")),
-        ]);
+    let data_state = crate::data::GatewayDataState::with_auth_module_reader_for_tests(Arc::new(
+        InMemoryAuthModuleReadRepository::seed(Vec::new(), None),
+    ))
+    .with_system_config_values_for_tests(vec![
+        ("enable_registration".to_string(), json!(true)),
+        ("require_email_verification".to_string(), json!(true)),
+        ("smtp_host".to_string(), json!("smtp.example.com")),
+        ("smtp_from_email".to_string(), json!("noreply@example.com")),
+        ("password_policy_level".to_string(), json!("strong")),
+    ]);
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
     let gateway = build_router_with_state(
@@ -1381,13 +1384,11 @@ async fn gateway_handles_auth_settings_without_proxying_upstream() {
         }),
     ));
     let data_state =
-        crate::data::GatewayDataState::with_auth_module_reader_for_tests(
-            auth_module_repository,
-        )
-        .with_system_config_values_for_tests(vec![(
-            "module.ldap.enabled".to_string(),
-            json!(true),
-        )]);
+        crate::data::GatewayDataState::with_auth_module_reader_for_tests(auth_module_repository)
+            .with_system_config_values_for_tests(vec![(
+                "module.ldap.enabled".to_string(),
+                json!(true),
+            )]);
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
     let gateway = build_router_with_state(
@@ -1582,10 +1583,10 @@ async fn gateway_handles_public_providers_without_proxying_upstream() {
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
-                provider_catalog_repository,
+                crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
+                    provider_catalog_repository,
+                ),
             ),
-        ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
@@ -1631,10 +1632,10 @@ async fn gateway_handles_public_provider_detail_without_proxying_upstream() {
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
-                provider_catalog_repository,
+                crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
+                    provider_catalog_repository,
+                ),
             ),
-        ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
@@ -1697,10 +1698,10 @@ async fn gateway_handles_public_providers_with_endpoints_without_proxying_upstre
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
-                provider_catalog_repository,
+                crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
+                    provider_catalog_repository,
+                ),
             ),
-        ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
@@ -2140,9 +2141,7 @@ fn sample_auth_session(
         user_id.to_string(),
         client_device_id.to_string(),
         None,
-        crate::data::state::StoredUserSessionRecord::hash_refresh_token(
-            refresh_token,
-        ),
+        crate::data::state::StoredUserSessionRecord::hash_refresh_token(refresh_token),
         None,
         None,
         Some(now),
@@ -2209,7 +2208,7 @@ async fn start_auth_gateway_with_usage_state<T>(
     tokio::task::JoinHandle<()>,
 )
 where
-    T: aether_data::repository::usage::UsageRepository + 'static,
+    T: UsageRepository + 'static,
 {
     let upstream_hits = Arc::new(Mutex::new(0usize));
     let upstream_hits_clone = Arc::clone(&upstream_hits);
@@ -2255,8 +2254,8 @@ async fn start_auth_dashboard_gateway_with_state<TUsage, TCatalog>(
     tokio::task::JoinHandle<()>,
 )
 where
-    TUsage: aether_data::repository::usage::UsageRepository + 'static,
-    TCatalog: aether_data::repository::provider_catalog::ProviderCatalogReadRepository + 'static,
+    TUsage: UsageRepository + 'static,
+    TCatalog: ProviderCatalogReadRepository + 'static,
 {
     let upstream_hits = Arc::new(Mutex::new(0usize));
     let upstream_hits_clone = Arc::clone(&upstream_hits);
@@ -2274,13 +2273,12 @@ where
     let (upstream_url, upstream_handle) = start_server(upstream).await;
     let user_repository = Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![user]));
     let wallet_repository = Arc::new(InMemoryWalletRepository::seed(vec![wallet]));
-    let data_state =
-        crate::data::GatewayDataState::with_user_wallet_and_usage_for_tests(
-            user_repository,
-            wallet_repository,
-            usage_repository,
-        )
-        .with_provider_catalog_reader(provider_catalog_repository);
+    let data_state = crate::data::GatewayDataState::with_user_wallet_and_usage_for_tests(
+        user_repository,
+        wallet_repository,
+        usage_repository,
+    )
+    .with_provider_catalog_reader(provider_catalog_repository);
     let state = AppState::new()
         .expect("gateway should build")
         .with_data_state_for_tests(data_state)
@@ -2294,9 +2292,7 @@ async fn start_auth_gateway_with_preferences_state(
     user: StoredUserAuthRecord,
     wallet: StoredWalletSnapshot,
     sessions: impl IntoIterator<Item = crate::data::state::StoredUserSessionRecord>,
-    preferences: impl IntoIterator<
-        Item = crate::data::state::StoredUserPreferenceRecord,
-    >,
+    preferences: impl IntoIterator<Item = crate::data::state::StoredUserPreferenceRecord>,
 ) -> (
     String,
     Arc<Mutex<usize>>,
@@ -2585,13 +2581,12 @@ async fn gateway_handles_user_monitoring_rate_limit_status_locally_without_proxy
 
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
-            let data_state =
-                crate::data::GatewayDataState::with_auth_api_key_repository_for_tests(
-                    auth_repository,
-                )
-                .with_user_reader(Arc::new(
-                    InMemoryUserReadRepository::seed_auth_users(vec![sample_auth_user(now)]),
-                ));
+            let data_state = crate::data::GatewayDataState::with_auth_api_key_repository_for_tests(
+                auth_repository,
+            )
+            .with_user_reader(Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![
+                sample_auth_user(now),
+            ])));
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -4098,9 +4093,7 @@ async fn gateway_returns_service_unavailable_for_users_me_detail_update_without_
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state =
-                crate::data::GatewayDataState::with_user_reader_for_tests(
-                    user_repository,
-                );
+                crate::data::GatewayDataState::with_user_reader_for_tests(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -4250,9 +4243,7 @@ async fn gateway_returns_service_unavailable_for_users_me_password_change_withou
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state =
-                crate::data::GatewayDataState::with_user_reader_for_tests(
-                    user_repository,
-                );
+                crate::data::GatewayDataState::with_user_reader_for_tests(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -4463,9 +4454,7 @@ async fn gateway_returns_service_unavailable_for_users_me_endpoint_status_withou
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state =
-                crate::data::GatewayDataState::with_user_reader_for_tests(
-                    user_repository,
-                );
+                crate::data::GatewayDataState::with_user_reader_for_tests(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -4620,9 +4609,7 @@ async fn gateway_returns_service_unavailable_for_users_me_preferences_update_wit
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state =
-                crate::data::GatewayDataState::with_user_reader_for_tests(
-                    user_repository,
-                );
+                crate::data::GatewayDataState::with_user_reader_for_tests(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -5479,10 +5466,8 @@ async fn gateway_handles_users_me_api_keys_locally_without_proxying_upstream() {
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state =
-                crate::data::GatewayDataState::with_user_reader_for_tests(
-                    user_repository,
-                )
-                .with_auth_api_key_reader(auth_repository);
+                crate::data::GatewayDataState::with_user_reader_for_tests(user_repository)
+                    .with_auth_api_key_reader(auth_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -5614,7 +5599,9 @@ async fn gateway_rejects_invalid_users_me_api_key_patch_path_as_local_not_found_
             let data_state = crate::data::GatewayDataState::with_auth_api_key_repository_for_tests(
                 Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![])),
             )
-            .with_user_reader(Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![user])));
+            .with_user_reader(Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![
+                user,
+            ])));
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -5798,13 +5785,12 @@ async fn gateway_handles_users_me_api_key_writes_locally_without_proxying_upstre
 
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
-            let data_state =
-                crate::data::GatewayDataState::with_auth_api_key_repository_for_tests(
-                    auth_repository,
-                )
-                .with_user_reader(user_repository)
-                .with_provider_catalog_reader(provider_catalog_repository)
-                .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY);
+            let data_state = crate::data::GatewayDataState::with_auth_api_key_repository_for_tests(
+                auth_repository,
+            )
+            .with_user_reader(user_repository)
+            .with_provider_catalog_reader(provider_catalog_repository)
+            .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -6064,11 +6050,9 @@ async fn gateway_returns_service_unavailable_for_users_me_api_key_writes_without
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state =
-                crate::data::GatewayDataState::with_auth_api_key_reader_for_tests(
-                    auth_repository,
-                )
-                .with_user_reader(user_repository)
-                .with_provider_catalog_reader(provider_catalog_repository);
+                crate::data::GatewayDataState::with_auth_api_key_reader_for_tests(auth_repository)
+                    .with_user_reader(user_repository)
+                    .with_provider_catalog_reader(provider_catalog_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -6341,10 +6325,11 @@ async fn gateway_rejects_users_me_management_token_nested_get_path_as_local_not_
 
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
-            let data_state = crate::data::GatewayDataState::with_management_token_repository_for_tests(
-                repository,
-            )
-            .with_user_reader(user_repository);
+            let data_state =
+                crate::data::GatewayDataState::with_management_token_repository_for_tests(
+                    repository,
+                )
+                .with_user_reader(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -6600,9 +6585,7 @@ async fn gateway_returns_service_unavailable_for_users_me_management_token_reads
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state =
-                crate::data::GatewayDataState::with_user_reader_for_tests(
-                    user_repository,
-                );
+                crate::data::GatewayDataState::with_user_reader_for_tests(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -6687,10 +6670,8 @@ async fn gateway_returns_service_unavailable_for_users_me_management_token_write
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state =
-                crate::data::GatewayDataState::with_management_token_reader_for_tests(
-                    repository,
-                )
-                .with_user_reader(user_repository);
+                crate::data::GatewayDataState::with_management_token_reader_for_tests(repository)
+                    .with_user_reader(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -6901,12 +6882,11 @@ async fn gateway_handles_users_me_providers_locally_without_proxying_upstream() 
 
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
-            let data_state =
-                crate::data::GatewayDataState::with_global_model_reader_for_tests(
-                    global_model_repository,
-                )
-                .with_provider_catalog_reader(provider_catalog_repository)
-                .with_user_reader(user_repository);
+            let data_state = crate::data::GatewayDataState::with_global_model_reader_for_tests(
+                global_model_repository,
+            )
+            .with_provider_catalog_reader(provider_catalog_repository)
+            .with_user_reader(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -7302,12 +7282,13 @@ async fn gateway_handles_auth_send_verification_code_locally_without_proxying_up
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(
-                    crate::data::GatewayDataState::disabled()
-                        .with_system_config_values_for_tests(vec![
+                    crate::data::GatewayDataState::disabled().with_system_config_values_for_tests(
+                        vec![
                             ("smtp_host".to_string(), json!("smtp.example.com")),
                             ("smtp_from_email".to_string(), json!("noreply@example.com")),
                             ("smtp_from_name".to_string(), json!("Aether Mail")),
-                        ]),
+                        ],
+                    ),
                 )
         })
         .await;
@@ -7526,16 +7507,10 @@ async fn gateway_handles_users_me_available_models_locally_without_proxying_upst
             sample_public_global_model("gm-3", "disabled-model", "Disabled Model", false),
         ])
         .with_active_global_model_refs(vec![
-            aether_data::repository::global_models::StoredProviderActiveGlobalModel::new(
-                "provider-openai".to_string(),
-                "gm-1".to_string(),
-            )
-            .expect("active global model ref should build"),
-            aether_data::repository::global_models::StoredProviderActiveGlobalModel::new(
-                "provider-claude".to_string(),
-                "gm-2".to_string(),
-            )
-            .expect("active global model ref should build"),
+            StoredProviderActiveGlobalModel::new("provider-openai".to_string(), "gm-1".to_string())
+                .expect("active global model ref should build"),
+            StoredProviderActiveGlobalModel::new("provider-claude".to_string(), "gm-2".to_string())
+                .expect("active global model ref should build"),
         ]),
     );
     let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
@@ -7549,12 +7524,11 @@ async fn gateway_handles_users_me_available_models_locally_without_proxying_upst
     let user_repository = Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![user]));
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
-            let data_state =
-                crate::data::GatewayDataState::with_global_model_reader_for_tests(
-                    global_model_repository,
-                )
-                .with_provider_catalog_reader(provider_catalog_repository)
-                .with_user_reader(user_repository);
+            let data_state = crate::data::GatewayDataState::with_global_model_reader_for_tests(
+                global_model_repository,
+            )
+            .with_provider_catalog_reader(provider_catalog_repository)
+            .with_user_reader(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -7621,22 +7595,19 @@ async fn gateway_returns_service_unavailable_for_users_me_available_models_witho
             sample_public_global_model("gm-1", "gpt-5", "GPT 5", true),
             sample_public_global_model("gm-2", "claude-sonnet-4-5", "Claude Sonnet 4.5", true),
         ])
-        .with_active_global_model_refs(vec![
-            aether_data::repository::global_models::StoredProviderActiveGlobalModel::new(
-                "provider-openai".to_string(),
-                "gm-1".to_string(),
-            )
-            .expect("active global model ref should build"),
-        ]),
+        .with_active_global_model_refs(vec![StoredProviderActiveGlobalModel::new(
+            "provider-openai".to_string(),
+            "gm-1".to_string(),
+        )
+        .expect("active global model ref should build")]),
     );
     let user_repository = Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![user]));
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
-            let data_state =
-                crate::data::GatewayDataState::with_global_model_reader_for_tests(
-                    global_model_repository,
-                )
-                .with_user_reader(user_repository);
+            let data_state = crate::data::GatewayDataState::with_global_model_reader_for_tests(
+                global_model_repository,
+            )
+            .with_user_reader(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -7695,9 +7666,7 @@ async fn gateway_handles_users_me_model_capabilities_get_locally_without_proxyin
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state =
-                crate::data::GatewayDataState::with_user_reader_for_tests(
-                    user_repository,
-                );
+                crate::data::GatewayDataState::with_user_reader_for_tests(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -7760,9 +7729,7 @@ async fn gateway_updates_users_me_model_capabilities_locally_without_proxying_up
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state =
-                crate::data::GatewayDataState::with_user_reader_for_tests(
-                    user_repository,
-                );
+                crate::data::GatewayDataState::with_user_reader_for_tests(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)
@@ -7841,9 +7808,7 @@ async fn gateway_returns_service_unavailable_for_users_me_model_capabilities_upd
     let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
         start_auth_gateway_with_builder(|| {
             let data_state =
-                crate::data::GatewayDataState::with_user_reader_for_tests(
-                    user_repository,
-                );
+                crate::data::GatewayDataState::with_user_reader_for_tests(user_repository);
             AppState::new()
                 .expect("gateway should build")
                 .with_data_state_for_tests(data_state)

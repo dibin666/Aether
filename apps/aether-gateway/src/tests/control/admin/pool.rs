@@ -1,9 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use aether_crypto::DEVELOPMENT_ENCRYPTION_KEY;
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository,
-};
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
 use axum::body::{Body, Bytes};
 use axum::routing::{any, get, post};
 use axum::{extract::Request, Router};
@@ -20,7 +19,7 @@ use crate::constants::{
 };
 use crate::control::resolve_public_request_context;
 use crate::data::GatewayDataState;
-use crate::handlers::admin::maybe_build_local_admin_pool_response;
+use crate::handlers::admin::system::maybe_build_local_admin_pool_response;
 
 fn trusted_admin_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();

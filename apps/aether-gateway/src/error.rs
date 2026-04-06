@@ -7,6 +7,7 @@ use tracing::warn;
 
 use crate::constants::*;
 use crate::insert_header_if_missing;
+use aether_ai_pipeline::finalize::PipelineFinalizeError;
 
 #[derive(Debug)]
 pub(crate) enum GatewayError {
@@ -64,5 +65,11 @@ impl IntoResponse for GatewayError {
             )
                 .into_response(),
         }
+    }
+}
+
+impl From<PipelineFinalizeError> for GatewayError {
+    fn from(error: PipelineFinalizeError) -> Self {
+        GatewayError::Internal(error.0)
     }
 }

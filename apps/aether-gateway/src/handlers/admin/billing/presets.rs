@@ -3,7 +3,7 @@ use super::{
     build_admin_billing_read_only_response, normalize_admin_billing_required_text,
 };
 use crate::control::GatewayPublicRequestContext;
-use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
+use crate::handlers::admin::shared::attach_admin_audit_response;
 use crate::{AppState, GatewayError};
 use axum::{
     body::{Body, Bytes},
@@ -37,8 +37,7 @@ fn build_admin_billing_presets_payload() -> serde_json::Value {
     })
 }
 
-fn build_admin_billing_aether_core_collectors(
-) -> Vec<crate::AdminBillingCollectorWriteInput> {
+fn build_admin_billing_aether_core_collectors() -> Vec<crate::AdminBillingCollectorWriteInput> {
     vec![
         crate::AdminBillingCollectorWriteInput {
             api_format: "OPENAI:CHAT".to_string(),
@@ -237,10 +236,7 @@ fn build_admin_billing_aether_core_collectors(
 
 fn resolve_admin_billing_preset_collectors(
     preset: &str,
-) -> Option<(
-    &'static str,
-    Vec<crate::AdminBillingCollectorWriteInput>,
-)> {
+) -> Option<(&'static str, Vec<crate::AdminBillingCollectorWriteInput>)> {
     let normalized = preset.trim().to_ascii_lowercase();
     match normalized.as_str() {
         "aether-core" | "default" => {
@@ -323,15 +319,15 @@ async fn build_admin_apply_billing_preset_response(
                 resolved_preset,
             ))
         }
-        crate::LocalMutationOutcome::Unavailable => Ok(
-            build_admin_billing_read_only_response("当前为只读模式，无法应用计费预设"),
-        ),
+        crate::LocalMutationOutcome::Unavailable => Ok(build_admin_billing_read_only_response(
+            "当前为只读模式，无法应用计费预设",
+        )),
         crate::LocalMutationOutcome::Invalid(detail) => {
             Ok(build_admin_billing_bad_request_response(detail))
         }
-        crate::LocalMutationOutcome::NotFound => Ok(
-            build_admin_billing_not_found_response("Billing preset not found"),
-        ),
+        crate::LocalMutationOutcome::NotFound => Ok(build_admin_billing_not_found_response(
+            "Billing preset not found",
+        )),
     }
 }
 

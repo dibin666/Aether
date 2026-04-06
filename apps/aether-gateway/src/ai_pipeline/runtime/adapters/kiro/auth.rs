@@ -1,6 +1,6 @@
-use crate::provider_transport::snapshot::GatewayProviderTransportSnapshot;
+use crate::ai_pipeline::provider_transport_facade::snapshot::GatewayProviderTransportSnapshot;
 
-use super::credentials::{generate_machine_id, KiroAuthConfig};
+use super::credentials::{KiroAuthConfig, generate_machine_id};
 
 pub(crate) const PROVIDER_TYPE: &str = "kiro";
 pub(crate) const KIRO_AUTH_HEADER: &str = "authorization";
@@ -150,11 +150,10 @@ pub(crate) fn supports_local_kiro_request_auth_resolution(
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_local_kiro_bearer_auth, resolve_local_kiro_request_auth,
+        KIRO_AUTH_HEADER, resolve_local_kiro_bearer_auth, resolve_local_kiro_request_auth,
         supports_local_kiro_auth_prerequisites, supports_local_kiro_request_auth_resolution,
-        KIRO_AUTH_HEADER,
     };
-    use crate::provider_transport::snapshot::{
+    use crate::ai_pipeline::provider_transport_facade::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };

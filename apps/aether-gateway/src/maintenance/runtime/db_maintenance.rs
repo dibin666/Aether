@@ -1,8 +1,9 @@
+use aether_data_contracts::DataLayerError;
 use tracing::warn;
 
 use crate::data::GatewayDataState;
 
-use super::{system_config_bool, DB_MAINTENANCE_TABLES};
+use super::{postgres_error, system_config_bool, DB_MAINTENANCE_TABLES};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct DbMaintenanceRunSummary {
@@ -12,7 +13,7 @@ pub(super) struct DbMaintenanceRunSummary {
 
 pub(super) async fn perform_db_maintenance_once(
     data: &GatewayDataState,
-) -> Result<DbMaintenanceRunSummary, aether_data::DataLayerError> {
+) -> Result<DbMaintenanceRunSummary, DataLayerError> {
     let Some(pool) = data.postgres_pool() else {
         return Ok(DbMaintenanceRunSummary {
             attempted: 0,
@@ -24,7 +25,10 @@ pub(super) async fn perform_db_maintenance_once(
         let pool = pool.clone();
         async move {
             let statement = format!("VACUUM ANALYZE {table_name}");
-            sqlx::raw_sql(&statement).execute(&pool).await?;
+            sqlx::raw_sql(&statement)
+                .execute(&pool)
+                .await
+                .map_err(postgres_error)?;
             Ok(())
         }
     })
@@ -34,10 +38,10 @@ pub(super) async fn perform_db_maintenance_once(
 pub(super) async fn run_db_maintenance_with<F, Fut>(
     data: &GatewayDataState,
     mut vacuum_table: F,
-) -> Result<DbMaintenanceRunSummary, aether_data::DataLayerError>
+) -> Result<DbMaintenanceRunSummary, DataLayerError>
 where
     F: FnMut(&'static str) -> Fut,
-    Fut: std::future::Future<Output = Result<(), aether_data::DataLayerError>>,
+    Fut: std::future::Future<Output = Result<(), DataLayerError>>,
 {
     if !system_config_bool(data, "enable_db_maintenance", true).await? {
         return Ok(DbMaintenanceRunSummary {

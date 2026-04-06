@@ -199,6 +199,46 @@ pub fn body_rules_are_locally_supported(rules: Option<&Value>) -> bool {
     })
 }
 
+pub fn body_rules_handle_path(rules: Option<&Value>, path: &str) -> bool {
+    let Some(target_path) = parse_body_path(path) else {
+        return false;
+    };
+    let Some(rules) = rules.and_then(Value::as_array) else {
+        return false;
+    };
+
+    rules.iter().any(|rule| {
+        let Some(rule) = rule.as_object() else {
+            return false;
+        };
+        match rule
+            .get("action")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("set") | Some("drop") => rule
+                .get("path")
+                .and_then(Value::as_str)
+                .and_then(parse_body_path)
+                .is_some_and(|candidate| candidate == target_path),
+            Some("rename") => {
+                rule.get("from")
+                    .and_then(Value::as_str)
+                    .and_then(parse_body_path)
+                    .is_some_and(|candidate| candidate == target_path)
+                    || rule
+                        .get("to")
+                        .and_then(Value::as_str)
+                        .and_then(parse_body_path)
+                        .is_some_and(|candidate| candidate == target_path)
+            }
+            _ => false,
+        }
+    })
+}
+
 pub fn apply_local_body_rules(
     body: &mut Value,
     rules: Option<&Value>,
@@ -705,7 +745,7 @@ fn rename_nested_value(
 mod tests {
     use super::{
         apply_local_body_rules, apply_local_header_rules, body_rules_are_locally_supported,
-        header_rules_are_locally_supported,
+        body_rules_handle_path, header_rules_are_locally_supported,
     };
 
     #[test]
@@ -816,5 +856,20 @@ mod tests {
 
         let wildcard_rules = serde_json::json!([{"action":"drop","path":"items[*].value"}]);
         assert!(!body_rules_are_locally_supported(Some(&wildcard_rules)));
+    }
+
+    #[test]
+    fn body_rules_handle_exact_paths_for_set_drop_and_rename() {
+        let rules = serde_json::json!([
+            {"action":"set","path":"store","value":false},
+            {"action":"drop","path":"metadata"},
+            {"action":"rename","from":"max_output_tokens","to":"limit"}
+        ]);
+
+        assert!(body_rules_handle_path(Some(&rules), "store"));
+        assert!(body_rules_handle_path(Some(&rules), "metadata"));
+        assert!(body_rules_handle_path(Some(&rules), "max_output_tokens"));
+        assert!(body_rules_handle_path(Some(&rules), "limit"));
+        assert!(!body_rules_handle_path(Some(&rules), "instructions"));
     }
 }

@@ -12,6 +12,7 @@ use super::{
     format_users_me_required_session_datetime_iso8601, resolve_authenticated_local_user, AppState,
     GatewayPublicRequestContext,
 };
+use crate::GatewayUserSessionView;
 
 #[derive(Debug, Deserialize)]
 struct UsersMeUpdateSessionLabelRequest {
@@ -34,7 +35,7 @@ pub(super) fn users_me_session_detail_path_matches(request_path: &str) -> bool {
 }
 
 fn build_users_me_session_payload(
-    session: crate::data::state::StoredUserSessionRecord,
+    session: GatewayUserSessionView,
     current_session_id: &str,
 ) -> serde_json::Value {
     json!({

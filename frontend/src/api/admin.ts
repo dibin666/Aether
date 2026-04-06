@@ -349,7 +349,7 @@ export interface AdminApiKey {
   is_active: boolean
   is_standalone: boolean  // 是否为独立余额Key
   total_requests?: number
-  total_tokens?: number
+  total_tokens?: number | null
   total_cost_usd?: number
   rate_limit?: number | null  // null = 跟随系统默认，0 = 不限制
   allowed_providers?: string[] | null  // 允许的提供商列表
@@ -360,6 +360,7 @@ export interface AdminApiKey {
   expires_at?: string
   created_at: string
   updated_at?: string
+  wallet?: BillingSummary | null
 }
 
 export interface CreateStandaloneApiKeyRequest {
@@ -501,6 +502,7 @@ export const adminApi = {
     skip?: number
     limit?: number
     is_active?: boolean
+    include_usage_summary?: boolean
   }): Promise<AdminApiKeysResponse> {
     const response = await apiClient.get<AdminApiKeysResponse>('/api/admin/api-keys', {
       params

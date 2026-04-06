@@ -1,8 +1,9 @@
 use tracing::warn;
 
-use crate::provider_transport::resolve_transport_proxy_snapshot;
-use crate::scheduler::GatewayMinimalCandidateSelectionCandidate;
+use crate::ai_pipeline::planner::transport_facade::read_provider_transport_snapshot;
+use crate::ai_pipeline::provider_transport_facade::resolve_transport_proxy_snapshot;
 use crate::AppState;
+use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum TunnelOwnerAffinityBucket {
@@ -13,8 +14,8 @@ enum TunnelOwnerAffinityBucket {
 
 pub(crate) async fn prefer_local_tunnel_owner_candidates(
     state: &AppState,
-    candidates: Vec<GatewayMinimalCandidateSelectionCandidate>,
-) -> Vec<GatewayMinimalCandidateSelectionCandidate> {
+    candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
+) -> Vec<SchedulerMinimalCandidateSelectionCandidate> {
     let mut ranked = Vec::with_capacity(candidates.len());
     for (original_index, candidate) in candidates.into_iter().enumerate() {
         let bucket = resolve_candidate_tunnel_owner_affinity(state, &candidate).await;
@@ -29,15 +30,15 @@ pub(crate) async fn prefer_local_tunnel_owner_candidates(
 
 async fn resolve_candidate_tunnel_owner_affinity(
     state: &AppState,
-    candidate: &GatewayMinimalCandidateSelectionCandidate,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
 ) -> TunnelOwnerAffinityBucket {
-    let transport = match state
-        .read_provider_transport_snapshot(
-            &candidate.provider_id,
-            &candidate.endpoint_id,
-            &candidate.key_id,
-        )
-        .await
+    let transport = match read_provider_transport_snapshot(
+        state,
+        &candidate.provider_id,
+        &candidate.endpoint_id,
+        &candidate.key_id,
+    )
+    .await
     {
         Ok(Some(transport)) => transport,
         Ok(None) => return TunnelOwnerAffinityBucket::Neutral,
@@ -101,14 +102,14 @@ async fn resolve_candidate_tunnel_owner_affinity(
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use aether_data::repository::provider_catalog::{
-        InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint,
-        StoredProviderCatalogKey, StoredProviderCatalogProvider,
+    use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+    use aether_data_contracts::repository::provider_catalog::{
+        StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
     };
     use serde_json::json;
 
     use super::{
-        prefer_local_tunnel_owner_candidates, AppState, GatewayMinimalCandidateSelectionCandidate,
+        prefer_local_tunnel_owner_candidates, AppState, SchedulerMinimalCandidateSelectionCandidate,
     };
     use crate::data::GatewayDataState;
     use crate::tunnel::TunnelAttachmentRecord;
@@ -116,8 +117,8 @@ mod tests {
     fn sample_candidate(
         endpoint_id: &str,
         key_id: &str,
-    ) -> GatewayMinimalCandidateSelectionCandidate {
-        GatewayMinimalCandidateSelectionCandidate {
+    ) -> SchedulerMinimalCandidateSelectionCandidate {
+        SchedulerMinimalCandidateSelectionCandidate {
             provider_id: "provider-1".to_string(),
             provider_name: "provider-1".to_string(),
             provider_type: "custom".to_string(),

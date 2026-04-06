@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use aether_contracts::{ExecutionPlan, RequestBody};
-use aether_data::repository::video_tasks::{StoredVideoTask, UpsertVideoTask, VideoTaskStatus};
+use aether_data_contracts::repository::video_tasks::{
+    StoredVideoTask, UpsertVideoTask, VideoTaskStatus,
+};
 use serde_json::{json, Map, Value};
 
 use crate::{
@@ -620,7 +622,7 @@ impl OpenAiVideoTaskSeed {
 
 #[cfg(test)]
 mod tests {
-    use aether_data::repository::video_tasks::{StoredVideoTask, VideoTaskStatus};
+    use aether_data_contracts::repository::video_tasks::{StoredVideoTask, VideoTaskStatus};
 
     use super::map_openai_stored_task_to_read_response;
 

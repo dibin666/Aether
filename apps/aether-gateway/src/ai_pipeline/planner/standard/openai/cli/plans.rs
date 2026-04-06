@@ -5,56 +5,15 @@ use super::decision::{
     maybe_build_local_openai_cli_decision_payload_for_candidate,
     resolve_local_openai_cli_decision_input, LocalOpenAiCliSpec,
 };
-use crate::ai_pipeline::planner::common::{
-    OPENAI_CLI_STREAM_PLAN_KIND, OPENAI_CLI_SYNC_PLAN_KIND, OPENAI_COMPACT_STREAM_PLAN_KIND,
-    OPENAI_COMPACT_SYNC_PLAN_KIND,
-};
+use crate::ai_pipeline::control_facade::GatewayControlDecision;
 use crate::ai_pipeline::planner::plan_builders::{
     build_openai_cli_stream_plan_from_decision, build_openai_cli_sync_plan_from_decision,
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
-use crate::control::GatewayControlDecision;
 use crate::{AppState, GatewayError};
-
-pub(super) fn resolve_sync_spec(plan_kind: &str) -> Option<LocalOpenAiCliSpec> {
-    match plan_kind {
-        OPENAI_CLI_SYNC_PLAN_KIND => Some(LocalOpenAiCliSpec {
-            api_format: "openai:cli",
-            decision_kind: OPENAI_CLI_SYNC_PLAN_KIND,
-            report_kind: "openai_cli_sync_success",
-            compact: false,
-            require_streaming: false,
-        }),
-        OPENAI_COMPACT_SYNC_PLAN_KIND => Some(LocalOpenAiCliSpec {
-            api_format: "openai:compact",
-            decision_kind: OPENAI_COMPACT_SYNC_PLAN_KIND,
-            report_kind: "openai_cli_sync_success",
-            compact: true,
-            require_streaming: false,
-        }),
-        _ => None,
-    }
-}
-
-pub(super) fn resolve_stream_spec(plan_kind: &str) -> Option<LocalOpenAiCliSpec> {
-    match plan_kind {
-        OPENAI_CLI_STREAM_PLAN_KIND => Some(LocalOpenAiCliSpec {
-            api_format: "openai:cli",
-            decision_kind: OPENAI_CLI_STREAM_PLAN_KIND,
-            report_kind: "openai_cli_stream_success",
-            compact: false,
-            require_streaming: true,
-        }),
-        OPENAI_COMPACT_STREAM_PLAN_KIND => Some(LocalOpenAiCliSpec {
-            api_format: "openai:compact",
-            decision_kind: OPENAI_COMPACT_STREAM_PLAN_KIND,
-            report_kind: "openai_cli_stream_success",
-            compact: true,
-            require_streaming: true,
-        }),
-        _ => None,
-    }
-}
+pub(super) use aether_ai_pipeline::planner::standard::openai_cli::{
+    resolve_stream_spec, resolve_sync_spec,
+};
 
 pub(super) async fn build_local_sync_plan_and_reports(
     state: &AppState,

@@ -3,7 +3,7 @@ use std::sync::RwLock;
 
 use async_trait::async_trait;
 
-use super::types::{
+use super::{
     StoredVideoTask, UpsertVideoTask, VideoTaskLookupKey, VideoTaskModelCount,
     VideoTaskQueryFilter, VideoTaskReadRepository, VideoTaskStatus, VideoTaskStatusCount,
     VideoTaskWriteRepository,
@@ -140,9 +140,9 @@ impl VideoTaskReadRepository for InMemoryVideoTaskRepository {
             .filter(|task| {
                 matches!(
                     task.status,
-                    super::types::VideoTaskStatus::Submitted
-                        | super::types::VideoTaskStatus::Queued
-                        | super::types::VideoTaskStatus::Processing
+                    super::VideoTaskStatus::Submitted
+                        | super::VideoTaskStatus::Queued
+                        | super::VideoTaskStatus::Processing
                 ) && task.poll_count < task.max_poll_count
                     && task
                         .next_poll_at_unix_secs

@@ -5,7 +5,7 @@ use super::types::{
     AuthModuleReadRepository, AuthModuleWriteRepository, StoredLdapModuleConfig,
     StoredOAuthProviderModuleConfig,
 };
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const LIST_ENABLED_OAUTH_PROVIDERS_SQL: &str = r#"
 SELECT
@@ -152,14 +152,16 @@ impl AuthModuleReadRepository for SqlxAuthModuleReadRepository {
     ) -> Result<Vec<StoredOAuthProviderModuleConfig>, DataLayerError> {
         let rows = sqlx::query(LIST_ENABLED_OAUTH_PROVIDERS_SQL)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_oauth_row).collect()
     }
 
     async fn get_ldap_config(&self) -> Result<Option<StoredLdapModuleConfig>, DataLayerError> {
         let row = sqlx::query(GET_LDAP_CONFIG_SQL)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_ldap_row).transpose()
     }
 }
@@ -171,14 +173,16 @@ impl AuthModuleReadRepository for SqlxAuthModuleRepository {
     ) -> Result<Vec<StoredOAuthProviderModuleConfig>, DataLayerError> {
         let rows = sqlx::query(LIST_ENABLED_OAUTH_PROVIDERS_SQL)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_oauth_row).collect()
     }
 
     async fn get_ldap_config(&self) -> Result<Option<StoredLdapModuleConfig>, DataLayerError> {
         let row = sqlx::query(GET_LDAP_CONFIG_SQL)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_ldap_row).transpose()
     }
 }
@@ -203,7 +207,8 @@ impl AuthModuleWriteRepository for SqlxAuthModuleRepository {
             .bind(config.use_starttls)
             .bind(config.connect_timeout)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         if let Some(row) = updated.as_ref() {
             return map_ldap_row(row).map(Some);
         }
@@ -222,35 +227,36 @@ impl AuthModuleWriteRepository for SqlxAuthModuleRepository {
             .bind(config.use_starttls)
             .bind(config.connect_timeout)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         inserted.as_ref().map(map_ldap_row).transpose()
     }
 }
 
 fn map_oauth_row(row: &PgRow) -> Result<StoredOAuthProviderModuleConfig, DataLayerError> {
     StoredOAuthProviderModuleConfig::new(
-        row.try_get("provider_type")?,
-        row.try_get("display_name")?,
-        row.try_get("client_id")?,
-        row.try_get("client_secret_encrypted")?,
-        row.try_get("redirect_uri")?,
+        row.try_get("provider_type").map_postgres_err()?,
+        row.try_get("display_name").map_postgres_err()?,
+        row.try_get("client_id").map_postgres_err()?,
+        row.try_get("client_secret_encrypted").map_postgres_err()?,
+        row.try_get("redirect_uri").map_postgres_err()?,
     )
 }
 
 fn map_ldap_row(row: &PgRow) -> Result<StoredLdapModuleConfig, DataLayerError> {
     Ok(StoredLdapModuleConfig {
-        server_url: row.try_get("server_url")?,
-        bind_dn: row.try_get("bind_dn")?,
-        bind_password_encrypted: row.try_get("bind_password_encrypted")?,
-        base_dn: row.try_get("base_dn")?,
-        user_search_filter: row.try_get("user_search_filter")?,
-        username_attr: row.try_get("username_attr")?,
-        email_attr: row.try_get("email_attr")?,
-        display_name_attr: row.try_get("display_name_attr")?,
-        is_enabled: row.try_get("is_enabled")?,
-        is_exclusive: row.try_get("is_exclusive")?,
-        use_starttls: row.try_get("use_starttls")?,
-        connect_timeout: row.try_get("connect_timeout")?,
+        server_url: row.try_get("server_url").map_postgres_err()?,
+        bind_dn: row.try_get("bind_dn").map_postgres_err()?,
+        bind_password_encrypted: row.try_get("bind_password_encrypted").map_postgres_err()?,
+        base_dn: row.try_get("base_dn").map_postgres_err()?,
+        user_search_filter: row.try_get("user_search_filter").map_postgres_err()?,
+        username_attr: row.try_get("username_attr").map_postgres_err()?,
+        email_attr: row.try_get("email_attr").map_postgres_err()?,
+        display_name_attr: row.try_get("display_name_attr").map_postgres_err()?,
+        is_enabled: row.try_get("is_enabled").map_postgres_err()?,
+        is_exclusive: row.try_get("is_exclusive").map_postgres_err()?,
+        use_starttls: row.try_get("use_starttls").map_postgres_err()?,
+        connect_timeout: row.try_get("connect_timeout").map_postgres_err()?,
     })
 }
 

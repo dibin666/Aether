@@ -68,6 +68,7 @@ pub(super) async fn handle_user_rate_limit_status(
         }
 
         let snapshot = match state
+            .data
             .read_auth_api_key_snapshot(&auth.user.id, &record.api_key_id, now_unix_secs)
             .await
         {

@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use aether_data_contracts::DataLayerError;
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc, Weekday};
 use chrono_tz::Tz;
 use tracing::warn;
@@ -15,7 +16,7 @@ use super::{
 
 pub(super) async fn provider_checkin_schedule(
     data: &GatewayDataState,
-) -> Result<(u32, u32), aether_data::DataLayerError> {
+) -> Result<(u32, u32), DataLayerError> {
     let configured =
         system_config_string(data, "provider_checkin_time", PROVIDER_CHECKIN_DEFAULT_TIME).await?;
     Ok(parse_hhmm_time(&configured).unwrap_or_else(|| {

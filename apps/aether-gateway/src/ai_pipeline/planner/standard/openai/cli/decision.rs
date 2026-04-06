@@ -1,46 +1,57 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use aether_data::repository::candidates::{RequestCandidateStatus, UpsertRequestCandidateRecord};
+use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 use serde_json::{json, Value};
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::ai_pipeline::control_facade::{
+    collect_control_headers, GatewayControlAuthContext, GatewayControlDecision,
+};
 use crate::ai_pipeline::conversion::{
     request_conversion_direct_auth, request_conversion_kind, request_conversion_transport_supported,
 };
-use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
-use crate::ai_pipeline::planner::common::{
-    EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
+use crate::ai_pipeline::execution_facade::{ConversionMode, ExecutionStrategy};
+use crate::ai_pipeline::planner::auth_snapshot_facade::{
+    read_auth_api_key_snapshot, GatewayAuthApiKeySnapshot,
 };
+use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::planner::candidate_runtime_facade::{
+    persist_available_local_candidate, persist_skipped_local_candidate,
+};
+use crate::ai_pipeline::planner::common::{
+    force_upstream_streaming_for_provider, EXECUTION_RUNTIME_STREAM_DECISION_ACTION,
+    EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
+};
+use crate::ai_pipeline::planner::executor_facade::mark_unused_local_candidate_items;
 use crate::ai_pipeline::planner::plan_builders::{
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
+use crate::ai_pipeline::planner::scheduler_facade::list_selectable_candidates;
 use crate::ai_pipeline::planner::standard::{
-    build_cross_format_openai_cli_request_body, build_cross_format_openai_cli_upstream_url,
-    build_local_openai_cli_request_body, build_local_openai_cli_upstream_url,
+    apply_codex_openai_cli_special_headers, build_cross_format_openai_cli_request_body,
+    build_cross_format_openai_cli_upstream_url, build_local_openai_cli_request_body,
+    build_local_openai_cli_upstream_url,
 };
-use crate::control::GatewayControlDecision;
-use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
-use crate::headers::collect_control_headers;
-use crate::provider_transport::antigravity::{
+use crate::ai_pipeline::planner::transport_facade::{
+    read_provider_transport_snapshot, resolve_local_oauth_request_auth,
+    LocalResolvedOAuthRequestAuth,
+};
+use crate::ai_pipeline::provider_transport_facade::antigravity::{
     build_antigravity_safe_v1internal_request, build_antigravity_static_identity_headers,
     classify_local_antigravity_request_support, AntigravityEnvelopeRequestType,
     AntigravityRequestEnvelopeSupport, AntigravityRequestSideSupport,
 };
-use crate::provider_transport::auth::{
+use crate::ai_pipeline::provider_transport_facade::auth::{
     build_openai_passthrough_headers, ensure_upstream_auth_header, resolve_local_gemini_auth,
     resolve_local_standard_auth,
 };
-use crate::provider_transport::policy::supports_local_standard_transport_with_network;
-use crate::provider_transport::{
+use crate::ai_pipeline::provider_transport_facade::policy::supports_local_standard_transport_with_network;
+use crate::ai_pipeline::provider_transport_facade::{
     apply_local_body_rules, apply_local_header_rules, resolve_transport_execution_timeouts,
     resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
-    LocalResolvedOAuthRequestAuth,
 };
-use crate::scheduler::{
-    current_unix_secs, list_selectable_candidates, record_local_request_candidate_status,
-    GatewayMinimalCandidateSelectionCandidate,
-};
+use crate::clock::current_unix_secs;
 use crate::{
     append_execution_contract_fields_to_value, AppState, GatewayControlSyncDecisionResponse,
     GatewayError,
@@ -48,25 +59,18 @@ use crate::{
 
 const ANTIGRAVITY_ENVELOPE_NAME: &str = "antigravity:v1internal";
 
-#[derive(Debug, Clone, Copy)]
-pub(super) struct LocalOpenAiCliSpec {
-    pub(super) api_format: &'static str,
-    pub(super) decision_kind: &'static str,
-    pub(super) report_kind: &'static str,
-    pub(super) compact: bool,
-    pub(super) require_streaming: bool,
-}
+pub(super) use aether_ai_pipeline::planner::standard::openai_cli::LocalOpenAiCliSpec;
 
 #[derive(Debug, Clone)]
 pub(super) struct LocalOpenAiCliDecisionInput {
-    pub(super) auth_context: crate::control::GatewayControlAuthContext,
+    pub(super) auth_context: GatewayControlAuthContext,
     pub(super) requested_model: String,
-    pub(super) auth_snapshot: crate::data::auth::GatewayAuthApiKeySnapshot,
+    pub(super) auth_snapshot: GatewayAuthApiKeySnapshot,
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct LocalOpenAiCliCandidateAttempt {
-    pub(super) candidate: GatewayMinimalCandidateSelectionCandidate,
+    pub(super) candidate: SchedulerMinimalCandidateSelectionCandidate,
     pub(super) candidate_index: u32,
     pub(super) candidate_id: String,
 }
@@ -90,13 +94,13 @@ pub(super) async fn resolve_local_openai_cli_decision_input(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)?;
 
-    let auth_snapshot = match state
-        .read_auth_api_key_snapshot(
-            &auth_context.user_id,
-            &auth_context.api_key_id,
-            current_unix_secs(),
-        )
-        .await
+    let auth_snapshot = match read_auth_api_key_snapshot(
+        state,
+        &auth_context.user_id,
+        &auth_context.api_key_id,
+        current_unix_secs(),
+    )
+    .await
     {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => return None,
@@ -201,47 +205,19 @@ pub(super) async fn materialize_local_openai_cli_candidate_attempts(
             candidate.endpoint_api_format.as_str(),
         );
 
-        let candidate_id = match state
-            .upsert_request_candidate(UpsertRequestCandidateRecord {
-                id: generated_candidate_id.clone(),
-                request_id: trace_id.to_string(),
-                user_id: Some(input.auth_context.user_id.clone()),
-                api_key_id: Some(input.auth_context.api_key_id.clone()),
-                username: None,
-                api_key_name: None,
-                candidate_index: candidate_index as u32,
-                retry_index: 0,
-                provider_id: Some(candidate.provider_id.clone()),
-                endpoint_id: Some(candidate.endpoint_id.clone()),
-                key_id: Some(candidate.key_id.clone()),
-                status: RequestCandidateStatus::Available,
-                skip_reason: None,
-                is_cached: Some(false),
-                status_code: None,
-                error_type: None,
-                error_message: None,
-                latency_ms: None,
-                concurrent_requests: None,
-                extra_data: Some(extra_data),
-                required_capabilities: candidate.key_capabilities.clone(),
-                created_at_unix_secs: Some(created_at_unix_secs),
-                started_at_unix_secs: None,
-                finished_at_unix_secs: None,
-            })
-            .await
-        {
-            Ok(Some(stored)) => stored.id,
-            Ok(None) => generated_candidate_id.clone(),
-            Err(err) => {
-                warn!(
-                    trace_id = %trace_id,
-                    api_format = spec.api_format,
-                    error = ?err,
-                    "gateway local openai cli decision request candidate upsert failed"
-                );
-                generated_candidate_id.clone()
-            }
-        };
+        let candidate_id = persist_available_local_candidate(
+            state,
+            trace_id,
+            &input.auth_context.user_id,
+            &input.auth_context.api_key_id,
+            &candidate,
+            candidate_index as u32,
+            &generated_candidate_id,
+            Some(extra_data),
+            created_at_unix_secs,
+            "gateway local openai cli decision request candidate upsert failed",
+        )
+        .await;
 
         attempts.push(LocalOpenAiCliCandidateAttempt {
             candidate,
@@ -254,9 +230,9 @@ pub(super) async fn materialize_local_openai_cli_candidate_attempts(
 }
 
 fn auth_snapshot_allows_cross_format_openai_cli_candidate(
-    auth_snapshot: &crate::data::auth::GatewayAuthApiKeySnapshot,
+    auth_snapshot: &GatewayAuthApiKeySnapshot,
     requested_model: &str,
-    candidate: &GatewayMinimalCandidateSelectionCandidate,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
 ) -> bool {
     if let Some(allowed_providers) = auth_snapshot.effective_allowed_providers() {
         let provider_allowed = allowed_providers.iter().any(|value| {
@@ -300,13 +276,13 @@ pub(super) async fn maybe_build_local_openai_cli_decision_payload_for_candidate(
     } = attempt;
     let provider_api_format = candidate.endpoint_api_format.trim().to_ascii_lowercase();
 
-    let transport = match state
-        .read_provider_transport_snapshot(
-            &candidate.provider_id,
-            &candidate.endpoint_id,
-            &candidate.key_id,
-        )
-        .await
+    let transport = match read_provider_transport_snapshot(
+        state,
+        &candidate.provider_id,
+        &candidate.endpoint_id,
+        &candidate.key_id,
+    )
+    .await
     {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => {
@@ -385,7 +361,7 @@ pub(super) async fn maybe_build_local_openai_cli_decision_payload_for_candidate(
         conversion_kind.and_then(|kind| request_conversion_direct_auth(&transport, kind))
     };
     let oauth_auth = if resolved_auth.is_none() {
-        match state.resolve_local_oauth_request_auth(&transport).await {
+        match resolve_local_oauth_request_auth(state, &transport).await {
             Ok(Some(LocalResolvedOAuthRequestAuth::Header { name, value })) => Some((name, value)),
             Ok(Some(LocalResolvedOAuthRequestAuth::Kiro(_))) => None,
             Ok(None) => None,
@@ -434,21 +410,32 @@ pub(super) async fn maybe_build_local_openai_cli_decision_payload_for_candidate(
     }
 
     let needs_bidirectional_conversion = !same_format && conversion_kind.is_some();
+    let upstream_is_stream = spec.require_streaming
+        || is_antigravity
+        || force_upstream_streaming_for_provider(
+            transport.provider.provider_type.as_str(),
+            provider_api_format.as_str(),
+        );
     let Some(base_provider_request_body) = (if needs_bidirectional_conversion {
         build_cross_format_openai_cli_request_body(
             body_json,
             &mapped_model,
             spec.api_format,
             provider_api_format.as_str(),
-            spec.require_streaming,
+            upstream_is_stream,
+            transport.provider.provider_type.as_str(),
             transport.endpoint.body_rules.as_ref(),
+            Some(input.auth_context.api_key_id.as_str()),
         )
     } else {
         build_local_openai_cli_request_body(
             body_json,
             &mapped_model,
-            spec.require_streaming,
+            upstream_is_stream,
+            transport.provider.provider_type.as_str(),
+            provider_api_format.as_str(),
             transport.endpoint.body_rules.as_ref(),
+            Some(input.auth_context.api_key_id.as_str()),
         )
     }) else {
         mark_skipped_local_openai_cli_candidate(
@@ -513,7 +500,6 @@ pub(super) async fn maybe_build_local_openai_cli_decision_payload_for_candidate(
     } else {
         base_provider_request_body
     };
-    let upstream_is_stream = spec.require_streaming || is_antigravity;
 
     let Some(upstream_url) = (if needs_bidirectional_conversion {
         build_cross_format_openai_cli_upstream_url(
@@ -572,6 +558,15 @@ pub(super) async fn maybe_build_local_openai_cli_decision_payload_for_candidate(
         .await;
         return None;
     }
+    apply_codex_openai_cli_special_headers(
+        &mut provider_request_headers,
+        &provider_request_body,
+        &parts.headers,
+        transport.provider.provider_type.as_str(),
+        provider_api_format.as_str(),
+        Some(trace_id),
+        transport.key.decrypted_auth_config.as_deref(),
+    );
     ensure_upstream_auth_header(&mut provider_request_headers, &auth_header, &auth_value);
     if upstream_is_stream {
         provider_request_headers
@@ -685,69 +680,37 @@ async fn mark_skipped_local_openai_cli_candidate(
     state: &AppState,
     input: &LocalOpenAiCliDecisionInput,
     trace_id: &str,
-    candidate: &GatewayMinimalCandidateSelectionCandidate,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
     candidate_index: u32,
     candidate_id: &str,
     skip_reason: &'static str,
 ) {
-    if let Err(err) = state
-        .upsert_request_candidate(UpsertRequestCandidateRecord {
-            id: candidate_id.to_string(),
-            request_id: trace_id.to_string(),
-            user_id: Some(input.auth_context.user_id.clone()),
-            api_key_id: Some(input.auth_context.api_key_id.clone()),
-            username: None,
-            api_key_name: None,
-            candidate_index,
-            retry_index: 0,
-            provider_id: Some(candidate.provider_id.clone()),
-            endpoint_id: Some(candidate.endpoint_id.clone()),
-            key_id: Some(candidate.key_id.clone()),
-            status: RequestCandidateStatus::Skipped,
-            skip_reason: Some(skip_reason.to_string()),
-            is_cached: Some(false),
-            status_code: None,
-            error_type: None,
-            error_message: None,
-            latency_ms: None,
-            concurrent_requests: None,
-            extra_data: None,
-            required_capabilities: candidate.key_capabilities.clone(),
-            created_at_unix_secs: None,
-            started_at_unix_secs: None,
-            finished_at_unix_secs: Some(current_unix_secs()),
-        })
-        .await
-    {
-        warn!(
-            trace_id = %trace_id,
-            candidate_id = %candidate_id,
-            skip_reason,
-            error = ?err,
-            "gateway local openai cli decision failed to persist skipped candidate"
-        );
-    }
+    persist_skipped_local_candidate(
+        state,
+        trace_id,
+        &input.auth_context.user_id,
+        &input.auth_context.api_key_id,
+        candidate,
+        candidate_index,
+        candidate_id,
+        skip_reason,
+        current_unix_secs(),
+        "gateway local openai cli decision failed to persist skipped candidate",
+    )
+    .await;
 }
 
 pub(super) async fn mark_unused_local_openai_cli_candidates<T>(state: &AppState, remaining: Vec<T>)
 where
     T: LocalOpenAiCliPlanAndReport,
 {
-    for plan_and_report in remaining {
-        record_local_request_candidate_status(
-            state,
-            plan_and_report.plan(),
-            plan_and_report.report_context(),
-            RequestCandidateStatus::Unused,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await;
-    }
+    mark_unused_local_candidate_items(
+        state,
+        remaining,
+        |item| item.plan(),
+        |item| item.report_context(),
+    )
+    .await;
 }
 
 pub(super) trait LocalOpenAiCliPlanAndReport {

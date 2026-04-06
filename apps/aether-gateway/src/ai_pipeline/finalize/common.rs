@@ -9,8 +9,8 @@ pub(crate) use crate::ai_pipeline::adaptation::private_envelope::{
     provider_private_response_allows_sync_finalize as local_finalize_allows_envelope,
 };
 use crate::ai_pipeline::contracts::core_success_background_report_kind;
+use crate::ai_pipeline::control_facade::GatewayControlDecision;
 use crate::api::response::build_client_response_from_parts;
-use crate::control::GatewayControlDecision;
 use crate::{usage::GatewaySyncReportRequest, GatewayError};
 
 pub(crate) struct LocalCoreSyncFinalizeOutcome {
@@ -140,59 +140,4 @@ pub(crate) fn canonicalize_tool_arguments(value: Option<Value>) -> String {
 
 pub(crate) fn build_generated_tool_call_id(index: usize) -> String {
     format!("call_auto_{index}")
-}
-
-pub(crate) fn parse_stream_json_events(body: &[u8]) -> Option<Vec<Value>> {
-    let text = std::str::from_utf8(body).ok()?;
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Some(Vec::new());
-    }
-
-    if trimmed.starts_with('[') {
-        let array_value: Value = serde_json::from_str(trimmed).ok()?;
-        let array = array_value.as_array()?;
-        return Some(
-            array
-                .iter()
-                .filter(|value| value.is_object())
-                .cloned()
-                .collect(),
-        );
-    }
-
-    let mut events = Vec::new();
-    let mut current_event_type: Option<String> = None;
-
-    for raw_line in text.lines() {
-        let line = raw_line.trim_matches('\r').trim();
-        if line.is_empty() || line.starts_with(':') {
-            continue;
-        }
-        if let Some(event_name) = line.strip_prefix("event:") {
-            current_event_type = Some(event_name.trim().to_string());
-            continue;
-        }
-        let data_line = if let Some(rest) = line.strip_prefix("data:") {
-            rest.trim()
-        } else {
-            line
-        };
-        if data_line.is_empty() || data_line == "[DONE]" {
-            continue;
-        }
-
-        let mut event: Value = serde_json::from_str(data_line).ok()?;
-        if let Some(event_object) = event.as_object_mut() {
-            if !event_object.contains_key("type") {
-                if let Some(event_name) = current_event_type.take() {
-                    event_object.insert("type".to_string(), Value::String(event_name));
-                }
-            }
-        }
-        events.push(event);
-        current_event_type = None;
-    }
-
-    Some(events)
 }

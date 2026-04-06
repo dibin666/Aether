@@ -1,6 +1,7 @@
 use futures_util::future::BoxFuture;
 use sqlx::{Postgres, Transaction};
 
+use crate::error::{postgres_error, SqlxResultExt};
 use crate::postgres::PostgresPool;
 use crate::DataLayerError;
 
@@ -70,9 +71,12 @@ impl PostgresTransactionRunner {
     ) -> Result<PostgresTransaction, DataLayerError> {
         options.validate()?;
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin().await.map_postgres_err()?;
         for statement in build_transaction_setup_statements(options) {
-            sqlx::query(statement.as_str()).execute(&mut *tx).await?;
+            sqlx::query(statement.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_postgres_err()?;
         }
         Ok(tx)
     }
@@ -90,7 +94,7 @@ impl PostgresTransactionRunner {
         let mut tx = self.begin(options).await?;
         match f(&mut tx).await {
             Ok(value) => {
-                tx.commit().await?;
+                tx.commit().await.map_err(postgres_error)?;
                 Ok(value)
             }
             Err(err) => {

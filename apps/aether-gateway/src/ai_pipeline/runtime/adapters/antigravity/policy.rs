@@ -1,14 +1,14 @@
 use serde_json::Value;
 
 use super::auth::{
-    resolve_local_antigravity_request_auth, AntigravityRequestAuth, AntigravityRequestAuthSupport,
-    AntigravityRequestAuthUnsupportedReason, ANTIGRAVITY_PROVIDER_TYPE,
+    ANTIGRAVITY_PROVIDER_TYPE, AntigravityRequestAuth, AntigravityRequestAuthSupport,
+    AntigravityRequestAuthUnsupportedReason, resolve_local_antigravity_request_auth,
 };
 use super::request::{
-    classify_antigravity_safe_request_body, AntigravityEnvelopeRequestType,
-    AntigravityRequestEnvelopeUnsupportedReason,
+    AntigravityEnvelopeRequestType, AntigravityRequestEnvelopeUnsupportedReason,
+    classify_antigravity_safe_request_body,
 };
-use crate::provider_transport::snapshot::GatewayProviderTransportSnapshot;
+use crate::ai_pipeline::provider_transport_facade::snapshot::GatewayProviderTransportSnapshot;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AntigravityRequestSideSpec {

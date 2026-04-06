@@ -7,7 +7,7 @@ use super::types::{
     StoredManagementTokenListPage, StoredManagementTokenUserSummary, StoredManagementTokenWithUser,
     UpdateManagementTokenRecord,
 };
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const LIST_MANAGEMENT_TOKENS_SQL: &str = r#"
 SELECT
@@ -217,8 +217,9 @@ impl ManagementTokenReadRepository for SqlxManagementTokenRepository {
             .bind(query.user_id.as_deref())
             .bind(query.is_active)
             .fetch_one(&self.pool)
-            .await?;
-        let total = count_row.try_get::<i64, _>("total")?;
+            .await
+            .map_postgres_err()?;
+        let total = count_row.try_get::<i64, _>("total").map_postgres_err()?;
 
         let rows = sqlx::query(LIST_MANAGEMENT_TOKENS_SQL)
             .bind(query.user_id.as_deref())
@@ -226,7 +227,8 @@ impl ManagementTokenReadRepository for SqlxManagementTokenRepository {
             .bind(i64::try_from(query.offset).unwrap_or(i64::MAX))
             .bind(i64::try_from(query.limit).unwrap_or(i64::MAX))
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         Ok(StoredManagementTokenListPage {
             items: rows
@@ -244,7 +246,8 @@ impl ManagementTokenReadRepository for SqlxManagementTokenRepository {
         let row = sqlx::query(GET_MANAGEMENT_TOKEN_WITH_USER_SQL)
             .bind(token_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_token_with_user_row).transpose()
     }
 }
@@ -305,7 +308,8 @@ impl ManagementTokenWriteRepository for SqlxManagementTokenRepository {
         let result = sqlx::query(DELETE_MANAGEMENT_TOKEN_SQL)
             .bind(token_id)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -318,7 +322,8 @@ impl ManagementTokenWriteRepository for SqlxManagementTokenRepository {
             .bind(token_id)
             .bind(is_active)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_token_row).transpose()
     }
 
@@ -332,7 +337,8 @@ impl ManagementTokenWriteRepository for SqlxManagementTokenRepository {
             .bind(&mutation.token_hash)
             .bind(mutation.token_prefix.as_deref())
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_token_row).transpose()
     }
 }
@@ -363,40 +369,40 @@ fn map_management_token_write_error(
 
     match conflict {
         Some(detail) => DataLayerError::InvalidInput(detail),
-        None => DataLayerError::Postgres(err),
+        None => DataLayerError::Postgres(err.to_string()),
     }
 }
 
 fn map_token_row(row: &PgRow) -> Result<StoredManagementToken, DataLayerError> {
     Ok(StoredManagementToken::new(
-        row.try_get("id")?,
-        row.try_get("user_id")?,
-        row.try_get("name")?,
+        row.try_get("id").map_postgres_err()?,
+        row.try_get("user_id").map_postgres_err()?,
+        row.try_get("name").map_postgres_err()?,
     )?
     .with_display_fields(
-        row.try_get("description")?,
-        row.try_get("token_prefix")?,
-        row.try_get("allowed_ips")?,
+        row.try_get("description").map_postgres_err()?,
+        row.try_get("token_prefix").map_postgres_err()?,
+        row.try_get("allowed_ips").map_postgres_err()?,
     )
     .with_runtime_fields(
-        optional_unix_secs(row.try_get("expires_at_unix_secs")?),
-        optional_unix_secs(row.try_get("last_used_at_unix_secs")?),
-        row.try_get("last_used_ip")?,
-        u64::try_from(row.try_get::<i32, _>("usage_count")?).unwrap_or(0),
-        row.try_get("is_active")?,
+        optional_unix_secs(row.try_get("expires_at_unix_secs").map_postgres_err()?),
+        optional_unix_secs(row.try_get("last_used_at_unix_secs").map_postgres_err()?),
+        row.try_get("last_used_ip").map_postgres_err()?,
+        u64::try_from(row.try_get::<i32, _>("usage_count").map_postgres_err()?).unwrap_or(0),
+        row.try_get("is_active").map_postgres_err()?,
     )
     .with_timestamps(
-        optional_unix_secs(row.try_get("created_at_unix_secs")?),
-        optional_unix_secs(row.try_get("updated_at_unix_secs")?),
+        optional_unix_secs(row.try_get("created_at_unix_secs").map_postgres_err()?),
+        optional_unix_secs(row.try_get("updated_at_unix_secs").map_postgres_err()?),
     ))
 }
 
 fn map_user_summary_row(row: &PgRow) -> Result<StoredManagementTokenUserSummary, DataLayerError> {
     StoredManagementTokenUserSummary::new(
-        row.try_get("user_row_id")?,
-        row.try_get("user_email")?,
-        row.try_get("user_username")?,
-        row.try_get("user_role")?,
+        row.try_get("user_row_id").map_postgres_err()?,
+        row.try_get("user_email").map_postgres_err()?,
+        row.try_get("user_username").map_postgres_err()?,
+        row.try_get("user_role").map_postgres_err()?,
     )
 }
 

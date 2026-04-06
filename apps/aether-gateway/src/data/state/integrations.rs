@@ -5,15 +5,16 @@ use aether_data::repository::audit::RequestAuditReader;
 use aether_data::repository::auth::{
     AuthApiKeyLookupKey, ResolvedAuthApiKeySnapshotReader, StoredAuthApiKeySnapshot,
 };
-use aether_data::repository::billing::StoredBillingModelContext;
-use aether_data::repository::candidate_selection::StoredMinimalCandidateSelectionRow;
-use aether_data::repository::provider_catalog::{
+use aether_data::DataLayerError;
+use aether_data_contracts::repository::billing::StoredBillingModelContext;
+use aether_data_contracts::repository::candidate_selection::StoredMinimalCandidateSelectionRow;
+use aether_data_contracts::repository::candidates::DecisionTrace;
+use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
-use aether_data::repository::settlement::{StoredUsageSettlement, UsageSettlementInput};
-use aether_data::repository::usage::{StoredRequestUsageAudit, UpsertUsageRecord};
-use aether_data::repository::video_tasks::{StoredVideoTask, VideoTaskLookupKey};
-use aether_data::DataLayerError;
+use aether_data_contracts::repository::settlement::{StoredUsageSettlement, UsageSettlementInput};
+use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UpsertUsageRecord};
+use aether_data_contracts::repository::video_tasks::{StoredVideoTask, VideoTaskLookupKey};
 use aether_usage_runtime::{
     UsageBillingEventEnricher, UsageEvent, UsageRecordWriter, UsageRuntimeAccess,
     UsageSettlementWriter,
@@ -22,8 +23,8 @@ use aether_video_tasks_core::StoredVideoTaskReadSide;
 use async_trait::async_trait;
 
 use super::GatewayDataState;
+use crate::data::candidate_selection::MinimalCandidateSelectionRowSource;
 use crate::provider_transport::ProviderTransportSnapshotSource;
-use crate::scheduler::SchedulerCandidateSelectionRowSource;
 
 #[async_trait]
 impl RequestAuditReader for GatewayDataState {
@@ -38,7 +39,7 @@ impl RequestAuditReader for GatewayDataState {
         &self,
         request_id: &str,
         attempted_only: bool,
-    ) -> Result<Option<aether_data::repository::candidates::DecisionTrace>, DataLayerError> {
+    ) -> Result<Option<DecisionTrace>, DataLayerError> {
         GatewayDataState::read_decision_trace(self, request_id, attempted_only).await
     }
 
@@ -102,7 +103,7 @@ impl ProviderTransportSnapshotSource for GatewayDataState {
 }
 
 #[async_trait]
-impl SchedulerCandidateSelectionRowSource for GatewayDataState {
+impl MinimalCandidateSelectionRowSource for GatewayDataState {
     async fn read_minimal_candidate_selection_rows_for_api_format_and_global_model(
         &self,
         api_format: &str,
@@ -197,7 +198,7 @@ mod tests {
         let state = GatewayDataState::with_billing_reader_for_tests(
             std::sync::Arc::new(
                 aether_data::repository::billing::InMemoryBillingReadRepository::seed(vec![
-                    aether_data::repository::billing::StoredBillingModelContext::new(
+                    aether_data_contracts::repository::billing::StoredBillingModelContext::new(
                         "provider-1".to_string(),
                         Some("pay_as_you_go".to_string()),
                         Some("key-1".to_string()),

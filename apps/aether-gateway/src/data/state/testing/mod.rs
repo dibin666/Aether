@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
+use aether_data_contracts::repository::candidates::RequestCandidateRepository;
+use aether_data_contracts::repository::quota::ProviderQuotaRepository;
+use aether_data_contracts::repository::usage::UsageRepository;
+
 use super::{
     AnnouncementReadRepository, AnnouncementWriteRepository, AuthApiKeyReadRepository,
     AuthApiKeyWriteRepository, AuthModuleReadRepository, AuthModuleWriteRepository,
@@ -85,7 +89,7 @@ impl GatewayDataState {
     #[cfg(test)]
     pub(crate) fn with_request_candidate_repository_for_tests<T>(repository: Arc<T>) -> Self
     where
-        T: aether_data::repository::candidates::RequestCandidateRepository + 'static,
+        T: RequestCandidateRepository + 'static,
     {
         let request_candidate_reader: Arc<dyn RequestCandidateReadRepository> = repository.clone();
         let request_candidate_writer: Arc<dyn RequestCandidateWriteRepository> = repository;
@@ -385,7 +389,7 @@ impl GatewayDataState {
         provider_quota_repository: Arc<T>,
     ) -> Self
     where
-        T: aether_data::repository::quota::ProviderQuotaRepository + 'static,
+        T: ProviderQuotaRepository + 'static,
     {
         let provider_quota_reader: Arc<dyn ProviderQuotaReadRepository> =
             provider_quota_repository.clone();
@@ -441,7 +445,7 @@ impl GatewayDataState {
         provider_quota_repository: Arc<T>,
     ) -> Self
     where
-        T: aether_data::repository::quota::ProviderQuotaRepository + 'static,
+        T: ProviderQuotaRepository + 'static,
         U: ProviderCatalogReadRepository + ProviderCatalogWriteRepository + 'static,
         V: GlobalModelReadRepository + GlobalModelWriteRepository + 'static,
     {
@@ -600,8 +604,8 @@ impl GatewayDataState {
         usage_repository: Arc<U>,
     ) -> Self
     where
-        T: aether_data::repository::candidates::RequestCandidateRepository + 'static,
-        U: aether_data::repository::usage::UsageRepository + 'static,
+        T: RequestCandidateRepository + 'static,
+        U: UsageRepository + 'static,
     {
         let request_candidate_reader: Arc<dyn RequestCandidateReadRepository> =
             request_candidate_repository.clone();
@@ -659,7 +663,7 @@ impl GatewayDataState {
         gemini_file_mapping_repository: Arc<U>,
     ) -> Self
     where
-        T: aether_data::repository::candidates::RequestCandidateRepository + 'static,
+        T: RequestCandidateRepository + 'static,
         U: aether_data::repository::gemini_file_mappings::GeminiFileMappingRepository + 'static,
     {
         let request_candidate_reader: Arc<dyn RequestCandidateReadRepository> =
@@ -879,7 +883,7 @@ impl GatewayDataState {
         usage_repository: Arc<TUsage>,
     ) -> Self
     where
-        TUsage: aether_data::repository::usage::UsageRepository + 'static,
+        TUsage: UsageRepository + 'static,
         TWallet: aether_data::repository::wallet::WalletRepository + 'static,
     {
         let wallet_reader: Arc<dyn WalletReadRepository> = wallet_repository.clone();
@@ -1842,7 +1846,7 @@ impl GatewayDataState {
         provider_quota_repository: Arc<T>,
     ) -> Self
     where
-        T: aether_data::repository::quota::ProviderQuotaRepository + 'static,
+        T: ProviderQuotaRepository + 'static,
     {
         let provider_quota_reader: Arc<dyn ProviderQuotaReadRepository> =
             provider_quota_repository.clone();
@@ -1899,7 +1903,7 @@ impl GatewayDataState {
         request_candidate_repository: Arc<dyn RequestCandidateReadRepository>,
     ) -> Self
     where
-        T: aether_data::repository::quota::ProviderQuotaRepository + 'static,
+        T: ProviderQuotaRepository + 'static,
     {
         let provider_quota_reader: Arc<dyn ProviderQuotaReadRepository> =
             provider_quota_repository.clone();
@@ -1959,7 +1963,7 @@ impl GatewayDataState {
         request_candidate_repository: Arc<dyn RequestCandidateReadRepository>,
     ) -> Self
     where
-        T: aether_data::repository::quota::ProviderQuotaRepository + 'static,
+        T: ProviderQuotaRepository + 'static,
     {
         let provider_quota_reader: Arc<dyn ProviderQuotaReadRepository> =
             provider_quota_repository.clone();
@@ -2021,7 +2025,7 @@ impl GatewayDataState {
         encryption_key: impl Into<String>,
     ) -> Self
     where
-        T: aether_data::repository::candidates::RequestCandidateRepository + 'static,
+        T: RequestCandidateRepository + 'static,
         U: ProviderCatalogReadRepository + ProviderCatalogWriteRepository + 'static,
     {
         let request_candidate_reader: Arc<dyn RequestCandidateReadRepository> =
@@ -2089,7 +2093,7 @@ impl GatewayDataState {
         encryption_key: impl Into<String>,
     ) -> Self
     where
-        T: aether_data::repository::candidates::RequestCandidateRepository + 'static,
+        T: RequestCandidateRepository + 'static,
         U: ProviderCatalogReadRepository + ProviderCatalogWriteRepository + 'static,
         V: aether_data::repository::shadow_results::ShadowResultRepository + 'static,
     {
@@ -2162,9 +2166,9 @@ impl GatewayDataState {
         encryption_key: impl Into<String>,
     ) -> Self
     where
-        T: aether_data::repository::candidates::RequestCandidateRepository + 'static,
+        T: RequestCandidateRepository + 'static,
         U: ProviderCatalogReadRepository + ProviderCatalogWriteRepository + 'static,
-        V: aether_data::repository::usage::UsageRepository + 'static,
+        V: UsageRepository + 'static,
     {
         let request_candidate_reader: Arc<dyn RequestCandidateReadRepository> =
             request_candidate_repository.clone();
@@ -2236,9 +2240,9 @@ impl GatewayDataState {
         encryption_key: impl Into<String>,
     ) -> Self
     where
-        T: aether_data::repository::candidates::RequestCandidateRepository + 'static,
+        T: RequestCandidateRepository + 'static,
         U: ProviderCatalogReadRepository + ProviderCatalogWriteRepository + 'static,
-        V: aether_data::repository::usage::UsageRepository + 'static,
+        V: UsageRepository + 'static,
         W: aether_data::repository::wallet::WalletRepository + 'static,
     {
         let request_candidate_reader: Arc<dyn RequestCandidateReadRepository> =
@@ -2307,7 +2311,7 @@ impl GatewayDataState {
         encryption_key: impl Into<String>,
     ) -> Self
     where
-        T: aether_data::repository::quota::ProviderQuotaRepository + 'static,
+        T: ProviderQuotaRepository + 'static,
     {
         let provider_quota_reader: Arc<dyn ProviderQuotaReadRepository> =
             provider_quota_repository.clone();
@@ -2360,7 +2364,7 @@ impl GatewayDataState {
     #[cfg(test)]
     pub(crate) fn with_usage_repository_for_tests<T>(repository: Arc<T>) -> Self
     where
-        T: aether_data::repository::usage::UsageRepository + 'static,
+        T: UsageRepository + 'static,
     {
         let usage_reader: Arc<dyn UsageReadRepository> = repository.clone();
         let usage_writer: Arc<dyn UsageWriteRepository> = repository;
@@ -2516,7 +2520,7 @@ impl GatewayDataState {
     ) -> Self
     where
         TWallet: aether_data::repository::wallet::WalletRepository + 'static,
-        TUsage: aether_data::repository::usage::UsageRepository + 'static,
+        TUsage: UsageRepository + 'static,
     {
         let wallet_reader: Arc<dyn WalletReadRepository> = wallet_repository.clone();
         let wallet_writer: Arc<dyn WalletWriteRepository> = wallet_repository;
@@ -2572,7 +2576,7 @@ impl GatewayDataState {
         wallet_repository: Arc<TWallet>,
     ) -> Self
     where
-        TUsage: aether_data::repository::usage::UsageRepository + 'static,
+        TUsage: UsageRepository + 'static,
         TWallet: aether_data::repository::wallet::WalletRepository + 'static,
     {
         let usage_reader: Arc<dyn UsageReadRepository> = usage_repository.clone();
@@ -2626,7 +2630,7 @@ impl GatewayDataState {
     #[cfg(test)]
     pub(crate) fn with_provider_quota_repository_for_tests<T>(repository: Arc<T>) -> Self
     where
-        T: aether_data::repository::quota::ProviderQuotaRepository + 'static,
+        T: ProviderQuotaRepository + 'static,
     {
         let provider_quota_reader: Arc<dyn ProviderQuotaReadRepository> = repository.clone();
         let provider_quota_writer: Arc<dyn ProviderQuotaWriteRepository> = repository;

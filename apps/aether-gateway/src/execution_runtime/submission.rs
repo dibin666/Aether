@@ -29,34 +29,10 @@ pub(super) fn maybe_build_local_core_error_response(
         return Ok(None);
     }
 
-    let Some(body_json) = payload.body_json.as_ref() else {
+    let Some(response_body_json) = resolve_local_core_error_response_body_json(payload)? else {
         return Ok(None);
     };
-    let mut body_json = body_json.clone();
-    if let Some(report_context) = payload.report_context.as_ref() {
-        if let Some(unwrapped) =
-            unwrap_local_finalize_response_value(body_json.clone(), report_context)?
-        {
-            body_json = unwrapped;
-        }
-    }
-
-    let Some(body_object) = body_json.as_object() else {
-        return Ok(None);
-    };
-    if !body_object.contains_key("error")
-        && !body_object
-            .get("type")
-            .and_then(|value| value.as_str())
-            .is_some_and(|value| value == "error")
-    {
-        return Ok(None);
-    }
-
-    let Some(response_body_json) = build_best_effort_local_core_error_body(payload, &body_json)?
-    else {
-        return Ok(None);
-    };
+    let status_source_json = resolve_local_sync_source_body_json(payload)?;
 
     let mut response_headers = payload.headers.clone();
     response_headers.remove("content-encoding");
@@ -68,7 +44,11 @@ pub(super) fn maybe_build_local_core_error_response(
     response_headers.insert("content-length".to_string(), body_bytes.len().to_string());
 
     Ok(Some(build_client_response_from_parts(
-        resolve_local_sync_error_status_code(payload.status_code, &body_json),
+        status_source_json
+            .as_ref()
+            .map_or(payload.status_code, |body_json| {
+                resolve_local_sync_error_status_code(payload.status_code, body_json)
+            }),
         &response_headers,
         Body::from(body_bytes),
         trace_id,
@@ -83,25 +63,13 @@ fn maybe_resolve_local_sync_response_body_json(
         return Ok(Some(client_body_json));
     }
 
-    let Some(mut body_json) = payload.body_json.clone() else {
-        return Ok(None);
-    };
-
-    if let Some(report_context) = payload.report_context.as_ref() {
-        if let Some(unwrapped) =
-            unwrap_local_finalize_response_value(body_json.clone(), report_context)?
-        {
-            body_json = unwrapped;
-        }
-    }
-
     if is_core_error_finalize_kind(payload.report_kind.as_str()) {
-        if let Some(converted) = build_best_effort_local_core_error_body(payload, &body_json)? {
+        if let Some(converted) = resolve_local_core_error_response_body_json(payload)? {
             return Ok(Some(converted));
         }
     }
 
-    Ok(Some(body_json))
+    resolve_local_sync_source_body_json(payload)
 }
 
 fn build_local_sync_response_from_json(
@@ -214,6 +182,102 @@ pub(crate) fn build_best_effort_local_core_error_body(
         details.code.as_deref(),
         details.kind,
     ))
+}
+
+pub(crate) fn resolve_local_core_error_response_body_json(
+    payload: &GatewaySyncReportRequest,
+) -> Result<Option<serde_json::Value>, GatewayError> {
+    if !is_core_error_finalize_kind(payload.report_kind.as_str()) {
+        return Ok(None);
+    }
+
+    if let Some(client_body_json) = payload.client_body_json.clone() {
+        return Ok(Some(client_body_json));
+    }
+
+    if let Some(body_json) = resolve_local_sync_source_body_json(payload)? {
+        if let Some(converted) = build_best_effort_local_core_error_body(payload, &body_json)? {
+            return Ok(Some(converted));
+        }
+        return Ok(Some(body_json));
+    }
+
+    let Some(body_text) = decode_local_sync_body_text(payload)? else {
+        return Ok(None);
+    };
+    let client_api_format = resolve_local_sync_client_api_format(payload);
+    if client_api_format.is_empty() {
+        return Ok(None);
+    }
+
+    let kind =
+        classify_local_sync_error_kind(payload.status_code, None, None, None, body_text.as_str());
+    Ok(build_core_error_body_for_client_format(
+        &client_api_format,
+        body_text.as_str(),
+        None,
+        kind,
+    ))
+}
+
+fn resolve_local_sync_source_body_json(
+    payload: &GatewaySyncReportRequest,
+) -> Result<Option<serde_json::Value>, GatewayError> {
+    let body_json = if let Some(body_json) = payload.body_json.clone() {
+        body_json
+    } else if let Some(body_base64) = payload.body_base64.as_deref() {
+        let body_bytes = base64::engine::general_purpose::STANDARD
+            .decode(body_base64)
+            .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        let stripped = strip_utf8_bom_and_ws(&body_bytes);
+        let Ok(body_json) = serde_json::from_slice::<serde_json::Value>(stripped) else {
+            return Ok(None);
+        };
+        body_json
+    } else {
+        return Ok(None);
+    };
+
+    if let Some(report_context) = payload.report_context.as_ref() {
+        if let Some(unwrapped) =
+            unwrap_local_finalize_response_value(body_json.clone(), report_context)?
+        {
+            return Ok(Some(unwrapped));
+        }
+    }
+
+    Ok(Some(body_json))
+}
+
+fn decode_local_sync_body_text(
+    payload: &GatewaySyncReportRequest,
+) -> Result<Option<String>, GatewayError> {
+    let Some(body_base64) = payload.body_base64.as_deref() else {
+        return Ok(None);
+    };
+    let body_bytes = base64::engine::general_purpose::STANDARD
+        .decode(body_base64)
+        .map_err(|err| GatewayError::Internal(err.to_string()))?;
+    let stripped = strip_utf8_bom_and_ws(&body_bytes);
+    let body_text = String::from_utf8_lossy(stripped).trim().to_string();
+    if body_text.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(body_text))
+}
+
+fn resolve_local_sync_client_api_format(payload: &GatewaySyncReportRequest) -> String {
+    let default_api_format = core_error_default_client_api_format(payload.report_kind.as_str())
+        .unwrap_or_default()
+        .to_string();
+    payload
+        .report_context
+        .as_ref()
+        .and_then(|value| value.get("client_api_format"))
+        .and_then(|value| value.as_str())
+        .unwrap_or(default_api_format.as_str())
+        .trim()
+        .to_ascii_lowercase()
 }
 
 pub(crate) fn resolve_core_error_background_report_kind(report_kind: &str) -> Option<String> {

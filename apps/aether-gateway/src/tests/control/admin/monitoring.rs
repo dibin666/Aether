@@ -4,17 +4,19 @@ use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY}
 use aether_data::repository::auth::{
     InMemoryAuthApiKeySnapshotRepository, StoredAuthApiKeyExportRecord,
 };
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateStatus, StoredRequestCandidate,
-};
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider,
-};
-use aether_data::repository::usage::{InMemoryUsageReadRepository, StoredRequestUsageAudit};
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data::repository::usage::InMemoryUsageReadRepository;
 use aether_data::repository::users::{
     InMemoryUserReadRepository, StoredUserAuthRecord, StoredUserExportRow,
 };
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateStatus, StoredRequestCandidate,
+};
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
+};
+use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
 use axum::body::Body;
 use axum::routing::{any, delete, get};
 use axum::{extract::Request, Router};
@@ -685,13 +687,11 @@ async fn gateway_handles_admin_monitoring_cache_stats_locally_with_trusted_admin
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-                crate::data::GatewayDataState::with_usage_reader_for_tests(
-                    usage_repository,
-                )
-                .with_system_config_values_for_tests([
-                    ("scheduling_mode".to_string(), json!("cache_affinity")),
-                    ("provider_priority_mode".to_string(), json!("provider")),
-                ]),
+                crate::data::GatewayDataState::with_usage_reader_for_tests(usage_repository)
+                    .with_system_config_values_for_tests([
+                        ("scheduling_mode".to_string(), json!("cache_affinity")),
+                        ("provider_priority_mode".to_string(), json!("provider")),
+                    ]),
             ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
@@ -963,10 +963,8 @@ async fn gateway_handles_admin_monitoring_cache_affinity_locally_without_redis_o
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-                crate::data::GatewayDataState::with_user_reader_for_tests(
-                    user_repository,
-                )
-                .with_auth_api_key_reader(auth_repository),
+                crate::data::GatewayDataState::with_user_reader_for_tests(user_repository)
+                    .with_auth_api_key_reader(auth_repository),
             ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
@@ -1028,10 +1026,8 @@ async fn gateway_handles_admin_monitoring_cache_users_delete_locally_with_truste
     let state = AppState::new()
         .expect("gateway should build")
         .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_user_reader_for_tests(
-                user_repository,
-            )
-            .with_auth_api_key_reader(auth_repository),
+            crate::data::GatewayDataState::with_user_reader_for_tests(user_repository)
+                .with_auth_api_key_reader(auth_repository),
         )
         .with_admin_monitoring_cache_affinity_entry_for_tests(
             "cache_affinity:user-key-1:openai:model-alpha",
@@ -1105,10 +1101,8 @@ async fn gateway_handles_admin_monitoring_cache_affinity_delete_locally_with_tru
     let state = AppState::new()
         .expect("gateway should build")
         .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_user_reader_for_tests(
-                user_repository,
-            )
-            .with_auth_api_key_reader(auth_repository),
+            crate::data::GatewayDataState::with_user_reader_for_tests(user_repository)
+                .with_auth_api_key_reader(auth_repository),
         )
         .with_admin_monitoring_cache_affinity_entry_for_tests(
             "cache_affinity:user-key-1:openai:model-alpha",
@@ -1366,13 +1360,11 @@ async fn gateway_handles_admin_monitoring_cache_metrics_locally_with_trusted_adm
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-                crate::data::GatewayDataState::with_usage_reader_for_tests(
-                    usage_repository,
-                )
-                .with_system_config_values_for_tests([
-                    ("scheduling_mode".to_string(), json!("cache_affinity")),
-                    ("provider_priority_mode".to_string(), json!("provider")),
-                ]),
+                crate::data::GatewayDataState::with_usage_reader_for_tests(usage_repository)
+                    .with_system_config_values_for_tests([
+                        ("scheduling_mode".to_string(), json!("cache_affinity")),
+                        ("provider_priority_mode".to_string(), json!("provider")),
+                    ]),
             ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
@@ -2056,10 +2048,10 @@ async fn gateway_handles_admin_monitoring_resilience_circuit_history_locally_wit
         AppState::new()
             .expect("gateway should build")
             .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
-                provider_catalog,
+                crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
+                    provider_catalog,
+                ),
             ),
-        ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 

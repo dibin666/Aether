@@ -6,7 +6,7 @@ use super::types::{
     AnnouncementListQuery, AnnouncementReadRepository, AnnouncementWriteRepository,
     CreateAnnouncementRecord, StoredAnnouncement, StoredAnnouncementPage, UpdateAnnouncementRecord,
 };
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const FIND_ANNOUNCEMENT_BY_ID_SQL: &str = r#"
 SELECT
@@ -199,7 +199,8 @@ impl AnnouncementReadRepository for SqlxAnnouncementReadRepository {
         let row = sqlx::query(FIND_ANNOUNCEMENT_BY_ID_SQL)
             .bind(announcement_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_announcement_row).transpose()
     }
 
@@ -212,8 +213,12 @@ impl AnnouncementReadRepository for SqlxAnnouncementReadRepository {
             .bind(query.active_only)
             .bind(now_unix_secs as f64)
             .fetch_one(&self.pool)
-            .await?;
-        let total = total_row.try_get::<i64, _>("total")?.max(0) as u64;
+            .await
+            .map_postgres_err()?;
+        let total = total_row
+            .try_get::<i64, _>("total")
+            .map_postgres_err()?
+            .max(0) as u64;
 
         let rows = sqlx::query(LIST_ANNOUNCEMENTS_SQL)
             .bind(query.active_only)
@@ -221,7 +226,8 @@ impl AnnouncementReadRepository for SqlxAnnouncementReadRepository {
             .bind(query.offset as i64)
             .bind(query.limit as i64)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_announcement_row)
@@ -239,8 +245,9 @@ impl AnnouncementReadRepository for SqlxAnnouncementReadRepository {
             .bind(user_id)
             .bind(now_unix_secs as f64)
             .fetch_one(&self.pool)
-            .await?;
-        Ok(row.try_get::<i64, _>("total")?.max(0) as u64)
+            .await
+            .map_postgres_err()?;
+        Ok(row.try_get::<i64, _>("total").map_postgres_err()?.max(0) as u64)
     }
 }
 
@@ -262,7 +269,8 @@ impl AnnouncementWriteRepository for SqlxAnnouncementReadRepository {
             .bind(optional_datetime(record.start_time_unix_secs))
             .bind(optional_datetime(record.end_time_unix_secs))
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         map_announcement_row(&row)
     }
 
@@ -282,7 +290,8 @@ impl AnnouncementWriteRepository for SqlxAnnouncementReadRepository {
             .bind(optional_datetime(record.start_time_unix_secs))
             .bind(optional_datetime(record.end_time_unix_secs))
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_announcement_row).transpose()
     }
 
@@ -290,7 +299,8 @@ impl AnnouncementWriteRepository for SqlxAnnouncementReadRepository {
         let result = sqlx::query(DELETE_ANNOUNCEMENT_SQL)
             .bind(announcement_id)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -306,7 +316,8 @@ impl AnnouncementWriteRepository for SqlxAnnouncementReadRepository {
             .bind(announcement_id)
             .bind(read_at_unix_secs as f64)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 }
@@ -328,19 +339,19 @@ fn current_unix_secs() -> u64 {
 
 fn map_announcement_row(row: &PgRow) -> Result<StoredAnnouncement, DataLayerError> {
     StoredAnnouncement::new(
-        row.try_get("id")?,
-        row.try_get("title")?,
-        row.try_get("content")?,
-        row.try_get("type")?,
-        row.try_get("priority")?,
-        row.try_get("is_active")?,
-        row.try_get("is_pinned")?,
-        row.try_get("author_id")?,
-        row.try_get("author_username")?,
-        row.try_get("start_time_unix_secs")?,
-        row.try_get("end_time_unix_secs")?,
-        row.try_get("created_at_unix_secs")?,
-        row.try_get("updated_at_unix_secs")?,
+        row.try_get("id").map_postgres_err()?,
+        row.try_get("title").map_postgres_err()?,
+        row.try_get("content").map_postgres_err()?,
+        row.try_get("type").map_postgres_err()?,
+        row.try_get("priority").map_postgres_err()?,
+        row.try_get("is_active").map_postgres_err()?,
+        row.try_get("is_pinned").map_postgres_err()?,
+        row.try_get("author_id").map_postgres_err()?,
+        row.try_get("author_username").map_postgres_err()?,
+        row.try_get("start_time_unix_secs").map_postgres_err()?,
+        row.try_get("end_time_unix_secs").map_postgres_err()?,
+        row.try_get("created_at_unix_secs").map_postgres_err()?,
+        row.try_get("updated_at_unix_secs").map_postgres_err()?,
     )
 }
 

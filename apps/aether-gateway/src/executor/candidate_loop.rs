@@ -1,14 +1,14 @@
 use axum::body::Body;
 use axum::http::Response;
 
+use aether_data_contracts::repository::candidates::RequestCandidateStatus;
+
 use crate::ai_pipeline::planner::plan_builders::{
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
 use crate::control::GatewayControlDecision;
-use crate::execution_runtime::{
-    execute_execution_runtime_stream, execute_execution_runtime_sync,
-};
-use crate::scheduler::record_local_request_candidate_status;
+use crate::execution_runtime::{execute_execution_runtime_stream, execute_execution_runtime_sync};
+use crate::request_candidate_runtime::record_local_request_candidate_status;
 use crate::{AppState, GatewayError};
 
 pub(crate) trait LocalPlanAndReport {
@@ -120,7 +120,33 @@ where
             state,
             plan_and_report.plan(),
             plan_and_report.report_context().as_ref(),
-            aether_data::repository::candidates::RequestCandidateStatus::Unused,
+            RequestCandidateStatus::Unused,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+    }
+}
+
+pub(crate) async fn mark_unused_local_candidate_items<T, FPlan, FContext>(
+    state: &AppState,
+    remaining: Vec<T>,
+    plan: FPlan,
+    report_context: FContext,
+) where
+    FPlan: Fn(&T) -> &aether_contracts::ExecutionPlan,
+    FContext: Fn(&T) -> Option<&serde_json::Value>,
+{
+    for item in remaining {
+        record_local_request_candidate_status(
+            state,
+            plan(&item),
+            report_context(&item),
+            RequestCandidateStatus::Unused,
             None,
             None,
             None,

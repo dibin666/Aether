@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use aether_data::repository::provider_catalog::{
+use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogProvider,
 };
 use futures_util::stream::{self, StreamExt};
 use tracing::{debug, warn};
 
-use crate::handlers::admin::provider_ops::admin_provider_ops_local_action_response;
+use crate::handlers::admin::provider::ops::admin_provider_ops_local_action_response;
 use crate::{AppState, GatewayError};
 
 use super::{system_config_bool, PROVIDER_CHECKIN_CONCURRENCY};

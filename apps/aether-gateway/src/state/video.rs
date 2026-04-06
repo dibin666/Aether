@@ -1,6 +1,10 @@
 use super::{AppState, GatewayError};
 
 use crate::{async_task, video_tasks};
+use aether_data_contracts::repository::video_tasks::{
+    StoredVideoTask, UpsertVideoTask, VideoTaskLookupKey, VideoTaskModelCount,
+    VideoTaskQueryFilter, VideoTaskStatusCount,
+};
 
 impl AppState {
     pub(crate) async fn read_data_backed_video_task_response(
@@ -17,9 +21,9 @@ impl AppState {
     pub(crate) async fn find_video_task_by_id(
         &self,
         task_id: &str,
-    ) -> Result<Option<aether_data::repository::video_tasks::StoredVideoTask>, GatewayError> {
+    ) -> Result<Option<StoredVideoTask>, GatewayError> {
         self.data
-            .find_video_task(aether_data::repository::video_tasks::VideoTaskLookupKey::Id(task_id))
+            .find_video_task(VideoTaskLookupKey::Id(task_id))
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
@@ -27,11 +31,9 @@ impl AppState {
     pub(crate) async fn find_video_task_by_short_id(
         &self,
         short_id: &str,
-    ) -> Result<Option<aether_data::repository::video_tasks::StoredVideoTask>, GatewayError> {
+    ) -> Result<Option<StoredVideoTask>, GatewayError> {
         self.data
-            .find_video_task(
-                aether_data::repository::video_tasks::VideoTaskLookupKey::ShortId(short_id),
-            )
+            .find_video_task(VideoTaskLookupKey::ShortId(short_id))
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
@@ -39,7 +41,7 @@ impl AppState {
     pub(crate) async fn upsert_video_task_snapshot(
         &self,
         snapshot: &video_tasks::LocalVideoTaskSnapshot,
-    ) -> Result<Option<aether_data::repository::video_tasks::StoredVideoTask>, GatewayError> {
+    ) -> Result<Option<StoredVideoTask>, GatewayError> {
         self.data
             .upsert_video_task(snapshot.to_upsert_record())
             .await
@@ -77,7 +79,7 @@ impl AppState {
 
     pub(crate) async fn reconstruct_video_task_snapshot(
         &self,
-        task: &aether_data::repository::video_tasks::StoredVideoTask,
+        task: &StoredVideoTask,
     ) -> Result<Option<video_tasks::LocalVideoTaskSnapshot>, GatewayError> {
         crate::provider_transport::reconstruct_local_video_task_snapshot(self, task)
             .await
@@ -89,7 +91,7 @@ impl AppState {
         now_unix_secs: u64,
         claim_until_unix_secs: u64,
         limit: usize,
-    ) -> Result<Vec<aether_data::repository::video_tasks::StoredVideoTask>, GatewayError> {
+    ) -> Result<Vec<StoredVideoTask>, GatewayError> {
         self.data
             .claim_due_video_tasks(now_unix_secs, claim_until_unix_secs, limit)
             .await
@@ -98,8 +100,8 @@ impl AppState {
 
     pub(crate) async fn update_active_video_task(
         &self,
-        task: aether_data::repository::video_tasks::UpsertVideoTask,
-    ) -> Result<Option<aether_data::repository::video_tasks::StoredVideoTask>, GatewayError> {
+        task: UpsertVideoTask,
+    ) -> Result<Option<StoredVideoTask>, GatewayError> {
         self.data
             .update_active_video_task(task)
             .await
@@ -108,10 +110,10 @@ impl AppState {
 
     pub(crate) async fn list_video_task_page(
         &self,
-        filter: &aether_data::repository::video_tasks::VideoTaskQueryFilter,
+        filter: &VideoTaskQueryFilter,
         offset: usize,
         limit: usize,
-    ) -> Result<Vec<aether_data::repository::video_tasks::StoredVideoTask>, GatewayError> {
+    ) -> Result<Vec<StoredVideoTask>, GatewayError> {
         self.data
             .list_video_task_page(filter, offset, limit)
             .await
@@ -120,7 +122,7 @@ impl AppState {
 
     pub(crate) async fn count_video_tasks(
         &self,
-        filter: &aether_data::repository::video_tasks::VideoTaskQueryFilter,
+        filter: &VideoTaskQueryFilter,
     ) -> Result<u64, GatewayError> {
         self.data
             .count_video_tasks(filter)
@@ -130,8 +132,8 @@ impl AppState {
 
     pub(crate) async fn count_video_tasks_by_status(
         &self,
-        filter: &aether_data::repository::video_tasks::VideoTaskQueryFilter,
-    ) -> Result<Vec<aether_data::repository::video_tasks::VideoTaskStatusCount>, GatewayError> {
+        filter: &VideoTaskQueryFilter,
+    ) -> Result<Vec<VideoTaskStatusCount>, GatewayError> {
         self.data
             .count_video_tasks_by_status(filter)
             .await
@@ -140,7 +142,7 @@ impl AppState {
 
     pub(crate) async fn count_distinct_video_task_users(
         &self,
-        filter: &aether_data::repository::video_tasks::VideoTaskQueryFilter,
+        filter: &VideoTaskQueryFilter,
     ) -> Result<u64, GatewayError> {
         self.data
             .count_distinct_video_task_users(filter)
@@ -150,9 +152,9 @@ impl AppState {
 
     pub(crate) async fn top_video_task_models(
         &self,
-        filter: &aether_data::repository::video_tasks::VideoTaskQueryFilter,
+        filter: &VideoTaskQueryFilter,
         limit: usize,
-    ) -> Result<Vec<aether_data::repository::video_tasks::VideoTaskModelCount>, GatewayError> {
+    ) -> Result<Vec<VideoTaskModelCount>, GatewayError> {
         self.data
             .top_video_task_models(filter, limit)
             .await
@@ -161,7 +163,7 @@ impl AppState {
 
     pub(crate) async fn count_video_tasks_created_since(
         &self,
-        filter: &aether_data::repository::video_tasks::VideoTaskQueryFilter,
+        filter: &VideoTaskQueryFilter,
         created_since_unix_secs: u64,
     ) -> Result<u64, GatewayError> {
         self.data

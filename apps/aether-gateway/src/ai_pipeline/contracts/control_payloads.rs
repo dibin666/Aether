@@ -4,9 +4,10 @@ use aether_contracts::{ExecutionPlan, ExecutionTimeouts, ProxySnapshot};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::control::GatewayControlAuthContext;
-use crate::control::GatewayControlDecision;
-use crate::headers::collect_control_headers;
+use crate::ai_pipeline::control_facade::{
+    collect_control_headers, resolve_execution_runtime_auth_context, GatewayControlAuthContext,
+    GatewayControlDecision,
+};
 use crate::{AppState, GatewayError};
 
 #[derive(Debug, Serialize)]
@@ -142,7 +143,7 @@ pub(crate) async fn build_gateway_plan_request(
     body_json: serde_json::Value,
     body_base64: Option<String>,
 ) -> Result<GatewayControlPlanRequest, GatewayError> {
-    let auth_context = crate::control::resolve_execution_runtime_auth_context(
+    let auth_context = resolve_execution_runtime_auth_context(
         state,
         decision,
         &parts.headers,

@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use aether_data::repository::candidate_selection::StoredMinimalCandidateSelectionRow;
-use aether_data::repository::candidates::StoredRequestCandidate;
-use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
-use aether_data::DataLayerError;
+use aether_data_contracts::repository::candidate_selection::StoredMinimalCandidateSelectionRow;
+use aether_data_contracts::repository::candidates::StoredRequestCandidate;
+use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
+use aether_data_contracts::DataLayerError;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SchedulerMinimalCandidateSelectionCandidate {
@@ -362,11 +362,13 @@ fn candidate_provider_key_health_score(
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use aether_data::repository::candidate_selection::{
+    use aether_data_contracts::repository::candidate_selection::{
         StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
     };
-    use aether_data::repository::candidates::{RequestCandidateStatus, StoredRequestCandidate};
-    use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
+    use aether_data_contracts::repository::candidates::{
+        RequestCandidateStatus, StoredRequestCandidate,
+    };
+    use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 
     use super::{
         auth_api_key_concurrency_limit_reached, build_minimal_candidate_selection,

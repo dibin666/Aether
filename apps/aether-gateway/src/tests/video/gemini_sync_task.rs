@@ -1,13 +1,15 @@
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateReadRepository, RequestCandidateStatus,
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data::repository::video_tasks::InMemoryVideoTaskRepository;
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateReadRepository, RequestCandidateStatus,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider,
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
-use aether_data::repository::video_tasks::{
-    InMemoryVideoTaskRepository, UpsertVideoTask, VideoTaskWriteRepository,
+use aether_data_contracts::repository::video_tasks::{
+    UpsertVideoTask, VideoTaskStatus, VideoTaskWriteRepository,
 };
 use axum::body::{to_bytes, Body};
 use axum::response::Response;
@@ -18,9 +20,7 @@ use http::StatusCode;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
-use crate::constants::{
-    CONTROL_EXECUTED_HEADER, CONTROL_EXECUTE_FALLBACK_HEADER, TRACE_ID_HEADER,
-};
+use crate::constants::{CONTROL_EXECUTED_HEADER, CONTROL_EXECUTE_FALLBACK_HEADER, TRACE_ID_HEADER};
 
 use super::{
     build_router_with_state, build_state_with_execution_runtime_override, start_server,
@@ -180,7 +180,7 @@ async fn gateway_executes_gemini_video_cancel_via_data_backed_local_follow_up_wi
             resolution: Some("720p".to_string()),
             aspect_ratio: Some("16:9".to_string()),
             size: Some("720p".to_string()),
-            status: aether_data::repository::video_tasks::VideoTaskStatus::Submitted,
+            status: VideoTaskStatus::Submitted,
             progress_percent: 0,
             progress_message: None,
             retry_count: 0,
@@ -244,9 +244,8 @@ async fn gateway_executes_gemini_video_cancel_via_data_backed_local_follow_up_wi
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
     let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
-    let gateway_state =
-        build_state_with_execution_runtime_override(execution_runtime_url)
-    .with_data_state_for_tests(
+    let gateway_state = build_state_with_execution_runtime_override(execution_runtime_url)
+        .with_data_state_for_tests(
         crate::data::GatewayDataState::with_video_task_and_request_candidate_repository_for_tests(
             repository,
             Arc::clone(&request_candidate_repository),
@@ -544,7 +543,7 @@ async fn gateway_executes_gemini_video_cancel_via_reconstructed_data_backed_loca
             resolution: Some("720p".to_string()),
             aspect_ratio: Some("16:9".to_string()),
             size: None,
-            status: aether_data::repository::video_tasks::VideoTaskStatus::Processing,
+            status: VideoTaskStatus::Processing,
             progress_percent: 50,
             progress_message: None,
             retry_count: 0,

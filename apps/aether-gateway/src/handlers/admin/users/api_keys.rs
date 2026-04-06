@@ -4,10 +4,9 @@ use super::{
     AdminToggleUserApiKeyLockRequest, AdminUpdateUserApiKeyRequest,
 };
 use crate::control::GatewayPublicRequestContext;
-use crate::handlers::admin::misc_helpers::attach_admin_audit_response;
-use crate::handlers::{
-    decrypt_catalog_secret_with_fallbacks, encrypt_catalog_secret_with_fallbacks,
-    query_param_optional_bool,
+use crate::handlers::admin::shared::{
+    attach_admin_audit_response, decrypt_catalog_secret_with_fallbacks,
+    encrypt_catalog_secret_with_fallbacks, query_param_optional_bool,
 };
 use crate::{AppState, GatewayError};
 use axum::{
@@ -198,8 +197,10 @@ pub(super) async fn build_admin_list_user_api_keys_response(
         .map(|record| record.api_key_id.clone())
         .collect::<Vec<_>>();
     let snapshot_by_id = state
-        .read_auth_api_key_snapshots_by_ids(&snapshot_ids)
-        .await?
+        .data
+        .list_auth_api_key_snapshots_by_ids(&snapshot_ids)
+        .await
+        .map_err(|err| GatewayError::Internal(err.to_string()))?
         .into_iter()
         .map(|snapshot| (snapshot.api_key_id.clone(), snapshot))
         .collect::<std::collections::BTreeMap<_, _>>();
@@ -241,7 +242,7 @@ pub(super) async fn build_admin_create_user_api_key_response(
     request_context: &GatewayPublicRequestContext,
     request_body: Option<&axum::body::Bytes>,
 ) -> Result<Response<Body>, GatewayError> {
-    if !state.has_auth_api_key_writer() {
+    if !state.data.has_auth_api_key_writer() {
         return Ok(build_admin_users_read_only_response(
             "当前为只读模式，无法创建用户 API Key",
         ));
@@ -381,7 +382,7 @@ pub(super) async fn build_admin_update_user_api_key_response(
     request_context: &GatewayPublicRequestContext,
     request_body: Option<&axum::body::Bytes>,
 ) -> Result<Response<Body>, GatewayError> {
-    if !state.has_auth_api_key_writer() {
+    if !state.data.has_auth_api_key_writer() {
         return Ok(build_admin_users_read_only_response(
             "当前为只读模式，无法更新用户 API Key",
         ));
@@ -445,8 +446,10 @@ pub(super) async fn build_admin_update_user_api_key_response(
     };
 
     let is_locked = state
-        .read_auth_api_key_snapshots_by_ids(std::slice::from_ref(&api_key_id))
-        .await?
+        .data
+        .list_auth_api_key_snapshots_by_ids(std::slice::from_ref(&api_key_id))
+        .await
+        .map_err(|err| GatewayError::Internal(err.to_string()))?
         .into_iter()
         .find(|snapshot| snapshot.api_key_id == api_key_id)
         .map(|snapshot| snapshot.api_key_is_locked)
@@ -466,7 +469,7 @@ pub(super) async fn build_admin_delete_user_api_key_response(
     state: &AppState,
     request_context: &GatewayPublicRequestContext,
 ) -> Result<Response<Body>, GatewayError> {
-    if !state.has_auth_api_key_writer() {
+    if !state.data.has_auth_api_key_writer() {
         return Ok(build_admin_users_read_only_response(
             "当前为只读模式，无法删除用户 API Key",
         ));
@@ -500,7 +503,7 @@ pub(super) async fn build_admin_toggle_user_api_key_lock_response(
     request_context: &GatewayPublicRequestContext,
     request_body: Option<&axum::body::Bytes>,
 ) -> Result<Response<Body>, GatewayError> {
-    if !state.has_auth_api_key_writer() {
+    if !state.data.has_auth_api_key_writer() {
         return Ok(build_admin_users_read_only_response(
             "当前为只读模式，无法锁定或解锁用户 API Key",
         ));
@@ -514,8 +517,10 @@ pub(super) async fn build_admin_toggle_user_api_key_lock_response(
     };
 
     let Some(snapshot) = state
-        .read_auth_api_key_snapshots_by_ids(std::slice::from_ref(&api_key_id))
-        .await?
+        .data
+        .list_auth_api_key_snapshots_by_ids(std::slice::from_ref(&api_key_id))
+        .await
+        .map_err(|err| GatewayError::Internal(err.to_string()))?
         .into_iter()
         .find(|snapshot| snapshot.user_id == user_id && snapshot.api_key_id == api_key_id)
     else {

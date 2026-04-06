@@ -16,6 +16,27 @@ use aether_data::repository::auth::{
 use sqlx::Row;
 use uuid::Uuid;
 
+fn postgres_error(error: sqlx::Error) -> DataLayerError {
+    DataLayerError::postgres(error)
+}
+
+trait SqlxResultExt<T> {
+    fn map_postgres_err(self) -> Result<T, DataLayerError>;
+}
+
+impl<T> SqlxResultExt<T> for Result<T, sqlx::Error> {
+    fn map_postgres_err(self) -> Result<T, DataLayerError> {
+        self.map_err(postgres_error)
+    }
+}
+
+fn row_get<T>(row: &sqlx::postgres::PgRow, column: &str) -> Result<T, DataLayerError>
+where
+    for<'r> T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+{
+    row.try_get(column).map_postgres_err()
+}
+
 const FIND_USER_SESSION_SQL: &str = r#"
 SELECT
     id,
@@ -500,15 +521,15 @@ SET
         ELSE role
     END,
     allowed_providers = CASE
-        WHEN $4::BOOLEAN THEN $5
+        WHEN $4::BOOLEAN THEN $5::json
         ELSE allowed_providers
     END,
     allowed_api_formats = CASE
-        WHEN $6::BOOLEAN THEN $7
+        WHEN $6::BOOLEAN THEN $7::json
         ELSE allowed_api_formats
     END,
     allowed_models = CASE
-        WHEN $8::BOOLEAN THEN $9
+        WHEN $8::BOOLEAN THEN $9::json
         ELSE allowed_models
     END,
     rate_limit = CASE
@@ -791,40 +812,40 @@ fn map_user_session_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<StoredUserSessionRecord, DataLayerError> {
     StoredUserSessionRecord::new(
-        row.try_get("id")?,
-        row.try_get("user_id")?,
-        row.try_get("client_device_id")?,
-        row.try_get("device_label")?,
-        row.try_get("refresh_token_hash")?,
-        row.try_get("prev_refresh_token_hash")?,
-        row.try_get("rotated_at")?,
-        row.try_get("last_seen_at")?,
-        row.try_get("expires_at")?,
-        row.try_get("revoked_at")?,
-        row.try_get("revoke_reason")?,
-        row.try_get("ip_address")?,
-        row.try_get("user_agent")?,
-        row.try_get("created_at")?,
-        row.try_get("updated_at")?,
+        row_get(row, "id")?,
+        row_get(row, "user_id")?,
+        row_get(row, "client_device_id")?,
+        row_get(row, "device_label")?,
+        row_get(row, "refresh_token_hash")?,
+        row_get(row, "prev_refresh_token_hash")?,
+        row_get(row, "rotated_at")?,
+        row_get(row, "last_seen_at")?,
+        row_get(row, "expires_at")?,
+        row_get(row, "revoked_at")?,
+        row_get(row, "revoke_reason")?,
+        row_get(row, "ip_address")?,
+        row_get(row, "user_agent")?,
+        row_get(row, "created_at")?,
+        row_get(row, "updated_at")?,
     )
 }
 
 fn map_user_auth_row(row: &sqlx::postgres::PgRow) -> Result<StoredUserAuthRecord, DataLayerError> {
     StoredUserAuthRecord::new(
-        row.try_get("id")?,
-        row.try_get("email")?,
-        row.try_get("email_verified")?,
-        row.try_get("username")?,
-        row.try_get("password_hash")?,
-        row.try_get("role")?,
-        row.try_get("auth_source")?,
-        row.try_get("allowed_providers")?,
-        row.try_get("allowed_api_formats")?,
-        row.try_get("allowed_models")?,
-        row.try_get("is_active")?,
-        row.try_get("is_deleted")?,
-        row.try_get("created_at")?,
-        row.try_get("last_login_at")?,
+        row_get(row, "id")?,
+        row_get(row, "email")?,
+        row_get(row, "email_verified")?,
+        row_get(row, "username")?,
+        row_get(row, "password_hash")?,
+        row_get(row, "role")?,
+        row_get(row, "auth_source")?,
+        row_get(row, "allowed_providers")?,
+        row_get(row, "allowed_api_formats")?,
+        row_get(row, "allowed_models")?,
+        row_get(row, "is_active")?,
+        row_get(row, "is_deleted")?,
+        row_get(row, "created_at")?,
+        row_get(row, "last_login_at")?,
     )
 }
 
@@ -835,7 +856,8 @@ async fn check_username_taken_in_tx(
     let row = sqlx::query(CHECK_AUTH_USER_USERNAME_TAKEN_SQL)
         .bind(username)
         .fetch_optional(&mut **tx)
-        .await?;
+        .await
+        .map_postgres_err()?;
     Ok(row.is_some())
 }
 
@@ -849,7 +871,8 @@ async fn find_ldap_auth_user_for_update_in_tx(
         let row = sqlx::query(FIND_LDAP_AUTH_USER_BY_DN_SQL)
             .bind(ldap_dn)
             .fetch_optional(&mut **tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         if let Some(row) = row.as_ref() {
             return map_user_auth_row(row).map(Some);
         }
@@ -859,7 +882,8 @@ async fn find_ldap_auth_user_for_update_in_tx(
         let row = sqlx::query(FIND_LDAP_AUTH_USER_BY_LDAP_USERNAME_SQL)
             .bind(ldap_username)
             .fetch_optional(&mut **tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         if let Some(row) = row.as_ref() {
             return map_user_auth_row(row).map(Some);
         }
@@ -868,7 +892,8 @@ async fn find_ldap_auth_user_for_update_in_tx(
     let row = sqlx::query(FIND_LDAP_AUTH_USER_BY_EMAIL_SQL)
         .bind(email)
         .fetch_optional(&mut **tx)
-        .await?;
+        .await
+        .map_postgres_err()?;
     row.as_ref().map(map_user_auth_row).transpose()
 }
 
@@ -876,26 +901,26 @@ fn map_wallet_snapshot_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<StoredWalletSnapshot, DataLayerError> {
     StoredWalletSnapshot::new(
-        row.try_get("id")?,
-        row.try_get("user_id")?,
-        row.try_get("api_key_id")?,
-        row.try_get("balance")?,
-        row.try_get("gift_balance")?,
-        row.try_get("limit_mode")?,
-        row.try_get("currency")?,
-        row.try_get("status")?,
-        row.try_get("total_recharged")?,
-        row.try_get("total_consumed")?,
-        row.try_get("total_refunded")?,
-        row.try_get("total_adjusted")?,
-        row.try_get("updated_at_unix_secs")?,
+        row_get(row, "id")?,
+        row_get(row, "user_id")?,
+        row_get(row, "api_key_id")?,
+        row_get(row, "balance")?,
+        row_get(row, "gift_balance")?,
+        row_get(row, "limit_mode")?,
+        row_get(row, "currency")?,
+        row_get(row, "status")?,
+        row_get(row, "total_recharged")?,
+        row_get(row, "total_consumed")?,
+        row_get(row, "total_refunded")?,
+        row_get(row, "total_adjusted")?,
+        row_get(row, "updated_at_unix_secs")?,
     )
 }
 
 fn map_user_preference_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<StoredUserPreferenceRecord, DataLayerError> {
-    let user_id = row.try_get::<String, _>("user_id")?;
+    let user_id = row_get::<String>(row, "user_id")?;
     if user_id.trim().is_empty() {
         return Err(DataLayerError::UnexpectedValue(
             "user_preferences.user_id is empty".to_string(),
@@ -904,16 +929,16 @@ fn map_user_preference_row(
 
     Ok(StoredUserPreferenceRecord {
         user_id,
-        avatar_url: row.try_get("avatar_url")?,
-        bio: row.try_get("bio")?,
-        default_provider_id: row.try_get("default_provider_id")?,
-        default_provider_name: row.try_get("default_provider_name")?,
-        theme: row.try_get("theme")?,
-        language: row.try_get("language")?,
-        timezone: row.try_get("timezone")?,
-        email_notifications: row.try_get("email_notifications")?,
-        usage_alerts: row.try_get("usage_alerts")?,
-        announcement_notifications: row.try_get("announcement_notifications")?,
+        avatar_url: row_get(row, "avatar_url")?,
+        bio: row_get(row, "bio")?,
+        default_provider_id: row_get(row, "default_provider_id")?,
+        default_provider_name: row_get(row, "default_provider_name")?,
+        theme: row_get(row, "theme")?,
+        language: row_get(row, "language")?,
+        timezone: row_get(row, "timezone")?,
+        email_notifications: row_get(row, "email_notifications")?,
+        usage_alerts: row_get(row, "usage_alerts")?,
+        announcement_notifications: row_get(row, "announcement_notifications")?,
     })
 }
 
@@ -937,7 +962,8 @@ impl GatewayDataState {
             .bind(email)
             .bind(user_id)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(row.is_some())
     }
 
@@ -953,7 +979,8 @@ impl GatewayDataState {
             .bind(username)
             .bind(user_id)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(row.is_some())
     }
 
@@ -995,7 +1022,8 @@ impl GatewayDataState {
         let row = sqlx::query(READ_USER_PREFERENCES_SQL)
             .bind(user_id)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_user_preference_row).transpose()
     }
 
@@ -1027,7 +1055,8 @@ impl GatewayDataState {
             .bind(preferences.usage_alerts)
             .bind(preferences.announcement_notifications)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_user_preference_row).transpose()
     }
 
@@ -1049,7 +1078,8 @@ impl GatewayDataState {
         let row = sqlx::query(FIND_ACTIVE_PROVIDER_NAME_SQL)
             .bind(provider_id)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(row.and_then(|row| row.try_get("name").ok()))
     }
 
@@ -1065,7 +1095,8 @@ impl GatewayDataState {
             .bind(user_id)
             .bind(session_id)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_user_session_row).transpose()
     }
 
@@ -1079,7 +1110,8 @@ impl GatewayDataState {
         let rows = sqlx::query(LIST_USER_SESSIONS_SQL)
             .bind(user_id)
             .fetch_all(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_user_session_row).collect()
     }
 
@@ -1100,7 +1132,8 @@ impl GatewayDataState {
             .bind(&session.client_device_id)
             .bind(now)
             .execute(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let row = sqlx::query(CREATE_USER_SESSION_SQL)
             .bind(&session.id)
             .bind(&session.user_id)
@@ -1115,7 +1148,8 @@ impl GatewayDataState {
             .bind(session.created_at.unwrap_or(now))
             .bind(session.updated_at.unwrap_or(now))
             .fetch_one(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(Some(map_user_session_row(&row)?))
     }
 
@@ -1131,7 +1165,8 @@ impl GatewayDataState {
             .bind(user_id)
             .bind(settings)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(row
             .as_ref()
             .and_then(|row| row.try_get("model_capability_settings").ok())
@@ -1152,7 +1187,8 @@ impl GatewayDataState {
             .bind(email)
             .bind(username)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_user_auth_row).transpose()
     }
 
@@ -1170,7 +1206,8 @@ impl GatewayDataState {
             .bind(password_hash)
             .bind(updated_at)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_user_auth_row).transpose()
     }
 
@@ -1192,7 +1229,8 @@ impl GatewayDataState {
             .bind(username)
             .bind(password_hash)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_user_auth_row).transpose()
     }
 
@@ -1224,7 +1262,8 @@ impl GatewayDataState {
             .bind(allowed_models.map(serde_json::Value::from))
             .bind(rate_limit)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_user_auth_row).transpose()
     }
 
@@ -1260,7 +1299,8 @@ impl GatewayDataState {
             .bind(is_active.is_some())
             .bind(is_active)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_user_auth_row).transpose()
     }
 
@@ -1276,7 +1316,8 @@ impl GatewayDataState {
             .bind(user_id)
             .bind(logged_in_at)
             .execute(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -1295,7 +1336,7 @@ impl GatewayDataState {
             return Ok(None);
         };
 
-        let mut tx = pool.begin().await?;
+        let mut tx = pool.begin().await.map_postgres_err()?;
         let existing = find_ldap_auth_user_for_update_in_tx(
             &mut tx,
             ldap_dn.as_deref(),
@@ -1306,11 +1347,11 @@ impl GatewayDataState {
 
         if let Some(existing) = existing {
             if existing.is_deleted || !existing.is_active {
-                tx.commit().await?;
+                tx.commit().await.map_err(postgres_error)?;
                 return Ok(None);
             }
             if !existing.auth_source.eq_ignore_ascii_case("ldap") {
-                tx.commit().await?;
+                tx.commit().await.map_err(postgres_error)?;
                 return Ok(None);
             }
 
@@ -1320,9 +1361,10 @@ impl GatewayDataState {
                     .bind(&email)
                     .bind(&existing.id)
                     .fetch_optional(&mut *tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                 if taken.is_some() {
-                    tx.commit().await?;
+                    tx.commit().await.map_err(postgres_error)?;
                     return Ok(None);
                 }
             }
@@ -1334,8 +1376,9 @@ impl GatewayDataState {
                 .bind(ldap_username.as_deref())
                 .bind(logged_in_at)
                 .fetch_one(&mut *tx)
-                .await?;
-            tx.commit().await?;
+                .await
+                .map_postgres_err()?;
+            tx.commit().await.map_err(postgres_error)?;
             return Ok(Some(map_user_auth_row(&row)?));
         }
 
@@ -1366,7 +1409,8 @@ impl GatewayDataState {
                 .bind(ldap_username.as_deref())
                 .bind(logged_in_at)
                 .fetch_one(&mut *tx)
-                .await?;
+                .await
+                .map_postgres_err()?;
             let user = map_user_auth_row(&user_row)?;
 
             let gift_amount = if unlimited {
@@ -1381,7 +1425,8 @@ impl GatewayDataState {
                 .bind(if unlimited { "unlimited" } else { "finite" })
                 .bind(gift_amount)
                 .fetch_one(&mut *tx)
-                .await?;
+                .await
+                .map_postgres_err()?;
             let wallet = map_wallet_snapshot_row(&wallet_row)?;
             if gift_amount > 0.0 {
                 sqlx::query(CREATE_AUTH_USER_WALLET_GIFT_TX_SQL)
@@ -1390,14 +1435,15 @@ impl GatewayDataState {
                     .bind(gift_amount)
                     .bind(&user.id)
                     .execute(&mut *tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
             }
 
-            tx.commit().await?;
+            tx.commit().await.map_err(postgres_error)?;
             return Ok(Some(user));
         }
 
-        tx.commit().await?;
+        tx.commit().await.map_err(postgres_error)?;
         Ok(None)
     }
 
@@ -1411,7 +1457,7 @@ impl GatewayDataState {
         let Some(pool) = self.postgres_pool() else {
             return Ok(None);
         };
-        let mut tx = pool.begin().await?;
+        let mut tx = pool.begin().await.map_postgres_err()?;
         let gift_amount = if unlimited {
             0.0
         } else {
@@ -1424,7 +1470,8 @@ impl GatewayDataState {
             .bind(if unlimited { "unlimited" } else { "finite" })
             .bind(gift_amount)
             .fetch_one(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let wallet = map_wallet_snapshot_row(&row)?;
         if gift_amount > 0.0 {
             sqlx::query(CREATE_AUTH_USER_WALLET_GIFT_TX_SQL)
@@ -1433,9 +1480,10 @@ impl GatewayDataState {
                 .bind(gift_amount)
                 .bind(user_id)
                 .execute(&mut *tx)
-                .await?;
+                .await
+                .map_postgres_err()?;
         }
-        tx.commit().await?;
+        tx.commit().await.map_err(postgres_error)?;
         Ok(Some(wallet))
     }
 
@@ -1451,7 +1499,8 @@ impl GatewayDataState {
             .bind(user_id)
             .bind(limit_mode)
             .fetch_optional(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_wallet_snapshot_row).transpose()
     }
 
@@ -1461,8 +1510,9 @@ impl GatewayDataState {
         };
         let row = sqlx::query(COUNT_ACTIVE_ADMIN_USERS_SQL)
             .fetch_one(&pool)
-            .await?;
-        let total = row.try_get::<i64, _>("total")?.max(0) as u64;
+            .await
+            .map_postgres_err()?;
+        let total = row.try_get::<i64, _>("total").map_postgres_err()?.max(0) as u64;
         Ok(total)
     }
 
@@ -1474,8 +1524,9 @@ impl GatewayDataState {
         };
         let row = sqlx::query(COUNT_ACTIVE_LOCAL_ADMIN_USERS_WITH_VALID_PASSWORD_SQL)
             .fetch_one(&pool)
-            .await?;
-        let total = row.try_get::<i64, _>("total")?.max(0) as u64;
+            .await
+            .map_postgres_err()?;
+        let total = row.try_get::<i64, _>("total").map_postgres_err()?.max(0) as u64;
         Ok(total)
     }
 
@@ -1495,8 +1546,9 @@ impl GatewayDataState {
             .bind(user_id)
             .bind(statuses)
             .fetch_one(&pool)
-            .await?;
-        let total = row.try_get::<i64, _>("total")?.max(0) as u64;
+            .await
+            .map_postgres_err()?;
+        let total = row.try_get::<i64, _>("total").map_postgres_err()?.max(0) as u64;
         Ok(total)
     }
 
@@ -1512,8 +1564,9 @@ impl GatewayDataState {
             .bind(user_id)
             .bind(statuses)
             .fetch_one(&pool)
-            .await?;
-        let total = row.try_get::<i64, _>("total")?.max(0) as u64;
+            .await
+            .map_postgres_err()?;
+        let total = row.try_get::<i64, _>("total").map_postgres_err()?.max(0) as u64;
         Ok(total)
     }
 
@@ -1527,7 +1580,8 @@ impl GatewayDataState {
         let result = sqlx::query(DELETE_LOCAL_AUTH_USER_SQL)
             .bind(user_id)
             .execute(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -1543,7 +1597,7 @@ impl GatewayDataState {
         let Some(pool) = self.postgres_pool() else {
             return Ok(None);
         };
-        let mut tx = pool.begin().await?;
+        let mut tx = pool.begin().await.map_postgres_err()?;
         let user_row = sqlx::query(CREATE_LOCAL_USER_SQL)
             .bind(Uuid::new_v4().to_string())
             .bind(email)
@@ -1551,7 +1605,8 @@ impl GatewayDataState {
             .bind(username)
             .bind(password_hash)
             .fetch_one(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let user = map_user_auth_row(&user_row)?;
         let gift_amount = if unlimited {
             0.0
@@ -1565,7 +1620,8 @@ impl GatewayDataState {
             .bind(if unlimited { "unlimited" } else { "finite" })
             .bind(gift_amount)
             .fetch_one(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let wallet = map_wallet_snapshot_row(&wallet_row)?;
         if gift_amount > 0.0 {
             sqlx::query(CREATE_AUTH_USER_WALLET_GIFT_TX_SQL)
@@ -1574,9 +1630,10 @@ impl GatewayDataState {
                 .bind(gift_amount)
                 .bind(&user.id)
                 .execute(&mut *tx)
-                .await?;
+                .await
+                .map_postgres_err()?;
         }
-        tx.commit().await?;
+        tx.commit().await.map_err(postgres_error)?;
         Ok(Some((user, wallet)))
     }
 
@@ -1598,7 +1655,8 @@ impl GatewayDataState {
             .bind(ip_address)
             .bind(user_agent.map(|value| value.chars().take(1000).collect::<String>()))
             .execute(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -1618,7 +1676,8 @@ impl GatewayDataState {
             .bind(device_label.chars().take(120).collect::<String>())
             .bind(updated_at)
             .execute(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -1646,7 +1705,8 @@ impl GatewayDataState {
             .bind(ip_address)
             .bind(user_agent.map(|value| value.chars().take(1000).collect::<String>()))
             .execute(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -1666,7 +1726,8 @@ impl GatewayDataState {
             .bind(revoked_at)
             .bind(reason.chars().take(100).collect::<String>())
             .execute(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -1684,7 +1745,8 @@ impl GatewayDataState {
             .bind(revoked_at)
             .bind(reason.chars().take(100).collect::<String>())
             .execute(&pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected())
     }
 
@@ -2221,6 +2283,7 @@ mod tests {
         StoredAuthApiKeySnapshot,
     };
 
+    use super::UPDATE_LOCAL_AUTH_USER_ADMIN_FIELDS_SQL;
     use crate::data::GatewayDataState;
 
     fn sample_snapshot(api_key_id: &str, user_id: &str) -> StoredAuthApiKeySnapshot {
@@ -2248,6 +2311,13 @@ mod tests {
             Some(serde_json::json!(["gpt-5"])),
         )
         .expect("snapshot should build")
+    }
+
+    #[test]
+    fn update_local_auth_user_admin_fields_sql_casts_json_case_values() {
+        assert!(UPDATE_LOCAL_AUTH_USER_ADMIN_FIELDS_SQL.contains("WHEN $4::BOOLEAN THEN $5::json"));
+        assert!(UPDATE_LOCAL_AUTH_USER_ADMIN_FIELDS_SQL.contains("WHEN $6::BOOLEAN THEN $7::json"));
+        assert!(UPDATE_LOCAL_AUTH_USER_ADMIN_FIELDS_SQL.contains("WHEN $8::BOOLEAN THEN $9::json"));
     }
 
     #[tokio::test]

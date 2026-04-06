@@ -181,3 +181,16 @@ export function isRateLimitInherited(rateLimit?: number | null): boolean {
 export function isRateLimitUnlimited(rateLimit?: number | null): boolean {
   return rateLimit === 0
 }
+
+export function formatShortRequestId(value: string | null | undefined): string {
+  const trimmed = value?.trim()
+  if (!trimmed) return '-'
+  if (trimmed.length <= 12) return trimmed
+
+  const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)
+  if (uuidLike) {
+    return trimmed.slice(0, 8)
+  }
+
+  return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`
+}

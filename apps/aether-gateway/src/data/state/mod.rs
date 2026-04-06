@@ -25,26 +25,10 @@ use aether_data::repository::auth_modules::{
     AuthModuleReadRepository, AuthModuleWriteRepository, StoredLdapModuleConfig,
     StoredOAuthProviderModuleConfig,
 };
-use aether_data::repository::billing::{BillingReadRepository, StoredBillingModelContext};
-use aether_data::repository::candidate_selection::{
-    MinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-};
-use aether_data::repository::candidates::{
-    PublicHealthStatusCount, PublicHealthTimelineBucket, RequestCandidateReadRepository,
-    RequestCandidateWriteRepository, StoredRequestCandidate, UpsertRequestCandidateRecord,
-};
 use aether_data::repository::gemini_file_mappings::{
     GeminiFileMappingListQuery, GeminiFileMappingReadRepository, GeminiFileMappingStats,
     GeminiFileMappingWriteRepository, StoredGeminiFileMapping, StoredGeminiFileMappingListPage,
     UpsertGeminiFileMappingRecord,
-};
-use aether_data::repository::global_models::{
-    AdminGlobalModelListQuery, AdminProviderModelListQuery, CreateAdminGlobalModelRecord,
-    GlobalModelReadRepository, GlobalModelWriteRepository, PublicCatalogModelListQuery,
-    PublicCatalogModelSearchQuery, PublicGlobalModelQuery, StoredAdminGlobalModel,
-    StoredAdminGlobalModelPage, StoredAdminProviderModel, StoredProviderActiveGlobalModel,
-    StoredProviderModelStats, StoredPublicCatalogModel, StoredPublicGlobalModel,
-    StoredPublicGlobalModelPage, UpdateAdminGlobalModelRecord, UpsertAdminProviderModelRecord,
 };
 use aether_data::repository::management_tokens::{
     CreateManagementTokenRecord, ManagementTokenListQuery, ManagementTokenReadRepository,
@@ -55,39 +39,20 @@ use aether_data::repository::oauth_providers::{
     OAuthProviderReadRepository, OAuthProviderWriteRepository, StoredOAuthProviderConfig,
     UpsertOAuthProviderConfigRecord,
 };
-use aether_data::repository::provider_catalog::{
-    ProviderCatalogKeyListQuery, ProviderCatalogReadRepository, ProviderCatalogWriteRepository,
-    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogKeyPage,
-    StoredProviderCatalogKeyStats, StoredProviderCatalogProvider,
-};
 use aether_data::repository::proxy_nodes::{
     ProxyNodeHeartbeatMutation, ProxyNodeReadRepository, ProxyNodeTunnelStatusMutation,
     ProxyNodeWriteRepository, StoredProxyNode, StoredProxyNodeEvent,
-};
-use aether_data::repository::quota::{
-    ProviderQuotaReadRepository, ProviderQuotaWriteRepository, StoredProviderQuotaSnapshot,
-};
-use aether_data::repository::settlement::{
-    SettlementWriteRepository, StoredUsageSettlement, UsageSettlementInput,
 };
 use aether_data::repository::shadow_results::{
     merge_shadow_result_sample, RecordShadowResultSample, ShadowResultLookupKey,
     ShadowResultReadRepository, ShadowResultWriteRepository, StoredShadowResult,
 };
 pub(crate) use aether_data::repository::system::{AdminSystemStats, StoredSystemConfigEntry};
-use aether_data::repository::usage::{
-    StoredProviderUsageSummary, StoredRequestUsageAudit, UpsertUsageRecord, UsageReadRepository,
-    UsageWriteRepository,
-};
 use aether_data::repository::users::{
     StoredUserAuthRecord, StoredUserExportRow, StoredUserSummary, UserReadRepository,
 };
 pub(crate) use aether_data::repository::users::{
     StoredUserPreferenceRecord, StoredUserSessionRecord,
-};
-use aether_data::repository::video_tasks::{
-    StoredVideoTask, UpsertVideoTask, VideoTaskLookupKey, VideoTaskModelCount,
-    VideoTaskQueryFilter, VideoTaskReadRepository, VideoTaskStatusCount, VideoTaskWriteRepository,
 };
 use aether_data::repository::wallet::{
     AdjustWalletBalanceInput, AdminPaymentOrderListQuery, AdminWalletLedgerQuery,
@@ -104,6 +69,43 @@ use aether_data::repository::wallet::{
     WalletReadRepository, WalletWriteRepository,
 };
 use aether_data::{DataBackends, DataLayerError};
+use aether_data_contracts::repository::billing::{
+    BillingReadRepository, StoredBillingModelContext,
+};
+use aether_data_contracts::repository::candidate_selection::{
+    MinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
+};
+use aether_data_contracts::repository::candidates::{
+    PublicHealthStatusCount, PublicHealthTimelineBucket, RequestCandidateReadRepository,
+    RequestCandidateWriteRepository, StoredRequestCandidate, UpsertRequestCandidateRecord,
+};
+use aether_data_contracts::repository::global_models::{
+    AdminGlobalModelListQuery, AdminProviderModelListQuery, CreateAdminGlobalModelRecord,
+    GlobalModelReadRepository, GlobalModelWriteRepository, PublicCatalogModelListQuery,
+    PublicCatalogModelSearchQuery, PublicGlobalModelQuery, StoredAdminGlobalModel,
+    StoredAdminGlobalModelPage, StoredAdminProviderModel, StoredProviderActiveGlobalModel,
+    StoredProviderModelStats, StoredPublicCatalogModel, StoredPublicGlobalModel,
+    StoredPublicGlobalModelPage, UpdateAdminGlobalModelRecord, UpsertAdminProviderModelRecord,
+};
+use aether_data_contracts::repository::provider_catalog::{
+    ProviderCatalogKeyListQuery, ProviderCatalogReadRepository, ProviderCatalogWriteRepository,
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogKeyPage,
+    StoredProviderCatalogKeyStats, StoredProviderCatalogProvider,
+};
+use aether_data_contracts::repository::quota::{
+    ProviderQuotaReadRepository, ProviderQuotaWriteRepository, StoredProviderQuotaSnapshot,
+};
+use aether_data_contracts::repository::settlement::{
+    SettlementWriteRepository, StoredUsageSettlement, UsageSettlementInput,
+};
+use aether_data_contracts::repository::usage::{
+    StoredProviderUsageSummary, StoredRequestUsageAudit, UpsertUsageRecord, UsageReadRepository,
+    UsageWriteRepository,
+};
+use aether_data_contracts::repository::video_tasks::{
+    StoredVideoTask, UpsertVideoTask, VideoTaskLookupKey, VideoTaskModelCount,
+    VideoTaskQueryFilter, VideoTaskReadRepository, VideoTaskStatusCount, VideoTaskWriteRepository,
+};
 
 #[derive(Clone, Default)]
 pub(crate) struct GatewayDataState {

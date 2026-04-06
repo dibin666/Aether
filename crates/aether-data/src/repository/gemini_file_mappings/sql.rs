@@ -6,7 +6,7 @@ use super::types::{
     GeminiFileMappingStats, GeminiFileMappingWriteRepository, StoredGeminiFileMapping,
     StoredGeminiFileMappingListPage, UpsertGeminiFileMappingRecord,
 };
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 #[derive(Debug, Clone)]
 pub struct SqlxGeminiFileMappingRepository {
@@ -20,25 +20,31 @@ impl SqlxGeminiFileMappingRepository {
 
     fn map_row(row: &PgRow) -> Result<StoredGeminiFileMapping, DataLayerError> {
         Ok(StoredGeminiFileMapping {
-            id: row.try_get("id")?,
-            file_name: row.try_get("file_name")?,
-            key_id: row.try_get("key_id")?,
+            id: row.try_get("id").map_postgres_err()?,
+            file_name: row.try_get("file_name").map_postgres_err()?,
+            key_id: row.try_get("key_id").map_postgres_err()?,
             user_id: row.try_get("user_id").ok().flatten(),
             display_name: row.try_get("display_name").ok().flatten(),
             mime_type: row.try_get("mime_type").ok().flatten(),
             source_hash: row.try_get("source_hash").ok().flatten(),
-            created_at_unix_secs: u64::try_from(row.try_get::<i64, _>("created_at_unix_secs")?)
-                .map_err(|_| {
-                    DataLayerError::UnexpectedValue(
-                        "gemini_file_mappings.created_at is invalid".to_string(),
-                    )
-                })?,
-            expires_at_unix_secs: u64::try_from(row.try_get::<i64, _>("expires_at_unix_secs")?)
-                .map_err(|_| {
-                    DataLayerError::UnexpectedValue(
-                        "gemini_file_mappings.expires_at is invalid".to_string(),
-                    )
-                })?,
+            created_at_unix_secs: u64::try_from(
+                row.try_get::<i64, _>("created_at_unix_secs")
+                    .map_postgres_err()?,
+            )
+            .map_err(|_| {
+                DataLayerError::UnexpectedValue(
+                    "gemini_file_mappings.created_at is invalid".to_string(),
+                )
+            })?,
+            expires_at_unix_secs: u64::try_from(
+                row.try_get::<i64, _>("expires_at_unix_secs")
+                    .map_postgres_err()?,
+            )
+            .map_err(|_| {
+                DataLayerError::UnexpectedValue(
+                    "gemini_file_mappings.expires_at is invalid".to_string(),
+                )
+            })?,
         })
     }
 }
@@ -67,7 +73,8 @@ WHERE file_name = $1
         )
         .bind(file_name)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         match row {
             Some(row) => Ok(Some(Self::map_row(&row)?)),
@@ -82,11 +89,13 @@ WHERE file_name = $1
         let total = build_list_count_query(query)
             .build_query_scalar::<i64>()
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let rows = build_list_rows_query(query)
             .build()
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(StoredGeminiFileMappingListPage {
             items: rows
                 .iter()
@@ -110,11 +119,20 @@ FROM gemini_file_mappings
         )
         .bind(now_unix_secs as f64)
         .fetch_one(&self.pool)
-        .await?;
-        let total_mappings =
-            usize::try_from(totals.try_get::<i64, _>("total_mappings")?).unwrap_or_default();
-        let active_mappings =
-            usize::try_from(totals.try_get::<i64, _>("active_mappings")?).unwrap_or_default();
+        .await
+        .map_postgres_err()?;
+        let total_mappings = usize::try_from(
+            totals
+                .try_get::<i64, _>("total_mappings")
+                .map_postgres_err()?,
+        )
+        .unwrap_or_default();
+        let active_mappings = usize::try_from(
+            totals
+                .try_get::<i64, _>("active_mappings")
+                .map_postgres_err()?,
+        )
+        .unwrap_or_default();
         let by_mime_type_rows = sqlx::query(
             r#"
 SELECT
@@ -128,7 +146,8 @@ ORDER BY mime_type ASC
         )
         .bind(now_unix_secs as f64)
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
         Ok(GeminiFileMappingStats {
             total_mappings,
             active_mappings,
@@ -137,8 +156,9 @@ ORDER BY mime_type ASC
                 .into_iter()
                 .map(|row| {
                     Ok(GeminiFileMappingMimeTypeCount {
-                        mime_type: row.try_get("mime_type")?,
-                        count: usize::try_from(row.try_get::<i64, _>("count")?).unwrap_or_default(),
+                        mime_type: row.try_get("mime_type").map_postgres_err()?,
+                        count: usize::try_from(row.try_get::<i64, _>("count").map_postgres_err()?)
+                            .unwrap_or_default(),
                     })
                 })
                 .collect::<Result<Vec<_>, DataLayerError>>()?,
@@ -197,7 +217,8 @@ RETURNING
         .bind(record.source_hash.clone())
         .bind(record.expires_at_unix_secs as f64)
         .fetch_one(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         Self::map_row(&row)
     }
@@ -211,7 +232,8 @@ WHERE file_name = $1
         )
         .bind(file_name)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -238,7 +260,8 @@ RETURNING
         )
         .bind(mapping_id)
         .fetch_optional(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         match row {
             Some(row) => Ok(Some(Self::map_row(&row)?)),
@@ -255,7 +278,8 @@ WHERE expires_at <= TO_TIMESTAMP($1::double precision)
         )
         .bind(now_unix_secs as f64)
         .execute(&self.pool)
-        .await?;
+        .await
+        .map_postgres_err()?;
 
         Ok(usize::try_from(result.rows_affected()).unwrap_or_default())
     }

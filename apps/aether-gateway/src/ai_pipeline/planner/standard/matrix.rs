@@ -1,79 +1,59 @@
-use std::collections::BTreeMap;
-
-use serde_json::{json, Map, Value};
-
-use super::{
-    claude::normalize_claude_request_to_openai_chat_request,
-    gemini::normalize_gemini_request_to_openai_chat_request,
-};
-use crate::ai_pipeline::conversion::request::{
-    convert_openai_chat_request_to_claude_request, convert_openai_chat_request_to_gemini_request,
-    convert_openai_chat_request_to_openai_cli_request,
-    normalize_openai_cli_request_to_openai_chat_request,
-};
-use crate::ai_pipeline::conversion::{request_conversion_kind, RequestConversionKind};
-use crate::provider_transport::apply_local_body_rules;
-use crate::provider_transport::url::{
+use super::codex::apply_codex_openai_cli_special_body_edits;
+use crate::ai_pipeline::planner::transport_facade::GatewayProviderTransportSnapshot;
+use crate::ai_pipeline::provider_transport_facade::apply_local_body_rules;
+use crate::ai_pipeline::provider_transport_facade::url::{
     build_claude_messages_url, build_gemini_content_url, build_openai_chat_url,
     build_openai_cli_url, build_passthrough_path_url,
 };
+use aether_ai_pipeline::planner::matrix::build_standard_request_body_from_canonical;
+pub(crate) use aether_ai_pipeline::planner::standard::normalize_standard_request_to_openai_chat_request;
+use serde_json::{json, Value};
 
 pub(crate) fn build_standard_request_body(
     body_json: &Value,
     client_api_format: &str,
     mapped_model: &str,
+    provider_type: &str,
     provider_api_format: &str,
     request_path: &str,
     upstream_is_stream: bool,
     body_rules: Option<&Value>,
+    user_api_key_id: Option<&str>,
 ) -> Option<Value> {
     let canonical_request = normalize_standard_request_to_openai_chat_request(
         body_json,
         client_api_format,
         request_path,
     )?;
-    let conversion_kind = request_conversion_kind(client_api_format, provider_api_format)?;
-    let mut provider_request_body = match conversion_kind {
-        RequestConversionKind::ToOpenAIChat => {
-            build_openai_chat_request_body(&canonical_request, mapped_model, upstream_is_stream)?
-        }
-        RequestConversionKind::ToOpenAIFamilyCli => {
-            convert_openai_chat_request_to_openai_cli_request(
-                &canonical_request,
-                mapped_model,
-                upstream_is_stream,
-                false,
-            )?
-        }
-        RequestConversionKind::ToOpenAICompact => {
-            convert_openai_chat_request_to_openai_cli_request(
-                &canonical_request,
-                mapped_model,
-                false,
-                true,
-            )?
-        }
-        RequestConversionKind::ToClaudeStandard => convert_openai_chat_request_to_claude_request(
-            &canonical_request,
-            mapped_model,
-            upstream_is_stream,
-        )?,
-        RequestConversionKind::ToGeminiStandard => convert_openai_chat_request_to_gemini_request(
-            &canonical_request,
-            mapped_model,
-            upstream_is_stream,
-        )?,
-    };
+    if cfg!(test) {
+        println!("canonical_request: {canonical_request:#?}");
+    }
+    let mut provider_request_body = build_standard_request_body_from_canonical(
+        &canonical_request,
+        mapped_model,
+        provider_api_format,
+        upstream_is_stream,
+    )?;
+    if cfg!(test) {
+        println!("provider_request_body before rules: {provider_request_body:#?}");
+    }
 
     if !apply_local_body_rules(&mut provider_request_body, body_rules, Some(body_json)) {
         return None;
     }
+    apply_codex_openai_cli_special_body_edits(
+        &mut provider_request_body,
+        provider_type,
+        provider_api_format,
+        body_rules,
+        user_api_key_id,
+    );
     Some(provider_request_body)
 }
 
 pub(crate) fn build_standard_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &GatewayProviderTransportSnapshot,
     mapped_model: &str,
     provider_api_format: &str,
     upstream_is_stream: bool,
@@ -119,42 +99,6 @@ pub(crate) fn build_standard_upstream_url(
     }
 }
 
-pub(crate) fn normalize_standard_request_to_openai_chat_request(
-    body_json: &Value,
-    client_api_format: &str,
-    request_path: &str,
-) -> Option<Value> {
-    match client_api_format.trim().to_ascii_lowercase().as_str() {
-        "openai:chat" => Some(body_json.clone()),
-        "openai:cli" | "openai:compact" => {
-            normalize_openai_cli_request_to_openai_chat_request(body_json)
-        }
-        "claude:chat" | "claude:cli" => normalize_claude_request_to_openai_chat_request(body_json),
-        "gemini:chat" | "gemini:cli" => {
-            normalize_gemini_request_to_openai_chat_request(body_json, request_path)
-        }
-        _ => None,
-    }
-}
-
-fn build_openai_chat_request_body(
-    body_json: &Value,
-    mapped_model: &str,
-    upstream_is_stream: bool,
-) -> Option<Value> {
-    let request_body_object = body_json.as_object()?;
-    let mut provider_request_body = serde_json::Map::from_iter(
-        request_body_object
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone())),
-    );
-    provider_request_body.insert("model".to_string(), Value::String(mapped_model.to_string()));
-    if upstream_is_stream {
-        provider_request_body.insert("stream".to_string(), Value::Bool(true));
-    }
-    Some(Value::Object(provider_request_body))
-}
-
 #[cfg(test)]
 mod tests {
     use super::build_standard_request_body;
@@ -178,9 +122,11 @@ mod tests {
             &request,
             "claude:chat",
             "gpt-5",
+            "openai",
             "openai:chat",
             "/v1/messages",
             false,
+            None,
             None,
         )
         .expect("claude chat should convert to openai chat");
@@ -210,9 +156,11 @@ mod tests {
             &request,
             "gemini:chat",
             "claude-sonnet-4-5",
+            "anthropic",
             "claude:chat",
             "/v1beta/models/gemini-2.5-pro:generateContent",
             false,
+            None,
             None,
         )
         .expect("gemini chat should convert to claude chat");
@@ -244,9 +192,11 @@ mod tests {
             &request,
             "claude:cli",
             "gemini-2.5-pro",
+            "google",
             "gemini:cli",
             "/v1/messages",
             false,
+            None,
             None,
         )
         .expect("claude cli should convert to gemini cli");
@@ -255,6 +205,135 @@ mod tests {
         assert_eq!(
             converted["contents"][0]["parts"][0]["text"],
             "Need CLI output"
+        );
+    }
+
+    #[test]
+    fn builds_openai_cli_request_from_claude_cli_source_with_forced_stream() {
+        let request = json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Need OpenAI CLI output"}]
+                }
+            ],
+            "max_tokens": 64
+        });
+
+        let converted = build_standard_request_body(
+            &request,
+            "claude:cli",
+            "gpt-5",
+            "openai",
+            "openai:cli",
+            "/v1/messages",
+            true,
+            None,
+            None,
+        )
+        .expect("claude cli should convert to openai cli");
+
+        assert_eq!(converted["model"], "gpt-5");
+        assert_eq!(converted["input"][0]["role"], "user");
+        assert_eq!(converted["input"][0]["content"][0]["type"], "input_text");
+        assert_eq!(
+            converted["input"][0]["content"][0]["text"],
+            "Need OpenAI CLI output"
+        );
+        assert_eq!(converted["stream"], true);
+    }
+
+    #[test]
+    fn strips_metadata_for_codex_openai_cli_requests() {
+        let request = json!({
+            "model": "claude-sonnet-4-5",
+            "metadata": {"trace_id": "abc"},
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": "Need OpenAI CLI output"}]
+            }],
+            "max_tokens": 64
+        });
+
+        let converted = build_standard_request_body(
+            &request,
+            "claude:cli",
+            "gpt-5",
+            "codex",
+            "openai:cli",
+            "/v1/messages",
+            true,
+            None,
+            None,
+        )
+        .expect("claude cli should convert to codex cli");
+
+        assert!(converted.get("metadata").is_none());
+    }
+
+    #[test]
+    fn applies_codex_defaults_unless_body_rules_handle_the_field() {
+        let request = json!({
+            "model": "claude-sonnet-4-5",
+            "metadata": {"trace_id": "abc"},
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": "Need OpenAI CLI output"}]
+            }],
+            "max_tokens": 64
+        });
+        let body_rules = json!([
+            {"action":"set","path":"store","value":true},
+            {"action":"set","path":"instructions","value":"Custom instructions"},
+            {"action":"set","path":"metadata","value":{"trace_id":"keep-me"}}
+        ]);
+
+        let converted = build_standard_request_body(
+            &request,
+            "claude:cli",
+            "gpt-5",
+            "codex",
+            "openai:cli",
+            "/v1/messages",
+            true,
+            Some(&body_rules),
+            None,
+        )
+        .expect("claude cli should convert to codex cli");
+
+        assert_eq!(converted["store"], true);
+        assert_eq!(converted["instructions"], "Custom instructions");
+        assert_eq!(converted["metadata"]["trace_id"], "keep-me");
+    }
+
+    #[test]
+    fn injects_codex_prompt_cache_key_for_standard_requests() {
+        let request = json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": "Need OpenAI CLI output"}]
+            }],
+            "max_tokens": 64
+        });
+
+        let converted = build_standard_request_body(
+            &request,
+            "claude:cli",
+            "gpt-5",
+            "codex",
+            "openai:cli",
+            "/v1/messages",
+            true,
+            None,
+            Some("key-123"),
+        )
+        .expect("claude cli should convert to codex cli");
+
+        assert_eq!(
+            converted["prompt_cache_key"],
+            "172c39e6-c0a0-5a70-8b63-e0f8e0d185a3"
         );
     }
 }

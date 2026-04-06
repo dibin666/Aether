@@ -6,9 +6,9 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::AppState;
+use crate::{AppState, GatewayError};
 use aether_data::repository::audit::RequestAuditBundle;
-use aether_data::repository::usage::StoredRequestUsageAudit;
+use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct GetRequestAuditBundleQuery {
@@ -20,9 +20,10 @@ pub(crate) async fn get_request_usage_audit(
     Path(request_id): Path<String>,
 ) -> Result<Json<StoredRequestUsageAudit>, axum::response::Response> {
     let usage = state
+        .data
         .read_request_usage_audit(&request_id)
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(|err| GatewayError::Internal(err.to_string()).into_response())?;
 
     match usage {
         Some(usage) => Ok(Json(usage)),
@@ -45,9 +46,10 @@ pub(crate) async fn get_request_audit_bundle(
 ) -> Result<Json<RequestAuditBundle>, axum::response::Response> {
     let attempted_only = query.attempted_only.unwrap_or(false);
     let bundle = state
+        .data
         .read_request_audit_bundle(&request_id, attempted_only, current_unix_secs())
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(|err| GatewayError::Internal(err.to_string()).into_response())?;
 
     match bundle {
         Some(bundle) => Ok(Json(bundle)),

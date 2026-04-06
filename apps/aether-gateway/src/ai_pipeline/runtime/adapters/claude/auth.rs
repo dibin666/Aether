@@ -1,1 +1,1 @@
-pub(crate) use crate::provider_transport::auth::resolve_local_standard_auth;
+pub(crate) use crate::ai_pipeline::provider_transport_facade::auth::resolve_local_standard_auth;

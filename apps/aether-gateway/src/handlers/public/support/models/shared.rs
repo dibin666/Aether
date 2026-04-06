@@ -1,4 +1,6 @@
-use aether_data::repository::candidate_selection::StoredMinimalCandidateSelectionRow;
+use aether_data_contracts::repository::candidate_selection::{
+    StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
+};
 use regex::Regex;
 
 use super::GatewayPublicRequestContext;
@@ -32,9 +34,9 @@ fn auth_snapshot_allows_provider_for_models(
     provider_id: &str,
     provider_name: &str,
 ) -> bool {
-    let Some(allowed) = auth_snapshot.and_then(
-        crate::data::auth::GatewayAuthApiKeySnapshot::effective_allowed_providers,
-    ) else {
+    let Some(allowed) = auth_snapshot
+        .and_then(crate::data::auth::GatewayAuthApiKeySnapshot::effective_allowed_providers)
+    else {
         return true;
     };
 
@@ -48,16 +50,16 @@ fn auth_snapshot_allows_model_for_models(
     auth_snapshot: Option<&crate::data::auth::GatewayAuthApiKeySnapshot>,
     global_model_name: &str,
 ) -> bool {
-    let Some(allowed) = auth_snapshot.and_then(
-        crate::data::auth::GatewayAuthApiKeySnapshot::effective_allowed_models,
-    ) else {
+    let Some(allowed) = auth_snapshot
+        .and_then(crate::data::auth::GatewayAuthApiKeySnapshot::effective_allowed_models)
+    else {
         return true;
     };
     allowed.iter().any(|value| value == global_model_name)
 }
 
 fn mapping_scope_matches_for_models(
-    mapping: &aether_data::repository::candidate_selection::StoredProviderModelMapping,
+    mapping: &StoredProviderModelMapping,
     api_format: &str,
 ) -> bool {
     let Some(api_formats) = mapping.api_formats.as_ref() else {

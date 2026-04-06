@@ -4,28 +4,31 @@ use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY}
 use aether_data::repository::auth::{
     InMemoryAuthApiKeySnapshotRepository, StoredAuthApiKeySnapshot,
 };
-use aether_data::repository::candidate_selection::{
-    InMemoryMinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-    StoredProviderModelMapping,
-};
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateStatus, StoredRequestCandidate,
-};
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider,
-};
+use aether_data::repository::candidate_selection::InMemoryMinimalCandidateSelectionReadRepository;
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
 use aether_data::repository::shadow_results::{
     InMemoryShadowResultRepository, RecordShadowResultSample, ShadowResultLookupKey,
     ShadowResultMatchStatus, ShadowResultReadRepository, ShadowResultSampleOrigin,
     ShadowResultWriteRepository, StoredShadowResult, UpsertShadowResult,
 };
-use aether_data::repository::usage::{InMemoryUsageReadRepository, StoredRequestUsageAudit};
-use aether_data::repository::video_tasks::{
-    InMemoryVideoTaskRepository, UpsertVideoTask, VideoTaskLookupKey, VideoTaskStatus,
-    VideoTaskWriteRepository,
-};
+use aether_data::repository::usage::InMemoryUsageReadRepository;
+use aether_data::repository::video_tasks::InMemoryVideoTaskRepository;
 use aether_data::DataLayerError;
+use aether_data_contracts::repository::candidate_selection::{
+    StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
+};
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateStatus, StoredRequestCandidate,
+};
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
+};
+use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
+use aether_data_contracts::repository::video_tasks::{
+    UpsertVideoTask, VideoTaskLookupKey, VideoTaskStatus, VideoTaskWriteRepository,
+};
+use aether_scheduler_core::{build_minimal_candidate_selection, SchedulerAuthConstraints};
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -643,14 +646,31 @@ async fn data_state_reads_minimal_candidate_selection_with_auth_filters() {
         .expect("auth snapshot should read")
         .expect("auth snapshot should exist");
 
-    let selection = crate::scheduler::read_minimal_candidate_selection(
-        &state,
+    let rows = state
+        .list_minimal_candidate_selection_rows("openai:chat", "gpt-4.1")
+        .await
+        .expect("minimal candidate selection rows should read");
+    let auth_constraints = SchedulerAuthConstraints {
+        allowed_providers: auth_snapshot
+            .effective_allowed_providers()
+            .map(|items| items.to_vec()),
+        allowed_api_formats: auth_snapshot
+            .effective_allowed_api_formats()
+            .map(|items| items.to_vec()),
+        allowed_models: auth_snapshot
+            .effective_allowed_models()
+            .map(|items| items.to_vec()),
+    };
+
+    let selection = build_minimal_candidate_selection(
+        rows,
         "openai:chat",
         "gpt-4.1",
+        "gpt-4.1",
         false,
-        Some(&auth_snapshot),
+        Some(&auth_constraints),
+        Some(auth_snapshot.api_key_id.as_str()),
     )
-    .await
     .expect("selection should read");
 
     assert_eq!(selection.len(), 2);

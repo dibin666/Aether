@@ -1,57 +1,60 @@
 use std::collections::BTreeMap;
 
-use aether_data::repository::candidates::{RequestCandidateStatus, UpsertRequestCandidateRecord};
+use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 use serde_json::json;
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::ai_pipeline::control_facade::{
+    collect_control_headers, GatewayControlAuthContext, GatewayControlDecision,
+};
+use crate::ai_pipeline::execution_facade::{ConversionMode, ExecutionStrategy};
+use crate::ai_pipeline::planner::auth_snapshot_facade::{
+    read_auth_api_key_snapshot, GatewayAuthApiKeySnapshot,
+};
 use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::planner::candidate_runtime_facade::{
+    persist_available_local_candidate, persist_skipped_local_candidate,
+};
 use crate::ai_pipeline::planner::common::{
     EXECUTION_RUNTIME_STREAM_DECISION_ACTION, EXECUTION_RUNTIME_SYNC_DECISION_ACTION,
-    GEMINI_FILES_DELETE_PLAN_KIND, GEMINI_FILES_DOWNLOAD_PLAN_KIND, GEMINI_FILES_GET_PLAN_KIND,
-    GEMINI_FILES_LIST_PLAN_KIND, GEMINI_FILES_UPLOAD_PLAN_KIND,
 };
+use crate::ai_pipeline::planner::executor_facade::mark_unused_local_candidate_items;
 use crate::ai_pipeline::planner::plan_builders::{
     build_passthrough_stream_plan_from_decision, build_passthrough_sync_plan_from_decision,
     LocalStreamPlanAndReport, LocalSyncPlanAndReport,
 };
-use crate::control::GatewayControlDecision;
-use crate::headers::collect_control_headers;
-use crate::provider_transport::auth::{
+use crate::ai_pipeline::planner::scheduler_facade::list_selectable_candidates_for_required_capability_without_requested_model;
+use crate::ai_pipeline::planner::transport_facade::read_provider_transport_snapshot;
+use crate::ai_pipeline::provider_transport_facade::auth::{
     build_passthrough_headers_with_auth, resolve_local_gemini_auth,
 };
-use crate::provider_transport::policy::supports_local_gemini_transport_with_network;
-use crate::provider_transport::url::build_gemini_files_passthrough_url;
-use crate::provider_transport::{
+use crate::ai_pipeline::provider_transport_facade::policy::supports_local_gemini_transport_with_network;
+use crate::ai_pipeline::provider_transport_facade::url::build_gemini_files_passthrough_url;
+use crate::ai_pipeline::provider_transport_facade::{
     apply_local_body_rules, apply_local_header_rules, resolve_transport_execution_timeouts,
     resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
 };
-use crate::scheduler::{
-    current_unix_secs, list_selectable_candidates_for_required_capability_without_requested_model,
-    record_local_request_candidate_status, GatewayMinimalCandidateSelectionCandidate,
-};
+use crate::clock::current_unix_secs;
 use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
+use aether_ai_pipeline::contracts::GEMINI_FILES_UPLOAD_PLAN_KIND;
+use aether_ai_pipeline::planner::specialized::files::{
+    resolve_stream_spec, resolve_sync_spec, LocalGeminiFilesSpec,
+};
 
 const GEMINI_FILES_CANDIDATE_API_FORMAT: &str = "gemini:chat";
 const GEMINI_FILES_CLIENT_API_FORMAT: &str = "gemini:files";
 const GEMINI_FILES_REQUIRED_CAPABILITY: &str = "gemini_files";
 
-#[derive(Debug, Clone, Copy)]
-struct LocalGeminiFilesSpec {
-    decision_kind: &'static str,
-    report_kind: Option<&'static str>,
-    require_streaming: bool,
-}
-
 #[derive(Debug, Clone)]
 struct LocalGeminiFilesDecisionInput {
-    auth_context: crate::control::GatewayControlAuthContext,
-    auth_snapshot: crate::data::auth::GatewayAuthApiKeySnapshot,
+    auth_context: GatewayControlAuthContext,
+    auth_snapshot: GatewayAuthApiKeySnapshot,
 }
 
 #[derive(Debug, Clone)]
 struct LocalGeminiFilesCandidateAttempt {
-    candidate: GatewayMinimalCandidateSelectionCandidate,
+    candidate: SchedulerMinimalCandidateSelectionCandidate,
     candidate_index: u32,
     candidate_id: String,
 }
@@ -181,43 +184,6 @@ pub(crate) async fn maybe_build_stream_local_gemini_files_decision_payload(
     Ok(None)
 }
 
-fn resolve_sync_spec(plan_kind: &str) -> Option<LocalGeminiFilesSpec> {
-    match plan_kind {
-        GEMINI_FILES_UPLOAD_PLAN_KIND => Some(LocalGeminiFilesSpec {
-            decision_kind: GEMINI_FILES_UPLOAD_PLAN_KIND,
-            report_kind: Some("gemini_files_store_mapping"),
-            require_streaming: false,
-        }),
-        GEMINI_FILES_LIST_PLAN_KIND => Some(LocalGeminiFilesSpec {
-            decision_kind: GEMINI_FILES_LIST_PLAN_KIND,
-            report_kind: Some("gemini_files_store_mapping"),
-            require_streaming: false,
-        }),
-        GEMINI_FILES_GET_PLAN_KIND => Some(LocalGeminiFilesSpec {
-            decision_kind: GEMINI_FILES_GET_PLAN_KIND,
-            report_kind: Some("gemini_files_store_mapping"),
-            require_streaming: false,
-        }),
-        GEMINI_FILES_DELETE_PLAN_KIND => Some(LocalGeminiFilesSpec {
-            decision_kind: GEMINI_FILES_DELETE_PLAN_KIND,
-            report_kind: Some("gemini_files_delete_mapping"),
-            require_streaming: false,
-        }),
-        _ => None,
-    }
-}
-
-fn resolve_stream_spec(plan_kind: &str) -> Option<LocalGeminiFilesSpec> {
-    match plan_kind {
-        GEMINI_FILES_DOWNLOAD_PLAN_KIND => Some(LocalGeminiFilesSpec {
-            decision_kind: GEMINI_FILES_DOWNLOAD_PLAN_KIND,
-            report_kind: None,
-            require_streaming: true,
-        }),
-        _ => None,
-    }
-}
-
 async fn build_local_sync_plan_and_reports(
     state: &AppState,
     parts: &http::request::Parts,
@@ -333,13 +299,13 @@ async fn resolve_local_gemini_files_decision_input(
         return None;
     };
 
-    let auth_snapshot = match state
-        .read_auth_api_key_snapshot(
-            &auth_context.user_id,
-            &auth_context.api_key_id,
-            current_unix_secs(),
-        )
-        .await
+    let auth_snapshot = match read_auth_api_key_snapshot(
+        state,
+        &auth_context.user_id,
+        &auth_context.api_key_id,
+        current_unix_secs(),
+    )
+    .await
     {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => return None,
@@ -392,46 +358,19 @@ async fn materialize_local_gemini_files_candidate_attempts(
             "key_name": candidate.key_name.clone(),
         });
 
-        let candidate_id = match state
-            .upsert_request_candidate(UpsertRequestCandidateRecord {
-                id: generated_candidate_id.clone(),
-                request_id: trace_id.to_string(),
-                user_id: Some(input.auth_context.user_id.clone()),
-                api_key_id: Some(input.auth_context.api_key_id.clone()),
-                username: None,
-                api_key_name: None,
-                candidate_index: candidate_index as u32,
-                retry_index: 0,
-                provider_id: Some(candidate.provider_id.clone()),
-                endpoint_id: Some(candidate.endpoint_id.clone()),
-                key_id: Some(candidate.key_id.clone()),
-                status: RequestCandidateStatus::Available,
-                skip_reason: None,
-                is_cached: Some(false),
-                status_code: None,
-                error_type: None,
-                error_message: None,
-                latency_ms: None,
-                concurrent_requests: None,
-                extra_data: Some(extra_data),
-                required_capabilities: candidate.key_capabilities.clone(),
-                created_at_unix_secs: Some(created_at_unix_secs),
-                started_at_unix_secs: None,
-                finished_at_unix_secs: None,
-            })
-            .await
-        {
-            Ok(Some(stored)) => stored.id,
-            Ok(None) => generated_candidate_id.clone(),
-            Err(err) => {
-                warn!(
-                    trace_id = %trace_id,
-                    error = ?err,
-                    "gateway local gemini files request candidate upsert failed"
-                );
-                generated_candidate_id.clone()
-            }
-        };
+        let candidate_id = persist_available_local_candidate(
+            state,
+            trace_id,
+            &input.auth_context.user_id,
+            &input.auth_context.api_key_id,
+            &candidate,
+            candidate_index as u32,
+            &generated_candidate_id,
+            Some(extra_data),
+            created_at_unix_secs,
+            "gateway local gemini files request candidate upsert failed",
+        )
+        .await;
 
         attempts.push(LocalGeminiFilesCandidateAttempt {
             candidate,
@@ -460,13 +399,13 @@ async fn maybe_build_local_gemini_files_decision_payload_for_candidate(
         candidate_id,
     } = attempt;
 
-    let transport = match state
-        .read_provider_transport_snapshot(
-            &candidate.provider_id,
-            &candidate.endpoint_id,
-            &candidate.key_id,
-        )
-        .await
+    let transport = match read_provider_transport_snapshot(
+        state,
+        &candidate.provider_id,
+        &candidate.endpoint_id,
+        &candidate.key_id,
+    )
+    .await
     {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => {
@@ -664,16 +603,8 @@ async fn maybe_build_local_gemini_files_decision_payload_for_candidate(
             EXECUTION_RUNTIME_SYNC_DECISION_ACTION.to_string()
         },
         decision_kind: Some(spec.decision_kind.to_string()),
-        execution_strategy: Some(
-            crate::execution_runtime::ExecutionStrategy::LocalSameFormat
-                .as_str()
-                .to_string(),
-        ),
-        conversion_mode: Some(
-            crate::execution_runtime::ConversionMode::None
-                .as_str()
-                .to_string(),
-        ),
+        execution_strategy: Some(ExecutionStrategy::LocalSameFormat.as_str().to_string()),
+        conversion_mode: Some(ConversionMode::None.as_str().to_string()),
         request_id: Some(trace_id.to_string()),
         candidate_id: Some(candidate_id.clone()),
         provider_name: Some(transport.provider.name.clone()),
@@ -737,69 +668,37 @@ async fn mark_skipped_local_gemini_files_candidate(
     state: &AppState,
     input: &LocalGeminiFilesDecisionInput,
     trace_id: &str,
-    candidate: &GatewayMinimalCandidateSelectionCandidate,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
     candidate_index: u32,
     candidate_id: &str,
     skip_reason: &'static str,
 ) {
-    if let Err(err) = state
-        .upsert_request_candidate(UpsertRequestCandidateRecord {
-            id: candidate_id.to_string(),
-            request_id: trace_id.to_string(),
-            user_id: Some(input.auth_context.user_id.clone()),
-            api_key_id: Some(input.auth_context.api_key_id.clone()),
-            username: None,
-            api_key_name: None,
-            candidate_index,
-            retry_index: 0,
-            provider_id: Some(candidate.provider_id.clone()),
-            endpoint_id: Some(candidate.endpoint_id.clone()),
-            key_id: Some(candidate.key_id.clone()),
-            status: RequestCandidateStatus::Skipped,
-            skip_reason: Some(skip_reason.to_string()),
-            is_cached: Some(false),
-            status_code: None,
-            error_type: None,
-            error_message: None,
-            latency_ms: None,
-            concurrent_requests: None,
-            extra_data: None,
-            required_capabilities: candidate.key_capabilities.clone(),
-            created_at_unix_secs: None,
-            started_at_unix_secs: None,
-            finished_at_unix_secs: Some(current_unix_secs()),
-        })
-        .await
-    {
-        warn!(
-            trace_id = %trace_id,
-            candidate_id = %candidate_id,
-            skip_reason,
-            error = ?err,
-            "gateway local gemini files failed to persist skipped candidate"
-        );
-    }
+    persist_skipped_local_candidate(
+        state,
+        trace_id,
+        &input.auth_context.user_id,
+        &input.auth_context.api_key_id,
+        candidate,
+        candidate_index,
+        candidate_id,
+        skip_reason,
+        current_unix_secs(),
+        "gateway local gemini files failed to persist skipped candidate",
+    )
+    .await;
 }
 
 async fn mark_unused_local_files_candidates<T>(state: &AppState, remaining: Vec<T>)
 where
     T: LocalGeminiFilesPlanAndReport,
 {
-    for plan_and_report in remaining {
-        record_local_request_candidate_status(
-            state,
-            plan_and_report.plan(),
-            plan_and_report.report_context(),
-            RequestCandidateStatus::Unused,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await;
-    }
+    mark_unused_local_candidate_items(
+        state,
+        remaining,
+        |item| item.plan(),
+        |item| item.report_context(),
+    )
+    .await;
 }
 
 trait LocalGeminiFilesPlanAndReport {

@@ -1,5 +1,5 @@
-use aether_data::repository::billing::StoredBillingModelContext;
-use aether_data::DataLayerError;
+use aether_data_contracts::repository::billing::StoredBillingModelContext;
+use aether_data_contracts::DataLayerError;
 use aether_usage_runtime::{UsageEvent, UsageEventType};
 use async_trait::async_trait;
 use serde_json::{Map, Value};
@@ -136,7 +136,7 @@ fn merge_billing_snapshot_metadata(
 
 #[cfg(test)]
 mod tests {
-    use aether_data::repository::billing::StoredBillingModelContext;
+    use aether_data_contracts::repository::billing::StoredBillingModelContext;
     use aether_usage_runtime::{UsageEvent, UsageEventData, UsageEventType};
     use async_trait::async_trait;
     use serde_json::json;
@@ -155,7 +155,8 @@ mod tests {
             _provider_id: &str,
             _provider_api_key_id: Option<&str>,
             _global_model_name: &str,
-        ) -> Result<Option<StoredBillingModelContext>, aether_data::DataLayerError> {
+        ) -> Result<Option<StoredBillingModelContext>, aether_data_contracts::DataLayerError>
+        {
             Ok(self.context.clone())
         }
     }

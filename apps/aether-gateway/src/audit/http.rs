@@ -80,15 +80,13 @@ pub(crate) async fn get_request_candidate_trace(
     State(state): State<AppState>,
     Path(request_id): Path<String>,
     Query(query): Query<GetRequestCandidateTraceQuery>,
-) -> Result<
-    Json<crate::data::candidates::RequestCandidateTrace>,
-    axum::response::Response,
-> {
+) -> Result<Json<crate::data::candidates::RequestCandidateTrace>, axum::response::Response> {
     let attempted_only = query.attempted_only.unwrap_or(false);
     let trace = state
+        .data
         .read_request_candidate_trace(&request_id, attempted_only)
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(|err| GatewayError::Internal(err.to_string()).into_response())?;
 
     match trace {
         Some(trace) => Ok(Json(trace)),
@@ -108,15 +106,13 @@ pub(crate) async fn get_decision_trace(
     State(state): State<AppState>,
     Path(request_id): Path<String>,
     Query(query): Query<GetRequestCandidateTraceQuery>,
-) -> Result<
-    Json<crate::data::decision_trace::DecisionTrace>,
-    axum::response::Response,
-> {
+) -> Result<Json<crate::data::decision_trace::DecisionTrace>, axum::response::Response> {
     let attempted_only = query.attempted_only.unwrap_or(false);
     let trace = state
+        .data
         .read_decision_trace(&request_id, attempted_only)
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(|err| GatewayError::Internal(err.to_string()).into_response())?;
 
     match trace {
         Some(trace) => Ok(Json(trace)),
@@ -135,14 +131,12 @@ pub(crate) async fn get_decision_trace(
 pub(crate) async fn get_auth_api_key_snapshot(
     State(state): State<AppState>,
     Path((user_id, api_key_id)): Path<(String, String)>,
-) -> Result<
-    Json<crate::data::auth::GatewayAuthApiKeySnapshot>,
-    axum::response::Response,
-> {
+) -> Result<Json<crate::data::auth::GatewayAuthApiKeySnapshot>, axum::response::Response> {
     let snapshot = state
+        .data
         .read_auth_api_key_snapshot(&user_id, &api_key_id, current_unix_secs())
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(|err| GatewayError::Internal(err.to_string()).into_response())?;
 
     match snapshot {
         Some(snapshot) => Ok(Json(snapshot)),

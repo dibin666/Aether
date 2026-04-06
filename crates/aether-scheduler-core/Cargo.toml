@@ -8,7 +8,7 @@ description = "Pure scheduler health and quota logic extracted from aether-gatew
 
 [dependencies]
 aether-contracts.workspace = true
-aether-data.workspace = true
+aether-data-contracts.workspace = true
 aether-wallet.workspace = true
 regex.workspace = true
 serde.workspace = true

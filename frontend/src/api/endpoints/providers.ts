@@ -194,6 +194,7 @@ export interface TestModelFailoverRequest {
   provider_id: string
   mode: 'global' | 'direct'
   model_name: string
+  failover_models?: string[]
   api_format?: string
   endpoint_id?: string
   message?: string
@@ -239,7 +240,14 @@ export async function testModelFailover(
   data: TestModelFailoverRequest,
   options: { signal?: AbortSignal } = {}
 ): Promise<TestModelFailoverResponse> {
-  const response = await client.post('/api/admin/provider-query/test-model-failover', data, {
+  const normalizedModelName = typeof data.model_name === 'string' ? data.model_name.trim() : ''
+  const failoverModels = Array.isArray(data.failover_models) && data.failover_models.length > 0
+    ? data.failover_models
+    : (normalizedModelName ? [normalizedModelName] : undefined)
+  const response = await client.post('/api/admin/provider-query/test-model-failover', {
+    ...data,
+    ...(failoverModels ? { failover_models: failoverModels } : {}),
+  }, {
     timeout: 10 * 60 * 1000,
     signal: options.signal,
   })

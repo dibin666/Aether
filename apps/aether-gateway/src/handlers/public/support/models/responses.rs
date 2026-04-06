@@ -1,4 +1,4 @@
-use aether_data::repository::candidate_selection::StoredMinimalCandidateSelectionRow;
+use aether_data_contracts::repository::candidate_selection::StoredMinimalCandidateSelectionRow;
 use axum::{
     body::Body,
     http,

@@ -3,12 +3,9 @@ mod local;
 use self::local::{
     maybe_build_local_admin_proxy_response, maybe_build_local_internal_proxy_response,
 };
-use super::admin::misc_helpers::{
-    build_admin_proxy_auth_required_response, build_unhandled_admin_proxy_response,
-};
 use super::internal::resolve_local_proxy_execution_path;
 pub(crate) use super::public::matches_model_mapping_for_models;
-use crate::ai_pipeline::{finalize as ai_finalize, runtime as ai_runtime};
+use crate::ai_pipeline::finalize as ai_finalize;
 use crate::api::response::{
     build_local_auth_rejection_response, build_local_http_error_response,
     build_local_overloaded_response, build_local_user_rpm_limited_response,
@@ -27,14 +24,16 @@ use crate::constants::{
     TRUSTED_AUTH_BALANCE_HEADER, TRUSTED_AUTH_USER_ID_HEADER, TUNNEL_AFFINITY_FORWARDED_BY_HEADER,
     TUNNEL_AFFINITY_OWNER_INSTANCE_HEADER,
 };
-use crate::control::maybe_execute_via_control;
-use crate::control::GatewayControlDecision;
-use crate::control::GatewayPublicRequestContext;
-use crate::handlers::{
-    allows_control_execute_emergency, local_proxy_route_requires_buffered_body,
-    request_enables_control_execute, request_model_local_rejection,
-    should_buffer_request_for_local_auth, should_strip_forwarded_provider_credential_header,
-    should_strip_forwarded_trusted_admin_header, trusted_auth_local_rejection,
+use crate::control::{
+    allows_control_execute_emergency, maybe_execute_via_control, request_model_local_rejection,
+    should_buffer_request_for_local_auth, trusted_auth_local_rejection, GatewayControlDecision,
+    GatewayPublicRequestContext,
+};
+use crate::executor::{maybe_execute_stream_request, maybe_execute_sync_request};
+use crate::handlers::shared::{
+    build_admin_proxy_auth_required_response, build_unhandled_admin_proxy_response,
+    local_proxy_route_requires_buffered_body, request_enables_control_execute,
+    should_strip_forwarded_provider_credential_header, should_strip_forwarded_trusted_admin_header,
 };
 use crate::headers::{extract_or_generate_trace_id, should_skip_request_header};
 use crate::router::RequestAdmissionError;
@@ -47,7 +46,7 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{self, header::HeaderName, header::HeaderValue, Response};
 use chrono::Utc;
 use std::time::Instant;
-use tracing::warn;
+use tracing::{info, warn};
 
 const OPENAI_CHAT_LOCAL_EXECUTION_RUNTIME_MISS_DETAIL: &str =
     "OpenAI chat execution runtime miss did not match a Rust execution path";
@@ -123,7 +122,7 @@ async fn maybe_forward_public_request_to_tunnel_owner(
     ) else {
         return Ok(None);
     };
-    let Some(target) = crate::scheduler::read_cached_scheduler_affinity_target(
+    let Some(target) = crate::scheduler::affinity::read_cached_scheduler_affinity_target(
         state,
         &auth_context.api_key_id,
         api_format,
@@ -151,8 +150,7 @@ async fn maybe_forward_public_request_to_tunnel_owner(
         }
     };
 
-    let Some(proxy) =
-        crate::provider_transport::resolve_transport_proxy_snapshot(&transport)
+    let Some(proxy) = crate::provider_transport::resolve_transport_proxy_snapshot(&transport)
     else {
         return Ok(None);
     };
@@ -321,9 +319,11 @@ pub(crate) async fn proxy_request(
             aether_runtime::DistributedConcurrencyError::InvalidConfiguration(message),
         )) => return Err(GatewayError::Internal(message)),
     };
+    let request_admission_ms = started_at.elapsed().as_millis() as u64;
     let (parts, body) = request.into_parts();
     let trace_id = extract_or_generate_trace_id(&parts.headers);
     state.clear_local_execution_runtime_miss_diagnostic(&trace_id);
+    let request_context_started_at = Instant::now();
     let request_context = crate::control::resolve_public_request_context(
         &state,
         &parts.method,
@@ -332,6 +332,30 @@ pub(crate) async fn proxy_request(
         &trace_id,
     )
     .await?;
+    let request_context_ms = request_context_started_at.elapsed().as_millis() as u64;
+    if request_context
+        .control_decision
+        .as_ref()
+        .is_some_and(|decision| {
+            decision.route_family.as_deref() == Some("api_keys_manage")
+                && decision.route_kind.as_deref() == Some("list_api_keys")
+        })
+    {
+        info!(
+            event_name = "admin_api_keys_route_breakdown",
+            log_type = "event",
+            trace_id = %trace_id,
+            method = %parts.method,
+            path = %parts
+                .uri
+                .path_and_query()
+                .map(|value| value.as_str())
+                .unwrap_or("/"),
+            request_admission_ms,
+            request_context_ms,
+            "measured admin api keys route pre-handler timing"
+        );
+    }
     let mut request_body = Some(body);
     let local_proxy_body = if local_proxy_route_requires_buffered_body(&request_context) {
         Some(
@@ -625,7 +649,7 @@ pub(crate) async fn proxy_request(
             .expect("execution runtime/control auth gate should have buffered request body");
         let stream_request = request_wants_stream(&request_context, buffered_body);
         if stream_request {
-            if let Some(execution_runtime_response) = ai_runtime::maybe_execute_stream_request(
+            if let Some(execution_runtime_response) = maybe_execute_stream_request(
                 &state,
                 &parts,
                 buffered_body,
@@ -646,14 +670,9 @@ pub(crate) async fn proxy_request(
                 ));
             }
         }
-        if let Some(execution_runtime_response) = ai_runtime::maybe_execute_sync_request(
-            &state,
-            &parts,
-            buffered_body,
-            &trace_id,
-            control_decision,
-        )
-        .await?
+        if let Some(execution_runtime_response) =
+            maybe_execute_sync_request(&state, &parts, buffered_body, &trace_id, control_decision)
+                .await?
         {
             state.clear_local_execution_runtime_miss_diagnostic(&trace_id);
             return Ok(finalize_gateway_response_with_context(
@@ -667,7 +686,7 @@ pub(crate) async fn proxy_request(
             ));
         }
         if parts.method != http::Method::POST {
-            if let Some(execution_runtime_response) = ai_runtime::maybe_execute_stream_request(
+            if let Some(execution_runtime_response) = maybe_execute_stream_request(
                 &state,
                 &parts,
                 buffered_body,

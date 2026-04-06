@@ -1,11 +1,13 @@
 use std::collections::BTreeSet;
 
-use aether_data::repository::candidates::build_decision_trace;
-use aether_data::DataLayerError;
+use aether_data_contracts::repository::candidates::build_decision_trace;
+use aether_data_contracts::DataLayerError;
 
 use super::state::GatewayDataState;
 
-pub(crate) use aether_data::repository::candidates::{DecisionTrace, DecisionTraceCandidate};
+pub(crate) use aether_data_contracts::repository::candidates::{
+    DecisionTrace, DecisionTraceCandidate,
+};
 
 pub(crate) async fn read_decision_trace(
     state: &GatewayDataState,
@@ -63,12 +65,13 @@ fn unique_ids<'a>(items: impl Iterator<Item = &'a String>) -> Vec<String> {
 mod tests {
     use std::sync::Arc;
 
-    use aether_data::repository::candidates::{
-        InMemoryRequestCandidateRepository, RequestCandidateStatus, StoredRequestCandidate,
+    use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+    use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+    use aether_data_contracts::repository::candidates::{
+        RequestCandidateStatus, StoredRequestCandidate,
     };
-    use aether_data::repository::provider_catalog::{
-        InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint,
-        StoredProviderCatalogKey, StoredProviderCatalogProvider,
+    use aether_data_contracts::repository::provider_catalog::{
+        StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
     };
 
     use super::{read_decision_trace, DecisionTrace, DecisionTraceCandidate};

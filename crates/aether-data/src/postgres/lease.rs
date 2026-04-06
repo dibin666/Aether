@@ -1,3 +1,4 @@
+use crate::error::SqlxResultExt;
 use crate::postgres::{DatabaseRecordId, PostgresTransactionOptions, PostgresTransactionRunner};
 use crate::DataLayerError;
 use futures_util::FutureExt;
@@ -108,7 +109,8 @@ impl PostgresLeaseRunner {
                         .bind(owner)
                         .bind(lease_ms)
                         .fetch_all(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
                     Ok(rows.into_iter().map(DatabaseRecordId).collect())
                 }
                 .boxed()
@@ -142,7 +144,8 @@ impl PostgresLeaseRunner {
                         .bind(ids)
                         .bind(owner)
                         .fetch_all(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
                     Ok(rows.into_iter().map(DatabaseRecordId).collect())
                 }
                 .boxed()
@@ -186,7 +189,8 @@ impl PostgresLeaseRunner {
                         .bind(owner)
                         .bind(lease_ms)
                         .fetch_all(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
                     Ok(rows.into_iter().map(DatabaseRecordId).collect())
                 }
                 .boxed()

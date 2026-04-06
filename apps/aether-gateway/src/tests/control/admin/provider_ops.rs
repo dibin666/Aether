@@ -3,9 +3,8 @@ use std::sync::{Arc, Mutex};
 use aether_crypto::{
     decrypt_python_fernet_ciphertext, encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository,
-};
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
 use axum::body::to_bytes;
 use axum::body::Body;
 use axum::routing::{any, get, post};

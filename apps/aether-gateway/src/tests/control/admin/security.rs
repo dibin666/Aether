@@ -13,7 +13,7 @@ use crate::constants::{
     TRUSTED_ADMIN_USER_ID_HEADER, TRUSTED_ADMIN_USER_ROLE_HEADER,
 };
 use crate::control::resolve_public_request_context;
-use crate::handlers::admin::maybe_build_local_admin_security_response;
+use crate::handlers::admin::auth::maybe_build_local_admin_security_response;
 
 async fn send_admin_security_request(
     gateway: Router,

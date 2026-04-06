@@ -303,7 +303,8 @@ pub(super) async fn handle_users_me_api_keys_get(
         .map(|record| record.api_key_id.clone())
         .collect::<Vec<_>>();
     let snapshot_by_id = match state
-        .read_auth_api_key_snapshots_by_ids(&snapshot_ids)
+        .data
+        .list_auth_api_key_snapshots_by_ids(&snapshot_ids)
         .await
     {
         Ok(value) => value
@@ -402,7 +403,8 @@ pub(super) async fn handle_users_me_api_key_detail_get(
 
     let snapshot_ids = vec![api_key_id.clone()];
     let is_locked = match state
-        .read_auth_api_key_snapshots_by_ids(&snapshot_ids)
+        .data
+        .list_auth_api_key_snapshots_by_ids(&snapshot_ids)
         .await
     {
         Ok(value) => value
@@ -431,6 +433,7 @@ async fn resolve_users_me_api_key_snapshot_by_id(
     api_key_id: &str,
 ) -> Result<crate::data::auth::GatewayAuthApiKeySnapshot, Response<Body>> {
     let snapshot = match state
+        .data
         .read_auth_api_key_snapshot(
             user_id,
             api_key_id,
@@ -483,7 +486,7 @@ pub(super) async fn handle_users_me_api_key_create(
     headers: &http::HeaderMap,
     request_body: Option<&axum::body::Bytes>,
 ) -> Response<Body> {
-    if !state.has_auth_api_key_writer() {
+    if !state.data.has_auth_api_key_writer() {
         return build_users_me_api_key_writer_unavailable_response();
     }
     let auth = match resolve_authenticated_local_user(state, request_context, headers).await {
@@ -565,7 +568,7 @@ pub(super) async fn handle_users_me_api_key_update(
     headers: &http::HeaderMap,
     request_body: Option<&axum::body::Bytes>,
 ) -> Response<Body> {
-    if !state.has_auth_api_key_writer() {
+    if !state.data.has_auth_api_key_writer() {
         return build_users_me_api_key_writer_unavailable_response();
     }
     let auth = match resolve_authenticated_local_user(state, request_context, headers).await {
@@ -648,7 +651,7 @@ pub(super) async fn handle_users_me_api_key_patch(
     headers: &http::HeaderMap,
     request_body: Option<&axum::body::Bytes>,
 ) -> Response<Body> {
-    if !state.has_auth_api_key_writer() {
+    if !state.data.has_auth_api_key_writer() {
         return build_users_me_api_key_writer_unavailable_response();
     }
     let auth = match resolve_authenticated_local_user(state, request_context, headers).await {
@@ -711,7 +714,7 @@ pub(super) async fn handle_users_me_api_key_delete(
     request_context: &GatewayPublicRequestContext,
     headers: &http::HeaderMap,
 ) -> Response<Body> {
-    if !state.has_auth_api_key_writer() {
+    if !state.data.has_auth_api_key_writer() {
         return build_users_me_api_key_writer_unavailable_response();
     }
     let auth = match resolve_authenticated_local_user(state, request_context, headers).await {
@@ -751,7 +754,7 @@ pub(super) async fn handle_users_me_api_key_providers_put(
     headers: &http::HeaderMap,
     request_body: Option<&axum::body::Bytes>,
 ) -> Response<Body> {
-    if !state.has_auth_api_key_writer() {
+    if !state.data.has_auth_api_key_writer() {
         return build_users_me_api_key_writer_unavailable_response();
     }
     let auth = match resolve_authenticated_local_user(state, request_context, headers).await {
@@ -886,7 +889,7 @@ pub(super) async fn handle_users_me_api_key_capabilities_put(
     headers: &http::HeaderMap,
     request_body: Option<&axum::body::Bytes>,
 ) -> Response<Body> {
-    if !state.has_auth_api_key_writer() {
+    if !state.data.has_auth_api_key_writer() {
         return build_users_me_api_key_writer_unavailable_response();
     }
     let auth = match resolve_authenticated_local_user(state, request_context, headers).await {

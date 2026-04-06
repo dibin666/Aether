@@ -19,8 +19,11 @@ use super::types::{
     StoredWalletDailyUsageLedgerPage, StoredWalletSnapshot, WalletLookupKey, WalletMutationOutcome,
     WalletReadRepository, WalletWriteRepository,
 };
-use crate::postgres::PostgresTransactionRunner;
-use crate::DataLayerError;
+use crate::{
+    error::{postgres_error, SqlxResultExt},
+    postgres::PostgresTransactionRunner,
+    DataLayerError,
+};
 use std::collections::BTreeMap;
 
 const FIND_BY_WALLET_ID_SQL: &str = r#"
@@ -624,7 +627,8 @@ impl WalletReadRepository for SqlxWalletRepository {
         let row = sqlx::query(query)
             .bind(bind)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_wallet_row).transpose()
     }
     async fn list_wallets_by_user_ids(
@@ -641,7 +645,8 @@ impl WalletReadRepository for SqlxWalletRepository {
         let rows = sqlx::query(LIST_BY_USER_IDS_SQL)
             .bind(user_ids)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let mut wallets = Vec::with_capacity(rows.len());
         for row in rows {
             let wallet = map_wallet_row(&row)?;
@@ -659,7 +664,8 @@ impl WalletReadRepository for SqlxWalletRepository {
         let rows = sqlx::query(LIST_BY_API_KEY_IDS_SQL)
             .bind(api_key_ids)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let mut wallets = Vec::with_capacity(rows.len());
         for row in rows {
             let wallet = map_wallet_row(&row)?;
@@ -677,7 +683,8 @@ impl WalletReadRepository for SqlxWalletRepository {
                 .bind(query.status.as_deref())
                 .bind(query.owner_type.as_deref())
                 .fetch_one(&self.pool)
-                .await?,
+                .await
+                .map_postgres_err()?,
         )?;
         let rows = sqlx::query(LIST_ADMIN_WALLETS_SQL)
             .bind(query.status.as_deref())
@@ -685,7 +692,8 @@ impl WalletReadRepository for SqlxWalletRepository {
             .bind(as_i64(query.offset, "wallet offset")?)
             .bind(as_i64(query.limit, "wallet limit")?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_admin_wallet_list_item_row)
@@ -703,7 +711,8 @@ impl WalletReadRepository for SqlxWalletRepository {
                 .bind(query.reason_code.as_deref())
                 .bind(query.owner_type.as_deref())
                 .fetch_one(&self.pool)
-                .await?,
+                .await
+                .map_postgres_err()?,
         )?;
         let rows = sqlx::query(LIST_ADMIN_WALLET_LEDGER_SQL)
             .bind(query.category.as_deref())
@@ -712,7 +721,8 @@ impl WalletReadRepository for SqlxWalletRepository {
             .bind(as_i64(query.offset, "wallet ledger offset")?)
             .bind(as_i64(query.limit, "wallet ledger limit")?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_admin_wallet_ledger_item_row)
@@ -728,14 +738,16 @@ impl WalletReadRepository for SqlxWalletRepository {
             sqlx::query(COUNT_ADMIN_WALLET_REFUND_REQUESTS_SQL)
                 .bind(query.status.as_deref())
                 .fetch_one(&self.pool)
-                .await?,
+                .await
+                .map_postgres_err()?,
         )?;
         let rows = sqlx::query(LIST_ADMIN_WALLET_REFUND_REQUESTS_SQL)
             .bind(query.status.as_deref())
             .bind(as_i64(query.offset, "wallet refund request offset")?)
             .bind(as_i64(query.limit, "wallet refund request limit")?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_admin_wallet_refund_request_item_row)
@@ -753,14 +765,16 @@ impl WalletReadRepository for SqlxWalletRepository {
             sqlx::query(COUNT_ADMIN_WALLET_TRANSACTIONS_SQL)
                 .bind(wallet_id)
                 .fetch_one(&self.pool)
-                .await?,
+                .await
+                .map_postgres_err()?,
         )?;
         let rows = sqlx::query(LIST_ADMIN_WALLET_TRANSACTIONS_SQL)
             .bind(wallet_id)
             .bind(as_i64(offset, "wallet transaction offset")?)
             .bind(as_i64(limit, "wallet transaction limit")?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_admin_wallet_transaction_row)
@@ -777,7 +791,8 @@ impl WalletReadRepository for SqlxWalletRepository {
             .bind(wallet_id)
             .bind(billing_timezone)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_wallet_daily_usage_row).transpose()
     }
 
@@ -792,14 +807,16 @@ impl WalletReadRepository for SqlxWalletRepository {
                 .bind(wallet_id)
                 .bind(billing_timezone)
                 .fetch_one(&self.pool)
-                .await?,
+                .await
+                .map_postgres_err()?,
         )?;
         let rows = sqlx::query(LIST_WALLET_DAILY_USAGE_HISTORY_SQL)
             .bind(wallet_id)
             .bind(billing_timezone)
             .bind(as_i64(limit, "wallet daily usage history limit")?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_wallet_daily_usage_row)
@@ -817,14 +834,16 @@ impl WalletReadRepository for SqlxWalletRepository {
             sqlx::query(COUNT_ADMIN_WALLET_REFUNDS_SQL)
                 .bind(wallet_id)
                 .fetch_one(&self.pool)
-                .await?,
+                .await
+                .map_postgres_err()?,
         )?;
         let rows = sqlx::query(LIST_ADMIN_WALLET_REFUNDS_SQL)
             .bind(wallet_id)
             .bind(as_i64(offset, "wallet refund offset")?)
             .bind(as_i64(limit, "wallet refund limit")?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_admin_wallet_refund_row)
@@ -841,7 +860,8 @@ impl WalletReadRepository for SqlxWalletRepository {
                 .bind(query.payment_method.as_deref())
                 .bind(query.status.as_deref())
                 .fetch_one(&self.pool)
-                .await?,
+                .await
+                .map_postgres_err()?,
         )?;
         let rows = sqlx::query(LIST_ADMIN_PAYMENT_ORDERS_SQL)
             .bind(query.payment_method.as_deref())
@@ -849,7 +869,8 @@ impl WalletReadRepository for SqlxWalletRepository {
             .bind(as_i64(query.offset, "payment order offset")?)
             .bind(as_i64(query.limit, "payment order limit")?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_admin_payment_order_row)
@@ -864,7 +885,8 @@ impl WalletReadRepository for SqlxWalletRepository {
         let row = sqlx::query(FIND_ADMIN_PAYMENT_ORDER_SQL)
             .bind(order_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_admin_payment_order_row).transpose()
     }
 
@@ -878,14 +900,16 @@ impl WalletReadRepository for SqlxWalletRepository {
             sqlx::query(COUNT_WALLET_PAYMENT_ORDERS_BY_USER_SQL)
                 .bind(user_id)
                 .fetch_one(&self.pool)
-                .await?,
+                .await
+                .map_postgres_err()?,
         )?;
         let rows = sqlx::query(LIST_WALLET_PAYMENT_ORDERS_BY_USER_SQL)
             .bind(user_id)
             .bind(as_i64(offset, "wallet payment order offset")?)
             .bind(as_i64(limit, "wallet payment order limit")?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_admin_payment_order_row)
@@ -902,7 +926,8 @@ impl WalletReadRepository for SqlxWalletRepository {
             .bind(user_id)
             .bind(order_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_admin_payment_order_row).transpose()
     }
 
@@ -915,7 +940,8 @@ impl WalletReadRepository for SqlxWalletRepository {
             .bind(wallet_id)
             .bind(refund_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_admin_wallet_refund_row).transpose()
     }
 
@@ -929,14 +955,16 @@ impl WalletReadRepository for SqlxWalletRepository {
             sqlx::query(COUNT_ADMIN_PAYMENT_CALLBACKS_SQL)
                 .bind(payment_method)
                 .fetch_one(&self.pool)
-                .await?,
+                .await
+                .map_postgres_err()?,
         )?;
         let rows = sqlx::query(LIST_ADMIN_PAYMENT_CALLBACKS_SQL)
             .bind(payment_method)
             .bind(as_i64(offset, "payment callback offset")?)
             .bind(as_i64(limit, "payment callback limit")?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let items = rows
             .iter()
             .map(map_admin_payment_callback_row)
@@ -965,7 +993,8 @@ FOR UPDATE
                     )
                     .bind(&input.user_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     {
                         Some(row) => row,
                         None => {
@@ -1013,11 +1042,12 @@ RETURNING id, status
                             .bind(&wallet_id)
                             .bind(&input.user_id)
                             .fetch_one(&mut **tx)
-                            .await?
+                            .await
+                            .map_postgres_err()?
                         }
                     };
-                    let wallet_id: String = wallet_row.try_get("id")?;
-                    let wallet_status: String = wallet_row.try_get("status")?;
+                    let wallet_id: String = row_get(&wallet_row, "id")?;
+                    let wallet_status: String = row_get(&wallet_row, "status")?;
                     if wallet_status != "active" {
                         return Ok(CreateWalletRechargeOrderOutcome::WalletInactive);
                     }
@@ -1099,7 +1129,8 @@ RETURNING
                     .bind(&input.gateway_response)
                     .bind(expires_at)
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     Ok(CreateWalletRechargeOrderOutcome::Created(
                         map_admin_payment_order_row(&row)?,
                     ))
@@ -1128,11 +1159,12 @@ FOR UPDATE
                     )
                     .bind(&input.wallet_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(CreateWalletRefundRequestOutcome::WalletMissing);
                     };
-                    let wallet_recharge_balance: f64 = locked_wallet_row.try_get("balance")?;
+                    let wallet_recharge_balance: f64 = row_get(&locked_wallet_row, "balance")?;
                     let wallet_reserved_row = sqlx::query(
                         r#"
 SELECT COALESCE(CAST(SUM(amount_usd) AS DOUBLE PRECISION), 0) AS total
@@ -1143,8 +1175,9 @@ WHERE wallet_id = $1
                     )
                     .bind(&input.wallet_id)
                     .fetch_one(&mut **tx)
-                    .await?;
-                    let wallet_reserved_amount: f64 = wallet_reserved_row.try_get("total")?;
+                    .await
+                    .map_postgres_err()?;
+                    let wallet_reserved_amount: f64 = row_get(&wallet_reserved_row, "total")?;
                     if input.amount_usd > (wallet_recharge_balance - wallet_reserved_amount) {
                         return Ok(
                             CreateWalletRefundRequestOutcome::RefundAmountExceedsAvailableBalance,
@@ -1179,11 +1212,12 @@ FOR UPDATE
                         .bind(order_id)
                         .bind(&input.wallet_id)
                         .fetch_optional(&mut **tx)
-                        .await?
+                        .await
+                        .map_postgres_err()?
                         else {
                             return Ok(CreateWalletRefundRequestOutcome::PaymentOrderNotFound);
                         };
-                        let status: String = order_row.try_get("status")?;
+                        let status: String = row_get(&order_row, "status")?;
                         if status != "credited" {
                             return Ok(CreateWalletRefundRequestOutcome::PaymentOrderNotRefundable);
                         }
@@ -1197,9 +1231,11 @@ WHERE payment_order_id = $1
                         )
                         .bind(order_id)
                         .fetch_one(&mut **tx)
-                        .await?;
-                        let refundable_amount: f64 = order_row.try_get("refundable_amount_usd")?;
-                        let reserved_amount: f64 = order_reserved_row.try_get("total")?;
+                        .await
+                        .map_postgres_err()?;
+                        let refundable_amount: f64 =
+                            row_get(&order_row, "refundable_amount_usd")?;
+                        let reserved_amount: f64 = row_get(&order_reserved_row, "total")?;
                         if input.amount_usd > (refundable_amount - reserved_amount) {
                             return Ok(
                                 CreateWalletRefundRequestOutcome::RefundAmountExceedsAvailableOrderAmount,
@@ -1209,7 +1245,7 @@ WHERE payment_order_id = $1
                         source_type = "payment_order".to_string();
                         source_id = Some(order_id.to_string());
                         if input.refund_mode.is_none() {
-                            let payment_method: String = order_row.try_get("payment_method")?;
+                            let payment_method: String = row_get(&order_row, "payment_method")?;
                             refund_mode =
                                 default_refund_mode_for_payment_method(&payment_method).to_string();
                         }
@@ -1334,7 +1370,8 @@ LIMIT 1
                                 .bind(&input.user_id)
                                 .bind(idempotency_key)
                                 .fetch_optional(&mut **tx)
-                                .await?;
+                                .await
+                                .map_postgres_err()?;
                                 if let Some(row) = existing {
                                     return Ok(CreateWalletRefundRequestOutcome::Duplicate(
                                         map_admin_wallet_refund_row(&row)?,
@@ -1343,7 +1380,7 @@ LIMIT 1
                             }
                             Ok(CreateWalletRefundRequestOutcome::DuplicateRejected)
                         }
-                        Err(err) => Err(err.into()),
+                        Err(err) => Err(postgres_error(err)),
                     }
                 })
             })
@@ -1367,17 +1404,18 @@ LIMIT 1
                     )
                     .bind(&input.callback_key)
                     .fetch_optional(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
 
                     let duplicate = existing_callback.is_some();
                     let callback_id = if let Some(row) = existing_callback.as_ref() {
-                        let status: String = row.try_get("status")?;
+                        let status: String = row_get(row, "status")?;
                         if status == "processed" {
                             return Ok(ProcessPaymentCallbackOutcome::DuplicateProcessed {
-                                order_id: row.try_get("payment_order_id")?,
+                                order_id: row_get(row, "payment_order_id")?,
                             });
                         }
-                        row.try_get("id")?
+                        row_get(row, "id")?
                     } else {
                         let callback_id = Uuid::new_v4().to_string();
                         sqlx::query(
@@ -1423,7 +1461,8 @@ VALUES (
                         .bind(input.signature_valid)
                         .bind(&input.payload)
                         .execute(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
                         callback_id
                     };
 
@@ -1482,7 +1521,8 @@ FOR UPDATE
                         )
                         .bind(order_no)
                         .fetch_optional(&mut **tx)
-                        .await?
+                        .await
+                        .map_postgres_err()?
                     } else if let Some(gateway_order_id) = lookup_gateway_order_id.as_deref() {
                         sqlx::query(
                             r#"
@@ -1513,7 +1553,8 @@ FOR UPDATE
                         )
                         .bind(gateway_order_id)
                         .fetch_optional(&mut **tx)
-                        .await?
+                        .await
+                        .map_postgres_err()?
                     } else {
                         None
                     };
@@ -1532,14 +1573,14 @@ FOR UPDATE
                         });
                     };
 
-                    let order_id: String = order_row.try_get("id")?;
-                    let order_no: String = order_row.try_get("order_no")?;
-                    let order_wallet_id: String = order_row.try_get("wallet_id")?;
-                    let order_payment_method: String = order_row.try_get("payment_method")?;
-                    let order_amount_usd: f64 = order_row.try_get("amount_usd")?;
-                    let order_status: String = order_row.try_get("status")?;
+                    let order_id: String = row_get(&order_row, "id")?;
+                    let order_no: String = row_get(&order_row, "order_no")?;
+                    let order_wallet_id: String = row_get(&order_row, "wallet_id")?;
+                    let order_payment_method: String = row_get(&order_row, "payment_method")?;
+                    let order_amount_usd: f64 = row_get(&order_row, "amount_usd")?;
+                    let order_status: String = row_get(&order_row, "status")?;
                     let expires_at_unix_secs: Option<i64> =
-                        order_row.try_get("expires_at_unix_secs")?;
+                        row_get(&order_row, "expires_at_unix_secs")?;
 
                     if (input.amount_usd - order_amount_usd).abs() > f64::EPSILON {
                         update_payment_callback_failure(
@@ -1596,7 +1637,8 @@ FOR UPDATE
                             )
                             .bind(&order_id)
                             .execute(&mut **tx)
-                            .await?;
+                            .await
+                            .map_postgres_err()?;
                             update_payment_callback_failure(
                                 tx,
                                 &callback_id,
@@ -1626,7 +1668,8 @@ FOR UPDATE
                     )
                     .bind(&order_wallet_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         update_payment_callback_failure(
                             tx,
@@ -1640,7 +1683,7 @@ FOR UPDATE
                             error: "wallet not found".to_string(),
                         });
                     };
-                    let wallet_status: String = wallet_row.try_get("status")?;
+                    let wallet_status: String = row_get(&wallet_row, "status")?;
                     if wallet_status != "active" {
                         update_payment_callback_failure(
                             tx,
@@ -1655,8 +1698,8 @@ FOR UPDATE
                         });
                     }
 
-                    let before_recharge: f64 = wallet_row.try_get("balance")?;
-                    let before_gift: f64 = wallet_row.try_get("gift_balance")?;
+                    let before_recharge: f64 = row_get(&wallet_row, "balance")?;
+                    let before_gift: f64 = row_get(&wallet_row, "gift_balance")?;
                     let before_total = before_recharge + before_gift;
                     let after_recharge = before_recharge + order_amount_usd;
                     let after_total = after_recharge + before_gift;
@@ -1674,7 +1717,8 @@ WHERE id = $1
                     .bind(after_recharge)
                     .bind(order_amount_usd)
                     .execute(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
 
                     sqlx::query(
                         r#"
@@ -1728,7 +1772,8 @@ VALUES (
                     .bind(&order_id)
                     .bind(format!("充值到账({})", input.payment_method))
                     .execute(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
 
                     let updated_order_row = sqlx::query(
                         r#"
@@ -1771,7 +1816,8 @@ RETURNING
                     .bind(input.pay_currency.as_deref())
                     .bind(input.exchange_rate)
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     mark_payment_callback_processed(tx, &callback_id, &input, &order_id, &order_no)
                         .await?;
                     Ok(ProcessPaymentCallbackOutcome::Applied {
@@ -1815,13 +1861,14 @@ FOR UPDATE
                     )
                     .bind(&input.wallet_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(None);
                     };
 
-                    let before_recharge: f64 = row.try_get("balance")?;
-                    let before_gift: f64 = row.try_get("gift_balance")?;
+                    let before_recharge: f64 = row_get(&row, "balance")?;
+                    let before_gift: f64 = row_get(&row, "gift_balance")?;
                     let before_total = before_recharge + before_gift;
                     let mut after_recharge = before_recharge;
                     let mut after_gift = before_gift;
@@ -1885,7 +1932,8 @@ RETURNING
                     .bind(after_gift)
                     .bind(input.amount_usd)
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     let wallet = map_wallet_row(&wallet_row)?;
 
                     let transaction_id = Uuid::new_v4().to_string();
@@ -1949,7 +1997,8 @@ VALUES (
                     .bind(input.operator_id.as_deref())
                     .bind(&description)
                     .execute(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
 
                     Ok(Some((
                         wallet,
@@ -1966,7 +2015,7 @@ VALUES (
                             gift_balance_before: before_gift,
                             gift_balance_after: after_gift,
                             link_type: Some("admin_action".to_string()),
-                            link_id: Some(wallet_row.try_get("id")?),
+                            link_id: Some(row_get(&wallet_row, "id")?),
                             operator_id: input.operator_id,
                             operator_name: None,
                             operator_email: None,
@@ -2008,14 +2057,15 @@ FOR UPDATE
                     )
                     .bind(&input.wallet_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(None);
                     };
 
-                    let before_recharge: f64 = wallet_row.try_get("balance")?;
-                    let before_gift: f64 = wallet_row.try_get("gift_balance")?;
-                    let user_id: Option<String> = wallet_row.try_get("user_id")?;
+                    let before_recharge: f64 = row_get(&wallet_row, "balance")?;
+                    let before_gift: f64 = row_get(&wallet_row, "gift_balance")?;
+                    let user_id: Option<String> = row_get(&wallet_row, "user_id")?;
                     let gateway_response = serde_json::json!({
                         "source": "manual",
                         "operator_id": input.operator_id,
@@ -2065,7 +2115,8 @@ VALUES (
                     .bind(&input.payment_method)
                     .bind(&gateway_response)
                     .execute(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
 
                     let after_recharge = before_recharge + input.amount_usd;
                     let wallet_row = sqlx::query(
@@ -2096,7 +2147,8 @@ RETURNING
                     .bind(after_recharge)
                     .bind(input.amount_usd)
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     let wallet = map_wallet_row(&wallet_row)?;
 
                     let reason_code = if matches!(
@@ -2166,7 +2218,8 @@ VALUES (
                             .unwrap_or("管理员手动充值"),
                     )
                     .execute(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
 
                     let order_row = sqlx::query(
                         r#"
@@ -2196,7 +2249,8 @@ LIMIT 1
                     )
                     .bind(&order_id)
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     Ok(Some((wallet, map_admin_payment_order_row(&order_row)?)))
                 })
             })
@@ -2251,7 +2305,8 @@ FOR UPDATE
                     .bind(&input.refund_id)
                     .bind(&input.wallet_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(WalletMutationOutcome::NotFound);
                     };
@@ -2285,14 +2340,15 @@ FOR UPDATE
                     )
                     .bind(&input.wallet_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(WalletMutationOutcome::Invalid(
                             "wallet not found".to_string(),
                         ));
                     };
-                    let before_recharge: f64 = wallet_row.try_get("balance")?;
-                    let before_gift: f64 = wallet_row.try_get("gift_balance")?;
+                    let before_recharge: f64 = row_get(&wallet_row, "balance")?;
+                    let before_gift: f64 = row_get(&wallet_row, "gift_balance")?;
                     let before_total = before_recharge + before_gift;
                     let amount_usd = refund.amount_usd;
                     let after_recharge = before_recharge - amount_usd;
@@ -2316,13 +2372,14 @@ FOR UPDATE
                         )
                         .bind(payment_order_id)
                         .fetch_optional(&mut **tx)
-                        .await?
+                        .await
+                        .map_postgres_err()?
                         else {
                             return Ok(WalletMutationOutcome::Invalid(
                                 "payment order not found".to_string(),
                             ));
                         };
-                        let refundable_amount: f64 = order_row.try_get("refundable_amount_usd")?;
+                        let refundable_amount: f64 = row_get(&order_row, "refundable_amount_usd")?;
                         if amount_usd > refundable_amount {
                             return Ok(WalletMutationOutcome::Invalid(
                                 "refund amount exceeds refundable amount".to_string(),
@@ -2340,7 +2397,8 @@ WHERE id = $1
                         .bind(payment_order_id)
                         .bind(amount_usd)
                         .execute(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
                     }
 
                     let wallet_row = sqlx::query(
@@ -2371,7 +2429,8 @@ RETURNING
                     .bind(after_recharge)
                     .bind(amount_usd)
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     let wallet = map_wallet_row(&wallet_row)?;
 
                     let transaction_id = Uuid::new_v4().to_string();
@@ -2428,7 +2487,8 @@ VALUES (
                     .bind(&input.refund_id)
                     .bind(input.operator_id.as_deref())
                     .execute(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
 
                     let refund_row = sqlx::query(
                         r#"
@@ -2470,7 +2530,8 @@ RETURNING
                     .bind(&input.wallet_id)
                     .bind(input.operator_id.as_deref())
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     Ok(WalletMutationOutcome::Applied((
                         wallet,
                         map_admin_wallet_refund_row(&refund_row)?,
@@ -2518,11 +2579,12 @@ FOR UPDATE
                     .bind(&input.refund_id)
                     .bind(&input.wallet_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(WalletMutationOutcome::NotFound);
                     };
-                    let status: String = current_refund.try_get("status")?;
+                    let status: String = row_get(&current_refund, "status")?;
                     if status != "processing" {
                         return Ok(WalletMutationOutcome::Invalid(
                             "refund status must be processing before completion".to_string(),
@@ -2572,7 +2634,8 @@ RETURNING
                     .bind(input.payout_reference.as_deref())
                     .bind(&input.payout_proof)
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     Ok(WalletMutationOutcome::Applied(map_admin_wallet_refund_row(
                         &refund_row,
                     )?))
@@ -2629,7 +2692,8 @@ FOR UPDATE
                     .bind(&input.refund_id)
                     .bind(&input.wallet_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(WalletMutationOutcome::NotFound);
                     };
@@ -2674,7 +2738,8 @@ RETURNING
                         .bind(&input.wallet_id)
                         .bind(&input.reason)
                         .fetch_one(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
                         let wallet_row = sqlx::query(
                             r#"
 SELECT
@@ -2697,7 +2762,8 @@ WHERE id = $1
                         )
                         .bind(&input.wallet_id)
                         .fetch_one(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
                         return Ok(WalletMutationOutcome::Applied((
                             map_wallet_row(&wallet_row)?,
                             map_admin_wallet_refund_row(&refund_row)?,
@@ -2735,15 +2801,16 @@ FOR UPDATE
                     )
                     .bind(&input.wallet_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(WalletMutationOutcome::Invalid(
                             "wallet not found".to_string(),
                         ));
                     };
                     let amount_usd = refund.amount_usd;
-                    let before_recharge: f64 = wallet_row.try_get("balance")?;
-                    let before_gift: f64 = wallet_row.try_get("gift_balance")?;
+                    let before_recharge: f64 = row_get(&wallet_row, "balance")?;
+                    let before_gift: f64 = row_get(&wallet_row, "gift_balance")?;
                     let before_total = before_recharge + before_gift;
                     let after_recharge = before_recharge + amount_usd;
 
@@ -2775,7 +2842,8 @@ RETURNING
                     .bind(after_recharge)
                     .bind(amount_usd)
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     let wallet = map_wallet_row(&wallet_row)?;
 
                     let transaction_id = Uuid::new_v4().to_string();
@@ -2832,7 +2900,8 @@ VALUES (
                     .bind(&input.refund_id)
                     .bind(input.operator_id.as_deref())
                     .execute(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
 
                     if let Some(payment_order_id) = refund.payment_order_id.as_deref() {
                         let _ = sqlx::query(
@@ -2847,7 +2916,8 @@ WHERE id = $1
                         .bind(payment_order_id)
                         .bind(amount_usd)
                         .execute(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
                     }
 
                     let refund_row = sqlx::query(
@@ -2888,7 +2958,8 @@ RETURNING
                     .bind(&input.wallet_id)
                     .bind(&input.reason)
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     Ok(WalletMutationOutcome::Applied((
                         wallet,
                         map_admin_wallet_refund_row(&refund_row)?,
@@ -2954,7 +3025,8 @@ FOR UPDATE
                     )
                     .bind(&order_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(WalletMutationOutcome::NotFound);
                     };
@@ -3014,7 +3086,8 @@ RETURNING
                     .bind(&order_id)
                     .bind(serde_json::Value::Object(gateway_response))
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     Ok(WalletMutationOutcome::Applied((
                         map_admin_payment_order_row(&row)?,
                         true,
@@ -3060,7 +3133,8 @@ FOR UPDATE
                     )
                     .bind(&order_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(WalletMutationOutcome::NotFound);
                     };
@@ -3111,7 +3185,8 @@ RETURNING
                     .bind(&order_id)
                     .bind(serde_json::Value::Object(gateway_response))
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     Ok(WalletMutationOutcome::Applied(map_admin_payment_order_row(
                         &row,
                     )?))
@@ -3155,7 +3230,8 @@ FOR UPDATE
                     )
                     .bind(&input.order_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(WalletMutationOutcome::NotFound);
                     };
@@ -3192,21 +3268,22 @@ FOR UPDATE
                     )
                     .bind(&order.wallet_id)
                     .fetch_optional(&mut **tx)
-                    .await?
+                    .await
+                    .map_postgres_err()?
                     else {
                         return Ok(WalletMutationOutcome::Invalid(
                             "wallet not found".to_string(),
                         ));
                     };
-                    let wallet_status: String = wallet_row.try_get("status")?;
+                    let wallet_status: String = row_get(&wallet_row, "status")?;
                     if wallet_status != "active" {
                         return Ok(WalletMutationOutcome::Invalid(
                             "wallet is not active".to_string(),
                         ));
                     }
 
-                    let before_recharge: f64 = wallet_row.try_get("balance")?;
-                    let before_gift: f64 = wallet_row.try_get("gift_balance")?;
+                    let before_recharge: f64 = row_get(&wallet_row, "balance")?;
+                    let before_gift: f64 = row_get(&wallet_row, "gift_balance")?;
                     let before_total = before_recharge + before_gift;
                     let after_recharge = before_recharge + order.amount_usd;
                     let now_unix_secs = Utc::now().timestamp().max(0) as u64;
@@ -3224,7 +3301,8 @@ WHERE id = $1
                     .bind(after_recharge)
                     .bind(order.amount_usd)
                     .execute(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
 
                     sqlx::query(
                         r#"
@@ -3277,7 +3355,8 @@ VALUES (
                     .bind(&input.order_id)
                     .bind(format!("充值到账({})", order.payment_method))
                     .execute(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
 
                     let mut gateway_response =
                         payment_gateway_response_map(order.gateway_response.clone());
@@ -3350,7 +3429,8 @@ RETURNING
                             .unwrap_or_default(),
                     )
                     .fetch_one(&mut **tx)
-                    .await?;
+                    .await
+                    .map_postgres_err()?;
                     Ok(WalletMutationOutcome::Applied((
                         map_admin_payment_order_row(&row)?,
                         true,
@@ -3413,7 +3493,8 @@ WHERE id = $1
     .bind(input.order_no.as_deref())
     .bind(input.gateway_order_id.as_deref())
     .execute(&mut **tx)
-    .await?;
+    .await
+    .map_postgres_err()?;
     Ok(())
 }
 
@@ -3446,7 +3527,8 @@ WHERE id = $1
     .bind(order_no)
     .bind(input.gateway_order_id.as_deref())
     .execute(&mut **tx)
-    .await?;
+    .await
+    .map_postgres_err()?;
     Ok(())
 }
 
@@ -3462,8 +3544,15 @@ fn parse_optional_timestamp(
     value.map(|inner| parse_timestamp(inner, field)).transpose()
 }
 
+fn row_get<T>(row: &PgRow, column: &str) -> Result<T, DataLayerError>
+where
+    for<'r> T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+{
+    row.try_get(column).map_postgres_err()
+}
+
 fn read_count(row: PgRow) -> Result<u64, DataLayerError> {
-    let total = row.try_get::<i64, _>("total")?;
+    let total = row.try_get::<i64, _>("total").map_postgres_err()?;
     Ok(total.max(0) as u64)
 }
 
@@ -3471,26 +3560,26 @@ fn map_admin_wallet_list_item_row(
     row: &PgRow,
 ) -> Result<StoredAdminWalletListItem, DataLayerError> {
     Ok(StoredAdminWalletListItem {
-        id: row.try_get("id")?,
-        user_id: row.try_get("user_id")?,
-        api_key_id: row.try_get("api_key_id")?,
-        balance: row.try_get("balance")?,
-        gift_balance: row.try_get("gift_balance")?,
-        limit_mode: row.try_get("limit_mode")?,
-        currency: row.try_get("currency")?,
-        status: row.try_get("status")?,
-        total_recharged: row.try_get("total_recharged")?,
-        total_consumed: row.try_get("total_consumed")?,
-        total_refunded: row.try_get("total_refunded")?,
-        total_adjusted: row.try_get("total_adjusted")?,
-        user_name: row.try_get("user_name")?,
-        api_key_name: row.try_get("api_key_name")?,
+        id: row_get(row, "id")?,
+        user_id: row_get(row, "user_id")?,
+        api_key_id: row_get(row, "api_key_id")?,
+        balance: row_get(row, "balance")?,
+        gift_balance: row_get(row, "gift_balance")?,
+        limit_mode: row_get(row, "limit_mode")?,
+        currency: row_get(row, "currency")?,
+        status: row_get(row, "status")?,
+        total_recharged: row_get(row, "total_recharged")?,
+        total_consumed: row_get(row, "total_consumed")?,
+        total_refunded: row_get(row, "total_refunded")?,
+        total_adjusted: row_get(row, "total_adjusted")?,
+        user_name: row_get(row, "user_name")?,
+        api_key_name: row_get(row, "api_key_name")?,
         created_at_unix_secs: parse_optional_timestamp(
-            row.try_get("created_at_unix_secs")?,
+            row_get(row, "created_at_unix_secs")?,
             "wallets.created_at",
         )?,
         updated_at_unix_secs: parse_optional_timestamp(
-            row.try_get("updated_at_unix_secs")?,
+            row_get(row, "updated_at_unix_secs")?,
             "wallets.updated_at",
         )?,
     })
@@ -3500,30 +3589,30 @@ fn map_admin_wallet_ledger_item_row(
     row: &PgRow,
 ) -> Result<StoredAdminWalletLedgerItem, DataLayerError> {
     Ok(StoredAdminWalletLedgerItem {
-        id: row.try_get("id")?,
-        wallet_id: row.try_get("wallet_id")?,
-        category: row.try_get("category")?,
-        reason_code: row.try_get("reason_code")?,
-        amount: row.try_get("amount")?,
-        balance_before: row.try_get("balance_before")?,
-        balance_after: row.try_get("balance_after")?,
-        recharge_balance_before: row.try_get("recharge_balance_before")?,
-        recharge_balance_after: row.try_get("recharge_balance_after")?,
-        gift_balance_before: row.try_get("gift_balance_before")?,
-        gift_balance_after: row.try_get("gift_balance_after")?,
-        link_type: row.try_get("link_type")?,
-        link_id: row.try_get("link_id")?,
-        operator_id: row.try_get("operator_id")?,
-        operator_name: row.try_get("operator_name")?,
-        operator_email: row.try_get("operator_email")?,
-        description: row.try_get("description")?,
-        wallet_user_id: row.try_get("user_id")?,
-        wallet_user_name: row.try_get("wallet_user_name")?,
-        wallet_api_key_id: row.try_get("api_key_id")?,
-        api_key_name: row.try_get("api_key_name")?,
-        wallet_status: row.try_get("wallet_status")?,
+        id: row_get(row, "id")?,
+        wallet_id: row_get(row, "wallet_id")?,
+        category: row_get(row, "category")?,
+        reason_code: row_get(row, "reason_code")?,
+        amount: row_get(row, "amount")?,
+        balance_before: row_get(row, "balance_before")?,
+        balance_after: row_get(row, "balance_after")?,
+        recharge_balance_before: row_get(row, "recharge_balance_before")?,
+        recharge_balance_after: row_get(row, "recharge_balance_after")?,
+        gift_balance_before: row_get(row, "gift_balance_before")?,
+        gift_balance_after: row_get(row, "gift_balance_after")?,
+        link_type: row_get(row, "link_type")?,
+        link_id: row_get(row, "link_id")?,
+        operator_id: row_get(row, "operator_id")?,
+        operator_name: row_get(row, "operator_name")?,
+        operator_email: row_get(row, "operator_email")?,
+        description: row_get(row, "description")?,
+        wallet_user_id: row_get(row, "user_id")?,
+        wallet_user_name: row_get(row, "wallet_user_name")?,
+        wallet_api_key_id: row_get(row, "api_key_id")?,
+        api_key_name: row_get(row, "api_key_name")?,
+        wallet_status: row_get(row, "wallet_status")?,
         created_at_unix_secs: parse_optional_timestamp(
-            row.try_get("created_at_unix_secs")?,
+            row_get(row, "created_at_unix_secs")?,
             "wallet_transactions.created_at",
         )?,
     })
@@ -3533,44 +3622,44 @@ fn map_admin_wallet_refund_request_item_row(
     row: &PgRow,
 ) -> Result<StoredAdminWalletRefundRequestItem, DataLayerError> {
     Ok(StoredAdminWalletRefundRequestItem {
-        id: row.try_get("id")?,
-        refund_no: row.try_get("refund_no")?,
-        wallet_id: row.try_get("wallet_id")?,
-        user_id: row.try_get("user_id")?,
-        payment_order_id: row.try_get("payment_order_id")?,
-        source_type: row.try_get("source_type")?,
-        source_id: row.try_get("source_id")?,
-        refund_mode: row.try_get("refund_mode")?,
-        amount_usd: row.try_get("amount_usd")?,
-        status: row.try_get("status")?,
-        reason: row.try_get("reason")?,
-        failure_reason: row.try_get("failure_reason")?,
-        gateway_refund_id: row.try_get("gateway_refund_id")?,
-        payout_method: row.try_get("payout_method")?,
-        payout_reference: row.try_get("payout_reference")?,
-        payout_proof: row.try_get("payout_proof")?,
-        requested_by: row.try_get("requested_by")?,
-        approved_by: row.try_get("approved_by")?,
-        processed_by: row.try_get("processed_by")?,
-        wallet_user_id: row.try_get("wallet_user_id")?,
-        wallet_user_name: row.try_get("wallet_user_name")?,
-        wallet_api_key_id: row.try_get("wallet_api_key_id")?,
-        api_key_name: row.try_get("api_key_name")?,
-        wallet_status: row.try_get("wallet_status")?,
+        id: row_get(row, "id")?,
+        refund_no: row_get(row, "refund_no")?,
+        wallet_id: row_get(row, "wallet_id")?,
+        user_id: row_get(row, "user_id")?,
+        payment_order_id: row_get(row, "payment_order_id")?,
+        source_type: row_get(row, "source_type")?,
+        source_id: row_get(row, "source_id")?,
+        refund_mode: row_get(row, "refund_mode")?,
+        amount_usd: row_get(row, "amount_usd")?,
+        status: row_get(row, "status")?,
+        reason: row_get(row, "reason")?,
+        failure_reason: row_get(row, "failure_reason")?,
+        gateway_refund_id: row_get(row, "gateway_refund_id")?,
+        payout_method: row_get(row, "payout_method")?,
+        payout_reference: row_get(row, "payout_reference")?,
+        payout_proof: row_get(row, "payout_proof")?,
+        requested_by: row_get(row, "requested_by")?,
+        approved_by: row_get(row, "approved_by")?,
+        processed_by: row_get(row, "processed_by")?,
+        wallet_user_id: row_get(row, "wallet_user_id")?,
+        wallet_user_name: row_get(row, "wallet_user_name")?,
+        wallet_api_key_id: row_get(row, "wallet_api_key_id")?,
+        api_key_name: row_get(row, "api_key_name")?,
+        wallet_status: row_get(row, "wallet_status")?,
         created_at_unix_secs: parse_optional_timestamp(
-            row.try_get("created_at_unix_secs")?,
+            row_get(row, "created_at_unix_secs")?,
             "refund_requests.created_at",
         )?,
         updated_at_unix_secs: parse_optional_timestamp(
-            row.try_get("updated_at_unix_secs")?,
+            row_get(row, "updated_at_unix_secs")?,
             "refund_requests.updated_at",
         )?,
         processed_at_unix_secs: parse_optional_timestamp(
-            row.try_get("processed_at_unix_secs")?,
+            row_get(row, "processed_at_unix_secs")?,
             "refund_requests.processed_at",
         )?,
         completed_at_unix_secs: parse_optional_timestamp(
-            row.try_get("completed_at_unix_secs")?,
+            row_get(row, "completed_at_unix_secs")?,
             "refund_requests.completed_at",
         )?,
     })
@@ -3580,25 +3669,25 @@ fn map_admin_wallet_transaction_row(
     row: &PgRow,
 ) -> Result<StoredAdminWalletTransaction, DataLayerError> {
     Ok(StoredAdminWalletTransaction {
-        id: row.try_get("id")?,
-        wallet_id: row.try_get("wallet_id")?,
-        category: row.try_get("category")?,
-        reason_code: row.try_get("reason_code")?,
-        amount: row.try_get("amount")?,
-        balance_before: row.try_get("balance_before")?,
-        balance_after: row.try_get("balance_after")?,
-        recharge_balance_before: row.try_get("recharge_balance_before")?,
-        recharge_balance_after: row.try_get("recharge_balance_after")?,
-        gift_balance_before: row.try_get("gift_balance_before")?,
-        gift_balance_after: row.try_get("gift_balance_after")?,
-        link_type: row.try_get("link_type")?,
-        link_id: row.try_get("link_id")?,
-        operator_id: row.try_get("operator_id")?,
-        operator_name: row.try_get("operator_name")?,
-        operator_email: row.try_get("operator_email")?,
-        description: row.try_get("description")?,
+        id: row_get(row, "id")?,
+        wallet_id: row_get(row, "wallet_id")?,
+        category: row_get(row, "category")?,
+        reason_code: row_get(row, "reason_code")?,
+        amount: row_get(row, "amount")?,
+        balance_before: row_get(row, "balance_before")?,
+        balance_after: row_get(row, "balance_after")?,
+        recharge_balance_before: row_get(row, "recharge_balance_before")?,
+        recharge_balance_after: row_get(row, "recharge_balance_after")?,
+        gift_balance_before: row_get(row, "gift_balance_before")?,
+        gift_balance_after: row_get(row, "gift_balance_after")?,
+        link_type: row_get(row, "link_type")?,
+        link_id: row_get(row, "link_id")?,
+        operator_id: row_get(row, "operator_id")?,
+        operator_name: row_get(row, "operator_name")?,
+        operator_email: row_get(row, "operator_email")?,
+        description: row_get(row, "description")?,
         created_at_unix_secs: parse_optional_timestamp(
-            row.try_get("created_at_unix_secs")?,
+            row_get(row, "created_at_unix_secs")?,
             "wallet_transactions.created_at",
         )?,
     })
@@ -3606,25 +3695,25 @@ fn map_admin_wallet_transaction_row(
 
 fn map_wallet_daily_usage_row(row: &PgRow) -> Result<StoredWalletDailyUsageLedger, DataLayerError> {
     Ok(StoredWalletDailyUsageLedger {
-        id: row.try_get("id")?,
-        billing_date: row.try_get("billing_date")?,
-        billing_timezone: row.try_get("billing_timezone")?,
-        total_cost_usd: row.try_get("total_cost_usd")?,
-        total_requests: row.try_get::<i64, _>("total_requests")?.max(0) as u64,
-        input_tokens: row.try_get::<i64, _>("input_tokens")?.max(0) as u64,
-        output_tokens: row.try_get::<i64, _>("output_tokens")?.max(0) as u64,
-        cache_creation_tokens: row.try_get::<i64, _>("cache_creation_tokens")?.max(0) as u64,
-        cache_read_tokens: row.try_get::<i64, _>("cache_read_tokens")?.max(0) as u64,
+        id: row_get(row, "id")?,
+        billing_date: row_get(row, "billing_date")?,
+        billing_timezone: row_get(row, "billing_timezone")?,
+        total_cost_usd: row_get(row, "total_cost_usd")?,
+        total_requests: row_get::<i64>(row, "total_requests")?.max(0) as u64,
+        input_tokens: row_get::<i64>(row, "input_tokens")?.max(0) as u64,
+        output_tokens: row_get::<i64>(row, "output_tokens")?.max(0) as u64,
+        cache_creation_tokens: row_get::<i64>(row, "cache_creation_tokens")?.max(0) as u64,
+        cache_read_tokens: row_get::<i64>(row, "cache_read_tokens")?.max(0) as u64,
         first_finalized_at_unix_secs: parse_optional_timestamp(
-            row.try_get("first_finalized_at_unix_secs")?,
+            row_get(row, "first_finalized_at_unix_secs")?,
             "wallet_daily_usage_ledgers.first_finalized_at",
         )?,
         last_finalized_at_unix_secs: parse_optional_timestamp(
-            row.try_get("last_finalized_at_unix_secs")?,
+            row_get(row, "last_finalized_at_unix_secs")?,
             "wallet_daily_usage_ledgers.last_finalized_at",
         )?,
         aggregated_at_unix_secs: parse_optional_timestamp(
-            row.try_get("aggregated_at_unix_secs")?,
+            row_get(row, "aggregated_at_unix_secs")?,
             "wallet_daily_usage_ledgers.aggregated_at",
         )?,
     })
@@ -3632,39 +3721,39 @@ fn map_wallet_daily_usage_row(row: &PgRow) -> Result<StoredWalletDailyUsageLedge
 
 fn map_admin_wallet_refund_row(row: &PgRow) -> Result<StoredAdminWalletRefund, DataLayerError> {
     Ok(StoredAdminWalletRefund {
-        id: row.try_get("id")?,
-        refund_no: row.try_get("refund_no")?,
-        wallet_id: row.try_get("wallet_id")?,
-        user_id: row.try_get("user_id")?,
-        payment_order_id: row.try_get("payment_order_id")?,
-        source_type: row.try_get("source_type")?,
-        source_id: row.try_get("source_id")?,
-        refund_mode: row.try_get("refund_mode")?,
-        amount_usd: row.try_get("amount_usd")?,
-        status: row.try_get("status")?,
-        reason: row.try_get("reason")?,
-        failure_reason: row.try_get("failure_reason")?,
-        gateway_refund_id: row.try_get("gateway_refund_id")?,
-        payout_method: row.try_get("payout_method")?,
-        payout_reference: row.try_get("payout_reference")?,
-        payout_proof: row.try_get("payout_proof")?,
-        requested_by: row.try_get("requested_by")?,
-        approved_by: row.try_get("approved_by")?,
-        processed_by: row.try_get("processed_by")?,
+        id: row_get(row, "id")?,
+        refund_no: row_get(row, "refund_no")?,
+        wallet_id: row_get(row, "wallet_id")?,
+        user_id: row_get(row, "user_id")?,
+        payment_order_id: row_get(row, "payment_order_id")?,
+        source_type: row_get(row, "source_type")?,
+        source_id: row_get(row, "source_id")?,
+        refund_mode: row_get(row, "refund_mode")?,
+        amount_usd: row_get(row, "amount_usd")?,
+        status: row_get(row, "status")?,
+        reason: row_get(row, "reason")?,
+        failure_reason: row_get(row, "failure_reason")?,
+        gateway_refund_id: row_get(row, "gateway_refund_id")?,
+        payout_method: row_get(row, "payout_method")?,
+        payout_reference: row_get(row, "payout_reference")?,
+        payout_proof: row_get(row, "payout_proof")?,
+        requested_by: row_get(row, "requested_by")?,
+        approved_by: row_get(row, "approved_by")?,
+        processed_by: row_get(row, "processed_by")?,
         created_at_unix_secs: parse_timestamp(
-            row.try_get("created_at_unix_secs")?,
+            row_get(row, "created_at_unix_secs")?,
             "refund_requests.created_at",
         )?,
         updated_at_unix_secs: parse_timestamp(
-            row.try_get("updated_at_unix_secs")?,
+            row_get(row, "updated_at_unix_secs")?,
             "refund_requests.updated_at",
         )?,
         processed_at_unix_secs: parse_optional_timestamp(
-            row.try_get("processed_at_unix_secs")?,
+            row_get(row, "processed_at_unix_secs")?,
             "refund_requests.processed_at",
         )?,
         completed_at_unix_secs: parse_optional_timestamp(
-            row.try_get("completed_at_unix_secs")?,
+            row_get(row, "completed_at_unix_secs")?,
             "refund_requests.completed_at",
         )?,
     })
@@ -3674,23 +3763,23 @@ fn map_admin_payment_callback_row(
     row: &PgRow,
 ) -> Result<StoredAdminPaymentCallback, DataLayerError> {
     Ok(StoredAdminPaymentCallback {
-        id: row.try_get("id")?,
-        payment_order_id: row.try_get("payment_order_id")?,
-        payment_method: row.try_get("payment_method")?,
-        callback_key: row.try_get("callback_key")?,
-        order_no: row.try_get("order_no")?,
-        gateway_order_id: row.try_get("gateway_order_id")?,
-        payload_hash: row.try_get("payload_hash")?,
-        signature_valid: row.try_get("signature_valid")?,
-        status: row.try_get("status")?,
-        payload: row.try_get("payload")?,
-        error_message: row.try_get("error_message")?,
+        id: row_get(row, "id")?,
+        payment_order_id: row_get(row, "payment_order_id")?,
+        payment_method: row_get(row, "payment_method")?,
+        callback_key: row_get(row, "callback_key")?,
+        order_no: row_get(row, "order_no")?,
+        gateway_order_id: row_get(row, "gateway_order_id")?,
+        payload_hash: row_get(row, "payload_hash")?,
+        signature_valid: row_get(row, "signature_valid")?,
+        status: row_get(row, "status")?,
+        payload: row_get(row, "payload")?,
+        error_message: row_get(row, "error_message")?,
         created_at_unix_secs: parse_timestamp(
-            row.try_get("created_at_unix_secs")?,
+            row_get(row, "created_at_unix_secs")?,
             "payment_callbacks.created_at",
         )?,
         processed_at_unix_secs: parse_optional_timestamp(
-            row.try_get("processed_at_unix_secs")?,
+            row_get(row, "processed_at_unix_secs")?,
             "payment_callbacks.processed_at",
         )?,
     })
@@ -3698,34 +3787,34 @@ fn map_admin_payment_callback_row(
 
 fn map_admin_payment_order_row(row: &PgRow) -> Result<StoredAdminPaymentOrder, DataLayerError> {
     Ok(StoredAdminPaymentOrder {
-        id: row.try_get("id")?,
-        order_no: row.try_get("order_no")?,
-        wallet_id: row.try_get("wallet_id")?,
-        user_id: row.try_get("user_id")?,
-        amount_usd: row.try_get("amount_usd")?,
-        pay_amount: row.try_get("pay_amount")?,
-        pay_currency: row.try_get("pay_currency")?,
-        exchange_rate: row.try_get("exchange_rate")?,
-        refunded_amount_usd: row.try_get("refunded_amount_usd")?,
-        refundable_amount_usd: row.try_get("refundable_amount_usd")?,
-        payment_method: row.try_get("payment_method")?,
-        gateway_order_id: row.try_get("gateway_order_id")?,
-        gateway_response: row.try_get("gateway_response")?,
-        status: row.try_get("status")?,
+        id: row_get(row, "id")?,
+        order_no: row_get(row, "order_no")?,
+        wallet_id: row_get(row, "wallet_id")?,
+        user_id: row_get(row, "user_id")?,
+        amount_usd: row_get(row, "amount_usd")?,
+        pay_amount: row_get(row, "pay_amount")?,
+        pay_currency: row_get(row, "pay_currency")?,
+        exchange_rate: row_get(row, "exchange_rate")?,
+        refunded_amount_usd: row_get(row, "refunded_amount_usd")?,
+        refundable_amount_usd: row_get(row, "refundable_amount_usd")?,
+        payment_method: row_get(row, "payment_method")?,
+        gateway_order_id: row_get(row, "gateway_order_id")?,
+        gateway_response: row_get(row, "gateway_response")?,
+        status: row_get(row, "status")?,
         created_at_unix_secs: parse_timestamp(
-            row.try_get("created_at_unix_secs")?,
+            row_get(row, "created_at_unix_secs")?,
             "payment_orders.created_at",
         )?,
         paid_at_unix_secs: parse_optional_timestamp(
-            row.try_get("paid_at_unix_secs")?,
+            row_get(row, "paid_at_unix_secs")?,
             "payment_orders.paid_at",
         )?,
         credited_at_unix_secs: parse_optional_timestamp(
-            row.try_get("credited_at_unix_secs")?,
+            row_get(row, "credited_at_unix_secs")?,
             "payment_orders.credited_at",
         )?,
         expires_at_unix_secs: parse_optional_timestamp(
-            row.try_get("expires_at_unix_secs")?,
+            row_get(row, "expires_at_unix_secs")?,
             "payment_orders.expires_at",
         )?,
     })
@@ -3733,19 +3822,19 @@ fn map_admin_payment_order_row(row: &PgRow) -> Result<StoredAdminPaymentOrder, D
 
 fn map_wallet_row(row: &sqlx::postgres::PgRow) -> Result<StoredWalletSnapshot, DataLayerError> {
     StoredWalletSnapshot::new(
-        row.try_get("id")?,
-        row.try_get("user_id")?,
-        row.try_get("api_key_id")?,
-        row.try_get("balance")?,
-        row.try_get("gift_balance")?,
-        row.try_get("limit_mode")?,
-        row.try_get("currency")?,
-        row.try_get("status")?,
-        row.try_get("total_recharged")?,
-        row.try_get("total_consumed")?,
-        row.try_get("total_refunded")?,
-        row.try_get("total_adjusted")?,
-        row.try_get("updated_at_unix_secs")?,
+        row_get(row, "id")?,
+        row_get(row, "user_id")?,
+        row_get(row, "api_key_id")?,
+        row_get(row, "balance")?,
+        row_get(row, "gift_balance")?,
+        row_get(row, "limit_mode")?,
+        row_get(row, "currency")?,
+        row_get(row, "status")?,
+        row_get(row, "total_recharged")?,
+        row_get(row, "total_consumed")?,
+        row_get(row, "total_refunded")?,
+        row_get(row, "total_adjusted")?,
+        row_get(row, "updated_at_unix_secs")?,
     )
 }
 

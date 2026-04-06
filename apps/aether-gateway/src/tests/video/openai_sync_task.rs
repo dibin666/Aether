@@ -1,13 +1,15 @@
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateReadRepository, RequestCandidateStatus,
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data::repository::video_tasks::InMemoryVideoTaskRepository;
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateReadRepository, RequestCandidateStatus,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider,
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
-use aether_data::repository::video_tasks::{
-    InMemoryVideoTaskRepository, UpsertVideoTask, VideoTaskWriteRepository,
+use aether_data_contracts::repository::video_tasks::{
+    UpsertVideoTask, VideoTaskStatus, VideoTaskWriteRepository,
 };
 use axum::body::{to_bytes, Body};
 use axum::response::Response;
@@ -18,9 +20,7 @@ use http::StatusCode;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
-use crate::constants::{
-    CONTROL_EXECUTED_HEADER, CONTROL_EXECUTE_FALLBACK_HEADER, TRACE_ID_HEADER,
-};
+use crate::constants::{CONTROL_EXECUTED_HEADER, CONTROL_EXECUTE_FALLBACK_HEADER, TRACE_ID_HEADER};
 
 use super::{
     build_router_with_state, build_state_with_execution_runtime_override, start_server,
@@ -260,7 +260,7 @@ async fn gateway_executes_openai_video_delete_via_reconstructed_data_backed_loca
             resolution: Some("720p".to_string()),
             aspect_ratio: Some("16:9".to_string()),
             size: Some("1280x720".to_string()),
-            status: aether_data::repository::video_tasks::VideoTaskStatus::Completed,
+            status: VideoTaskStatus::Completed,
             progress_percent: 100,
             progress_message: None,
             retry_count: 0,

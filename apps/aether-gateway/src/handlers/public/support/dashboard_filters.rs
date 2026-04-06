@@ -2,6 +2,7 @@ use super::{
     build_auth_error_response, query_param_value, resolve_authenticated_local_user, AppState,
     GatewayError, GatewayPublicRequestContext,
 };
+use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UsageAuditListQuery};
 use axum::{
     body::Body,
     http,
@@ -67,7 +68,7 @@ pub(super) fn decision_route_kind(request_context: &GatewayPublicRequestContext)
 }
 
 impl DashboardUsageTotals {
-    fn record(&mut self, item: &aether_data::repository::usage::StoredRequestUsageAudit) {
+    fn record(&mut self, item: &StoredRequestUsageAudit) {
         self.requests += 1;
         self.input_tokens += item.input_tokens;
         self.output_tokens += item.output_tokens;
@@ -357,7 +358,7 @@ fn dashboard_range_bounds_unix(range: DashboardDateRange) -> Option<(u64, u64)> 
 }
 
 fn dashboard_usage_local_date(
-    item: &aether_data::repository::usage::StoredRequestUsageAudit,
+    item: &StoredRequestUsageAudit,
     tz_offset_minutes: i32,
 ) -> Option<chrono::NaiveDate> {
     let timestamp = i64::try_from(item.created_at_unix_secs).ok()?;
@@ -370,7 +371,7 @@ async fn dashboard_list_usage_for_range(
     range: DashboardDateRange,
     user_id: Option<&str>,
     error_context: &str,
-) -> Result<Vec<aether_data::repository::usage::StoredRequestUsageAudit>, Response<Body>> {
+) -> Result<Vec<StoredRequestUsageAudit>, Response<Body>> {
     let Some((created_from_unix_secs, created_until_unix_secs)) =
         dashboard_range_bounds_unix(range)
     else {
@@ -382,7 +383,7 @@ async fn dashboard_list_usage_for_range(
     };
 
     match state
-        .list_usage_audits(&aether_data::repository::usage::UsageAuditListQuery {
+        .list_usage_audits(&UsageAuditListQuery {
             created_from_unix_secs: Some(created_from_unix_secs),
             created_until_unix_secs: Some(created_until_unix_secs),
             user_id: user_id.map(ToOwned::to_owned),
@@ -400,9 +401,7 @@ async fn dashboard_list_usage_for_range(
     }
 }
 
-fn dashboard_usage_totals(
-    usage: &[aether_data::repository::usage::StoredRequestUsageAudit],
-) -> DashboardUsageTotals {
+fn dashboard_usage_totals(usage: &[StoredRequestUsageAudit]) -> DashboardUsageTotals {
     let mut totals = DashboardUsageTotals::default();
     for item in usage {
         totals.record(item);
@@ -708,7 +707,7 @@ pub(super) async fn handle_dashboard_stats_get(
 
 fn dashboard_daily_aggregate_record(
     aggregate: &mut DashboardDailyAggregate,
-    item: &aether_data::repository::usage::StoredRequestUsageAudit,
+    item: &StoredRequestUsageAudit,
 ) {
     aggregate.totals.record(item);
     let model = aggregate.models.entry(item.model.clone()).or_default();
@@ -1048,7 +1047,7 @@ pub(super) async fn handle_dashboard_provider_status_get(
         .unwrap_or_default()
         .saturating_sub(24 * 3600);
     let usage = match state
-        .list_usage_audits(&aether_data::repository::usage::UsageAuditListQuery {
+        .list_usage_audits(&UsageAuditListQuery {
             created_from_unix_secs: Some(since_unix_secs),
             created_until_unix_secs: None,
             user_id: None,

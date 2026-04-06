@@ -131,9 +131,9 @@ async fn gateway_handles_admin_billing_apply_preset_locally_with_trusted_admin_p
     let gateway = build_router_with_state(
         AppState::new()
             .expect("gateway should build")
-            .with_admin_billing_collectors_for_tests(Vec::<
-                crate::AdminBillingCollectorRecord,
-            >::new()),
+            .with_admin_billing_collectors_for_tests(
+                Vec::<crate::AdminBillingCollectorRecord>::new(),
+            ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
@@ -215,11 +215,9 @@ async fn gateway_returns_conflict_for_admin_billing_apply_preset_when_backend_un
     let (upstream_url, upstream_handle) = start_server(upstream).await;
     let mut state = AppState::new()
         .expect("gateway should build")
-        .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_user_reader_for_tests(Arc::new(
-                InMemoryUserReadRepository::seed_auth_users(Vec::new()),
-            )),
-        );
+        .with_data_state_for_tests(crate::data::GatewayDataState::with_user_reader_for_tests(
+            Arc::new(InMemoryUserReadRepository::seed_auth_users(Vec::new())),
+        ));
     state.admin_billing_collector_store = None;
     let gateway = build_router_with_state(state);
     let (gateway_url, gateway_handle) = start_server(gateway).await;
@@ -443,11 +441,9 @@ async fn gateway_returns_conflict_for_admin_billing_rule_create_when_backend_una
     let (upstream_url, upstream_handle) = start_server(upstream).await;
     let mut state = AppState::new()
         .expect("gateway should build")
-        .with_data_state_for_tests(
-            crate::data::GatewayDataState::with_user_reader_for_tests(Arc::new(
-                InMemoryUserReadRepository::seed_auth_users(Vec::new()),
-            )),
-        );
+        .with_data_state_for_tests(crate::data::GatewayDataState::with_user_reader_for_tests(
+            Arc::new(InMemoryUserReadRepository::seed_auth_users(Vec::new())),
+        ));
     state.admin_billing_rule_store = None;
     let gateway = build_router_with_state(state);
     let (gateway_url, gateway_handle) = start_server(gateway).await;

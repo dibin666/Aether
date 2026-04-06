@@ -2,7 +2,7 @@ use std::sync::RwLock;
 
 use async_trait::async_trait;
 
-use super::types::{MinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow};
+use super::{MinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow};
 use crate::DataLayerError;
 
 #[derive(Debug, Default)]

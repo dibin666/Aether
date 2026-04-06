@@ -5,7 +5,7 @@ use super::types::{
     StoredUserAuthRecord, StoredUserExportRow, StoredUserSummary, UserExportListQuery,
     UserExportSummary, UserReadRepository,
 };
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const LIST_USERS_BY_IDS_SQL: &str = r#"
 SELECT
@@ -192,7 +192,8 @@ impl SqlxUserReadRepository {
         let rows = sqlx::query(LIST_USERS_BY_IDS_SQL)
             .bind(user_ids)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_user_row).collect()
     }
 
@@ -201,14 +202,16 @@ impl SqlxUserReadRepository {
     ) -> Result<Vec<StoredUserExportRow>, DataLayerError> {
         let rows = sqlx::query(LIST_NON_ADMIN_EXPORT_USERS_SQL)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_user_export_row).collect()
     }
 
     pub async fn list_export_users(&self) -> Result<Vec<StoredUserExportRow>, DataLayerError> {
         let rows = sqlx::query(LIST_EXPORT_USERS_SQL)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_user_export_row).collect()
     }
 
@@ -237,17 +240,22 @@ impl SqlxUserReadRepository {
                 DataLayerError::InvalidInput(format!("invalid user export limit: {}", query.limit))
             })?);
 
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let rows = builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_user_export_row).collect()
     }
 
     pub async fn summarize_export_users(&self) -> Result<UserExportSummary, DataLayerError> {
         let row = sqlx::query(SUMMARIZE_EXPORT_USERS_SQL)
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(UserExportSummary {
-            total: row.try_get::<i64, _>("total")?.max(0) as u64,
-            active: row.try_get::<i64, _>("active")?.max(0) as u64,
+            total: row.try_get::<i64, _>("total").map_postgres_err()?.max(0) as u64,
+            active: row.try_get::<i64, _>("active").map_postgres_err()?.max(0) as u64,
         })
     }
 
@@ -258,7 +266,8 @@ impl SqlxUserReadRepository {
         let row = sqlx::query(FIND_EXPORT_USER_BY_ID_SQL)
             .bind(user_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_user_export_row).transpose()
     }
 
@@ -273,7 +282,8 @@ impl SqlxUserReadRepository {
         let rows = sqlx::query(LIST_USER_AUTH_BY_IDS_SQL)
             .bind(user_ids)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_user_auth_row).collect()
     }
 
@@ -284,7 +294,8 @@ impl SqlxUserReadRepository {
         let row = sqlx::query(FIND_USER_AUTH_BY_ID_SQL)
             .bind(user_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_user_auth_row).transpose()
     }
 
@@ -295,56 +306,58 @@ impl SqlxUserReadRepository {
         let row = sqlx::query(FIND_USER_AUTH_BY_IDENTIFIER_SQL)
             .bind(identifier)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_user_auth_row).transpose()
     }
 }
 
 fn map_user_row(row: &sqlx::postgres::PgRow) -> Result<StoredUserSummary, DataLayerError> {
     StoredUserSummary::new(
-        row.try_get("id")?,
-        row.try_get("username")?,
-        row.try_get("email")?,
-        row.try_get("role")?,
-        row.try_get("is_active")?,
-        row.try_get("is_deleted")?,
+        row.try_get("id").map_postgres_err()?,
+        row.try_get("username").map_postgres_err()?,
+        row.try_get("email").map_postgres_err()?,
+        row.try_get("role").map_postgres_err()?,
+        row.try_get("is_active").map_postgres_err()?,
+        row.try_get("is_deleted").map_postgres_err()?,
     )
 }
 
 fn map_user_export_row(row: &sqlx::postgres::PgRow) -> Result<StoredUserExportRow, DataLayerError> {
     StoredUserExportRow::new(
-        row.try_get("id")?,
-        row.try_get("email")?,
-        row.try_get("email_verified")?,
-        row.try_get("username")?,
-        row.try_get("password_hash")?,
-        row.try_get("role")?,
-        row.try_get("auth_source")?,
-        row.try_get("allowed_providers")?,
-        row.try_get("allowed_api_formats")?,
-        row.try_get("allowed_models")?,
-        row.try_get("rate_limit")?,
-        row.try_get("model_capability_settings")?,
-        row.try_get("is_active")?,
+        row.try_get("id").map_postgres_err()?,
+        row.try_get("email").map_postgres_err()?,
+        row.try_get("email_verified").map_postgres_err()?,
+        row.try_get("username").map_postgres_err()?,
+        row.try_get("password_hash").map_postgres_err()?,
+        row.try_get("role").map_postgres_err()?,
+        row.try_get("auth_source").map_postgres_err()?,
+        row.try_get("allowed_providers").map_postgres_err()?,
+        row.try_get("allowed_api_formats").map_postgres_err()?,
+        row.try_get("allowed_models").map_postgres_err()?,
+        row.try_get("rate_limit").map_postgres_err()?,
+        row.try_get("model_capability_settings")
+            .map_postgres_err()?,
+        row.try_get("is_active").map_postgres_err()?,
     )
 }
 
 fn map_user_auth_row(row: &sqlx::postgres::PgRow) -> Result<StoredUserAuthRecord, DataLayerError> {
     StoredUserAuthRecord::new(
-        row.try_get("id")?,
-        row.try_get("email")?,
-        row.try_get("email_verified")?,
-        row.try_get("username")?,
-        row.try_get("password_hash")?,
-        row.try_get("role")?,
-        row.try_get("auth_source")?,
-        row.try_get("allowed_providers")?,
-        row.try_get("allowed_api_formats")?,
-        row.try_get("allowed_models")?,
-        row.try_get("is_active")?,
-        row.try_get("is_deleted")?,
-        row.try_get("created_at")?,
-        row.try_get("last_login_at")?,
+        row.try_get("id").map_postgres_err()?,
+        row.try_get("email").map_postgres_err()?,
+        row.try_get("email_verified").map_postgres_err()?,
+        row.try_get("username").map_postgres_err()?,
+        row.try_get("password_hash").map_postgres_err()?,
+        row.try_get("role").map_postgres_err()?,
+        row.try_get("auth_source").map_postgres_err()?,
+        row.try_get("allowed_providers").map_postgres_err()?,
+        row.try_get("allowed_api_formats").map_postgres_err()?,
+        row.try_get("allowed_models").map_postgres_err()?,
+        row.try_get("is_active").map_postgres_err()?,
+        row.try_get("is_deleted").map_postgres_err()?,
+        row.try_get("created_at").map_postgres_err()?,
+        row.try_get("last_login_at").map_postgres_err()?,
     )
 }
 

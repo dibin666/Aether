@@ -1,3 +1,4 @@
+use aether_data_contracts::DataLayerError;
 use tracing::info;
 
 use crate::data::GatewayDataState;
@@ -11,9 +12,7 @@ use super::{
     perform_wallet_daily_usage_aggregation_once, summarize_postgres_pool,
 };
 
-pub(super) async fn run_audit_cleanup_once(
-    data: &GatewayDataState,
-) -> Result<(), aether_data::DataLayerError> {
+pub(super) async fn run_audit_cleanup_once(data: &GatewayDataState) -> Result<(), DataLayerError> {
     let deleted = cleanup_audit_logs_once(data).await?;
     if deleted > 0 {
         info!(
@@ -29,7 +28,7 @@ pub(super) async fn run_audit_cleanup_once(
 
 pub(super) async fn run_gemini_file_mapping_cleanup_once(
     data: &GatewayDataState,
-) -> Result<(), aether_data::DataLayerError> {
+) -> Result<(), DataLayerError> {
     let deleted = cleanup_expired_gemini_file_mappings_once(data).await?;
     if deleted > 0 {
         info!(
@@ -43,9 +42,7 @@ pub(super) async fn run_gemini_file_mapping_cleanup_once(
     Ok(())
 }
 
-pub(super) async fn run_db_maintenance_once(
-    data: &GatewayDataState,
-) -> Result<(), aether_data::DataLayerError> {
+pub(super) async fn run_db_maintenance_once(data: &GatewayDataState) -> Result<(), DataLayerError> {
     let summary = perform_db_maintenance_once(data).await?;
     if summary.attempted > 0 {
         info!(
@@ -63,7 +60,7 @@ pub(super) async fn run_db_maintenance_once(
 
 pub(super) async fn run_wallet_daily_usage_aggregation_once(
     data: &GatewayDataState,
-) -> Result<(), aether_data::DataLayerError> {
+) -> Result<(), DataLayerError> {
     let summary = perform_wallet_daily_usage_aggregation_once(data).await?;
     info!(
         event_name = "wallet_daily_usage_aggregation_completed",
@@ -80,7 +77,7 @@ pub(super) async fn run_wallet_daily_usage_aggregation_once(
 
 pub(super) async fn run_stats_aggregation_once(
     data: &GatewayDataState,
-) -> Result<(), aether_data::DataLayerError> {
+) -> Result<(), DataLayerError> {
     let Some(summary) = perform_stats_aggregation_once(data).await? else {
         return Ok(());
     };
@@ -101,9 +98,7 @@ pub(super) async fn run_stats_aggregation_once(
     Ok(())
 }
 
-pub(super) async fn run_usage_cleanup_once(
-    data: &GatewayDataState,
-) -> Result<(), aether_data::DataLayerError> {
+pub(super) async fn run_usage_cleanup_once(data: &GatewayDataState) -> Result<(), DataLayerError> {
     let summary = perform_usage_cleanup_once(data).await?;
     if summary.body_compressed > 0
         || summary.body_cleaned > 0
@@ -146,7 +141,7 @@ pub(super) fn run_pool_monitor_once(data: &GatewayDataState) {
 
 pub(super) async fn run_pending_cleanup_once(
     data: &GatewayDataState,
-) -> Result<(), aether_data::DataLayerError> {
+) -> Result<(), DataLayerError> {
     let summary = cleanup_stale_pending_requests_once(data).await?;
     if summary.failed > 0 || summary.recovered > 0 {
         info!(
@@ -163,7 +158,7 @@ pub(super) async fn run_pending_cleanup_once(
 
 pub(super) async fn run_stats_hourly_aggregation_once(
     data: &GatewayDataState,
-) -> Result<(), aether_data::DataLayerError> {
+) -> Result<(), DataLayerError> {
     let Some(summary) = perform_stats_hourly_aggregation_once(data).await? else {
         return Ok(());
     };

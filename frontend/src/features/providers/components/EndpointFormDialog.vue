@@ -205,7 +205,7 @@
                       请求体
                     </Button>
                     <Button
-                      v-if="isFixedProvider"
+                      v-if="isFixedProvider && hasDefaultBodyRules(endpoint.api_format)"
                       variant="ghost"
                       size="sm"
                       class="h-7 text-xs px-2"
@@ -1240,11 +1240,21 @@ const deleteConfirmDescription = computed(() => {
   return `确定要删除 ${formatLabel} 端点吗？关联密钥将移除对该 API 格式的支持。`
 })
 
+function defaultBodyRulesCacheKey(apiFormat: string): string {
+  const providerType = (props.provider?.provider_type || '').toLowerCase()
+  return providerType ? `${apiFormat}:${providerType}` : apiFormat
+}
+
+function hasDefaultBodyRules(apiFormat: string): boolean {
+  const cacheKey = defaultBodyRulesCacheKey(apiFormat)
+  if (!defaultBodyRulesLoaded.value[cacheKey]) return false
+  return (defaultBodyRulesByFormat.value[cacheKey]?.length || 0) > 0
+}
+
 async function loadDefaultBodyRulesForFormat(apiFormat: string, force = false): Promise<BodyRule[]> {
   if (!apiFormat) return []
   const providerType = (props.provider?.provider_type || '').toLowerCase()
-  // 缓存 key 需要包含 provider_type，不同类型的 provider 有不同的默认规则
-  const cacheKey = providerType ? `${apiFormat}:${providerType}` : apiFormat
+  const cacheKey = defaultBodyRulesCacheKey(apiFormat)
   if (!force && defaultBodyRulesLoaded.value[cacheKey]) {
     return defaultBodyRulesByFormat.value[cacheKey] || []
   }
@@ -2222,7 +2232,7 @@ watch(() => props.endpoints, (endpoints) => {
       }
     }
     const newFormats = localEndpoints.value
-      .filter(e => e.api_format && !defaultBodyRulesLoaded.value[e.api_format])
+      .filter(e => e.api_format && !defaultBodyRulesLoaded.value[defaultBodyRulesCacheKey(e.api_format)])
       .map(e => ({ api_format: e.api_format }) as ProviderEndpoint)
     if (newFormats.length) {
       void preloadDefaultBodyRules(newFormats)

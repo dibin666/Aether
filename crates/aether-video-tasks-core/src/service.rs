@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use aether_contracts::ExecutionPlan;
-use aether_data::repository::video_tasks::StoredVideoTask;
+use aether_data_contracts::repository::video_tasks::StoredVideoTask;
 use serde_json::{Map, Value};
 
 use crate::{

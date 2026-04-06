@@ -22,6 +22,7 @@ use super::{
     VideoTaskModelCount, VideoTaskQueryFilter, VideoTaskStatusCount, WalletLookupKey,
     WalletMutationOutcome,
 };
+use aether_data_contracts::repository::usage::UsageAuditListQuery;
 use aether_video_tasks_core::read_data_backed_video_task_response;
 
 fn is_missing_shadow_results_relation_error(error: &DataLayerError) -> bool {
@@ -640,7 +641,7 @@ impl GatewayDataState {
 
     pub(crate) async fn list_usage_audits(
         &self,
-        query: &aether_data::repository::usage::UsageAuditListQuery,
+        query: &UsageAuditListQuery,
     ) -> Result<Vec<StoredRequestUsageAudit>, DataLayerError> {
         match &self.usage_reader {
             Some(repository) => repository.list_usage_audits(query).await,

@@ -8,9 +8,7 @@ use crate::ai_pipeline::adaptation::surfaces::{
     provider_adaptation_should_unwrap_stream_envelope, ANTIGRAVITY_V1INTERNAL_ENVELOPE_NAME,
     GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME,
 };
-use crate::ai_pipeline::runtime::adapters::kiro::{
-    KiroToClaudeCliStreamState, KIRO_ENVELOPE_NAME,
-};
+use crate::ai_pipeline::runtime::adapters::kiro::{KiroToClaudeCliStreamState, KIRO_ENVELOPE_NAME};
 use crate::{usage::GatewaySyncReportRequest, GatewayError};
 
 enum ProviderPrivateStreamNormalizeMode {

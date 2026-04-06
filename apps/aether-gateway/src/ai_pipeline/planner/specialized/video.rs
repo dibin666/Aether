@@ -1,63 +1,59 @@
 use std::collections::BTreeMap;
 
-use aether_data::repository::candidates::{RequestCandidateStatus, UpsertRequestCandidateRecord};
+use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 use serde_json::{json, Value};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
-use crate::ai_pipeline::planner::common::{
-    EXECUTION_RUNTIME_SYNC_DECISION_ACTION, GEMINI_VIDEO_CREATE_SYNC_PLAN_KIND,
-    OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND,
+use crate::ai_pipeline::control_facade::{
+    collect_control_headers, GatewayControlAuthContext, GatewayControlDecision,
 };
+use crate::ai_pipeline::execution_facade::{ConversionMode, ExecutionStrategy};
+use crate::ai_pipeline::planner::auth_snapshot_facade::{
+    read_auth_api_key_snapshot, GatewayAuthApiKeySnapshot,
+};
+use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::planner::candidate_runtime_facade::{
+    persist_available_local_candidate, persist_skipped_local_candidate,
+};
+use crate::ai_pipeline::planner::common::EXECUTION_RUNTIME_SYNC_DECISION_ACTION;
+use crate::ai_pipeline::planner::executor_facade::mark_unused_local_candidate_items;
 use crate::ai_pipeline::planner::plan_builders::{
     build_passthrough_sync_plan_from_decision, LocalSyncPlanAndReport,
 };
-use crate::control::GatewayControlDecision;
-use crate::headers::collect_control_headers;
-use crate::provider_transport::auth::{
+use crate::ai_pipeline::planner::scheduler_facade::list_selectable_candidates;
+use crate::ai_pipeline::planner::transport_facade::{
+    read_provider_transport_snapshot, GatewayProviderTransportSnapshot,
+};
+use crate::ai_pipeline::provider_transport_facade::auth::{
     build_passthrough_headers_with_auth, resolve_local_gemini_auth, resolve_local_openai_chat_auth,
 };
-use crate::provider_transport::policy::{
+use crate::ai_pipeline::provider_transport_facade::policy::{
     supports_local_gemini_transport_with_network, supports_local_standard_transport_with_network,
 };
-use crate::provider_transport::url::{
+use crate::ai_pipeline::provider_transport_facade::url::{
     build_gemini_video_predict_long_running_url, build_passthrough_path_url,
 };
-use crate::provider_transport::{
+use crate::ai_pipeline::provider_transport_facade::{
     apply_local_body_rules, apply_local_header_rules, resolve_transport_execution_timeouts,
     resolve_transport_proxy_snapshot_with_tunnel_affinity, resolve_transport_tls_profile,
 };
-use crate::scheduler::{
-    current_unix_secs, list_selectable_candidates, record_local_request_candidate_status,
-    GatewayMinimalCandidateSelectionCandidate,
-};
+use crate::clock::current_unix_secs;
 use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LocalVideoCreateFamily {
-    OpenAi,
-    Gemini,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct LocalVideoCreateSpec {
-    api_format: &'static str,
-    decision_kind: &'static str,
-    report_kind: &'static str,
-    family: LocalVideoCreateFamily,
-}
+use aether_ai_pipeline::planner::specialized::video::{
+    resolve_sync_spec, LocalVideoCreateFamily, LocalVideoCreateSpec,
+};
 
 #[derive(Debug, Clone)]
 struct LocalVideoCreateDecisionInput {
-    auth_context: crate::control::GatewayControlAuthContext,
+    auth_context: GatewayControlAuthContext,
     requested_model: String,
-    auth_snapshot: crate::data::auth::GatewayAuthApiKeySnapshot,
+    auth_snapshot: GatewayAuthApiKeySnapshot,
 }
 
 #[derive(Debug, Clone)]
 struct LocalVideoCreateCandidateAttempt {
-    candidate: GatewayMinimalCandidateSelectionCandidate,
+    candidate: SchedulerMinimalCandidateSelectionCandidate,
     candidate_index: u32,
     candidate_id: String,
 }
@@ -139,24 +135,6 @@ pub(crate) async fn maybe_build_sync_local_video_decision_payload(
     }
 
     Ok(None)
-}
-
-fn resolve_sync_spec(plan_kind: &str) -> Option<LocalVideoCreateSpec> {
-    match plan_kind {
-        OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND => Some(LocalVideoCreateSpec {
-            api_format: "openai:video",
-            decision_kind: OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND,
-            report_kind: "openai_video_create_sync_finalize",
-            family: LocalVideoCreateFamily::OpenAi,
-        }),
-        GEMINI_VIDEO_CREATE_SYNC_PLAN_KIND => Some(LocalVideoCreateSpec {
-            api_format: "gemini:video",
-            decision_kind: GEMINI_VIDEO_CREATE_SYNC_PLAN_KIND,
-            report_kind: "gemini_video_create_sync_finalize",
-            family: LocalVideoCreateFamily::Gemini,
-        }),
-        _ => None,
-    }
 }
 
 async fn build_local_sync_plan_and_reports(
@@ -257,13 +235,13 @@ async fn resolve_local_video_create_decision_input(
         LocalVideoCreateFamily::Gemini => extract_gemini_video_model_from_path(parts.uri.path())?,
     };
 
-    let auth_snapshot = match state
-        .read_auth_api_key_snapshot(
-            &auth_context.user_id,
-            &auth_context.api_key_id,
-            current_unix_secs(),
-        )
-        .await
+    let auth_snapshot = match read_auth_api_key_snapshot(
+        state,
+        &auth_context.user_id,
+        &auth_context.api_key_id,
+        current_unix_secs(),
+    )
+    .await
     {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => return None,
@@ -299,13 +277,13 @@ async fn maybe_build_local_video_create_decision_payload_for_candidate(
         candidate_index,
         candidate_id,
     } = attempt;
-    let transport = match state
-        .read_provider_transport_snapshot(
-            &candidate.provider_id,
-            &candidate.endpoint_id,
-            &candidate.key_id,
-        )
-        .await
+    let transport = match read_provider_transport_snapshot(
+        state,
+        &candidate.provider_id,
+        &candidate.endpoint_id,
+        &candidate.key_id,
+    )
+    .await
     {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => {
@@ -461,16 +439,8 @@ async fn maybe_build_local_video_create_decision_payload_for_candidate(
     Some(GatewayControlSyncDecisionResponse {
         action: EXECUTION_RUNTIME_SYNC_DECISION_ACTION.to_string(),
         decision_kind: Some(spec.decision_kind.to_string()),
-        execution_strategy: Some(
-            crate::execution_runtime::ExecutionStrategy::LocalSameFormat
-                .as_str()
-                .to_string(),
-        ),
-        conversion_mode: Some(
-            crate::execution_runtime::ConversionMode::None
-                .as_str()
-                .to_string(),
-        ),
+        execution_strategy: Some(ExecutionStrategy::LocalSameFormat.as_str().to_string()),
+        conversion_mode: Some(ConversionMode::None.as_str().to_string()),
         request_id: Some(trace_id.to_string()),
         candidate_id: Some(candidate_id.clone()),
         provider_name: Some(transport.provider.name.clone()),
@@ -552,7 +522,7 @@ fn build_provider_request_body(
 
 fn build_video_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &GatewayProviderTransportSnapshot,
     mapped_model: &str,
     family: LocalVideoCreateFamily,
 ) -> Option<String> {
@@ -595,7 +565,7 @@ async fn materialize_local_video_create_candidate_attempts(
     state: &AppState,
     trace_id: &str,
     input: &LocalVideoCreateDecisionInput,
-    candidates: Vec<GatewayMinimalCandidateSelectionCandidate>,
+    candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
     api_format: &str,
 ) -> Vec<LocalVideoCreateCandidateAttempt> {
     let candidates = prefer_local_tunnel_owner_candidates(state, candidates).await;
@@ -616,47 +586,19 @@ async fn materialize_local_video_create_candidate_attempts(
             "key_name": candidate.key_name.clone(),
         });
 
-        let candidate_id = match state
-            .upsert_request_candidate(UpsertRequestCandidateRecord {
-                id: generated_candidate_id.clone(),
-                request_id: trace_id.to_string(),
-                user_id: Some(input.auth_context.user_id.clone()),
-                api_key_id: Some(input.auth_context.api_key_id.clone()),
-                username: None,
-                api_key_name: None,
-                candidate_index: candidate_index as u32,
-                retry_index: 0,
-                provider_id: Some(candidate.provider_id.clone()),
-                endpoint_id: Some(candidate.endpoint_id.clone()),
-                key_id: Some(candidate.key_id.clone()),
-                status: RequestCandidateStatus::Available,
-                skip_reason: None,
-                is_cached: Some(false),
-                status_code: None,
-                error_type: None,
-                error_message: None,
-                latency_ms: None,
-                concurrent_requests: None,
-                extra_data: Some(extra_data),
-                required_capabilities: candidate.key_capabilities.clone(),
-                created_at_unix_secs: Some(created_at_unix_secs),
-                started_at_unix_secs: None,
-                finished_at_unix_secs: None,
-            })
-            .await
-        {
-            Ok(Some(stored)) => stored.id,
-            Ok(None) => generated_candidate_id.clone(),
-            Err(err) => {
-                warn!(
-                    trace_id = %trace_id,
-                    decision_api_format = api_format,
-                    error = ?err,
-                    "gateway local video decision request candidate upsert failed"
-                );
-                generated_candidate_id.clone()
-            }
-        };
+        let candidate_id = persist_available_local_candidate(
+            state,
+            trace_id,
+            &input.auth_context.user_id,
+            &input.auth_context.api_key_id,
+            &candidate,
+            candidate_index as u32,
+            &generated_candidate_id,
+            Some(extra_data),
+            created_at_unix_secs,
+            "gateway local video decision request candidate upsert failed",
+        )
+        .await;
 
         attempts.push(LocalVideoCreateCandidateAttempt {
             candidate,
@@ -672,70 +614,37 @@ async fn mark_skipped_local_video_candidate(
     state: &AppState,
     input: &LocalVideoCreateDecisionInput,
     trace_id: &str,
-    candidate: &GatewayMinimalCandidateSelectionCandidate,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
     candidate_index: u32,
     candidate_id: &str,
     skip_reason: &'static str,
 ) {
-    let terminal_unix_secs = current_unix_secs();
-    if let Err(err) = state
-        .upsert_request_candidate(UpsertRequestCandidateRecord {
-            id: candidate_id.to_string(),
-            request_id: trace_id.to_string(),
-            user_id: Some(input.auth_context.user_id.clone()),
-            api_key_id: Some(input.auth_context.api_key_id.clone()),
-            username: None,
-            api_key_name: None,
-            candidate_index,
-            retry_index: 0,
-            provider_id: Some(candidate.provider_id.clone()),
-            endpoint_id: Some(candidate.endpoint_id.clone()),
-            key_id: Some(candidate.key_id.clone()),
-            status: RequestCandidateStatus::Skipped,
-            skip_reason: Some(skip_reason.to_string()),
-            is_cached: Some(false),
-            status_code: None,
-            error_type: None,
-            error_message: None,
-            latency_ms: None,
-            concurrent_requests: None,
-            extra_data: None,
-            required_capabilities: candidate.key_capabilities.clone(),
-            created_at_unix_secs: None,
-            started_at_unix_secs: None,
-            finished_at_unix_secs: Some(terminal_unix_secs),
-        })
-        .await
-    {
-        warn!(
-            trace_id = %trace_id,
-            candidate_id = %candidate_id,
-            skip_reason,
-            error = ?err,
-            "gateway local video decision failed to persist skipped candidate"
-        );
-    }
+    persist_skipped_local_candidate(
+        state,
+        trace_id,
+        &input.auth_context.user_id,
+        &input.auth_context.api_key_id,
+        candidate,
+        candidate_index,
+        candidate_id,
+        skip_reason,
+        current_unix_secs(),
+        "gateway local video decision failed to persist skipped candidate",
+    )
+    .await;
 }
 
 async fn mark_unused_local_video_candidates(
     state: &AppState,
     remaining: Vec<LocalSyncPlanAndReport>,
 ) {
-    for plan_and_report in remaining {
-        record_local_request_candidate_status(
-            state,
-            &plan_and_report.plan,
-            plan_and_report.report_context.as_ref(),
-            RequestCandidateStatus::Unused,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await;
-    }
+    mark_unused_local_candidate_items(
+        state,
+        remaining,
+        |item| &item.plan,
+        |item| item.report_context.as_ref(),
+    )
+    .await;
 }
 
 fn extract_gemini_video_model_from_path(path: &str) -> Option<String> {

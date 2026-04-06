@@ -499,7 +499,7 @@
         v-else-if="!showTraceTimeline"
         class="py-4 text-center text-sm text-muted-foreground"
       >
-        没有可用的候选进行测试
+        {{ resultEmptyMessage }}
       </div>
 
       <div
@@ -734,19 +734,33 @@ const dialogDescription = computed(() => {
   return ''
 })
 
+const resultAttempts = computed(() => props.result?.attempts ?? [])
+
 const hasEffectiveModel = computed(() => {
   if (!props.result) return false
-  return props.result.attempts.some(attempt => attempt.effective_model && attempt.effective_model !== props.result?.model)
+  return resultAttempts.value.some(
+    attempt => attempt.effective_model && attempt.effective_model !== props.result?.model,
+  )
 })
 
 const showEndpointColumn = computed(() => {
   if (!props.result) return false
   if (props.mode === 'direct') return true
-  const formats = new Set(props.result.attempts.map(attempt => attempt.endpoint_api_format))
+  const formats = new Set(resultAttempts.value.map(attempt => attempt.endpoint_api_format))
   return formats.size > 1
 })
 
-const resultAttempts = computed(() => props.result?.attempts ?? [])
+const resultEmptyMessage = computed(() => {
+  if (!props.result) return '没有可用的候选进行测试'
+  if (typeof props.result.error === 'string' && props.result.error.trim()) {
+    return props.result.error.trim()
+  }
+  const rawResult = props.result as TestModelFailoverResponse & { message?: string }
+  if (typeof rawResult.message === 'string' && rawResult.message.trim()) {
+    return rawResult.message.trim()
+  }
+  return '没有可用的候选进行测试'
+})
 const showAllAttempts = ref(false)
 const inspectionTab = ref<'request-headers' | 'request-body' | 'response-headers' | 'response-body'>('request-body')
 const selectedInspectionKey = ref<string | null>(null)

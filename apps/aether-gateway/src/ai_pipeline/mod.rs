@@ -1,6 +1,9 @@
 pub(crate) mod adaptation;
 pub(crate) mod contracts;
+pub(crate) mod control_facade;
 pub(crate) mod conversion;
+pub(crate) mod execution_facade;
 pub(crate) mod finalize;
 pub(crate) mod planner;
+pub(crate) mod provider_transport_facade;
 pub(crate) mod runtime;

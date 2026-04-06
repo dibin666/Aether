@@ -2,7 +2,7 @@ use std::sync::RwLock;
 
 use async_trait::async_trait;
 
-use super::types::{
+use super::{
     AdminGlobalModelListQuery, AdminProviderModelListQuery, CreateAdminGlobalModelRecord,
     GlobalModelReadRepository, GlobalModelWriteRepository, PublicCatalogModelListQuery,
     PublicCatalogModelSearchQuery, PublicGlobalModelQuery, StoredAdminGlobalModel,

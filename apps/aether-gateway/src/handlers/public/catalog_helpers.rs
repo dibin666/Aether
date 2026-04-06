@@ -1,12 +1,13 @@
 use crate::api::ai::public_api_format_local_path;
-use crate::handlers::{
-    query_param_optional_bool, query_param_value, unix_secs_to_rfc3339,
-};
+use crate::handlers::shared::{query_param_optional_bool, query_param_value, unix_secs_to_rfc3339};
 use crate::AppState;
-use aether_data::repository::candidates::{
+use aether_data_contracts::repository::candidates::{
     PublicHealthTimelineBucket, RequestCandidateStatus, StoredRequestCandidate,
 };
-use aether_data::repository::provider_catalog::StoredProviderCatalogKey;
+use aether_data_contracts::repository::global_models::{
+    PublicCatalogModelListQuery, PublicCatalogModelSearchQuery, StoredPublicCatalogModel,
+};
+use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -195,9 +196,7 @@ pub(crate) async fn build_public_providers_payload(
     Some(serde_json::Value::Array(providers))
 }
 
-fn serialize_public_catalog_model(
-    model: aether_data::repository::global_models::StoredPublicCatalogModel,
-) -> serde_json::Value {
+fn serialize_public_catalog_model(model: StoredPublicCatalogModel) -> serde_json::Value {
     json!({
         "id": model.id,
         "provider_id": model.provider_id,
@@ -238,13 +237,11 @@ pub(crate) async fn build_public_catalog_models_payload(
         .unwrap_or(100);
 
     let items = state
-        .list_public_catalog_models(
-            &aether_data::repository::global_models::PublicCatalogModelListQuery {
-                provider_id,
-                offset: skip,
-                limit,
-            },
-        )
+        .list_public_catalog_models(&PublicCatalogModelListQuery {
+            provider_id,
+            offset: skip,
+            limit,
+        })
         .await
         .ok()?;
 
@@ -276,13 +273,11 @@ pub(crate) async fn build_public_catalog_search_models_payload(
         .unwrap_or(20);
 
     let items = state
-        .search_public_catalog_models(
-            &aether_data::repository::global_models::PublicCatalogModelSearchQuery {
-                search,
-                provider_id,
-                limit,
-            },
-        )
+        .search_public_catalog_models(&PublicCatalogModelSearchQuery {
+            search,
+            provider_id,
+            limit,
+        })
         .await
         .ok()?;
 

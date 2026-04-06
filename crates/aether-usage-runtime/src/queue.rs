@@ -4,7 +4,7 @@ use aether_data::redis::{
     RedisConsumerGroup, RedisConsumerName, RedisStreamEntry, RedisStreamName,
     RedisStreamReclaimConfig, RedisStreamRunner, RedisStreamRunnerConfig,
 };
-use aether_data::DataLayerError;
+use aether_data_contracts::DataLayerError;
 
 use super::config::UsageRuntimeConfig;
 use super::event::UsageEvent;

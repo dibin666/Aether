@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use aether_contracts::{ExecutionPlan, ExecutionTelemetry};
 use aether_data::redis::RedisStreamRunner;
-use aether_data::DataLayerError;
+use aether_data_contracts::DataLayerError;
 use async_trait::async_trait;
 use tracing::warn;
 

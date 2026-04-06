@@ -1,5 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use aether_data_contracts::repository::global_models::{
+    PublicCatalogModelListQuery, PublicGlobalModelQuery, StoredPublicGlobalModel,
+    StoredPublicGlobalModelPage,
+};
 use axum::{
     body::Body,
     http,
@@ -18,9 +22,7 @@ const USERS_ME_MODEL_CATALOG_UNAVAILABLE_DETAIL: &str = "用户模型目录暂�
 const USERS_ME_PROVIDER_CATALOG_UNAVAILABLE_DETAIL: &str = "用户提供商目录暂不可用";
 const USERS_ME_ENDPOINT_STATUS_UNAVAILABLE_DETAIL: &str = "用户端点健康数据暂不可用";
 
-fn build_users_me_available_model_payload(
-    model: aether_data::repository::global_models::StoredPublicGlobalModel,
-) -> serde_json::Value {
+fn build_users_me_available_model_payload(model: StoredPublicGlobalModel) -> serde_json::Value {
     json!({
         "id": model.id,
         "name": model.name,
@@ -178,14 +180,12 @@ pub(super) async fn handle_users_me_available_models(
 
     let page = if provider_model_ids.is_none() && allowed_models.is_none() {
         match state
-            .list_public_global_models(
-                &aether_data::repository::global_models::PublicGlobalModelQuery {
-                    offset: skip,
-                    limit,
-                    is_active: Some(true),
-                    search,
-                },
-            )
+            .list_public_global_models(&PublicGlobalModelQuery {
+                offset: skip,
+                limit,
+                is_active: Some(true),
+                search,
+            })
             .await
         {
             Ok(value) => value,
@@ -199,14 +199,12 @@ pub(super) async fn handle_users_me_available_models(
         }
     } else {
         let page = match state
-            .list_public_global_models(
-                &aether_data::repository::global_models::PublicGlobalModelQuery {
-                    offset: 0,
-                    limit: USERS_ME_AVAILABLE_MODELS_FETCH_LIMIT,
-                    is_active: Some(true),
-                    search,
-                },
-            )
+            .list_public_global_models(&PublicGlobalModelQuery {
+                offset: 0,
+                limit: USERS_ME_AVAILABLE_MODELS_FETCH_LIMIT,
+                is_active: Some(true),
+                search,
+            })
             .await
         {
             Ok(value) => value,
@@ -241,7 +239,7 @@ pub(super) async fn handle_users_me_available_models(
             .skip(skip)
             .take(limit)
             .collect::<Vec<_>>();
-        aether_data::repository::global_models::StoredPublicGlobalModelPage { items, total }
+        StoredPublicGlobalModelPage { items, total }
     };
 
     Json(json!({
@@ -330,13 +328,11 @@ pub(super) async fn handle_users_me_providers_get(
     if state.has_global_model_data_reader() {
         for provider_id in &provider_ids {
             let models = match state
-                .list_public_catalog_models(
-                    &aether_data::repository::global_models::PublicCatalogModelListQuery {
-                        provider_id: Some(provider_id.clone()),
-                        offset: 0,
-                        limit: 1000,
-                    },
-                )
+                .list_public_catalog_models(&PublicCatalogModelListQuery {
+                    provider_id: Some(provider_id.clone()),
+                    offset: 0,
+                    limit: 1000,
+                })
                 .await
             {
                 Ok(value) => value,

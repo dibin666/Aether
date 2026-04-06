@@ -7,7 +7,7 @@ repository.workspace = true
 
 [dependencies]
 aether-contracts.workspace = true
-aether-data.workspace = true
+aether-data-contracts.workspace = true
 aether-provider-transport.workspace = true
 aether-scheduler-core.workspace = true
 async-trait.workspace = true

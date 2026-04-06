@@ -1,8 +1,8 @@
-use aether_data::DataLayerError;
+use aether_data_contracts::DataLayerError;
 
 use super::state::GatewayDataState;
 
-pub(crate) use aether_data::repository::candidates::{
+pub(crate) use aether_data_contracts::repository::candidates::{
     RequestCandidateFinalStatus, RequestCandidateTrace,
 };
 
@@ -25,9 +25,9 @@ pub(crate) async fn read_request_candidate_trace(
 mod tests {
     use super::super::GatewayDataState;
     use super::{read_request_candidate_trace, RequestCandidateFinalStatus};
-    use aether_data::repository::candidates::{
-        derive_request_candidate_final_status, InMemoryRequestCandidateRepository,
-        RequestCandidateStatus, StoredRequestCandidate,
+    use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+    use aether_data_contracts::repository::candidates::{
+        derive_request_candidate_final_status, RequestCandidateStatus, StoredRequestCandidate,
     };
     use std::sync::Arc;
 

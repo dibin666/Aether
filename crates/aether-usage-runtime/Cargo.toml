@@ -9,6 +9,7 @@ description = "Usage runtime shared types and queue primitives extracted from ae
 [dependencies]
 aether-contracts.workspace = true
 aether-data.workspace = true
+aether-data-contracts.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 serde.workspace = true

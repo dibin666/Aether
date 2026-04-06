@@ -7,7 +7,10 @@ use super::types::{
     StandaloneApiKeyExportListQuery, StoredAuthApiKeyExportRecord, StoredAuthApiKeySnapshot,
     UpdateStandaloneApiKeyBasicRecord, UpdateUserApiKeyBasicRecord,
 };
-use crate::DataLayerError;
+use crate::{
+    error::{postgres_error, SqlxResultExt},
+    DataLayerError,
+};
 
 const FIND_BY_KEY_HASH_SQL: &str = r#"
 SELECT
@@ -455,9 +458,9 @@ UPDATE api_keys
 SET
   name = COALESCE($2, name),
   rate_limit = COALESCE($3, rate_limit),
-  allowed_providers = CASE WHEN $4 THEN $5 ELSE allowed_providers END,
-  allowed_api_formats = CASE WHEN $6 THEN $7 ELSE allowed_api_formats END,
-  allowed_models = CASE WHEN $8 THEN $9 ELSE allowed_models END,
+  allowed_providers = CASE WHEN $4 THEN $5::json ELSE allowed_providers END,
+  allowed_api_formats = CASE WHEN $6 THEN $7::json ELSE allowed_api_formats END,
+  allowed_models = CASE WHEN $8 THEN $9::json ELSE allowed_models END,
   updated_at = NOW()
 WHERE id = $1
   AND is_standalone = TRUE
@@ -646,28 +649,25 @@ impl SqlxAuthApiKeySnapshotReadRepository {
         key: AuthApiKeyLookupKey<'_>,
     ) -> Result<Option<StoredAuthApiKeySnapshot>, DataLayerError> {
         let row = match key {
-            AuthApiKeyLookupKey::KeyHash(key_hash) => {
-                sqlx::query(FIND_BY_KEY_HASH_SQL)
-                    .bind(key_hash)
-                    .fetch_optional(&self.pool)
-                    .await?
-            }
-            AuthApiKeyLookupKey::ApiKeyId(api_key_id) => {
-                sqlx::query(FIND_BY_API_KEY_ID_SQL)
-                    .bind(api_key_id)
-                    .fetch_optional(&self.pool)
-                    .await?
-            }
+            AuthApiKeyLookupKey::KeyHash(key_hash) => sqlx::query(FIND_BY_KEY_HASH_SQL)
+                .bind(key_hash)
+                .fetch_optional(&self.pool)
+                .await
+                .map_postgres_err()?,
+            AuthApiKeyLookupKey::ApiKeyId(api_key_id) => sqlx::query(FIND_BY_API_KEY_ID_SQL)
+                .bind(api_key_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_postgres_err()?,
             AuthApiKeyLookupKey::UserApiKeyIds {
                 user_id,
                 api_key_id,
-            } => {
-                sqlx::query(FIND_BY_USER_API_KEY_IDS_SQL)
-                    .bind(api_key_id)
-                    .bind(user_id)
-                    .fetch_optional(&self.pool)
-                    .await?
-            }
+            } => sqlx::query(FIND_BY_USER_API_KEY_IDS_SQL)
+                .bind(api_key_id)
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_postgres_err()?,
         };
 
         row.as_ref().map(map_auth_api_key_snapshot_row).transpose()
@@ -684,7 +684,8 @@ impl SqlxAuthApiKeySnapshotReadRepository {
         let rows = sqlx::query(LIST_BY_API_KEY_IDS_SQL)
             .bind(api_key_ids)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_auth_api_key_snapshot_row).collect()
     }
 
@@ -699,7 +700,8 @@ impl SqlxAuthApiKeySnapshotReadRepository {
         let rows = sqlx::query(LIST_EXPORT_BY_USER_IDS_SQL)
             .bind(user_ids)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_auth_api_key_export_row).collect()
     }
 
@@ -714,7 +716,8 @@ impl SqlxAuthApiKeySnapshotReadRepository {
         let rows = sqlx::query(LIST_EXPORT_BY_API_KEY_IDS_SQL)
             .bind(api_key_ids)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_auth_api_key_export_row).collect()
     }
 
@@ -731,10 +734,11 @@ impl SqlxAuthApiKeySnapshotReadRepository {
             .bind(user_ids)
             .bind(now_unix_secs as f64)
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(AuthApiKeyExportSummary {
-            total: row.try_get::<i64, _>("total")?.max(0) as u64,
-            active: row.try_get::<i64, _>("active")?.max(0) as u64,
+            total: row_get::<i64>(&row, "total")?.max(0) as u64,
+            active: row_get::<i64>(&row, "active")?.max(0) as u64,
         })
     }
 
@@ -745,10 +749,11 @@ impl SqlxAuthApiKeySnapshotReadRepository {
         let row = sqlx::query(SUMMARIZE_EXPORT_NON_STANDALONE_SQL)
             .bind(now_unix_secs as f64)
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(AuthApiKeyExportSummary {
-            total: row.try_get::<i64, _>("total")?.max(0) as u64,
-            active: row.try_get::<i64, _>("active")?.max(0) as u64,
+            total: row_get::<i64>(&row, "total")?.max(0) as u64,
+            active: row_get::<i64>(&row, "active")?.max(0) as u64,
         })
     }
 
@@ -757,7 +762,8 @@ impl SqlxAuthApiKeySnapshotReadRepository {
     ) -> Result<Vec<StoredAuthApiKeyExportRecord>, DataLayerError> {
         let rows = sqlx::query(LIST_EXPORT_STANDALONE_SQL)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_auth_api_key_export_row).collect()
     }
 
@@ -774,7 +780,8 @@ impl SqlxAuthApiKeySnapshotReadRepository {
             .bind(skip)
             .bind(limit)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_auth_api_key_export_row).collect()
     }
 
@@ -785,8 +792,9 @@ impl SqlxAuthApiKeySnapshotReadRepository {
         let row = sqlx::query(COUNT_EXPORT_STANDALONE_SQL)
             .bind(is_active)
             .fetch_one(&self.pool)
-            .await?;
-        Ok(row.try_get::<i64, _>("total")?.max(0) as u64)
+            .await
+            .map_postgres_err()?;
+        Ok(row_get::<i64>(&row, "total")?.max(0) as u64)
     }
 
     pub async fn summarize_export_standalone_api_keys(
@@ -796,10 +804,11 @@ impl SqlxAuthApiKeySnapshotReadRepository {
         let row = sqlx::query(SUMMARIZE_EXPORT_STANDALONE_SQL)
             .bind(now_unix_secs as f64)
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(AuthApiKeyExportSummary {
-            total: row.try_get::<i64, _>("total")?.max(0) as u64,
-            active: row.try_get::<i64, _>("active")?.max(0) as u64,
+            total: row_get::<i64>(&row, "total")?.max(0) as u64,
+            active: row_get::<i64>(&row, "active")?.max(0) as u64,
         })
     }
 
@@ -810,7 +819,8 @@ impl SqlxAuthApiKeySnapshotReadRepository {
         let row = sqlx::query(FIND_EXPORT_STANDALONE_BY_ID_SQL)
             .bind(api_key_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_auth_api_key_export_row).transpose()
     }
 }
@@ -901,7 +911,8 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
         let result = sqlx::query(TOUCH_LAST_USED_AT_SQL)
             .bind(api_key_id)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -918,7 +929,8 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
             .bind(record.rate_limit)
             .bind(record.concurrent_limit)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_auth_api_key_export_row).transpose()
     }
 
@@ -953,7 +965,8 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
             .bind(record.rate_limit)
             .bind(record.concurrent_limit)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_auth_api_key_export_row).transpose()
     }
 
@@ -967,7 +980,8 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
             .bind(record.name)
             .bind(record.rate_limit)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_auth_api_key_export_row).transpose()
     }
 
@@ -1007,7 +1021,8 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
             .bind(record.allowed_models.is_some())
             .bind(allowed_models)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_auth_api_key_export_row).transpose()
     }
 
@@ -1022,7 +1037,8 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
             .bind(api_key_id)
             .bind(is_active)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_auth_api_key_export_row).transpose()
     }
 
@@ -1035,7 +1051,8 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
             .bind(api_key_id)
             .bind(is_active)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_auth_api_key_export_row).transpose()
     }
 
@@ -1050,7 +1067,8 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
             .bind(api_key_id)
             .bind(is_locked)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -1069,7 +1087,8 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
             .bind(api_key_id)
             .bind(allowed_providers)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_auth_api_key_export_row).transpose()
     }
 
@@ -1084,7 +1103,8 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
             .bind(api_key_id)
             .bind(force_capabilities)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_auth_api_key_export_row).transpose()
     }
 
@@ -1093,100 +1113,124 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
         user_id: &str,
         api_key_id: &str,
     ) -> Result<bool, DataLayerError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin().await.map_postgres_err()?;
         sqlx::query(NULL_USAGE_API_KEY_FK_SQL)
             .bind(api_key_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         sqlx::query(NULL_REQUEST_CANDIDATE_API_KEY_FK_SQL)
             .bind(api_key_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let result = sqlx::query(DELETE_USER_API_KEY_SQL)
             .bind(user_id)
             .bind(api_key_id)
             .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
+            .await
+            .map_postgres_err()?;
+        tx.commit().await.map_err(postgres_error)?;
         Ok(result.rows_affected() > 0)
     }
 
     async fn delete_standalone_api_key(&self, api_key_id: &str) -> Result<bool, DataLayerError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin().await.map_postgres_err()?;
         sqlx::query(NULL_USAGE_API_KEY_FK_SQL)
             .bind(api_key_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         sqlx::query(NULL_REQUEST_CANDIDATE_API_KEY_FK_SQL)
             .bind(api_key_id)
             .execute(&mut *tx)
-            .await?;
+            .await
+            .map_postgres_err()?;
         let result = sqlx::query(DELETE_STANDALONE_API_KEY_SQL)
             .bind(api_key_id)
             .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
+            .await
+            .map_postgres_err()?;
+        tx.commit().await.map_err(postgres_error)?;
         Ok(result.rows_affected() > 0)
     }
+}
+
+fn row_get<T>(row: &sqlx::postgres::PgRow, column: &str) -> Result<T, DataLayerError>
+where
+    for<'r> T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+{
+    row.try_get(column).map_postgres_err()
 }
 
 fn map_auth_api_key_snapshot_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<StoredAuthApiKeySnapshot, DataLayerError> {
     let snapshot = StoredAuthApiKeySnapshot::new(
-        row.try_get("user_id")?,
-        row.try_get("username")?,
-        row.try_get("email")?,
-        row.try_get("user_role")?,
-        row.try_get("user_auth_source")?,
-        row.try_get("user_is_active")?,
-        row.try_get("user_is_deleted")?,
-        row.try_get("user_allowed_providers")?,
-        row.try_get("user_allowed_api_formats")?,
-        row.try_get("user_allowed_models")?,
-        row.try_get("api_key_id")?,
-        row.try_get("api_key_name")?,
-        row.try_get("api_key_is_active")?,
-        row.try_get("api_key_is_locked")?,
-        row.try_get("api_key_is_standalone")?,
-        row.try_get("api_key_rate_limit")?,
-        row.try_get("api_key_concurrent_limit")?,
-        row.try_get("api_key_expires_at_unix_secs")?,
-        row.try_get("api_key_allowed_providers")?,
-        row.try_get("api_key_allowed_api_formats")?,
-        row.try_get("api_key_allowed_models")?,
+        row_get(row, "user_id")?,
+        row_get(row, "username")?,
+        row_get(row, "email")?,
+        row_get(row, "user_role")?,
+        row_get(row, "user_auth_source")?,
+        row_get(row, "user_is_active")?,
+        row_get(row, "user_is_deleted")?,
+        row_get(row, "user_allowed_providers")?,
+        row_get(row, "user_allowed_api_formats")?,
+        row_get(row, "user_allowed_models")?,
+        row_get(row, "api_key_id")?,
+        row_get(row, "api_key_name")?,
+        row_get(row, "api_key_is_active")?,
+        row_get(row, "api_key_is_locked")?,
+        row_get(row, "api_key_is_standalone")?,
+        row_get(row, "api_key_rate_limit")?,
+        row_get(row, "api_key_concurrent_limit")?,
+        row_get(row, "api_key_expires_at_unix_secs")?,
+        row_get(row, "api_key_allowed_providers")?,
+        row_get(row, "api_key_allowed_api_formats")?,
+        row_get(row, "api_key_allowed_models")?,
     )?;
-    Ok(snapshot.with_user_rate_limit(row.try_get("user_rate_limit")?))
+    Ok(snapshot.with_user_rate_limit(row_get(row, "user_rate_limit")?))
 }
 
 fn map_auth_api_key_export_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<StoredAuthApiKeyExportRecord, DataLayerError> {
     StoredAuthApiKeyExportRecord::new(
-        row.try_get("user_id")?,
-        row.try_get("api_key_id")?,
-        row.try_get("key_hash")?,
-        row.try_get("key_encrypted")?,
-        row.try_get("name")?,
-        row.try_get("allowed_providers")?,
-        row.try_get("allowed_api_formats")?,
-        row.try_get("allowed_models")?,
-        row.try_get("rate_limit")?,
-        row.try_get("concurrent_limit")?,
-        row.try_get("force_capabilities")?,
-        row.try_get("is_active")?,
-        row.try_get("expires_at_unix_secs")?,
-        row.try_get("auto_delete_on_expiry")?,
-        row.try_get::<i32, _>("total_requests")?.into(),
-        row.try_get("total_cost_usd")?,
-        row.try_get("is_standalone")?,
+        row_get(row, "user_id")?,
+        row_get(row, "api_key_id")?,
+        row_get(row, "key_hash")?,
+        row_get(row, "key_encrypted")?,
+        row_get(row, "name")?,
+        row_get(row, "allowed_providers")?,
+        row_get(row, "allowed_api_formats")?,
+        row_get(row, "allowed_models")?,
+        row_get(row, "rate_limit")?,
+        row_get(row, "concurrent_limit")?,
+        row_get(row, "force_capabilities")?,
+        row_get(row, "is_active")?,
+        row_get(row, "expires_at_unix_secs")?,
+        row_get(row, "auto_delete_on_expiry")?,
+        row_get::<i32>(row, "total_requests")?.into(),
+        row_get(row, "total_cost_usd")?,
+        row_get(row, "is_standalone")?,
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SqlxAuthApiKeySnapshotReadRepository;
+    use super::{SqlxAuthApiKeySnapshotReadRepository, UPDATE_STANDALONE_API_KEY_BASIC_SQL};
     use crate::postgres::{PostgresPoolConfig, PostgresPoolFactory};
+
+    #[test]
+    fn update_standalone_api_key_basic_sql_casts_json_case_values() {
+        assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL
+            .contains("allowed_providers = CASE WHEN $4 THEN $5::json ELSE allowed_providers END"));
+        assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL.contains(
+            "allowed_api_formats = CASE WHEN $6 THEN $7::json ELSE allowed_api_formats END"
+        ));
+        assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL
+            .contains("allowed_models = CASE WHEN $8 THEN $9::json ELSE allowed_models END"));
+    }
 
     #[tokio::test]
     async fn repository_constructs_from_lazy_pool() {

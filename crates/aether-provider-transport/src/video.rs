@@ -1,4 +1,4 @@
-use aether_data::repository::video_tasks::StoredVideoTask;
+use aether_data_contracts::repository::video_tasks::StoredVideoTask;
 use aether_video_tasks_core::{
     LocalVideoTaskSnapshot, LocalVideoTaskTransport, LocalVideoTaskTransportBridgeInput,
 };
@@ -103,7 +103,7 @@ pub async fn reconstruct_local_video_task_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use aether_data::repository::video_tasks::{StoredVideoTask, VideoTaskStatus};
+    use aether_data_contracts::repository::video_tasks::{StoredVideoTask, VideoTaskStatus};
     use aether_video_tasks_core::LocalVideoTaskSnapshot;
     use async_trait::async_trait;
     use serde_json::json;

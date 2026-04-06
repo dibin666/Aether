@@ -2,6 +2,7 @@ use sqlx::{PgPool, Postgres, QueryBuilder, Row};
 
 use async_trait::async_trait;
 
+use crate::error::SqlxResultExt;
 use crate::repository::video_tasks::{
     StoredVideoTask, UpsertVideoTask, VideoTaskLookupKey, VideoTaskModelCount,
     VideoTaskQueryFilter, VideoTaskReadRepository, VideoTaskStatus, VideoTaskStatusCount,
@@ -302,7 +303,8 @@ impl SqlxVideoTaskRepository {
         let row = sqlx::query(&sql)
             .bind(id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_video_task_row).transpose()
     }
 
@@ -314,7 +316,8 @@ impl SqlxVideoTaskRepository {
         let row = sqlx::query(&sql)
             .bind(short_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_video_task_row).transpose()
     }
 
@@ -328,7 +331,8 @@ impl SqlxVideoTaskRepository {
             .bind(user_id)
             .bind(external_task_id)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_video_task_row).transpose()
     }
 
@@ -345,7 +349,8 @@ impl SqlxVideoTaskRepository {
                 DataLayerError::UnexpectedValue(format!("invalid active task limit: {limit}"))
             })?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         rows.iter().map(map_video_task_row).collect()
     }
@@ -368,7 +373,8 @@ impl SqlxVideoTaskRepository {
                 DataLayerError::UnexpectedValue(format!("invalid due task limit: {limit}"))
             })?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         rows.iter().map(map_video_task_row).collect()
     }
@@ -398,7 +404,11 @@ impl SqlxVideoTaskRepository {
         builder.push("\nLIMIT ");
         builder.push_bind(limit);
 
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let rows = builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_video_task_row).collect()
     }
 
@@ -407,8 +417,12 @@ impl SqlxVideoTaskRepository {
             QueryBuilder::<Postgres>::new("SELECT COUNT(id) AS total FROM video_tasks");
         push_video_task_filter(&mut builder, filter, None);
 
-        let row = builder.build().fetch_one(&self.pool).await?;
-        let total = row.try_get::<i64, _>("total")?;
+        let row = builder
+            .build()
+            .fetch_one(&self.pool)
+            .await
+            .map_postgres_err()?;
+        let total = row.try_get::<i64, _>("total").map_postgres_err()?;
         u64::try_from(total)
             .map_err(|_| DataLayerError::UnexpectedValue(format!("invalid count result: {total}")))
     }
@@ -422,12 +436,19 @@ impl SqlxVideoTaskRepository {
         push_video_task_filter(&mut builder, filter, None);
         builder.push("\nGROUP BY status\nORDER BY status ASC");
 
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let rows = builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?;
         rows.into_iter()
             .map(|row| {
-                let status =
-                    VideoTaskStatus::from_database(row.try_get::<String, _>("status")?.as_str())?;
-                let total = row.try_get::<i64, _>("total")?;
+                let status = VideoTaskStatus::from_database(
+                    row.try_get::<String, _>("status")
+                        .map_postgres_err()?
+                        .as_str(),
+                )?;
+                let total = row.try_get::<i64, _>("total").map_postgres_err()?;
                 Ok(VideoTaskStatusCount {
                     status,
                     count: u64::try_from(total).map_err(|_| {
@@ -452,8 +473,12 @@ impl SqlxVideoTaskRepository {
         push_sql_clause(&mut builder, &mut has_where, "user_id IS NOT NULL");
         push_sql_clause(&mut builder, &mut has_where, "user_id <> ''");
 
-        let row = builder.build().fetch_one(&self.pool).await?;
-        let total = row.try_get::<i64, _>("total")?;
+        let row = builder
+            .build()
+            .fetch_one(&self.pool)
+            .await
+            .map_postgres_err()?;
+        let total = row.try_get::<i64, _>("total").map_postgres_err()?;
         u64::try_from(total)
             .map_err(|_| DataLayerError::UnexpectedValue(format!("invalid count result: {total}")))
     }
@@ -479,11 +504,15 @@ impl SqlxVideoTaskRepository {
         builder.push("\nGROUP BY model\nORDER BY total DESC, model ASC\nLIMIT ");
         builder.push_bind(limit);
 
-        let rows = builder.build().fetch_all(&self.pool).await?;
+        let rows = builder
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_postgres_err()?;
         rows.into_iter()
             .map(|row| {
-                let model = row.try_get::<String, _>("model")?;
-                let total = row.try_get::<i64, _>("total")?;
+                let model = row.try_get::<String, _>("model").map_postgres_err()?;
+                let total = row.try_get::<i64, _>("total").map_postgres_err()?;
                 Ok(VideoTaskModelCount {
                     model,
                     count: u64::try_from(total).map_err(|_| {
@@ -505,8 +534,12 @@ impl SqlxVideoTaskRepository {
             QueryBuilder::<Postgres>::new("SELECT COUNT(id) AS total FROM video_tasks");
         push_video_task_filter(&mut builder, filter, Some(created_since_unix_secs));
 
-        let row = builder.build().fetch_one(&self.pool).await?;
-        let total = row.try_get::<i64, _>("total")?;
+        let row = builder
+            .build()
+            .fetch_one(&self.pool)
+            .await
+            .map_postgres_err()?;
+        let total = row.try_get::<i64, _>("total").map_postgres_err()?;
         u64::try_from(total)
             .map_err(|_| DataLayerError::UnexpectedValue(format!("invalid count result: {total}")))
     }
@@ -571,7 +604,8 @@ impl SqlxVideoTaskRepository {
             .bind(task.completed_at_unix_secs.map(|value| value as f64))
             .bind(task.updated_at_unix_secs as f64)
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         map_video_task_row(&row)
     }
@@ -640,7 +674,8 @@ impl SqlxVideoTaskRepository {
             .bind(task.updated_at_unix_secs as f64)
             .bind(vec!["pending", "submitted", "queued", "processing"])
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         row.as_ref().map(map_video_task_row).transpose()
     }
@@ -665,7 +700,8 @@ impl SqlxVideoTaskRepository {
             .bind(claim_until_unix_secs as f64)
             .bind(now_unix_secs as f64)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         let mut tasks = rows
             .iter()
@@ -846,45 +882,49 @@ fn map_status_for_database(status: VideoTaskStatus) -> &'static str {
 }
 
 fn map_video_task_row(row: &sqlx::postgres::PgRow) -> Result<StoredVideoTask, DataLayerError> {
-    let status = VideoTaskStatus::from_database(row.try_get::<String, _>("status")?.as_str())?;
+    let status = VideoTaskStatus::from_database(
+        row.try_get::<String, _>("status")
+            .map_postgres_err()?
+            .as_str(),
+    )?;
     StoredVideoTask::new(
-        row.try_get("id")?,
-        row.try_get("short_id")?,
-        row.try_get("request_id")?,
-        row.try_get("user_id")?,
-        row.try_get("api_key_id")?,
-        row.try_get("username")?,
-        row.try_get("api_key_name")?,
-        row.try_get("external_task_id")?,
-        row.try_get("provider_id")?,
-        row.try_get("endpoint_id")?,
-        row.try_get("key_id")?,
-        row.try_get("client_api_format")?,
-        row.try_get("provider_api_format")?,
-        row.try_get("format_converted")?,
-        row.try_get("model")?,
-        row.try_get("prompt")?,
-        row.try_get("original_request_body")?,
-        row.try_get("duration_seconds")?,
-        row.try_get("resolution")?,
-        row.try_get("aspect_ratio")?,
-        row.try_get("size")?,
+        row.try_get("id").map_postgres_err()?,
+        row.try_get("short_id").map_postgres_err()?,
+        row.try_get("request_id").map_postgres_err()?,
+        row.try_get("user_id").map_postgres_err()?,
+        row.try_get("api_key_id").map_postgres_err()?,
+        row.try_get("username").map_postgres_err()?,
+        row.try_get("api_key_name").map_postgres_err()?,
+        row.try_get("external_task_id").map_postgres_err()?,
+        row.try_get("provider_id").map_postgres_err()?,
+        row.try_get("endpoint_id").map_postgres_err()?,
+        row.try_get("key_id").map_postgres_err()?,
+        row.try_get("client_api_format").map_postgres_err()?,
+        row.try_get("provider_api_format").map_postgres_err()?,
+        row.try_get("format_converted").map_postgres_err()?,
+        row.try_get("model").map_postgres_err()?,
+        row.try_get("prompt").map_postgres_err()?,
+        row.try_get("original_request_body").map_postgres_err()?,
+        row.try_get("duration_seconds").map_postgres_err()?,
+        row.try_get("resolution").map_postgres_err()?,
+        row.try_get("aspect_ratio").map_postgres_err()?,
+        row.try_get("size").map_postgres_err()?,
         status,
-        row.try_get("progress_percent")?,
-        row.try_get("progress_message")?,
-        row.try_get("retry_count")?,
-        row.try_get("poll_interval_seconds")?,
-        row.try_get("next_poll_at_unix_secs")?,
-        row.try_get("poll_count")?,
-        row.try_get("max_poll_count")?,
-        row.try_get("created_at_unix_secs")?,
-        row.try_get("submitted_at_unix_secs")?,
-        row.try_get("completed_at_unix_secs")?,
-        row.try_get("updated_at_unix_secs")?,
-        row.try_get("error_code")?,
-        row.try_get("error_message")?,
-        row.try_get("video_url")?,
-        row.try_get("request_metadata")?,
+        row.try_get("progress_percent").map_postgres_err()?,
+        row.try_get("progress_message").map_postgres_err()?,
+        row.try_get("retry_count").map_postgres_err()?,
+        row.try_get("poll_interval_seconds").map_postgres_err()?,
+        row.try_get("next_poll_at_unix_secs").map_postgres_err()?,
+        row.try_get("poll_count").map_postgres_err()?,
+        row.try_get("max_poll_count").map_postgres_err()?,
+        row.try_get("created_at_unix_secs").map_postgres_err()?,
+        row.try_get("submitted_at_unix_secs").map_postgres_err()?,
+        row.try_get("completed_at_unix_secs").map_postgres_err()?,
+        row.try_get("updated_at_unix_secs").map_postgres_err()?,
+        row.try_get("error_code").map_postgres_err()?,
+        row.try_get("error_message").map_postgres_err()?,
+        row.try_get("video_url").map_postgres_err()?,
+        row.try_get("request_metadata").map_postgres_err()?,
     )
 }
 

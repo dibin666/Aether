@@ -38,7 +38,7 @@ pub use policy::{
 };
 pub use rules::{
     apply_local_body_rules, apply_local_header_rules, body_rules_are_locally_supported,
-    header_rules_are_locally_supported,
+    body_rules_handle_path, header_rules_are_locally_supported,
 };
 pub use snapshot::{
     read_provider_transport_snapshot, GatewayProviderTransportSnapshot,

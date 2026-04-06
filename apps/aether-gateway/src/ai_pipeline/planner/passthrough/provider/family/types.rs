@@ -1,28 +1,20 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LocalSameFormatProviderFamily {
-    Standard,
-    Gemini,
-}
+use crate::ai_pipeline::control_facade::GatewayControlAuthContext;
+use crate::ai_pipeline::planner::auth_snapshot_facade::GatewayAuthApiKeySnapshot;
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct LocalSameFormatProviderSpec {
-    pub(crate) api_format: &'static str,
-    pub(crate) decision_kind: &'static str,
-    pub(crate) report_kind: &'static str,
-    pub(crate) family: LocalSameFormatProviderFamily,
-    pub(crate) require_streaming: bool,
-}
+pub(crate) use aether_ai_pipeline::planner::passthrough::provider::{
+    LocalSameFormatProviderFamily, LocalSameFormatProviderSpec,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalSameFormatProviderDecisionInput {
-    pub(crate) auth_context: crate::control::GatewayControlAuthContext,
+    pub(crate) auth_context: GatewayControlAuthContext,
     pub(crate) requested_model: String,
-    pub(crate) auth_snapshot: crate::data::auth::GatewayAuthApiKeySnapshot,
+    pub(crate) auth_snapshot: GatewayAuthApiKeySnapshot,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalSameFormatProviderCandidateAttempt {
-    pub(crate) candidate: crate::scheduler::GatewayMinimalCandidateSelectionCandidate,
+    pub(crate) candidate: aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate,
     pub(crate) candidate_index: u32,
     pub(crate) candidate_id: String,
 }

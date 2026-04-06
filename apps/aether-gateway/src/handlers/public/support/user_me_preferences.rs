@@ -12,6 +12,7 @@ use super::{
     build_auth_error_response, resolve_authenticated_local_user, AppState,
     GatewayPublicRequestContext, PUBLIC_CAPABILITY_DEFINITIONS,
 };
+use crate::GatewayUserPreferenceView;
 
 const USERS_ME_PREFERENCES_STORAGE_UNAVAILABLE_DETAIL: &str = "用户偏好设置存储暂不可用";
 const USERS_ME_MODEL_CAPABILITIES_STORAGE_UNAVAILABLE_DETAIL: &str = "用户模型能力配置存储暂不可用";
@@ -73,7 +74,7 @@ fn validate_user_model_capability_settings(
 }
 
 fn build_users_me_preferences_payload(
-    preferences: &crate::data::state::StoredUserPreferenceRecord,
+    preferences: &GatewayUserPreferenceView,
 ) -> serde_json::Value {
     json!({
         "avatar_url": preferences.avatar_url,
@@ -177,11 +178,7 @@ pub(super) async fn handle_users_me_preferences_get(
 
     let preferences = match state.read_user_preferences(&auth.user.id).await {
         Ok(Some(value)) => value,
-        Ok(None) => {
-            crate::data::state::StoredUserPreferenceRecord::default_for_user(
-                &auth.user.id,
-            )
-        }
+        Ok(None) => GatewayUserPreferenceView::default_for_user(&auth.user.id),
         Err(err) => {
             return build_auth_error_response(
                 http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -219,11 +216,7 @@ pub(super) async fn handle_users_me_preferences_put(
 
     let mut preferences = match state.read_user_preferences(&auth.user.id).await {
         Ok(Some(value)) => value,
-        Ok(None) => {
-            crate::data::state::StoredUserPreferenceRecord::default_for_user(
-                &auth.user.id,
-            )
-        }
+        Ok(None) => GatewayUserPreferenceView::default_for_user(&auth.user.id),
         Err(err) => {
             return build_auth_error_response(
                 http::StatusCode::INTERNAL_SERVER_ERROR,

@@ -8,18 +8,19 @@ use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY}
 use aether_data::repository::auth::{
     InMemoryAuthApiKeySnapshotRepository, StoredAuthApiKeySnapshot,
 };
-use aether_data::repository::candidate_selection::{
-    InMemoryMinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-    StoredProviderModelMapping,
-};
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateReadRepository, RequestCandidateStatus,
-};
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider,
-};
+use aether_data::repository::candidate_selection::InMemoryMinimalCandidateSelectionReadRepository;
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
 use aether_data::repository::usage::InMemoryUsageReadRepository;
+use aether_data_contracts::repository::candidate_selection::{
+    StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
+};
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateReadRepository, RequestCandidateStatus,
+};
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
+};
 use sha2::{Digest, Sha256};
 
 #[tokio::test]
@@ -1926,12 +1927,12 @@ async fn gateway_executes_antigravity_gemini_cli_sync_upstream_stream_via_local_
     let (refresh_url, refresh_handle) = start_server(refresh).await;
     let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
     let oauth_refresh =
-        crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(
-            vec![Arc::new(
+        crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(vec![
+            Arc::new(
                 crate::provider_transport::oauth_refresh::GenericOAuthRefreshAdapter::default()
                     .with_token_url_for_tests("antigravity", format!("{refresh_url}/oauth/token")),
-            )],
-        );
+            ),
+        ]);
     let gateway_state =
         build_state_with_execution_runtime_override(execution_runtime_url.clone())
             .with_data_state_for_tests(

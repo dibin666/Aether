@@ -5,11 +5,12 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::data::GatewayDataState;
+use aether_data_contracts::DataLayerError;
 
 use super::{
-    stats_aggregation_target_day, system_config_bool, PercentileSummary, StatsAggregationSummary,
-    DELETE_STATS_DAILY_ERRORS_FOR_DATE_SQL, INSERT_STATS_DAILY_ERROR_SQL, INSERT_STATS_SUMMARY_SQL,
-    SELECT_ACTIVE_USER_IDS_SQL, SELECT_EXISTING_STATS_SUMMARY_ID_SQL,
+    postgres_error, stats_aggregation_target_day, system_config_bool, PercentileSummary,
+    StatsAggregationSummary, DELETE_STATS_DAILY_ERRORS_FOR_DATE_SQL, INSERT_STATS_DAILY_ERROR_SQL,
+    INSERT_STATS_SUMMARY_SQL, SELECT_ACTIVE_USER_IDS_SQL, SELECT_EXISTING_STATS_SUMMARY_ID_SQL,
     SELECT_STATS_DAILY_AGGREGATE_SQL, SELECT_STATS_DAILY_API_KEY_AGGREGATES_SQL,
     SELECT_STATS_DAILY_ERROR_AGGREGATES_SQL, SELECT_STATS_DAILY_FALLBACK_COUNT_SQL,
     SELECT_STATS_DAILY_FIRST_BYTE_PERCENTILES_SQL, SELECT_STATS_DAILY_MODEL_AGGREGATES_SQL,
@@ -22,7 +23,7 @@ use super::{
 
 pub(super) async fn perform_stats_aggregation_once(
     data: &GatewayDataState,
-) -> Result<Option<StatsAggregationSummary>, aether_data::DataLayerError> {
+) -> Result<Option<StatsAggregationSummary>, DataLayerError> {
     let Some(pool) = data.postgres_pool() else {
         return Ok(None);
     };
@@ -33,36 +34,45 @@ pub(super) async fn perform_stats_aggregation_once(
     let now_utc = Utc::now();
     let day_start_utc = stats_aggregation_target_day(now_utc);
     let day_end_utc = day_start_utc + chrono::Duration::days(1);
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin().await.map_err(postgres_error)?;
     let aggregate_row = sqlx::query(SELECT_STATS_DAILY_AGGREGATE_SQL)
         .bind(day_start_utc)
         .bind(day_end_utc)
         .fetch_one(&mut *tx)
-        .await?;
-    let total_requests = aggregate_row.try_get::<i64, _>("total_requests")?;
-    let error_requests = aggregate_row.try_get::<i64, _>("error_requests")?;
+        .await
+        .map_err(postgres_error)?;
+    let total_requests = aggregate_row
+        .try_get::<i64, _>("total_requests")
+        .map_err(postgres_error)?;
+    let error_requests = aggregate_row
+        .try_get::<i64, _>("error_requests")
+        .map_err(postgres_error)?;
     let success_requests = total_requests.saturating_sub(error_requests);
     let fallback_count = sqlx::query(SELECT_STATS_DAILY_FALLBACK_COUNT_SQL)
         .bind(day_start_utc)
         .bind(day_end_utc)
         .bind(vec!["success", "failed"])
         .fetch_one(&mut *tx)
-        .await?
-        .try_get::<i64, _>("fallback_count")?;
+        .await
+        .map_err(postgres_error)?
+        .try_get::<i64, _>("fallback_count")
+        .map_err(postgres_error)?;
     let response_percentiles = fetch_stats_daily_percentiles(
         &mut tx,
         SELECT_STATS_DAILY_RESPONSE_TIME_PERCENTILES_SQL,
         day_start_utc,
         day_end_utc,
     )
-    .await?;
+    .await
+    .map_err(postgres_error)?;
     let first_byte_percentiles = fetch_stats_daily_percentiles(
         &mut tx,
         SELECT_STATS_DAILY_FIRST_BYTE_PERCENTILES_SQL,
         day_start_utc,
         day_end_utc,
     )
-    .await?;
+    .await
+    .map_err(postgres_error)?;
 
     sqlx::query(UPSERT_STATS_DAILY_SQL)
         .bind(Uuid::new_v4().to_string())
@@ -70,17 +80,61 @@ pub(super) async fn perform_stats_aggregation_once(
         .bind(total_requests)
         .bind(success_requests)
         .bind(error_requests)
-        .bind(aggregate_row.try_get::<i64, _>("input_tokens")?)
-        .bind(aggregate_row.try_get::<i64, _>("output_tokens")?)
-        .bind(aggregate_row.try_get::<i64, _>("cache_creation_tokens")?)
-        .bind(aggregate_row.try_get::<i64, _>("cache_read_tokens")?)
-        .bind(aggregate_row.try_get::<f64, _>("total_cost")?)
-        .bind(aggregate_row.try_get::<f64, _>("actual_total_cost")?)
-        .bind(aggregate_row.try_get::<f64, _>("input_cost")?)
-        .bind(aggregate_row.try_get::<f64, _>("output_cost")?)
-        .bind(aggregate_row.try_get::<f64, _>("cache_creation_cost")?)
-        .bind(aggregate_row.try_get::<f64, _>("cache_read_cost")?)
-        .bind(aggregate_row.try_get::<f64, _>("avg_response_time_ms")?)
+        .bind(
+            aggregate_row
+                .try_get::<i64, _>("input_tokens")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            aggregate_row
+                .try_get::<i64, _>("output_tokens")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            aggregate_row
+                .try_get::<i64, _>("cache_creation_tokens")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            aggregate_row
+                .try_get::<i64, _>("cache_read_tokens")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            aggregate_row
+                .try_get::<f64, _>("total_cost")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            aggregate_row
+                .try_get::<f64, _>("actual_total_cost")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            aggregate_row
+                .try_get::<f64, _>("input_cost")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            aggregate_row
+                .try_get::<f64, _>("output_cost")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            aggregate_row
+                .try_get::<f64, _>("cache_creation_cost")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            aggregate_row
+                .try_get::<f64, _>("cache_read_cost")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            aggregate_row
+                .try_get::<f64, _>("avg_response_time_ms")
+                .map_err(postgres_error)?,
+        )
         .bind(response_percentiles.p50)
         .bind(response_percentiles.p90)
         .bind(response_percentiles.p99)
@@ -88,27 +142,45 @@ pub(super) async fn perform_stats_aggregation_once(
         .bind(first_byte_percentiles.p90)
         .bind(first_byte_percentiles.p99)
         .bind(fallback_count)
-        .bind(aggregate_row.try_get::<i64, _>("unique_models")?)
-        .bind(aggregate_row.try_get::<i64, _>("unique_providers")?)
+        .bind(
+            aggregate_row
+                .try_get::<i64, _>("unique_models")
+                .map_err(postgres_error)?,
+        )
+        .bind(
+            aggregate_row
+                .try_get::<i64, _>("unique_providers")
+                .map_err(postgres_error)?,
+        )
         .bind(true)
         .bind(now_utc)
         .bind(now_utc)
         .bind(now_utc)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(postgres_error)?;
 
-    let model_rows =
-        upsert_stats_daily_model_rows(&mut tx, day_start_utc, day_end_utc, now_utc).await?;
+    let model_rows = upsert_stats_daily_model_rows(&mut tx, day_start_utc, day_end_utc, now_utc)
+        .await
+        .map_err(postgres_error)?;
     let provider_rows =
-        upsert_stats_daily_provider_rows(&mut tx, day_start_utc, day_end_utc, now_utc).await?;
+        upsert_stats_daily_provider_rows(&mut tx, day_start_utc, day_end_utc, now_utc)
+            .await
+            .map_err(postgres_error)?;
     let api_key_rows =
-        upsert_stats_daily_api_key_rows(&mut tx, day_start_utc, day_end_utc, now_utc).await?;
-    let error_rows =
-        refresh_stats_daily_error_rows(&mut tx, day_start_utc, day_end_utc, now_utc).await?;
-    let user_rows =
-        upsert_stats_user_daily_rows(&mut tx, day_start_utc, day_end_utc, now_utc).await?;
-    refresh_stats_summary_row(&mut tx, day_end_utc, now_utc).await?;
-    tx.commit().await?;
+        upsert_stats_daily_api_key_rows(&mut tx, day_start_utc, day_end_utc, now_utc)
+            .await
+            .map_err(postgres_error)?;
+    let error_rows = refresh_stats_daily_error_rows(&mut tx, day_start_utc, day_end_utc, now_utc)
+        .await
+        .map_err(postgres_error)?;
+    let user_rows = upsert_stats_user_daily_rows(&mut tx, day_start_utc, day_end_utc, now_utc)
+        .await
+        .map_err(postgres_error)?;
+    refresh_stats_summary_row(&mut tx, day_end_utc, now_utc)
+        .await
+        .map_err(postgres_error)?;
+    tx.commit().await.map_err(postgres_error)?;
 
     Ok(Some(StatsAggregationSummary {
         day_start_utc,

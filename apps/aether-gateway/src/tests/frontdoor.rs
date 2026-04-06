@@ -11,23 +11,26 @@ use aether_data::repository::auth::{
 use aether_data::repository::auth_modules::{
     InMemoryAuthModuleReadRepository, StoredLdapModuleConfig, StoredOAuthProviderModuleConfig,
 };
-use aether_data::repository::candidate_selection::{
-    InMemoryMinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-    StoredProviderModelMapping,
+use aether_data::repository::candidate_selection::InMemoryMinimalCandidateSelectionReadRepository;
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+use aether_data::repository::global_models::InMemoryGlobalModelReadRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data::repository::video_tasks::InMemoryVideoTaskRepository;
+use aether_data_contracts::repository::candidate_selection::{
+    StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
 };
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateStatus, StoredRequestCandidate,
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateStatus, StoredRequestCandidate,
 };
-use aether_data::repository::global_models::{
-    InMemoryGlobalModelReadRepository, StoredPublicCatalogModel, StoredPublicGlobalModel,
+use aether_data_contracts::repository::global_models::{
+    StoredPublicCatalogModel, StoredPublicGlobalModel,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider,
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
-use aether_data::repository::video_tasks::{
-    InMemoryVideoTaskRepository, UpsertVideoTask, VideoTaskLookupKey, VideoTaskReadRepository,
-    VideoTaskStatus, VideoTaskWriteRepository,
+use aether_data_contracts::repository::video_tasks::{
+    UpsertVideoTask, VideoTaskLookupKey, VideoTaskReadRepository, VideoTaskStatus,
+    VideoTaskWriteRepository,
 };
 use base64::Engine as _;
 use sha2::{Digest, Sha256};

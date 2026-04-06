@@ -5,7 +5,7 @@ use super::types::{
     OAuthProviderReadRepository, OAuthProviderWriteRepository, StoredOAuthProviderConfig,
     UpsertOAuthProviderConfigRecord,
 };
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const LIST_OAUTH_PROVIDER_CONFIGS_SQL: &str = r#"
 SELECT
@@ -183,7 +183,8 @@ impl OAuthProviderReadRepository for SqlxOAuthProviderRepository {
     ) -> Result<Vec<StoredOAuthProviderConfig>, DataLayerError> {
         let rows = sqlx::query(LIST_OAUTH_PROVIDER_CONFIGS_SQL)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_oauth_provider_row).collect()
     }
 
@@ -194,7 +195,8 @@ impl OAuthProviderReadRepository for SqlxOAuthProviderRepository {
         let row = sqlx::query(GET_OAUTH_PROVIDER_CONFIG_SQL)
             .bind(provider_type)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_oauth_provider_row).transpose()
     }
 
@@ -207,7 +209,8 @@ impl OAuthProviderReadRepository for SqlxOAuthProviderRepository {
             .bind(provider_type)
             .bind(ldap_exclusive)
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         usize::try_from(locked_count).map_err(|_| {
             DataLayerError::UnexpectedValue(
                 "oauth_providers.locked_user_count is negative".to_string(),
@@ -239,7 +242,8 @@ impl OAuthProviderWriteRepository for SqlxOAuthProviderRepository {
             .bind(record.extra_config.as_ref())
             .bind(record.is_enabled)
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         map_oauth_provider_row(&row)
     }
 
@@ -250,7 +254,8 @@ impl OAuthProviderWriteRepository for SqlxOAuthProviderRepository {
         let result = sqlx::query(DELETE_OAUTH_PROVIDER_CONFIG_SQL)
             .bind(provider_type)
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         Ok(result.rows_affected() > 0)
     }
 }
@@ -275,51 +280,130 @@ fn parse_scopes(value: Option<serde_json::Value>) -> Result<Option<Vec<String>>,
     let Some(value) = value else {
         return Ok(None);
     };
-    let serde_json::Value::Array(items) = value else {
-        return Err(DataLayerError::UnexpectedValue(
+    parse_scopes_value(&value)
+}
+
+fn parse_scopes_value(value: &serde_json::Value) -> Result<Option<Vec<String>>, DataLayerError> {
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Array(items) => parse_scopes_array(items).map(Some),
+        serde_json::Value::String(raw) => parse_embedded_scopes(raw),
+        _ => Err(DataLayerError::UnexpectedValue(
             "oauth_providers.scopes is not a JSON array".to_string(),
-        ));
-    };
+        )),
+    }
+}
+
+fn parse_embedded_scopes(raw: &str) -> Result<Option<Vec<String>>, DataLayerError> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("null") {
+        return Ok(None);
+    }
+
+    if let Ok(decoded) = serde_json::from_str::<serde_json::Value>(raw) {
+        return parse_scopes_value(&decoded);
+    }
+
+    Ok(Some(vec![raw.to_string()]))
+}
+
+fn parse_scopes_array(items: &[serde_json::Value]) -> Result<Vec<String>, DataLayerError> {
     let mut scopes = Vec::with_capacity(items.len());
     for item in items {
-        let serde_json::Value::String(scope) = item else {
+        let Some(scope) = item.as_str() else {
             return Err(DataLayerError::UnexpectedValue(
                 "oauth_providers.scopes contains non-string value".to_string(),
             ));
         };
-        scopes.push(scope);
+        let scope = scope.trim();
+        if !scope.is_empty() {
+            scopes.push(scope.to_string());
+        }
     }
-    Ok(Some(scopes))
+    Ok(scopes)
 }
 
 fn map_oauth_provider_row(row: &PgRow) -> Result<StoredOAuthProviderConfig, DataLayerError> {
     Ok(StoredOAuthProviderConfig::new(
-        row.try_get("provider_type")?,
-        row.try_get("display_name")?,
-        row.try_get("client_id")?,
-        row.try_get("redirect_uri")?,
-        row.try_get("frontend_callback_url")?,
+        row.try_get("provider_type").map_postgres_err()?,
+        row.try_get("display_name").map_postgres_err()?,
+        row.try_get("client_id").map_postgres_err()?,
+        row.try_get("redirect_uri").map_postgres_err()?,
+        row.try_get("frontend_callback_url").map_postgres_err()?,
     )?
     .with_config_fields(
-        row.try_get("client_secret_encrypted")?,
-        row.try_get("authorization_url_override")?,
-        row.try_get("token_url_override")?,
-        row.try_get("userinfo_url_override")?,
-        parse_scopes(row.try_get("scopes")?)?,
-        row.try_get("attribute_mapping")?,
-        row.try_get("extra_config")?,
-        row.try_get("is_enabled")?,
+        row.try_get("client_secret_encrypted").map_postgres_err()?,
+        row.try_get("authorization_url_override")
+            .map_postgres_err()?,
+        row.try_get("token_url_override").map_postgres_err()?,
+        row.try_get("userinfo_url_override").map_postgres_err()?,
+        parse_scopes(row.try_get("scopes").map_postgres_err()?)?,
+        row.try_get("attribute_mapping").map_postgres_err()?,
+        row.try_get("extra_config").map_postgres_err()?,
+        row.try_get("is_enabled").map_postgres_err()?,
     )
     .with_timestamps(
-        optional_unix_secs(row.try_get("created_at_unix_secs")?),
-        optional_unix_secs(row.try_get("updated_at_unix_secs")?),
+        optional_unix_secs(row.try_get("created_at_unix_secs").map_postgres_err()?),
+        optional_unix_secs(row.try_get("updated_at_unix_secs").map_postgres_err()?),
     ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SqlxOAuthProviderRepository;
-    use crate::postgres::{PostgresPoolConfig, PostgresPoolFactory};
+    use super::{parse_scopes, SqlxOAuthProviderRepository};
+    use crate::{
+        postgres::{PostgresPoolConfig, PostgresPoolFactory},
+        DataLayerError,
+    };
+
+    #[test]
+    fn parse_scopes_accepts_json_arrays() {
+        let scopes = parse_scopes(Some(serde_json::json!(["openid", " profile ", ""])))
+            .expect("json array should parse");
+        assert_eq!(
+            scopes,
+            Some(vec!["openid".to_string(), "profile".to_string()])
+        );
+    }
+
+    #[test]
+    fn parse_scopes_accepts_stringified_json_arrays() {
+        let scopes = parse_scopes(Some(serde_json::json!("[\"openid\", \" profile \", \"\"]")))
+            .expect("stringified array should parse");
+        assert_eq!(
+            scopes,
+            Some(vec!["openid".to_string(), "profile".to_string()])
+        );
+    }
+
+    #[test]
+    fn parse_scopes_accepts_plain_strings_as_single_scope() {
+        let scopes =
+            parse_scopes(Some(serde_json::json!("openid"))).expect("plain string should parse");
+        assert_eq!(scopes, Some(vec!["openid".to_string()]));
+    }
+
+    #[test]
+    fn parse_scopes_rejects_non_string_items() {
+        let err = parse_scopes(Some(serde_json::json!(["openid", 1])))
+            .expect_err("non-string items should fail");
+        assert!(matches!(
+            err,
+            DataLayerError::UnexpectedValue(ref message)
+                if message == "oauth_providers.scopes contains non-string value"
+        ));
+    }
+
+    #[test]
+    fn parse_scopes_rejects_non_array_objects() {
+        let err = parse_scopes(Some(serde_json::json!({"scope": "openid"})))
+            .expect_err("object should fail");
+        assert!(matches!(
+            err,
+            DataLayerError::UnexpectedValue(ref message)
+                if message == "oauth_providers.scopes is not a JSON array"
+        ));
+    }
 
     #[tokio::test]
     async fn repository_constructs_from_lazy_pool() {

@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use sqlx::{PgPool, Row};
 
-use super::types::{
+use super::{
     MinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
     StoredProviderModelMapping,
 };
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const LIST_FOR_EXACT_API_FORMAT_SQL: &str = r#"
 SELECT
@@ -172,7 +172,8 @@ impl SqlxMinimalCandidateSelectionReadRepository {
         let rows = sqlx::query(LIST_FOR_EXACT_API_FORMAT_SQL)
             .bind(api_format)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_candidate_selection_row).collect()
     }
 
@@ -185,7 +186,8 @@ impl SqlxMinimalCandidateSelectionReadRepository {
             .bind(api_format)
             .bind(global_model_name)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         rows.iter().map(map_candidate_selection_row).collect()
     }
 }
@@ -212,46 +214,53 @@ fn map_candidate_selection_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<StoredMinimalCandidateSelectionRow, DataLayerError> {
     Ok(StoredMinimalCandidateSelectionRow {
-        provider_id: row.try_get("provider_id")?,
-        provider_name: row.try_get("provider_name")?,
-        provider_type: row.try_get("provider_type")?,
-        provider_priority: row.try_get("provider_priority")?,
-        provider_is_active: row.try_get("provider_is_active")?,
-        endpoint_id: row.try_get("endpoint_id")?,
-        endpoint_api_format: row.try_get("endpoint_api_format")?,
-        endpoint_api_family: row.try_get("endpoint_api_family")?,
-        endpoint_kind: row.try_get("endpoint_kind")?,
-        endpoint_is_active: row.try_get("endpoint_is_active")?,
-        key_id: row.try_get("key_id")?,
-        key_name: row.try_get("key_name")?,
-        key_auth_type: row.try_get("key_auth_type")?,
-        key_is_active: row.try_get("key_is_active")?,
+        provider_id: row.try_get("provider_id").map_postgres_err()?,
+        provider_name: row.try_get("provider_name").map_postgres_err()?,
+        provider_type: row.try_get("provider_type").map_postgres_err()?,
+        provider_priority: row.try_get("provider_priority").map_postgres_err()?,
+        provider_is_active: row.try_get("provider_is_active").map_postgres_err()?,
+        endpoint_id: row.try_get("endpoint_id").map_postgres_err()?,
+        endpoint_api_format: row.try_get("endpoint_api_format").map_postgres_err()?,
+        endpoint_api_family: row.try_get("endpoint_api_family").map_postgres_err()?,
+        endpoint_kind: row.try_get("endpoint_kind").map_postgres_err()?,
+        endpoint_is_active: row.try_get("endpoint_is_active").map_postgres_err()?,
+        key_id: row.try_get("key_id").map_postgres_err()?,
+        key_name: row.try_get("key_name").map_postgres_err()?,
+        key_auth_type: row.try_get("key_auth_type").map_postgres_err()?,
+        key_is_active: row.try_get("key_is_active").map_postgres_err()?,
         key_api_formats: parse_string_list(
-            row.try_get("key_api_formats")?,
+            row.try_get("key_api_formats").map_postgres_err()?,
             "provider_api_keys.api_formats",
         )?,
         key_allowed_models: parse_string_list(
-            row.try_get("key_allowed_models")?,
+            row.try_get("key_allowed_models").map_postgres_err()?,
             "provider_api_keys.allowed_models",
         )?,
-        key_capabilities: row.try_get("key_capabilities")?,
-        key_internal_priority: row.try_get("key_internal_priority")?,
-        key_global_priority_by_format: row.try_get("key_global_priority_by_format")?,
-        model_id: row.try_get("model_id")?,
-        global_model_id: row.try_get("global_model_id")?,
-        global_model_name: row.try_get("global_model_name")?,
+        key_capabilities: row.try_get("key_capabilities").map_postgres_err()?,
+        key_internal_priority: row.try_get("key_internal_priority").map_postgres_err()?,
+        key_global_priority_by_format: row
+            .try_get("key_global_priority_by_format")
+            .map_postgres_err()?,
+        model_id: row.try_get("model_id").map_postgres_err()?,
+        global_model_id: row.try_get("global_model_id").map_postgres_err()?,
+        global_model_name: row.try_get("global_model_name").map_postgres_err()?,
         global_model_mappings: parse_string_list(
-            row.try_get("global_model_mappings")?,
+            row.try_get("global_model_mappings").map_postgres_err()?,
             "global_models.config.model_mappings",
         )?,
-        global_model_supports_streaming: row.try_get("global_model_supports_streaming")?,
-        model_provider_model_name: row.try_get("model_provider_model_name")?,
+        global_model_supports_streaming: row
+            .try_get("global_model_supports_streaming")
+            .map_postgres_err()?,
+        model_provider_model_name: row
+            .try_get("model_provider_model_name")
+            .map_postgres_err()?,
         model_provider_model_mappings: parse_provider_model_mappings(
-            row.try_get("model_provider_model_mappings")?,
+            row.try_get("model_provider_model_mappings")
+                .map_postgres_err()?,
         )?,
-        model_supports_streaming: row.try_get("model_supports_streaming")?,
-        model_is_active: row.try_get("model_is_active")?,
-        model_is_available: row.try_get("model_is_available")?,
+        model_supports_streaming: row.try_get("model_supports_streaming").map_postgres_err()?,
+        model_is_active: row.try_get("model_is_active").map_postgres_err()?,
+        model_is_available: row.try_get("model_is_available").map_postgres_err()?,
     })
 }
 

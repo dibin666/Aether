@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::data::state::StoredUserSessionRecord;
+use crate::GatewayUserSessionView;
 
 pub(super) fn format_users_me_optional_datetime_iso8601(
     value: Option<DateTime<Utc>>,
@@ -15,7 +15,7 @@ pub(super) fn format_users_me_optional_unix_secs_iso8601(value: Option<u64>) -> 
 }
 
 pub(super) fn format_users_me_required_session_datetime_iso8601(
-    session: &StoredUserSessionRecord,
+    session: &GatewayUserSessionView,
 ) -> Option<String> {
     session
         .created_at

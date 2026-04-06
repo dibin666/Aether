@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
 use aether_contracts::{ExecutionPlan, ExecutionResult, ExecutionTelemetry};
+use aether_data_contracts::repository::candidates::RequestCandidateStatus;
+use aether_scheduler_core::execution_error_details;
 use axum::body::Body;
 use axum::http::Response;
 use base64::Engine as _;
@@ -11,18 +13,20 @@ use crate::ai_pipeline::finalize::maybe_build_sync_finalize_outcome;
 use crate::api::response::{
     attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
 };
+use crate::clock::current_unix_secs as current_request_candidate_unix_secs;
 use crate::constants::{CONTROL_CANDIDATE_ID_HEADER, CONTROL_REQUEST_ID_HEADER};
 use crate::control::GatewayControlDecision;
 #[cfg(test)]
 use crate::execution_runtime::remote_compat::post_sync_plan_to_remote_execution_runtime;
 use crate::execution_runtime::submission::submit_local_core_error_or_sync_finalize;
 use crate::execution_runtime::transport::DirectSyncExecutionRuntime;
-use crate::scheduler::{
-    current_unix_secs as current_request_candidate_unix_secs,
-    ensure_execution_request_candidate_slot, execution_error_details,
-    record_local_request_candidate_status, resolve_core_sync_error_finalize_report_kind,
-    should_fallback_to_control_sync, should_finalize_sync_response,
-    should_retry_next_local_candidate_sync,
+use crate::execution_runtime::{
+    resolve_core_sync_error_finalize_report_kind, should_fallback_to_control_sync,
+    should_finalize_sync_response, should_retry_next_local_candidate_sync,
+};
+use crate::log_ids::short_request_id;
+use crate::request_candidate_runtime::{
+    ensure_execution_request_candidate_slot, record_local_request_candidate_status,
 };
 use crate::usage::{spawn_sync_report, submit_sync_report};
 use crate::video_tasks::VideoTaskSyncReportMode;
@@ -77,6 +81,7 @@ pub(crate) async fn execute_execution_runtime_sync(
 ) -> Result<Option<Response<Body>>, GatewayError> {
     ensure_execution_request_candidate_slot(state, &mut plan, &mut report_context).await;
     let plan_request_id = plan.request_id.as_str();
+    let plan_request_id_for_log = short_request_id(plan_request_id);
     let plan_candidate_id = plan.candidate_id.as_deref();
     #[cfg(not(test))]
     let result = {
@@ -90,7 +95,7 @@ pub(crate) async fn execute_execution_runtime_sync(
                     event_name = "sync_execution_runtime_unavailable",
                     log_type = "ops",
                     trace_id = %trace_id,
-                    request_id = %plan_request_id,
+                    request_id = %plan_request_id_for_log,
                     candidate_id = ?plan_candidate_id,
                     error = %err,
                     "gateway in-process sync execution unavailable"
@@ -115,7 +120,7 @@ pub(crate) async fn execute_execution_runtime_sync(
                         event_name = "sync_execution_runtime_unavailable",
                         log_type = "ops",
                         trace_id = %trace_id,
-                        request_id = %plan_request_id,
+                        request_id = %plan_request_id_for_log,
                         candidate_id = ?plan_candidate_id,
                         error = %err,
                         "gateway in-process sync execution unavailable"
@@ -158,7 +163,7 @@ pub(crate) async fn execute_execution_runtime_sync(
             state,
             &plan,
             report_context.as_ref(),
-            aether_data::repository::candidates::RequestCandidateStatus::Failed,
+            RequestCandidateStatus::Failed,
             Some(result.status_code),
             result_error_type.clone(),
             result_error_message.clone(),
@@ -171,7 +176,7 @@ pub(crate) async fn execute_execution_runtime_sync(
             event_name = "local_sync_candidate_retry_scheduled",
             log_type = "event",
             trace_id = %trace_id,
-            request_id = %plan_request_id,
+            request_id = %plan_request_id_for_log,
             status_code = result.status_code,
             "gateway local sync decision retrying next candidate after retryable execution runtime result"
         );
@@ -180,6 +185,7 @@ pub(crate) async fn execute_execution_runtime_sync(
     let request_id = (!result.request_id.trim().is_empty())
         .then_some(result.request_id.as_str())
         .or(Some(plan_request_id));
+    let request_id_for_log = short_request_id(request_id.unwrap_or("-"));
     let candidate_id = result.candidate_id.as_deref().or(plan_candidate_id);
     let mut headers = result.headers.clone();
     let (body_bytes, body_json, body_base64) = decode_execution_result_body(&result, &mut headers)?;
@@ -223,7 +229,7 @@ pub(crate) async fn execute_execution_runtime_sync(
             state,
             &plan,
             report_context.as_ref(),
-            aether_data::repository::candidates::RequestCandidateStatus::Failed,
+            RequestCandidateStatus::Failed,
             Some(result.status_code),
             result_error_type.clone(),
             result_error_message.clone(),
@@ -245,9 +251,9 @@ pub(crate) async fn execute_execution_runtime_sync(
         &plan,
         report_context.as_ref(),
         if result.status_code >= 400 {
-            aether_data::repository::candidates::RequestCandidateStatus::Failed
+            RequestCandidateStatus::Failed
         } else {
-            aether_data::repository::candidates::RequestCandidateStatus::Success
+            RequestCandidateStatus::Success
         },
         Some(result.status_code),
         result_error_type.clone(),
@@ -407,7 +413,7 @@ pub(crate) async fn execute_execution_runtime_sync(
                     event_name = "local_video_finalize_missing_success_report_mapping",
                     log_type = "ops",
                     trace_id = %trace_id,
-                    request_id = request_id.unwrap_or("-"),
+                    request_id = %request_id_for_log,
                     candidate_id = ?candidate_id,
                     report_kind = %payload.report_kind,
                     "gateway local video finalize produced response without background success report mapping"
@@ -449,7 +455,7 @@ pub(crate) async fn execute_execution_runtime_sync(
                     event_name = "local_video_finalize_missing_error_report_mapping",
                     log_type = "ops",
                     trace_id = %trace_id,
-                    request_id = request_id.unwrap_or("-"),
+                    request_id = %request_id_for_log,
                     candidate_id = ?candidate_id,
                     report_kind = %payload.report_kind,
                     "gateway local video finalize produced response without background error report mapping"
@@ -580,7 +586,7 @@ async fn execute_sync_via_remote_execution_runtime(
                 event_name = "sync_execution_runtime_remote_unavailable",
                 log_type = "ops",
                 trace_id = %trace_id,
-                request_id = %plan_request_id,
+                request_id = %short_request_id(plan_request_id),
                 candidate_id = ?plan_candidate_id,
                 error = ?err,
                 "gateway remote execution runtime sync unavailable"
@@ -595,7 +601,7 @@ async fn execute_sync_via_remote_execution_runtime(
             state,
             plan,
             report_context,
-            aether_data::repository::candidates::RequestCandidateStatus::Failed,
+            RequestCandidateStatus::Failed,
             Some(response.status().as_u16()),
             Some("execution_runtime_http_error".to_string()),
             Some(format!(

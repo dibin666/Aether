@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use aether_data::repository::provider_catalog::StoredProviderCatalogProvider;
-use aether_data::repository::quota::StoredProviderQuotaSnapshot;
+use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogProvider;
+use aether_data_contracts::repository::quota::StoredProviderQuotaSnapshot;
 use aether_wallet::{ProviderBillingType, ProviderQuotaSnapshot};
 
 pub fn should_skip_provider_quota(quota: &StoredProviderQuotaSnapshot, now_unix_secs: u64) -> bool {
@@ -46,8 +46,8 @@ pub fn build_provider_concurrent_limit_map(
 #[cfg(test)]
 mod tests {
     use super::{build_provider_concurrent_limit_map, should_skip_provider_quota};
-    use aether_data::repository::provider_catalog::StoredProviderCatalogProvider;
-    use aether_data::repository::quota::StoredProviderQuotaSnapshot;
+    use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogProvider;
+    use aether_data_contracts::repository::quota::StoredProviderQuotaSnapshot;
 
     fn sample_provider(id: &str, concurrent_limit: Option<i32>) -> StoredProviderCatalogProvider {
         StoredProviderCatalogProvider::new(

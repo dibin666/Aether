@@ -6,6 +6,7 @@ use redis::from_redis_value;
 use redis::streams::StreamReadReply;
 use redis::Value as RedisValue;
 
+use crate::error::{redis_error, RedisResultExt};
 use crate::redis::{RedisClient, RedisKeyspace};
 use crate::DataLayerError;
 
@@ -154,7 +155,11 @@ impl RedisStreamRunner {
         validate_stream_position(start_id)?;
 
         self.run_with_timeout("redis stream ensure consumer group", async {
-            let mut connection = self.client.get_multiplexed_async_connection().await?;
+            let mut connection = self
+                .client
+                .get_multiplexed_async_connection()
+                .await
+                .map_redis_err()?;
             let result = redis::cmd("XGROUP")
                 .arg("CREATE")
                 .arg(&stream.0)
@@ -167,7 +172,7 @@ impl RedisStreamRunner {
             match result {
                 Ok(_) => Ok(()),
                 Err(err) if err.code() == Some("BUSYGROUP") => Ok(()),
-                Err(err) => Err(DataLayerError::Redis(err)),
+                Err(err) => Err(redis_error(err)),
             }
         })
         .await
@@ -195,7 +200,11 @@ impl RedisStreamRunner {
         }
 
         self.run_with_timeout("redis stream append", async {
-            let mut connection = self.client.get_multiplexed_async_connection().await?;
+            let mut connection = self
+                .client
+                .get_multiplexed_async_connection()
+                .await
+                .map_redis_err()?;
             let mut command = redis::cmd("XADD");
             command.arg(&stream.0);
             if let Some(maxlen) = maxlen.filter(|value| *value > 0) {
@@ -205,7 +214,10 @@ impl RedisStreamRunner {
             for (key, value) in fields {
                 command.arg(key).arg(value);
             }
-            Ok(command.query_async::<String>(&mut connection).await?)
+            Ok(command
+                .query_async::<String>(&mut connection)
+                .await
+                .map_redis_err()?)
         })
         .await
     }
@@ -245,7 +257,11 @@ impl RedisStreamRunner {
         validate_consumer(consumer)?;
 
         self.run_with_timeout("redis stream read group", async {
-            let mut connection = self.client.get_multiplexed_async_connection().await?;
+            let mut connection = self
+                .client
+                .get_multiplexed_async_connection()
+                .await
+                .map_redis_err()?;
             let mut command = redis::cmd("XREADGROUP");
             command
                 .arg("GROUP")
@@ -260,7 +276,8 @@ impl RedisStreamRunner {
 
             let reply = command
                 .query_async::<StreamReadReply>(&mut connection)
-                .await?;
+                .await
+                .map_redis_err()?;
 
             Ok(reply
                 .keys
@@ -296,13 +313,20 @@ impl RedisStreamRunner {
         }
 
         self.run_with_timeout("redis stream ack", async {
-            let mut connection = self.client.get_multiplexed_async_connection().await?;
+            let mut connection = self
+                .client
+                .get_multiplexed_async_connection()
+                .await
+                .map_redis_err()?;
             let mut command = redis::cmd("XACK");
             command.arg(&stream.0).arg(&group.0);
             for id in ids {
                 command.arg(id);
             }
-            Ok(command.query_async::<usize>(&mut connection).await?)
+            Ok(command
+                .query_async::<usize>(&mut connection)
+                .await
+                .map_redis_err()?)
         })
         .await
     }
@@ -318,13 +342,20 @@ impl RedisStreamRunner {
         }
 
         self.run_with_timeout("redis stream delete", async {
-            let mut connection = self.client.get_multiplexed_async_connection().await?;
+            let mut connection = self
+                .client
+                .get_multiplexed_async_connection()
+                .await
+                .map_redis_err()?;
             let mut command = redis::cmd("XDEL");
             command.arg(&stream.0);
             for id in ids {
                 command.arg(id);
             }
-            Ok(command.query_async::<usize>(&mut connection).await?)
+            Ok(command
+                .query_async::<usize>(&mut connection)
+                .await
+                .map_redis_err()?)
         })
         .await
     }
@@ -344,7 +375,11 @@ impl RedisStreamRunner {
         config.validate()?;
 
         self.run_with_timeout("redis stream reclaim", async {
-            let mut connection = self.client.get_multiplexed_async_connection().await?;
+            let mut connection = self
+                .client
+                .get_multiplexed_async_connection()
+                .await
+                .map_redis_err()?;
             let reply = redis::cmd("XAUTOCLAIM")
                 .arg(&stream.0)
                 .arg(&group.0)
@@ -354,7 +389,8 @@ impl RedisStreamRunner {
                 .arg("COUNT")
                 .arg(config.count)
                 .query_async::<RedisValue>(&mut connection)
-                .await?;
+                .await
+                .map_redis_err()?;
 
             parse_reclaim_result(reply)
         })

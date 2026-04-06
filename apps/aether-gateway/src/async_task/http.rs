@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aether_contracts::ExecutionResult;
-use aether_data::repository::video_tasks::{
+use aether_data_contracts::repository::video_tasks::{
     StoredVideoTask, VideoTaskQueryFilter, VideoTaskStatus,
 };
 use axum::body::Body;
@@ -63,7 +63,7 @@ pub(crate) async fn get_video_task_stats(
 pub(crate) async fn get_video_task_detail(
     State(state): State<AppState>,
     Path(task_id): Path<String>,
-) -> Result<Json<aether_data::repository::video_tasks::StoredVideoTask>, axum::response::Response> {
+) -> Result<Json<StoredVideoTask>, axum::response::Response> {
     let task = read_video_task_detail(&state, &task_id)
         .await
         .map_err(IntoResponse::into_response)?;

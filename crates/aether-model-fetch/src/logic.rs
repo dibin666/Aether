@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use aether_data::repository::provider_catalog::{
+use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
 };
 use aether_provider_transport::provider_types::provider_type_supports_model_fetch;
@@ -360,7 +360,7 @@ fn normalize_api_format(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use aether_data::repository::provider_catalog::{
+    use aether_data_contracts::repository::provider_catalog::{
         StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
     };
     use serde_json::json;

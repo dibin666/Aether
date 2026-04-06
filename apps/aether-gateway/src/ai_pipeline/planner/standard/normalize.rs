@@ -3,19 +3,22 @@ use std::collections::BTreeMap;
 use serde_json::{json, Map, Value};
 use url::form_urlencoded;
 
-use crate::ai_pipeline::conversion::request::{
-    convert_openai_chat_request_to_claude_request, convert_openai_chat_request_to_gemini_request,
-    convert_openai_chat_request_to_openai_cli_request, extract_openai_text_content,
-    normalize_openai_cli_request_to_openai_chat_request, parse_openai_tool_result_content,
-};
+use super::codex::apply_codex_openai_cli_special_body_edits;
 use crate::ai_pipeline::conversion::{request_conversion_kind, RequestConversionKind};
-use crate::provider_transport::antigravity::{
+use crate::ai_pipeline::planner::transport_facade::GatewayProviderTransportSnapshot;
+use crate::ai_pipeline::provider_transport_facade::antigravity::{
     build_antigravity_v1internal_url, AntigravityRequestUrlAction,
 };
-use crate::provider_transport::apply_local_body_rules;
-use crate::provider_transport::url::{
+use crate::ai_pipeline::provider_transport_facade::apply_local_body_rules;
+use crate::ai_pipeline::provider_transport_facade::url::{
     build_claude_messages_url, build_gemini_content_url, build_openai_chat_url,
     build_openai_cli_url, build_passthrough_path_url,
+};
+use aether_ai_pipeline::planner::standard::normalize::{
+    build_cross_format_openai_chat_request_body as pipeline_build_cross_format_openai_chat_request_body,
+    build_cross_format_openai_cli_request_body as pipeline_build_cross_format_openai_cli_request_body,
+    build_local_openai_chat_request_body as pipeline_build_local_openai_chat_request_body,
+    build_local_openai_cli_request_body as pipeline_build_local_openai_cli_request_body,
 };
 
 pub(crate) fn build_local_openai_chat_request_body(
@@ -24,17 +27,8 @@ pub(crate) fn build_local_openai_chat_request_body(
     upstream_is_stream: bool,
     body_rules: Option<&Value>,
 ) -> Option<Value> {
-    let request_body_object = body_json.as_object()?;
-    let mut provider_request_body = serde_json::Map::from_iter(
-        request_body_object
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone())),
-    );
-    provider_request_body.insert("model".to_string(), Value::String(mapped_model.to_string()));
-    if upstream_is_stream {
-        provider_request_body.insert("stream".to_string(), Value::Bool(true));
-    }
-    let mut provider_request_body = Value::Object(provider_request_body);
+    let mut provider_request_body =
+        pipeline_build_local_openai_chat_request_body(body_json, mapped_model, upstream_is_stream)?;
     if !apply_local_body_rules(&mut provider_request_body, body_rules, Some(body_json)) {
         return None;
     }
@@ -43,7 +37,7 @@ pub(crate) fn build_local_openai_chat_request_body(
 
 pub(crate) fn build_local_openai_chat_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &GatewayProviderTransportSnapshot,
 ) -> Option<String> {
     let custom_path = transport
         .endpoint
@@ -66,45 +60,34 @@ pub(crate) fn build_local_openai_chat_upstream_url(
 pub(crate) fn build_cross_format_openai_chat_request_body(
     body_json: &Value,
     mapped_model: &str,
+    provider_type: &str,
     provider_api_format: &str,
     upstream_is_stream: bool,
     body_rules: Option<&Value>,
+    user_api_key_id: Option<&str>,
 ) -> Option<Value> {
-    let conversion_kind = request_conversion_kind("openai:chat", provider_api_format)?;
-    let mut provider_request_body = match conversion_kind {
-        RequestConversionKind::ToClaudeStandard => convert_openai_chat_request_to_claude_request(
-            body_json,
-            mapped_model,
-            upstream_is_stream,
-        )?,
-        RequestConversionKind::ToGeminiStandard => convert_openai_chat_request_to_gemini_request(
-            body_json,
-            mapped_model,
-            upstream_is_stream,
-        )?,
-        RequestConversionKind::ToOpenAIFamilyCli => {
-            convert_openai_chat_request_to_openai_cli_request(
-                body_json,
-                mapped_model,
-                upstream_is_stream,
-                false,
-            )?
-        }
-        RequestConversionKind::ToOpenAICompact => {
-            convert_openai_chat_request_to_openai_cli_request(body_json, mapped_model, false, true)?
-        }
-        _ => return None,
-    };
-
+    let mut provider_request_body = pipeline_build_cross_format_openai_chat_request_body(
+        body_json,
+        mapped_model,
+        provider_api_format,
+        upstream_is_stream,
+    )?;
     if !apply_local_body_rules(&mut provider_request_body, body_rules, Some(body_json)) {
         return None;
     }
+    apply_codex_openai_cli_special_body_edits(
+        &mut provider_request_body,
+        provider_type,
+        provider_api_format,
+        body_rules,
+        user_api_key_id,
+    );
     Some(provider_request_body)
 }
 
 pub(crate) fn build_cross_format_openai_chat_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &GatewayProviderTransportSnapshot,
     mapped_model: &str,
     provider_api_format: &str,
     upstream_is_stream: bool,
@@ -151,22 +134,23 @@ pub(crate) fn build_local_openai_cli_request_body(
     body_json: &Value,
     mapped_model: &str,
     require_streaming: bool,
+    provider_type: &str,
+    provider_api_format: &str,
     body_rules: Option<&Value>,
+    user_api_key_id: Option<&str>,
 ) -> Option<Value> {
-    let request_body_object = body_json.as_object()?;
-    let mut provider_request_body = serde_json::Map::from_iter(
-        request_body_object
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone())),
-    );
-    provider_request_body.insert("model".to_string(), Value::String(mapped_model.to_string()));
-    if require_streaming {
-        provider_request_body.insert("stream".to_string(), Value::Bool(true));
-    }
-    let mut provider_request_body = Value::Object(provider_request_body);
+    let mut provider_request_body =
+        pipeline_build_local_openai_cli_request_body(body_json, mapped_model, require_streaming)?;
     if !apply_local_body_rules(&mut provider_request_body, body_rules, Some(body_json)) {
         return None;
     }
+    apply_codex_openai_cli_special_body_edits(
+        &mut provider_request_body,
+        provider_type,
+        provider_api_format,
+        body_rules,
+        user_api_key_id,
+    );
     Some(provider_request_body)
 }
 
@@ -176,48 +160,33 @@ pub(crate) fn build_cross_format_openai_cli_request_body(
     client_api_format: &str,
     provider_api_format: &str,
     upstream_is_stream: bool,
+    provider_type: &str,
     body_rules: Option<&Value>,
+    user_api_key_id: Option<&str>,
 ) -> Option<Value> {
-    let chat_like_request = normalize_openai_cli_request_to_openai_chat_request(body_json)?;
-    let conversion_kind = request_conversion_kind(client_api_format, provider_api_format)?;
-    let mut provider_request_body = match conversion_kind {
-        RequestConversionKind::ToOpenAIFamilyCli => {
-            convert_openai_chat_request_to_openai_cli_request(
-                &chat_like_request,
-                mapped_model,
-                upstream_is_stream,
-                false,
-            )?
-        }
-        RequestConversionKind::ToOpenAICompact => {
-            convert_openai_chat_request_to_openai_cli_request(
-                &chat_like_request,
-                mapped_model,
-                false,
-                true,
-            )?
-        }
-        RequestConversionKind::ToClaudeStandard => convert_openai_chat_request_to_claude_request(
-            &chat_like_request,
-            mapped_model,
-            upstream_is_stream,
-        )?,
-        RequestConversionKind::ToGeminiStandard => convert_openai_chat_request_to_gemini_request(
-            &chat_like_request,
-            mapped_model,
-            upstream_is_stream,
-        )?,
-        _ => return None,
-    };
+    let mut provider_request_body = pipeline_build_cross_format_openai_cli_request_body(
+        body_json,
+        mapped_model,
+        client_api_format,
+        provider_api_format,
+        upstream_is_stream,
+    )?;
     if !apply_local_body_rules(&mut provider_request_body, body_rules, Some(body_json)) {
         return None;
     }
+    apply_codex_openai_cli_special_body_edits(
+        &mut provider_request_body,
+        provider_type,
+        provider_api_format,
+        body_rules,
+        user_api_key_id,
+    );
     Some(provider_request_body)
 }
 
 pub(crate) fn build_local_openai_cli_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &GatewayProviderTransportSnapshot,
     compact: bool,
 ) -> Option<String> {
     let custom_path = transport
@@ -241,7 +210,7 @@ pub(crate) fn build_local_openai_cli_upstream_url(
 
 pub(crate) fn build_cross_format_openai_cli_upstream_url(
     parts: &http::request::Parts,
-    transport: &crate::provider_transport::GatewayProviderTransportSnapshot,
+    transport: &GatewayProviderTransportSnapshot,
     mapped_model: &str,
     client_api_format: &str,
     provider_api_format: &str,
@@ -325,6 +294,8 @@ mod tests {
             "openai:compact",
             "openai:cli",
             false,
+            "openai",
+            None,
             None,
         )
         .expect("compact to openai cli body should build");
@@ -332,5 +303,120 @@ mod tests {
         assert_eq!(provider_request_body["model"], "gpt-5-upstream");
         assert_eq!(provider_request_body["input"][0]["type"], "message");
         assert_eq!(provider_request_body["input"][0]["role"], "user");
+    }
+
+    #[test]
+    fn strips_metadata_for_codex_openai_cli_requests() {
+        let body_json = json!({
+            "model": "claude-sonnet-4-5",
+            "metadata": {"trace_id": "abc"},
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": "hello"}]
+            }],
+        });
+
+        let provider_request_body = build_cross_format_openai_cli_request_body(
+            &body_json,
+            "gpt-5-upstream",
+            "claude:cli",
+            "openai:cli",
+            true,
+            "codex",
+            None,
+            None,
+        )
+        .expect("claude cli to codex request should build");
+
+        assert!(provider_request_body.get("metadata").is_none());
+    }
+
+    #[test]
+    fn applies_codex_defaults_unless_body_rules_handle_the_field() {
+        let body_json = json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": "hello"}]
+            }],
+            "metadata": {"trace_id": "abc"},
+            "store": true
+        });
+        let body_rules = json!([
+            {"action":"set","path":"store","value":true},
+            {"action":"set","path":"instructions","value":"Custom instructions"},
+            {"action":"set","path":"metadata","value":{"trace_id":"keep-me"}}
+        ]);
+
+        let provider_request_body = build_cross_format_openai_cli_request_body(
+            &body_json,
+            "gpt-5-upstream",
+            "claude:cli",
+            "openai:cli",
+            true,
+            "codex",
+            Some(&body_rules),
+            None,
+        )
+        .expect("claude cli to codex request should build");
+
+        assert_eq!(provider_request_body["store"], true);
+        assert_eq!(provider_request_body["instructions"], "Custom instructions");
+        assert_eq!(provider_request_body["metadata"]["trace_id"], "keep-me");
+    }
+
+    #[test]
+    fn injects_codex_prompt_cache_key_for_openai_cli_cross_format_requests() {
+        let body_json = json!({
+            "model": "claude-sonnet-4-5",
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": "hello"}]
+            }],
+        });
+
+        let provider_request_body = build_cross_format_openai_cli_request_body(
+            &body_json,
+            "gpt-5-upstream",
+            "claude:cli",
+            "openai:cli",
+            true,
+            "codex",
+            None,
+            Some("key-123"),
+        )
+        .expect("claude cli to codex request should build");
+
+        assert_eq!(
+            provider_request_body["prompt_cache_key"],
+            "172c39e6-c0a0-5a70-8b63-e0f8e0d185a3"
+        );
+    }
+
+    #[test]
+    fn injects_codex_prompt_cache_key_for_openai_chat_cross_format_requests() {
+        let body_json = json!({
+            "model": "gpt-5",
+            "messages": [{
+                "role": "user",
+                "content": "hello"
+            }],
+        });
+
+        let provider_request_body = super::build_cross_format_openai_chat_request_body(
+            &body_json,
+            "gpt-5-upstream",
+            "codex",
+            "openai:cli",
+            false,
+            None,
+            Some("key-123"),
+        )
+        .expect("openai chat to codex request should build");
+
+        assert_eq!(
+            provider_request_body["prompt_cache_key"],
+            "172c39e6-c0a0-5a70-8b63-e0f8e0d185a3"
+        );
     }
 }

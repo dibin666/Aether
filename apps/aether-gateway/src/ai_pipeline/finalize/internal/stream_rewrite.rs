@@ -4,6 +4,9 @@ use crate::ai_pipeline::adaptation::private_envelope::transform_provider_private
 use crate::ai_pipeline::finalize::standard::StreamingStandardConversionState;
 use crate::ai_pipeline::runtime::adapters::kiro::KiroToClaudeCliStreamState;
 use crate::GatewayError;
+use aether_ai_pipeline::finalize::{
+    resolve_finalize_stream_rewrite_mode, FinalizeStreamRewriteMode,
+};
 
 enum RewriteMode {
     EnvelopeUnwrap,
@@ -21,103 +24,13 @@ pub(crate) fn maybe_build_local_stream_rewriter(
     report_context: Option<&Value>,
 ) -> Option<LocalStreamRewriter> {
     let report_context = report_context?;
-    let needs_conversion = report_context
-        .get("needs_conversion")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let envelope_name = report_context
-        .get("envelope_name")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    let provider_api_format = report_context
-        .get("provider_api_format")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    let client_api_format = report_context
-        .get("client_api_format")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-
-    let mode = if needs_conversion {
-        match (
-            envelope_name.as_str(),
-            provider_api_format.as_str(),
-            client_api_format.as_str(),
-        ) {
-            ("", "claude:chat", "openai:chat") => {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            ("", "gemini:chat", "openai:chat") => {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            ("", "openai:cli", "openai:chat") | ("", "openai:compact", "openai:chat") => {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            ("", "claude:cli", "openai:cli") => {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            ("", "claude:cli", "openai:compact") => {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            ("", "gemini:cli", "openai:cli") => {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            ("", "gemini:cli", "openai:compact") => {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            ("antigravity:v1internal", "gemini:chat", "openai:chat") => {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            ("antigravity:v1internal", "gemini:cli", "openai:cli") => {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            ("antigravity:v1internal", "gemini:cli", "openai:compact") => {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            _ if is_standard_chat_client_api_format(client_api_format.as_str())
-                && is_standard_provider_api_format(provider_api_format.as_str()) =>
-            {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            _ if is_standard_cli_client_api_format(client_api_format.as_str())
-                && is_standard_provider_api_format(provider_api_format.as_str()) =>
-            {
-                RewriteMode::Standard(StreamingStandardConversionState::default())
-            }
-            _ => return None,
+    let mode = match resolve_finalize_stream_rewrite_mode(report_context)? {
+        FinalizeStreamRewriteMode::EnvelopeUnwrap => RewriteMode::EnvelopeUnwrap,
+        FinalizeStreamRewriteMode::Standard => {
+            RewriteMode::Standard(StreamingStandardConversionState::default())
         }
-    } else {
-        match envelope_name.as_str() {
-            "antigravity:v1internal" => {
-                if provider_api_format == client_api_format
-                    && matches!(provider_api_format.as_str(), "gemini:chat" | "gemini:cli")
-                {
-                    RewriteMode::EnvelopeUnwrap
-                } else {
-                    return None;
-                }
-            }
-            "gemini_cli:v1internal" => {
-                if provider_api_format == "gemini:cli" && client_api_format == "gemini:cli" {
-                    RewriteMode::EnvelopeUnwrap
-                } else {
-                    return None;
-                }
-            }
-            "kiro:generateassistantresponse" => {
-                if provider_api_format == "claude:cli" && client_api_format == "claude:cli" {
-                    RewriteMode::KiroToClaudeCli(KiroToClaudeCliStreamState::new(report_context))
-                } else {
-                    return None;
-                }
-            }
-            _ => return None,
+        FinalizeStreamRewriteMode::KiroToClaudeCli => {
+            RewriteMode::KiroToClaudeCli(KiroToClaudeCliStreamState::new(report_context))
         }
     };
 
@@ -173,30 +86,6 @@ impl LocalStreamRewriter {
             RewriteMode::KiroToClaudeCli(_) => Ok(Vec::new()),
         }
     }
-}
-
-fn is_standard_provider_api_format(api_format: &str) -> bool {
-    matches!(
-        api_format,
-        "openai:chat"
-            | "openai:cli"
-            | "openai:compact"
-            | "claude:chat"
-            | "claude:cli"
-            | "gemini:chat"
-            | "gemini:cli"
-    )
-}
-
-fn is_standard_chat_client_api_format(api_format: &str) -> bool {
-    matches!(api_format, "openai:chat" | "claude:chat" | "gemini:chat")
-}
-
-fn is_standard_cli_client_api_format(api_format: &str) -> bool {
-    matches!(
-        api_format,
-        "openai:cli" | "openai:compact" | "claude:cli" | "gemini:cli"
-    )
 }
 
 #[cfg(test)]

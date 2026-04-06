@@ -1,6 +1,5 @@
 use axum::routing::{any, post};
 use axum::Router;
-use serde_json::json;
 
 use super::{claude, gemini, openai};
 use crate::{handlers::proxy::proxy_request, state::AppState};
@@ -61,33 +60,11 @@ pub(crate) fn admin_endpoint_signature_parts(
     Some((normalized, api_family, endpoint_kind))
 }
 
-fn codex_default_body_rules() -> Vec<serde_json::Value> {
-    vec![
-        json!({"action": "drop", "path": "max_output_tokens"}),
-        json!({"action": "drop", "path": "temperature"}),
-        json!({"action": "drop", "path": "top_p"}),
-        json!({"action": "set", "path": "store", "value": false}),
-        json!({
-            "action": "set",
-            "path": "instructions",
-            "value": "You are GPT-5.",
-            "condition": {"path": "instructions", "op": "not_exists"},
-        }),
-    ]
-}
-
 pub(crate) fn admin_default_body_rules_for_signature(
     api_format: &str,
     provider_type: Option<&str>,
 ) -> Option<(String, Vec<serde_json::Value>)> {
     let normalized_api_format = normalize_admin_endpoint_signature(api_format)?.to_string();
-    let provider_type = provider_type.map(|value| value.trim().to_ascii_lowercase());
-    let body_rules = if normalized_api_format == "openai:compact"
-        || (normalized_api_format == "openai:cli" && provider_type.as_deref() == Some("codex"))
-    {
-        codex_default_body_rules()
-    } else {
-        Vec::new()
-    };
-    Some((normalized_api_format, body_rules))
+    let _ = provider_type;
+    Some((normalized_api_format, Vec::new()))
 }

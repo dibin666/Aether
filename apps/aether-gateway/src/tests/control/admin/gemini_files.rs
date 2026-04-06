@@ -3,9 +3,9 @@ use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
 use aether_data::repository::gemini_file_mappings::{
     GeminiFileMappingReadRepository, InMemoryGeminiFileMappingRepository,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider,
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
 use axum::body::{to_bytes, Body};
 use axum::routing::any;

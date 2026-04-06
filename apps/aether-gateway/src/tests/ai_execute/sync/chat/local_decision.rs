@@ -859,8 +859,12 @@ async fn gateway_executes_openai_chat_sync_via_local_openai_compact_cross_format
         url: String,
         provider_model: String,
         api_key: String,
+        x_client_request_id: String,
+        session_id: String,
+        conversation_id: String,
         instructions: String,
         user_text: String,
+        prompt_cache_key: String,
         stream_present: bool,
     }
 
@@ -1099,6 +1103,24 @@ async fn gateway_executes_openai_chat_sync_via_local_openai_compact_cross_format
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
                         .to_string(),
+                    x_client_request_id: payload
+                        .get("headers")
+                        .and_then(|value| value.get("x-client-request-id"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    session_id: payload
+                        .get("headers")
+                        .and_then(|value| value.get("session_id"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    conversation_id: payload
+                        .get("headers")
+                        .and_then(|value| value.get("conversation_id"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
                     instructions: payload
                         .get("body")
                         .and_then(|value| value.get("json_body"))
@@ -1116,6 +1138,13 @@ async fn gateway_executes_openai_chat_sync_via_local_openai_compact_cross_format
                         .and_then(|value| value.as_array())
                         .and_then(|value| value.first())
                         .and_then(|value| value.get("text"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    prompt_cache_key: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("prompt_cache_key"))
                         .and_then(|value| value.as_str())
                         .unwrap_or_default()
                         .to_string(),
@@ -1260,6 +1289,19 @@ async fn gateway_executes_openai_chat_sync_via_local_openai_compact_cross_format
         seen_execution_runtime_request.api_key,
         "sk-upstream-openai-chat-compact"
     );
+    assert_eq!(
+        seen_execution_runtime_request.x_client_request_id,
+        "trace-openai-chat-compact-local-123"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.prompt_cache_key,
+        "ee016aa9-7fc4-5432-957e-b34172d3bfd8"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.session_id,
+        "7916c4f51c45a74c"
+    );
+    assert!(seen_execution_runtime_request.conversation_id.is_empty());
     assert_eq!(
         seen_execution_runtime_request.instructions,
         "You are terse."

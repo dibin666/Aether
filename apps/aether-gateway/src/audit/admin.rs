@@ -91,7 +91,7 @@ pub(crate) fn emit_admin_audit(
             action,
             target_type,
             target_id = %target_id,
-            "admin mutation audit event"
+            "admin audit event"
         );
     } else {
         warn!(
@@ -111,7 +111,7 @@ pub(crate) fn emit_admin_audit(
             action,
             target_type,
             target_id = %target_id,
-            "admin mutation audit event"
+            "admin audit event"
         );
     }
 }

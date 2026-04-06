@@ -1,6 +1,7 @@
 use std::io::Error as IoError;
 
 use aether_contracts::{ExecutionPlan, ExecutionTelemetry, StreamFramePayload};
+use aether_data_contracts::repository::candidates::RequestCandidateStatus;
 use async_stream::stream;
 use axum::body::{Body, Bytes};
 use axum::http::Response;
@@ -11,7 +12,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::io::StreamReader;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use super::error::{
     build_execution_runtime_error_response, collect_error_body, decode_stream_error_body,
@@ -30,6 +31,7 @@ use crate::ai_pipeline::finalize::maybe_build_stream_response_rewriter;
 use crate::api::response::{
     attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
 };
+use crate::clock::current_unix_secs as current_request_candidate_unix_secs;
 use crate::constants::{CONTROL_CANDIDATE_ID_HEADER, CONTROL_REQUEST_ID_HEADER};
 use crate::control::GatewayControlDecision;
 use crate::execution_runtime::build_direct_execution_frame_stream;
@@ -41,13 +43,15 @@ use crate::execution_runtime::submission::{
 use crate::execution_runtime::transport::{
     DirectSyncExecutionRuntime, DirectUpstreamStreamExecution,
 };
-use crate::execution_runtime::{MAX_STREAM_PREFETCH_BYTES, MAX_STREAM_PREFETCH_FRAMES};
-use crate::scheduler::{
-    current_unix_secs as current_request_candidate_unix_secs,
-    ensure_execution_request_candidate_slot, record_local_request_candidate_status,
+use crate::execution_runtime::{
     resolve_core_stream_direct_finalize_report_kind,
     resolve_core_stream_error_finalize_report_kind, should_fallback_to_control_stream,
     should_retry_next_local_candidate_stream,
+};
+use crate::execution_runtime::{MAX_STREAM_PREFETCH_BYTES, MAX_STREAM_PREFETCH_FRAMES};
+use crate::log_ids::short_request_id;
+use crate::request_candidate_runtime::{
+    ensure_execution_request_candidate_slot, record_local_request_candidate_status,
 };
 use crate::usage::submit_stream_report;
 use crate::usage::{GatewayStreamReportRequest, GatewaySyncReportRequest};
@@ -64,6 +68,7 @@ pub(crate) async fn execute_execution_runtime_stream(
     mut report_context: Option<serde_json::Value>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
     ensure_execution_request_candidate_slot(state, &mut plan, &mut report_context).await;
+    let plan_request_id_for_log = short_request_id(plan.request_id.as_str());
     #[cfg(not(test))]
     {
         let execution = match DirectSyncExecutionRuntime::new()
@@ -72,11 +77,11 @@ pub(crate) async fn execute_execution_runtime_stream(
         {
             Ok(execution) => execution,
             Err(err) => {
-                warn!(
+                info!(
                     event_name = "stream_execution_runtime_unavailable",
                     log_type = "ops",
                     trace_id = %trace_id,
-                    request_id = %plan.request_id,
+                    request_id = %plan_request_id_for_log,
                     candidate_id = ?plan.candidate_id,
                     error = %err,
                     "gateway in-process stream execution unavailable"
@@ -109,11 +114,11 @@ pub(crate) async fn execute_execution_runtime_stream(
             {
                 Ok(execution) => execution,
                 Err(err) => {
-                    warn!(
+                    info!(
                         event_name = "stream_execution_runtime_unavailable",
                         log_type = "ops",
                         trace_id = %trace_id,
-                        request_id = %plan.request_id,
+                        request_id = %plan_request_id_for_log,
                         candidate_id = ?plan.candidate_id,
                         error = %err,
                         "gateway in-process stream execution unavailable"
@@ -149,7 +154,7 @@ pub(crate) async fn execute_execution_runtime_stream(
                     event_name = "stream_execution_runtime_remote_unavailable",
                     log_type = "ops",
                     trace_id = %trace_id,
-                    request_id = %plan.request_id,
+                    request_id = %plan_request_id_for_log,
                     candidate_id = ?plan.candidate_id,
                     error = ?err,
                     "gateway remote execution runtime stream unavailable"
@@ -164,7 +169,7 @@ pub(crate) async fn execute_execution_runtime_stream(
                 state,
                 &plan,
                 report_context.as_ref(),
-                aether_data::repository::candidates::RequestCandidateStatus::Failed,
+                RequestCandidateStatus::Failed,
                 Some(response.status().as_u16()),
                 Some("execution_runtime_http_error".to_string()),
                 Some(format!(
@@ -212,6 +217,7 @@ async fn execute_stream_from_frame_stream(
     frame_stream: BoxStream<'static, Result<Bytes, IoError>>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
     let request_id = plan.request_id.as_str();
+    let request_id_for_log = short_request_id(request_id);
     let candidate_id = plan.candidate_id.as_deref();
     let reader = StreamReader::new(frame_stream);
     let mut lines = FramedRead::new(reader, LinesCodec::new());
@@ -235,7 +241,7 @@ async fn execute_stream_from_frame_stream(
             state,
             &plan,
             report_context.as_ref(),
-            aether_data::repository::candidates::RequestCandidateStatus::Failed,
+            RequestCandidateStatus::Failed,
             Some(status_code),
             Some("retryable_upstream_status".to_string()),
             Some(format!(
@@ -250,7 +256,7 @@ async fn execute_stream_from_frame_stream(
             event_name = "local_stream_candidate_retry_scheduled",
             log_type = "event",
             trace_id = %trace_id,
-            request_id,
+            request_id = %request_id_for_log,
             status_code,
             "gateway local stream decision retrying next candidate after retryable execution runtime status"
         );
@@ -270,7 +276,7 @@ async fn execute_stream_from_frame_stream(
             state,
             &plan,
             report_context.as_ref(),
-            aether_data::repository::candidates::RequestCandidateStatus::Failed,
+            RequestCandidateStatus::Failed,
             Some(status_code),
             Some("control_fallback".to_string()),
             Some(format!(
@@ -316,7 +322,7 @@ async fn execute_stream_from_frame_stream(
             state,
             &plan,
             report_context.as_ref(),
-            aether_data::repository::candidates::RequestCandidateStatus::Failed,
+            RequestCandidateStatus::Failed,
             Some(status_code),
             Some("execution_runtime_stream_error".to_string()),
             Some(format!(
@@ -626,7 +632,7 @@ async fn execute_stream_from_frame_stream(
         state,
         &plan,
         report_context.as_ref(),
-        aether_data::repository::candidates::RequestCandidateStatus::Streaming,
+        RequestCandidateStatus::Streaming,
         Some(status_code),
         None,
         None,
@@ -653,6 +659,7 @@ async fn execute_stream_from_frame_stream(
     let direct_stream_finalize_kind_owned = direct_stream_finalize_kind.clone();
     let candidate_started_unix_secs_for_report = candidate_started_unix_secs;
     let request_id_for_report = request_id.to_string();
+    let request_id_for_report_log = short_request_id(request_id);
     let candidate_id_for_report = candidate_id.map(ToOwned::to_owned);
     tokio::spawn(async move {
         let mut provider_buffered_body = provider_prefetched_body_for_report;
@@ -671,7 +678,7 @@ async fn execute_stream_from_frame_stream(
                             event_name = "stream_execution_frame_decode_failed",
                             log_type = "ops",
                             trace_id = %trace_id_owned,
-                            request_id = %request_id_for_report,
+                            request_id = %request_id_for_report_log,
                             candidate_id = ?candidate_id_for_report.as_deref(),
                             error = ?err,
                             "gateway failed to decode execution runtime stream frame"
@@ -697,7 +704,7 @@ async fn execute_stream_from_frame_stream(
                                         event_name = "stream_execution_chunk_decode_failed",
                                         log_type = "ops",
                                         trace_id = %trace_id_owned,
-                                        request_id = %request_id_for_report,
+                                        request_id = %request_id_for_report_log,
                                         candidate_id = ?candidate_id_for_report.as_deref(),
                                         error = %err,
                                         "gateway failed to decode execution runtime chunk"
@@ -731,7 +738,7 @@ async fn execute_stream_from_frame_stream(
                                         event_name = "stream_execution_chunk_normalize_failed",
                                         log_type = "ops",
                                         trace_id = %trace_id_owned,
-                                        request_id = %request_id_for_report,
+                                        request_id = %request_id_for_report_log,
                                         candidate_id = ?candidate_id_for_report.as_deref(),
                                         error = ?err,
                                         "gateway failed to normalize execution runtime stream chunk"
@@ -756,7 +763,7 @@ async fn execute_stream_from_frame_stream(
                                         event_name = "stream_execution_chunk_rewrite_failed",
                                         log_type = "ops",
                                         trace_id = %trace_id_owned,
-                                        request_id = %request_id_for_report,
+                                        request_id = %request_id_for_report_log,
                                         candidate_id = ?candidate_id_for_report.as_deref(),
                                         error = ?err,
                                         "gateway failed to rewrite execution runtime stream chunk"
@@ -783,7 +790,7 @@ async fn execute_stream_from_frame_stream(
                                 event_name = "stream_execution_downstream_disconnected",
                                 log_type = "ops",
                                 trace_id = %trace_id_owned,
-                                request_id = %request_id_for_report,
+                                request_id = %request_id_for_report_log,
                                 candidate_id = ?candidate_id_for_report.as_deref(),
                                 "gateway stream downstream dropped; stopping execution runtime stream forwarding"
                             );
@@ -804,7 +811,7 @@ async fn execute_stream_from_frame_stream(
                             event_name = "stream_execution_error_frame",
                             log_type = "ops",
                             trace_id = %trace_id_owned,
-                            request_id = %request_id_for_report,
+                            request_id = %request_id_for_report_log,
                             candidate_id = ?candidate_id_for_report.as_deref(),
                             error = %error.message,
                             "execution runtime stream emitted error frame"
@@ -839,7 +846,7 @@ async fn execute_stream_from_frame_stream(
                                         event_name = "stream_execution_normalized_flush_rewrite_failed",
                                         log_type = "ops",
                                         trace_id = %trace_id_owned,
-                                        request_id = %request_id_for_report,
+                                        request_id = %request_id_for_report_log,
                                         candidate_id = ?candidate_id_for_report.as_deref(),
                                         error = ?err,
                                         "gateway failed to rewrite normalized private stream chunk during flush"
@@ -864,7 +871,7 @@ async fn execute_stream_from_frame_stream(
                                     event_name = "stream_execution_downstream_flush_disconnected",
                                     log_type = "ops",
                                     trace_id = %trace_id_owned,
-                                    request_id = %request_id_for_report,
+                                    request_id = %request_id_for_report_log,
                                     candidate_id = ?candidate_id_for_report.as_deref(),
                                     "gateway stream downstream dropped while flushing private stream normalization"
                                 );
@@ -878,7 +885,7 @@ async fn execute_stream_from_frame_stream(
                             event_name = "stream_execution_normalization_flush_failed",
                             log_type = "ops",
                             trace_id = %trace_id_owned,
-                            request_id = %request_id_for_report,
+                            request_id = %request_id_for_report_log,
                             candidate_id = ?candidate_id_for_report.as_deref(),
                             error = ?err,
                             "gateway failed to flush private stream normalization"
@@ -903,7 +910,7 @@ async fn execute_stream_from_frame_stream(
                                     event_name = "stream_execution_downstream_rewrite_flush_disconnected",
                                     log_type = "ops",
                                     trace_id = %trace_id_owned,
-                                    request_id = %request_id_for_report,
+                                    request_id = %request_id_for_report_log,
                                     candidate_id = ?candidate_id_for_report.as_deref(),
                                     "gateway stream downstream dropped while flushing local stream rewrite"
                                 );
@@ -916,7 +923,7 @@ async fn execute_stream_from_frame_stream(
                                 event_name = "stream_execution_rewrite_flush_failed",
                                 log_type = "ops",
                                 trace_id = %trace_id_owned,
-                                request_id = %request_id_for_report,
+                                request_id = %request_id_for_report_log,
                                 candidate_id = ?candidate_id_for_report.as_deref(),
                                 error = ?err,
                                 "gateway failed to flush local stream rewrite"
@@ -974,7 +981,7 @@ async fn execute_stream_from_frame_stream(
                 &state_for_report,
                 &plan_for_report,
                 report_context_owned.as_ref(),
-                aether_data::repository::candidates::RequestCandidateStatus::Cancelled,
+                RequestCandidateStatus::Cancelled,
                 Some(499),
                 Some("downstream_disconnect".to_string()),
                 Some("client disconnected before stream completion".to_string()),
@@ -1029,7 +1036,7 @@ async fn execute_stream_from_frame_stream(
             &state_for_report,
             &plan_for_report,
             report_context_owned.as_ref(),
-            aether_data::repository::candidates::RequestCandidateStatus::Success,
+            RequestCandidateStatus::Success,
             Some(status_code),
             None,
             None,
@@ -1048,7 +1055,7 @@ async fn execute_stream_from_frame_stream(
                     event_name = "execution_report_submit_failed",
                     log_type = "ops",
                     trace_id = %trace_id_owned,
-                    request_id = %request_id_for_report,
+                    request_id = %request_id_for_report_log,
                     candidate_id = ?candidate_id_for_report.as_deref(),
                     report_scope = "stream",
                     error = ?err,

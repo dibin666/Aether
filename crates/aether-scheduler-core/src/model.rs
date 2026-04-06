@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
-use aether_data::repository::candidate_selection::{
+use aether_data_contracts::repository::candidate_selection::{
     StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
 };
-use aether_data::DataLayerError;
+use aether_data_contracts::DataLayerError;
 use regex::Regex;
 
 pub fn resolve_requested_global_model_name(

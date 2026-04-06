@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::time::Duration;
 
+use crate::error::RedisResultExt;
 use crate::redis::{RedisClient, RedisKeyspace};
 use crate::DataLayerError;
 
@@ -79,13 +80,18 @@ impl RedisKvRunner {
         let resolved_ttl = ttl_seconds.unwrap_or(self.config.default_ttl_seconds);
         let namespaced_key = self.keyspace.key(key);
         self.run_with_timeout("redis kv setex", async {
-            let mut connection = self.client.get_multiplexed_async_connection().await?;
+            let mut connection = self
+                .client
+                .get_multiplexed_async_connection()
+                .await
+                .map_redis_err()?;
             Ok(redis::cmd("SETEX")
                 .arg(&namespaced_key)
                 .arg(resolved_ttl)
                 .arg(value)
                 .query_async(&mut connection)
-                .await?)
+                .await
+                .map_redis_err()?)
         })
         .await
     }
@@ -93,11 +99,16 @@ impl RedisKvRunner {
     pub async fn del(&self, key: &str) -> Result<i64, DataLayerError> {
         let namespaced_key = self.keyspace.key(key);
         self.run_with_timeout("redis kv del", async {
-            let mut connection = self.client.get_multiplexed_async_connection().await?;
+            let mut connection = self
+                .client
+                .get_multiplexed_async_connection()
+                .await
+                .map_redis_err()?;
             Ok(redis::cmd("DEL")
                 .arg(&namespaced_key)
                 .query_async(&mut connection)
-                .await?)
+                .await
+                .map_redis_err()?)
         })
         .await
     }

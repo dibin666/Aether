@@ -4,12 +4,13 @@ use crate::constants::{
 };
 use crate::control::GatewayControlDecision;
 use crate::control::GatewayPublicRequestContext;
-use crate::handlers::OFFICIAL_EXTERNAL_MODEL_PROVIDERS;
 use crate::headers::header_value_str;
 use crate::tunnel::TUNNEL_ROUTE_FAMILY;
 use axum::http::{self, HeaderName};
 use chrono::{SecondsFormat, Utc};
 use url::form_urlencoded;
+
+use super::OFFICIAL_EXTERNAL_MODEL_PROVIDERS;
 
 pub(crate) fn rust_auth_terminates_provider_credentials(
     decision: Option<&GatewayControlDecision>,

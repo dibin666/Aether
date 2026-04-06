@@ -1,10 +1,10 @@
 mod memory;
 mod sql;
-mod types;
 
-pub use memory::InMemoryProviderQuotaRepository;
-pub use sql::SqlxProviderQuotaRepository;
-pub use types::{
+#[allow(unused_imports)]
+pub(crate) use aether_data_contracts::repository::quota::{
     ProviderQuotaReadRepository, ProviderQuotaRepository, ProviderQuotaWriteRepository,
     StoredProviderQuotaSnapshot,
 };
+pub use memory::InMemoryProviderQuotaRepository;
+pub use sql::SqlxProviderQuotaRepository;

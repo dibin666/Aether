@@ -7,11 +7,13 @@ repository.workspace = true
 description = "Rust ingress gateway for Aether phase 3a transparent proxy"
 
 [dependencies]
+aether-ai-pipeline.workspace = true
 aether-billing.workspace = true
 aether-cache.workspace = true
 aether-contracts.workspace = true
 aether-crypto.workspace = true
 aether-data.workspace = true
+aether-data-contracts.workspace = true
 aether-http.workspace = true
 aether-model-fetch.workspace = true
 aether-provider-transport.workspace = true
@@ -42,6 +44,7 @@ reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha1 = "0.10"
 sha2.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true

@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_data::redis::{RedisConsumerName, RedisStreamEntry, RedisStreamRunner};
-use aether_data::repository::usage::{StoredRequestUsageAudit, UpsertUsageRecord};
-use aether_data::DataLayerError;
+use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UpsertUsageRecord};
+use aether_data_contracts::DataLayerError;
 use async_trait::async_trait;
 use tracing::warn;
 
@@ -226,8 +226,10 @@ fn consumer_name() -> String {
 mod tests {
     use std::sync::Mutex;
 
-    use aether_data::repository::settlement::{StoredUsageSettlement, UsageSettlementInput};
-    use aether_data::repository::usage::{StoredRequestUsageAudit, UpsertUsageRecord};
+    use aether_data_contracts::repository::settlement::{
+        StoredUsageSettlement, UsageSettlementInput,
+    };
+    use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UpsertUsageRecord};
     use async_trait::async_trait;
 
     use super::{write_event_record, UsageRecordWriter};
@@ -244,7 +246,8 @@ mod tests {
         async fn upsert_usage_record(
             &self,
             record: UpsertUsageRecord,
-        ) -> Result<Option<StoredRequestUsageAudit>, aether_data::DataLayerError> {
+        ) -> Result<Option<StoredRequestUsageAudit>, aether_data_contracts::DataLayerError>
+        {
             self.records
                 .lock()
                 .expect("records lock")
@@ -304,7 +307,7 @@ mod tests {
         async fn settle_usage(
             &self,
             input: UsageSettlementInput,
-        ) -> Result<Option<StoredUsageSettlement>, aether_data::DataLayerError> {
+        ) -> Result<Option<StoredUsageSettlement>, aether_data_contracts::DataLayerError> {
             self.settlements
                 .lock()
                 .expect("settlements lock")

@@ -1,4 +1,5 @@
 use super::{AppState, GatewayError, LocalMutationOutcome, LocalProviderDeleteTaskState};
+use aether_data_contracts::repository::{candidates, global_models, provider_catalog};
 
 impl AppState {
     pub fn has_provider_catalog_data_reader(&self) -> bool {
@@ -32,10 +33,7 @@ impl AppState {
     pub(crate) async fn list_provider_catalog_providers(
         &self,
         active_only: bool,
-    ) -> Result<
-        Vec<aether_data::repository::provider_catalog::StoredProviderCatalogProvider>,
-        GatewayError,
-    > {
+    ) -> Result<Vec<provider_catalog::StoredProviderCatalogProvider>, GatewayError> {
         self.data
             .list_provider_catalog_providers(active_only)
             .await
@@ -45,10 +43,7 @@ impl AppState {
     pub(crate) async fn list_provider_catalog_endpoints_by_provider_ids(
         &self,
         provider_ids: &[String],
-    ) -> Result<
-        Vec<aether_data::repository::provider_catalog::StoredProviderCatalogEndpoint>,
-        GatewayError,
-    > {
+    ) -> Result<Vec<provider_catalog::StoredProviderCatalogEndpoint>, GatewayError> {
         self.data
             .list_provider_catalog_endpoints_by_provider_ids(provider_ids)
             .await
@@ -57,9 +52,8 @@ impl AppState {
 
     pub(crate) async fn list_public_global_models(
         &self,
-        query: &aether_data::repository::global_models::PublicGlobalModelQuery,
-    ) -> Result<aether_data::repository::global_models::StoredPublicGlobalModelPage, GatewayError>
-    {
+        query: &global_models::PublicGlobalModelQuery,
+    ) -> Result<global_models::StoredPublicGlobalModelPage, GatewayError> {
         self.data
             .list_public_global_models(query)
             .await
@@ -158,8 +152,7 @@ impl AppState {
     pub(crate) async fn get_public_global_model_by_name(
         &self,
         model_name: &str,
-    ) -> Result<Option<aether_data::repository::global_models::StoredPublicGlobalModel>, GatewayError>
-    {
+    ) -> Result<Option<global_models::StoredPublicGlobalModel>, GatewayError> {
         self.data
             .get_public_global_model_by_name(model_name)
             .await
@@ -168,9 +161,8 @@ impl AppState {
 
     pub(crate) async fn list_public_catalog_models(
         &self,
-        query: &aether_data::repository::global_models::PublicCatalogModelListQuery,
-    ) -> Result<Vec<aether_data::repository::global_models::StoredPublicCatalogModel>, GatewayError>
-    {
+        query: &global_models::PublicCatalogModelListQuery,
+    ) -> Result<Vec<global_models::StoredPublicCatalogModel>, GatewayError> {
         self.data
             .list_public_catalog_models(query)
             .await
@@ -179,9 +171,8 @@ impl AppState {
 
     pub(crate) async fn search_public_catalog_models(
         &self,
-        query: &aether_data::repository::global_models::PublicCatalogModelSearchQuery,
-    ) -> Result<Vec<aether_data::repository::global_models::StoredPublicCatalogModel>, GatewayError>
-    {
+        query: &global_models::PublicCatalogModelSearchQuery,
+    ) -> Result<Vec<global_models::StoredPublicCatalogModel>, GatewayError> {
         self.data
             .search_public_catalog_models(query)
             .await
@@ -190,9 +181,8 @@ impl AppState {
 
     pub(crate) async fn list_admin_provider_models(
         &self,
-        query: &aether_data::repository::global_models::AdminProviderModelListQuery,
-    ) -> Result<Vec<aether_data::repository::global_models::StoredAdminProviderModel>, GatewayError>
-    {
+        query: &global_models::AdminProviderModelListQuery,
+    ) -> Result<Vec<global_models::StoredAdminProviderModel>, GatewayError> {
         self.data
             .list_admin_provider_models(query)
             .await
@@ -201,9 +191,8 @@ impl AppState {
 
     pub(crate) async fn list_admin_global_models(
         &self,
-        query: &aether_data::repository::global_models::AdminGlobalModelListQuery,
-    ) -> Result<aether_data::repository::global_models::StoredAdminGlobalModelPage, GatewayError>
-    {
+        query: &global_models::AdminGlobalModelListQuery,
+    ) -> Result<global_models::StoredAdminGlobalModelPage, GatewayError> {
         self.data
             .list_admin_global_models(query)
             .await
@@ -214,10 +203,7 @@ impl AppState {
         &self,
         provider_id: &str,
         model_id: &str,
-    ) -> Result<
-        Option<aether_data::repository::global_models::StoredAdminProviderModel>,
-        GatewayError,
-    > {
+    ) -> Result<Option<global_models::StoredAdminProviderModel>, GatewayError> {
         self.data
             .get_admin_provider_model(provider_id, model_id)
             .await
@@ -227,8 +213,7 @@ impl AppState {
     pub(crate) async fn list_admin_provider_available_source_models(
         &self,
         provider_id: &str,
-    ) -> Result<Vec<aether_data::repository::global_models::StoredAdminProviderModel>, GatewayError>
-    {
+    ) -> Result<Vec<global_models::StoredAdminProviderModel>, GatewayError> {
         self.data
             .list_admin_provider_available_source_models(provider_id)
             .await
@@ -238,8 +223,7 @@ impl AppState {
     pub(crate) async fn get_admin_global_model_by_id(
         &self,
         global_model_id: &str,
-    ) -> Result<Option<aether_data::repository::global_models::StoredAdminGlobalModel>, GatewayError>
-    {
+    ) -> Result<Option<global_models::StoredAdminGlobalModel>, GatewayError> {
         self.data
             .get_admin_global_model_by_id(global_model_id)
             .await
@@ -249,8 +233,7 @@ impl AppState {
     pub(crate) async fn get_admin_global_model_by_name(
         &self,
         model_name: &str,
-    ) -> Result<Option<aether_data::repository::global_models::StoredAdminGlobalModel>, GatewayError>
-    {
+    ) -> Result<Option<global_models::StoredAdminGlobalModel>, GatewayError> {
         self.data
             .get_admin_global_model_by_name(model_name)
             .await
@@ -260,8 +243,7 @@ impl AppState {
     pub(crate) async fn list_admin_provider_models_by_global_model_id(
         &self,
         global_model_id: &str,
-    ) -> Result<Vec<aether_data::repository::global_models::StoredAdminProviderModel>, GatewayError>
-    {
+    ) -> Result<Vec<global_models::StoredAdminProviderModel>, GatewayError> {
         self.data
             .list_admin_provider_models_by_global_model_id(global_model_id)
             .await
@@ -270,11 +252,8 @@ impl AppState {
 
     pub(crate) async fn create_admin_provider_model(
         &self,
-        record: &aether_data::repository::global_models::UpsertAdminProviderModelRecord,
-    ) -> Result<
-        Option<aether_data::repository::global_models::StoredAdminProviderModel>,
-        GatewayError,
-    > {
+        record: &global_models::UpsertAdminProviderModelRecord,
+    ) -> Result<Option<global_models::StoredAdminProviderModel>, GatewayError> {
         self.data
             .create_admin_provider_model(record)
             .await
@@ -283,11 +262,8 @@ impl AppState {
 
     pub(crate) async fn update_admin_provider_model(
         &self,
-        record: &aether_data::repository::global_models::UpsertAdminProviderModelRecord,
-    ) -> Result<
-        Option<aether_data::repository::global_models::StoredAdminProviderModel>,
-        GatewayError,
-    > {
+        record: &global_models::UpsertAdminProviderModelRecord,
+    ) -> Result<Option<global_models::StoredAdminProviderModel>, GatewayError> {
         self.data
             .update_admin_provider_model(record)
             .await
@@ -307,9 +283,8 @@ impl AppState {
 
     pub(crate) async fn create_admin_global_model(
         &self,
-        record: &aether_data::repository::global_models::CreateAdminGlobalModelRecord,
-    ) -> Result<Option<aether_data::repository::global_models::StoredAdminGlobalModel>, GatewayError>
-    {
+        record: &global_models::CreateAdminGlobalModelRecord,
+    ) -> Result<Option<global_models::StoredAdminGlobalModel>, GatewayError> {
         self.data
             .create_admin_global_model(record)
             .await
@@ -318,9 +293,8 @@ impl AppState {
 
     pub(crate) async fn update_admin_global_model(
         &self,
-        record: &aether_data::repository::global_models::UpdateAdminGlobalModelRecord,
-    ) -> Result<Option<aether_data::repository::global_models::StoredAdminGlobalModel>, GatewayError>
-    {
+        record: &global_models::UpdateAdminGlobalModelRecord,
+    ) -> Result<Option<global_models::StoredAdminGlobalModel>, GatewayError> {
         self.data
             .update_admin_global_model(record)
             .await
@@ -340,8 +314,7 @@ impl AppState {
     pub(crate) async fn list_provider_model_stats(
         &self,
         provider_ids: &[String],
-    ) -> Result<Vec<aether_data::repository::global_models::StoredProviderModelStats>, GatewayError>
-    {
+    ) -> Result<Vec<global_models::StoredProviderModelStats>, GatewayError> {
         self.data
             .list_provider_model_stats(provider_ids)
             .await
@@ -351,10 +324,7 @@ impl AppState {
     pub(crate) async fn list_active_global_model_ids_by_provider_ids(
         &self,
         provider_ids: &[String],
-    ) -> Result<
-        Vec<aether_data::repository::global_models::StoredProviderActiveGlobalModel>,
-        GatewayError,
-    > {
+    ) -> Result<Vec<global_models::StoredProviderActiveGlobalModel>, GatewayError> {
         self.data
             .list_active_global_model_ids_by_provider_ids(provider_ids)
             .await
@@ -366,8 +336,7 @@ impl AppState {
         endpoint_ids: &[String],
         since_unix_secs: u64,
         limit: usize,
-    ) -> Result<Vec<aether_data::repository::candidates::StoredRequestCandidate>, GatewayError>
-    {
+    ) -> Result<Vec<candidates::StoredRequestCandidate>, GatewayError> {
         self.data
             .list_finalized_request_candidates_by_endpoint_ids_since(
                 endpoint_ids,
@@ -382,8 +351,7 @@ impl AppState {
         &self,
         endpoint_ids: &[String],
         since_unix_secs: u64,
-    ) -> Result<Vec<aether_data::repository::candidates::PublicHealthStatusCount>, GatewayError>
-    {
+    ) -> Result<Vec<candidates::PublicHealthStatusCount>, GatewayError> {
         self.data
             .count_finalized_request_candidate_statuses_by_endpoint_ids_since(
                 endpoint_ids,
@@ -399,8 +367,7 @@ impl AppState {
         since_unix_secs: u64,
         until_unix_secs: u64,
         segments: u32,
-    ) -> Result<Vec<aether_data::repository::candidates::PublicHealthTimelineBucket>, GatewayError>
-    {
+    ) -> Result<Vec<candidates::PublicHealthTimelineBucket>, GatewayError> {
         self.data
             .aggregate_finalized_request_candidate_timeline_by_endpoint_ids_since(
                 endpoint_ids,
@@ -415,10 +382,7 @@ impl AppState {
     pub(crate) async fn list_provider_catalog_keys_by_provider_ids(
         &self,
         provider_ids: &[String],
-    ) -> Result<
-        Vec<aether_data::repository::provider_catalog::StoredProviderCatalogKey>,
-        GatewayError,
-    > {
+    ) -> Result<Vec<provider_catalog::StoredProviderCatalogKey>, GatewayError> {
         self.data
             .list_provider_catalog_keys_by_provider_ids(provider_ids)
             .await
@@ -428,10 +392,7 @@ impl AppState {
     pub(crate) async fn list_provider_catalog_keys_by_ids(
         &self,
         key_ids: &[String],
-    ) -> Result<
-        Vec<aether_data::repository::provider_catalog::StoredProviderCatalogKey>,
-        GatewayError,
-    > {
+    ) -> Result<Vec<provider_catalog::StoredProviderCatalogKey>, GatewayError> {
         self.data
             .list_provider_catalog_keys_by_ids(key_ids)
             .await
@@ -440,9 +401,8 @@ impl AppState {
 
     pub(crate) async fn list_provider_catalog_key_page(
         &self,
-        query: &aether_data::repository::provider_catalog::ProviderCatalogKeyListQuery,
-    ) -> Result<aether_data::repository::provider_catalog::StoredProviderCatalogKeyPage, GatewayError>
-    {
+        query: &provider_catalog::ProviderCatalogKeyListQuery,
+    ) -> Result<provider_catalog::StoredProviderCatalogKeyPage, GatewayError> {
         self.data
             .list_provider_catalog_key_page(query)
             .await
@@ -452,10 +412,7 @@ impl AppState {
     pub(crate) async fn list_provider_catalog_key_stats_by_provider_ids(
         &self,
         provider_ids: &[String],
-    ) -> Result<
-        Vec<aether_data::repository::provider_catalog::StoredProviderCatalogKeyStats>,
-        GatewayError,
-    > {
+    ) -> Result<Vec<provider_catalog::StoredProviderCatalogKeyStats>, GatewayError> {
         self.data
             .list_provider_catalog_key_stats_by_provider_ids(provider_ids)
             .await
@@ -464,11 +421,8 @@ impl AppState {
 
     pub(crate) async fn create_provider_catalog_key(
         &self,
-        key: &aether_data::repository::provider_catalog::StoredProviderCatalogKey,
-    ) -> Result<
-        Option<aether_data::repository::provider_catalog::StoredProviderCatalogKey>,
-        GatewayError,
-    > {
+        key: &provider_catalog::StoredProviderCatalogKey,
+    ) -> Result<Option<provider_catalog::StoredProviderCatalogKey>, GatewayError> {
         let created = self
             .data
             .create_provider_catalog_key(key)
@@ -482,12 +436,9 @@ impl AppState {
 
     pub(crate) async fn create_provider_catalog_provider(
         &self,
-        provider: &aether_data::repository::provider_catalog::StoredProviderCatalogProvider,
+        provider: &provider_catalog::StoredProviderCatalogProvider,
         shift_existing_priorities_from: Option<i32>,
-    ) -> Result<
-        Option<aether_data::repository::provider_catalog::StoredProviderCatalogProvider>,
-        GatewayError,
-    > {
+    ) -> Result<Option<provider_catalog::StoredProviderCatalogProvider>, GatewayError> {
         let created = self
             .data
             .create_provider_catalog_provider(provider, shift_existing_priorities_from)
@@ -501,11 +452,8 @@ impl AppState {
 
     pub(crate) async fn update_provider_catalog_provider(
         &self,
-        provider: &aether_data::repository::provider_catalog::StoredProviderCatalogProvider,
-    ) -> Result<
-        Option<aether_data::repository::provider_catalog::StoredProviderCatalogProvider>,
-        GatewayError,
-    > {
+        provider: &provider_catalog::StoredProviderCatalogProvider,
+    ) -> Result<Option<provider_catalog::StoredProviderCatalogProvider>, GatewayError> {
         let updated = self
             .data
             .update_provider_catalog_provider(provider)
@@ -550,11 +498,8 @@ impl AppState {
 
     pub(crate) async fn create_provider_catalog_endpoint(
         &self,
-        endpoint: &aether_data::repository::provider_catalog::StoredProviderCatalogEndpoint,
-    ) -> Result<
-        Option<aether_data::repository::provider_catalog::StoredProviderCatalogEndpoint>,
-        GatewayError,
-    > {
+        endpoint: &provider_catalog::StoredProviderCatalogEndpoint,
+    ) -> Result<Option<provider_catalog::StoredProviderCatalogEndpoint>, GatewayError> {
         let created = self
             .data
             .create_provider_catalog_endpoint(endpoint)
@@ -568,11 +513,8 @@ impl AppState {
 
     pub(crate) async fn update_provider_catalog_endpoint(
         &self,
-        endpoint: &aether_data::repository::provider_catalog::StoredProviderCatalogEndpoint,
-    ) -> Result<
-        Option<aether_data::repository::provider_catalog::StoredProviderCatalogEndpoint>,
-        GatewayError,
-    > {
+        endpoint: &provider_catalog::StoredProviderCatalogEndpoint,
+    ) -> Result<Option<provider_catalog::StoredProviderCatalogEndpoint>, GatewayError> {
         let updated = self
             .data
             .update_provider_catalog_endpoint(endpoint)
@@ -601,11 +543,8 @@ impl AppState {
 
     pub(crate) async fn update_provider_catalog_key(
         &self,
-        key: &aether_data::repository::provider_catalog::StoredProviderCatalogKey,
-    ) -> Result<
-        Option<aether_data::repository::provider_catalog::StoredProviderCatalogKey>,
-        GatewayError,
-    > {
+        key: &provider_catalog::StoredProviderCatalogKey,
+    ) -> Result<Option<provider_catalog::StoredProviderCatalogKey>, GatewayError> {
         let updated = self
             .data
             .update_provider_catalog_key(key)
@@ -664,10 +603,7 @@ impl AppState {
     pub(crate) async fn read_provider_catalog_providers_by_ids(
         &self,
         provider_ids: &[String],
-    ) -> Result<
-        Vec<aether_data::repository::provider_catalog::StoredProviderCatalogProvider>,
-        GatewayError,
-    > {
+    ) -> Result<Vec<provider_catalog::StoredProviderCatalogProvider>, GatewayError> {
         self.data
             .list_provider_catalog_providers_by_ids(provider_ids)
             .await
@@ -677,10 +613,7 @@ impl AppState {
     pub(crate) async fn read_provider_catalog_endpoints_by_ids(
         &self,
         endpoint_ids: &[String],
-    ) -> Result<
-        Vec<aether_data::repository::provider_catalog::StoredProviderCatalogEndpoint>,
-        GatewayError,
-    > {
+    ) -> Result<Vec<provider_catalog::StoredProviderCatalogEndpoint>, GatewayError> {
         self.data
             .list_provider_catalog_endpoints_by_ids(endpoint_ids)
             .await
@@ -690,10 +623,7 @@ impl AppState {
     pub(crate) async fn read_provider_catalog_keys_by_ids(
         &self,
         key_ids: &[String],
-    ) -> Result<
-        Vec<aether_data::repository::provider_catalog::StoredProviderCatalogKey>,
-        GatewayError,
-    > {
+    ) -> Result<Vec<provider_catalog::StoredProviderCatalogKey>, GatewayError> {
         self.data
             .list_provider_catalog_keys_by_ids(key_ids)
             .await

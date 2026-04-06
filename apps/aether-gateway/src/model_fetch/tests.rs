@@ -3,13 +3,15 @@ use std::time::Duration;
 
 use aether_contracts::ExecutionPlan;
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
-use aether_data::repository::global_models::{
-    GlobalModelReadRepository, InMemoryGlobalModelReadRepository, StoredAdminGlobalModel,
+use aether_data::repository::global_models::InMemoryGlobalModelReadRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::global_models::{
+    AdminProviderModelListQuery, GlobalModelReadRepository, StoredAdminGlobalModel,
     StoredAdminProviderModel,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository,
-    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
+use aether_data_contracts::repository::provider_catalog::{
+    ProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
+    StoredProviderCatalogProvider,
 };
 use axum::routing::any;
 use axum::{extract::Request, Json, Router};
@@ -286,14 +288,12 @@ async fn gateway_model_fetch_updates_key_and_syncs_provider_model_whitelist_asso
     assert!(updated_key.last_models_fetch_at_unix_secs.is_some());
 
     let provider_models = global_model_repository
-        .list_admin_provider_models(
-            &aether_data::repository::global_models::AdminProviderModelListQuery {
-                provider_id: "provider-openai".to_string(),
-                is_active: None,
-                offset: 0,
-                limit: 10_000,
-            },
-        )
+        .list_admin_provider_models(&AdminProviderModelListQuery {
+            provider_id: "provider-openai".to_string(),
+            is_active: None,
+            offset: 0,
+            limit: 10_000,
+        })
         .await
         .expect("provider models should load");
     assert_eq!(provider_models.len(), 1);
@@ -514,14 +514,12 @@ async fn gateway_background_model_fetch_updates_key_and_syncs_provider_model_whi
     assert_eq!(updated_key.last_models_fetch_error, None);
 
     let provider_models = global_model_repository
-        .list_admin_provider_models(
-            &aether_data::repository::global_models::AdminProviderModelListQuery {
-                provider_id: "provider-openai".to_string(),
-                is_active: None,
-                offset: 0,
-                limit: 10_000,
-            },
-        )
+        .list_admin_provider_models(&AdminProviderModelListQuery {
+            provider_id: "provider-openai".to_string(),
+            is_active: None,
+            offset: 0,
+            limit: 10_000,
+        })
         .await
         .expect("provider models should load");
     assert_eq!(provider_models.len(), 1);

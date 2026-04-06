@@ -7,7 +7,7 @@ use super::types::{
     ShadowResultWriteRepository, StoredShadowResult, UpsertShadowResult,
 };
 use crate::postgres::PostgresTransactionRunner;
-use crate::DataLayerError;
+use crate::{error::SqlxResultExt, DataLayerError};
 
 const FIND_BY_TRACE_FINGERPRINT_SQL: &str = r#"
 SELECT
@@ -148,7 +148,8 @@ impl SqlxShadowResultRepository {
             .bind(trace_id)
             .bind(request_fingerprint)
             .fetch_optional(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
         row.as_ref().map(map_shadow_result_row).transpose()
     }
 
@@ -167,7 +168,8 @@ impl SqlxShadowResultRepository {
                 ))
             })?)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_postgres_err()?;
 
         rows.iter().map(map_shadow_result_row).collect()
     }
@@ -193,7 +195,8 @@ impl SqlxShadowResultRepository {
                         .bind(result.created_at_unix_secs as f64)
                         .bind(result.updated_at_unix_secs as f64)
                         .fetch_one(&mut **tx)
-                        .await?;
+                        .await
+                        .map_postgres_err()?;
                     map_shadow_result_row(&row)
                 }) as BoxFuture<'_, Result<StoredShadowResult, DataLayerError>>
             })
@@ -237,22 +240,25 @@ fn match_status_to_database(status: ShadowResultMatchStatus) -> &'static str {
 fn map_shadow_result_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<StoredShadowResult, DataLayerError> {
-    let match_status =
-        ShadowResultMatchStatus::from_database(row.try_get::<String, _>("match_status")?.as_str())?;
+    let match_status = ShadowResultMatchStatus::from_database(
+        row.try_get::<String, _>("match_status")
+            .map_postgres_err()?
+            .as_str(),
+    )?;
     StoredShadowResult::new(
-        row.try_get("trace_id")?,
-        row.try_get("request_fingerprint")?,
-        row.try_get("request_id")?,
-        row.try_get("route_family")?,
-        row.try_get("route_kind")?,
-        row.try_get("candidate_id")?,
-        row.try_get("rust_result_digest")?,
-        row.try_get("python_result_digest")?,
+        row.try_get("trace_id").map_postgres_err()?,
+        row.try_get("request_fingerprint").map_postgres_err()?,
+        row.try_get("request_id").map_postgres_err()?,
+        row.try_get("route_family").map_postgres_err()?,
+        row.try_get("route_kind").map_postgres_err()?,
+        row.try_get("candidate_id").map_postgres_err()?,
+        row.try_get("rust_result_digest").map_postgres_err()?,
+        row.try_get("python_result_digest").map_postgres_err()?,
         match_status,
-        row.try_get("status_code")?,
-        row.try_get("error_message")?,
-        row.try_get("created_at_unix_secs")?,
-        row.try_get("updated_at_unix_secs")?,
+        row.try_get("status_code").map_postgres_err()?,
+        row.try_get("error_message").map_postgres_err()?,
+        row.try_get("created_at_unix_secs").map_postgres_err()?,
+        row.try_get("updated_at_unix_secs").map_postgres_err()?,
     )
 }
 

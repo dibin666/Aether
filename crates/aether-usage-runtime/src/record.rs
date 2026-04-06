@@ -1,5 +1,5 @@
-use aether_data::repository::usage::UpsertUsageRecord;
-use aether_data::DataLayerError;
+use aether_data_contracts::repository::usage::UpsertUsageRecord;
+use aether_data_contracts::DataLayerError;
 
 use crate::{UsageEvent, UsageEventType};
 

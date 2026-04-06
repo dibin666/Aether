@@ -1,4 +1,4 @@
-use aether_data::repository::video_tasks::{StoredVideoTask, UpsertVideoTask};
+use aether_data_contracts::repository::video_tasks::{StoredVideoTask, UpsertVideoTask};
 use serde_json::{json, Map, Value};
 
 use crate::{

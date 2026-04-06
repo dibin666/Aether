@@ -7,6 +7,7 @@ repository.workspace = true
 description = "Shared data access contracts and config for Aether Rust services"
 
 [dependencies]
+aether-data-contracts.workspace = true
 aether-cache.workspace = true
 aether-wallet.workspace = true
 async-trait.workspace = true

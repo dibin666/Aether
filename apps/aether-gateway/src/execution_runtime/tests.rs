@@ -1,5 +1,6 @@
 use aether_contracts::{ExecutionPlan, RequestBody};
 use axum::http::Request;
+use base64::Engine as _;
 use serde_json::json;
 
 use crate::ai_pipeline::contracts::GatewayControlSyncDecisionResponse;
@@ -11,13 +12,15 @@ use crate::ai_pipeline::planner::plan_builders::{
 };
 use crate::execution_runtime::submission::{
     build_best_effort_local_core_error_body, resolve_core_error_background_report_kind,
-    resolve_core_success_background_report_kind,
+    resolve_core_success_background_report_kind, resolve_local_core_error_response_body_json,
 };
 use crate::execution_runtime::{
     resolve_local_sync_error_background_report_kind,
     resolve_local_sync_success_background_report_kind,
 };
-use crate::intent::{should_bypass_intent_decision, should_bypass_intent_plan};
+use crate::executor::{
+    should_bypass_execution_runtime_decision, should_bypass_execution_runtime_plan,
+};
 use crate::usage::GatewaySyncReportRequest;
 
 fn test_parts() -> http::request::Parts {
@@ -221,6 +224,67 @@ fn build_best_effort_local_core_error_body_converts_claude_cli_error_to_openai_c
             "error": {
                 "message": "invalid auth token",
                 "type": "authentication_error"
+            }
+        })
+    );
+}
+
+#[test]
+fn resolve_local_core_error_response_body_json_parses_body_base64_json_for_cross_format_cli_error()
+{
+    let mut payload = core_finalize_payload(
+        "claude_cli_sync_finalize",
+        "claude:cli",
+        "openai:cli",
+        401,
+        json!({}),
+    );
+    payload.body_json = None;
+    payload.body_base64 = Some(
+        base64::engine::general_purpose::STANDARD
+            .encode(r#"{"error":{"message":"invalid auth token","type":"authentication_error"}}"#),
+    );
+
+    let resolved = resolve_local_core_error_response_body_json(&payload)
+        .expect("resolution should not error")
+        .expect("resolution should produce a client error body");
+
+    assert_eq!(
+        resolved,
+        json!({
+            "type": "error",
+            "error": {
+                "message": "invalid auth token",
+                "type": "authentication_error"
+            }
+        })
+    );
+}
+
+#[test]
+fn resolve_local_core_error_response_body_json_builds_client_error_from_plain_text_body() {
+    let mut payload = core_finalize_payload(
+        "claude_cli_sync_finalize",
+        "claude:cli",
+        "openai:cli",
+        400,
+        json!({}),
+    );
+    payload.body_json = None;
+    payload.body_base64 =
+        Some(base64::engine::general_purpose::STANDARD.encode("invalid model for this endpoint"));
+
+    let resolved = resolve_local_core_error_response_body_json(&payload)
+        .expect("resolution should not error")
+        .expect("resolution should produce a client error body");
+
+    assert_eq!(
+        resolved,
+        json!({
+            "type": "error",
+            "error": {
+                "message": "invalid model for this endpoint",
+                "type": "invalid_request_error"
             }
         })
     );
@@ -527,7 +591,7 @@ fn bypasses_execution_runtime_for_codex_backendapi_variant() {
     payload.client_api_format = Some("openai:cli".to_string());
     payload.upstream_url = Some("https://chatgpt.com/backendapi/codex/responses".to_string());
 
-    assert!(should_bypass_intent_decision(&payload));
+    assert!(should_bypass_execution_runtime_decision(&payload));
 }
 
 #[test]
@@ -554,5 +618,5 @@ fn bypasses_execution_runtime_for_codex_plan_variant() {
         timeouts: None,
     };
 
-    assert!(should_bypass_intent_plan(&plan));
+    assert!(should_bypass_execution_runtime_plan(&plan));
 }

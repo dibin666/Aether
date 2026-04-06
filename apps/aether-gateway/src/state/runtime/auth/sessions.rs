@@ -1,12 +1,11 @@
-use crate::{AppState, GatewayError};
+use crate::{AppState, GatewayError, GatewayUserSessionView};
 
 impl AppState {
     pub(crate) async fn find_user_session(
         &self,
         user_id: &str,
         session_id: &str,
-    ) -> Result<Option<crate::data::state::StoredUserSessionRecord>, GatewayError>
-    {
+    ) -> Result<Option<GatewayUserSessionView>, GatewayError> {
         #[cfg(test)]
         if let Some(store) = self.auth_session_store.as_ref() {
             let key = format!("{user_id}:{session_id}");
@@ -14,20 +13,21 @@ impl AppState {
                 .lock()
                 .expect("auth session store should lock")
                 .get(&key)
-                .cloned());
+                .cloned()
+                .map(Into::into));
         }
 
         self.data
             .find_user_session(user_id, session_id)
             .await
+            .map(|value| value.map(Into::into))
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
     pub(crate) async fn list_user_sessions(
         &self,
         user_id: &str,
-    ) -> Result<Vec<crate::data::state::StoredUserSessionRecord>, GatewayError>
-    {
+    ) -> Result<Vec<GatewayUserSessionView>, GatewayError> {
         #[cfg(test)]
         if let Some(store) = self.auth_session_store.as_ref() {
             let prefix = format!("{user_id}:");
@@ -46,12 +46,13 @@ impl AppState {
                     .cmp(&left.last_seen_at)
                     .then_with(|| right.created_at.cmp(&left.created_at))
             });
-            return Ok(sessions);
+            return Ok(sessions.into_iter().map(Into::into).collect());
         }
 
         self.data
             .list_user_sessions(user_id)
             .await
+            .map(|sessions| sessions.into_iter().map(Into::into).collect())
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
@@ -112,11 +113,14 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
-    pub(crate) async fn create_user_session(
+    pub(crate) async fn create_user_session<T>(
         &self,
-        session: crate::data::state::StoredUserSessionRecord,
-    ) -> Result<Option<crate::data::state::StoredUserSessionRecord>, GatewayError>
+        session: T,
+    ) -> Result<Option<GatewayUserSessionView>, GatewayError>
+    where
+        T: Into<GatewayUserSessionView>,
     {
+        let session = session.into();
         #[cfg(test)]
         if let Some(store) = self.auth_session_store.as_ref() {
             let now = session
@@ -138,14 +142,16 @@ impl AppState {
             }
             guard.insert(
                 format!("{}:{}", session.user_id, session.id),
-                session.clone(),
+                session.clone().into(),
             );
             return Ok(Some(session));
         }
 
+        let raw_session: crate::data::state::StoredUserSessionRecord = session.into();
         self.data
-            .create_user_session(&session)
+            .create_user_session(&raw_session)
             .await
+            .map(|value| value.map(Into::into))
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 

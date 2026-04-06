@@ -1,11 +1,11 @@
 use crate::{AppState, GatewayError};
+use aether_data_contracts::repository::{candidates, usage};
 
 impl AppState {
     pub(crate) async fn read_request_candidates_by_request_id(
         &self,
         request_id: &str,
-    ) -> Result<Vec<aether_data::repository::candidates::StoredRequestCandidate>, GatewayError>
-    {
+    ) -> Result<Vec<candidates::StoredRequestCandidate>, GatewayError> {
         self.data
             .list_request_candidates_by_request_id(request_id)
             .await
@@ -16,8 +16,7 @@ impl AppState {
         &self,
         provider_id: &str,
         limit: usize,
-    ) -> Result<Vec<aether_data::repository::candidates::StoredRequestCandidate>, GatewayError>
-    {
+    ) -> Result<Vec<candidates::StoredRequestCandidate>, GatewayError> {
         self.data
             .list_request_candidates_by_provider_id(provider_id, limit)
             .await
@@ -28,7 +27,7 @@ impl AppState {
         &self,
         provider_id: &str,
         since_unix_secs: u64,
-    ) -> Result<aether_data::repository::usage::StoredProviderUsageSummary, GatewayError> {
+    ) -> Result<usage::StoredProviderUsageSummary, GatewayError> {
         self.data
             .summarize_provider_usage_since(provider_id, since_unix_secs)
             .await
@@ -37,8 +36,8 @@ impl AppState {
 
     pub(crate) async fn list_usage_audits(
         &self,
-        query: &aether_data::repository::usage::UsageAuditListQuery,
-    ) -> Result<Vec<aether_data::repository::usage::StoredRequestUsageAudit>, GatewayError> {
+        query: &usage::UsageAuditListQuery,
+    ) -> Result<Vec<usage::StoredRequestUsageAudit>, GatewayError> {
         self.data
             .list_usage_audits(query)
             .await
@@ -49,7 +48,7 @@ impl AppState {
         &self,
         user_id: Option<&str>,
         limit: usize,
-    ) -> Result<Vec<aether_data::repository::usage::StoredRequestUsageAudit>, GatewayError> {
+    ) -> Result<Vec<usage::StoredRequestUsageAudit>, GatewayError> {
         self.data
             .list_recent_usage_audits(user_id, limit)
             .await

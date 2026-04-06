@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
+use crate::ai_pipeline::control_facade::GatewayControlDecision;
+use crate::ai_pipeline::execution_facade::{ConversionMode, ExecutionStrategy};
 use crate::ai_pipeline::planner::common::{
     EXECUTION_RUNTIME_STREAM_DECISION_ACTION, OPENAI_VIDEO_CONTENT_PLAN_KIND,
 };
-use crate::control::GatewayControlDecision;
-use crate::execution_runtime::{ConversionMode, ExecutionStrategy};
-use crate::scheduler::{
+use crate::ai_pipeline::planner::{
     is_matching_stream_request, resolve_execution_runtime_stream_plan_kind,
 };
 use crate::{AppState, GatewayControlSyncDecisionResponse, GatewayError};

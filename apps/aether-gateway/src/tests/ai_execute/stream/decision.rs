@@ -8,16 +8,17 @@ use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY}
 use aether_data::repository::auth::{
     InMemoryAuthApiKeySnapshotRepository, StoredAuthApiKeySnapshot,
 };
-use aether_data::repository::candidate_selection::{
-    InMemoryMinimalCandidateSelectionReadRepository, StoredMinimalCandidateSelectionRow,
-    StoredProviderModelMapping,
+use aether_data::repository::candidate_selection::InMemoryMinimalCandidateSelectionReadRepository;
+use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::candidate_selection::{
+    StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
 };
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateReadRepository, RequestCandidateStatus,
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateReadRepository, RequestCandidateStatus,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-    StoredProviderCatalogProvider,
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
 use sha2::{Digest, Sha256};
 
@@ -449,8 +450,12 @@ async fn gateway_executes_openai_chat_stream_via_local_openai_cli_cross_format_c
         stream: bool,
         accept: String,
         api_key: String,
+        x_client_request_id: String,
+        session_id: String,
+        conversation_id: String,
         instructions: String,
         user_text: String,
+        prompt_cache_key: String,
     }
 
     fn hash_api_key(value: &str) -> String {
@@ -718,6 +723,24 @@ async fn gateway_executes_openai_chat_stream_via_local_openai_cli_cross_format_c
                             .and_then(|value| value.as_str())
                             .unwrap_or_default()
                             .to_string(),
+                        x_client_request_id: payload
+                            .get("headers")
+                            .and_then(|value| value.get("x-client-request-id"))
+                            .and_then(|value| value.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        session_id: payload
+                            .get("headers")
+                            .and_then(|value| value.get("session_id"))
+                            .and_then(|value| value.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        conversation_id: payload
+                            .get("headers")
+                            .and_then(|value| value.get("conversation_id"))
+                            .and_then(|value| value.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
                         instructions: payload
                             .get("body")
                             .and_then(|value| value.get("json_body"))
@@ -735,6 +758,13 @@ async fn gateway_executes_openai_chat_stream_via_local_openai_cli_cross_format_c
                             .and_then(|value| value.as_array())
                             .and_then(|value| value.first())
                             .and_then(|value| value.get("text"))
+                            .and_then(|value| value.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        prompt_cache_key: payload
+                            .get("body")
+                            .and_then(|value| value.get("json_body"))
+                            .and_then(|value| value.get("prompt_cache_key"))
                             .and_then(|value| value.as_str())
                             .unwrap_or_default()
                             .to_string(),
@@ -839,6 +869,22 @@ async fn gateway_executes_openai_chat_stream_via_local_openai_cli_cross_format_c
     assert_eq!(
         seen_execution_runtime_request.api_key,
         "sk-upstream-openai-chat-cli"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.x_client_request_id,
+        "trace-openai-chat-cli-local-123"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.prompt_cache_key,
+        "b6741389-8b9e-5c00-bef6-fbce92aee45a"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.session_id,
+        "9fa08f4f14ccba13"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.conversation_id,
+        "9fa08f4f14ccba13"
     );
     assert_eq!(
         seen_execution_runtime_request.instructions,

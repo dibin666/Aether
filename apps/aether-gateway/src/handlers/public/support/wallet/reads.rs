@@ -3,7 +3,8 @@ use super::{
     query_param_value, resolve_authenticated_local_user, unix_secs_to_rfc3339, AppState, Body,
     GatewayError, GatewayPublicRequestContext, Response, WALLET_LEGACY_TIMEZONE,
 };
-use crate::handlers::round_to;
+use crate::handlers::shared::round_to;
+use aether_data_contracts::repository::usage::UsageAuditListQuery;
 use chrono::Utc;
 use serde_json::json;
 
@@ -210,7 +211,7 @@ pub(super) async fn handle_wallet_today_cost(
     let end_unix_secs = start_unix_secs.saturating_add(24 * 3600);
 
     let items = match state
-        .list_usage_audits(&aether_data::repository::usage::UsageAuditListQuery {
+        .list_usage_audits(&UsageAuditListQuery {
             created_from_unix_secs: Some(start_unix_secs),
             created_until_unix_secs: Some(end_unix_secs),
             user_id: Some(auth.user.id.clone()),

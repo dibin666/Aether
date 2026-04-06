@@ -1,6 +1,4 @@
-use crate::{
-    AdminWalletPaymentOrderRecord, AdminWalletTransactionRecord, AppState, GatewayError,
-};
+use crate::{AdminWalletPaymentOrderRecord, AdminWalletTransactionRecord, AppState, GatewayError};
 
 use super::admin_wallet_build_order_no;
 

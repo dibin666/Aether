@@ -7,9 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, info};
 
-use crate::wallet_runtime::{
-    local_rejection_from_wallet_access, resolve_wallet_auth_gate,
-};
+use crate::wallet_runtime::{local_rejection_from_wallet_access, resolve_wallet_auth_gate};
 use crate::{AppState, GatewayError};
 
 use super::super::GatewayControlDecision;
@@ -483,8 +481,10 @@ pub(super) async fn resolve_data_backed_auth_context(
         }
         Some(GatewayPrincipalCandidate::ApiKeyHash { key_hash, .. }) => {
             let snapshot = state
+                .data
                 .read_auth_api_key_snapshot_by_key_hash(&key_hash, now_unix_secs)
-                .await?;
+                .await
+                .map_err(|err| GatewayError::Internal(err.to_string()))?;
             let Some(snapshot) = snapshot else {
                 return Ok(Some(GatewayControlAuthContext {
                     user_id: String::new(),
@@ -527,12 +527,14 @@ async fn resolve_trusted_auth_context(
     now_unix_secs: u64,
 ) -> Result<Option<GatewayControlAuthContext>, GatewayError> {
     let snapshot = state
+        .data
         .read_auth_api_key_snapshot(
             &trusted_headers.user_id,
             &trusted_headers.api_key_id,
             now_unix_secs,
         )
-        .await?;
+        .await
+        .map_err(|err| GatewayError::Internal(err.to_string()))?;
     let Some(snapshot) = snapshot else {
         return Ok(Some(GatewayControlAuthContext {
             user_id: trusted_headers.user_id,

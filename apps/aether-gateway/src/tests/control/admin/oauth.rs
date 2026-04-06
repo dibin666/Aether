@@ -9,9 +9,8 @@ use aether_data::repository::management_tokens::{
 use aether_data::repository::oauth_providers::{
     InMemoryOAuthProviderRepository, OAuthProviderReadRepository,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository,
-};
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
 use axum::body::{to_bytes, Body, Bytes};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, patch, post, put};
@@ -30,7 +29,7 @@ use crate::constants::{
 };
 use crate::control::resolve_public_request_context;
 use crate::data::GatewayDataState;
-use crate::handlers::admin::maybe_build_local_admin_provider_oauth_response;
+use crate::handlers::admin::provider::maybe_build_local_admin_provider_oauth_response;
 
 fn trusted_admin_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
@@ -1990,12 +1989,12 @@ async fn gateway_refreshes_admin_provider_oauth_key_locally_with_trusted_admin_p
     let (upstream_url, upstream_handle) = start_server(upstream).await;
     let (token_url, token_handle) = start_server(token_server).await;
     let oauth_refresh =
-        crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(
-            vec![Arc::new(
+        crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(vec![
+            Arc::new(
                 crate::provider_transport::oauth_refresh::GenericOAuthRefreshAdapter::default()
                     .with_token_url_for_tests("codex", format!("{token_url}/oauth/token")),
-            )],
-        );
+            ),
+        ]);
     let gateway = build_router_with_state(
         AppState::new()
             .expect("gateway should build")

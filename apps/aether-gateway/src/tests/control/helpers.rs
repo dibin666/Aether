@@ -135,9 +135,7 @@ pub(super) async fn issue_test_admin_access_token(
         user.id.clone(),
         client_device_id.to_string(),
         None,
-        crate::data::state::StoredUserSessionRecord::hash_refresh_token(
-            &refresh_token,
-        ),
+        crate::data::state::StoredUserSessionRecord::hash_refresh_token(&refresh_token),
         None,
         None,
         Some(now),

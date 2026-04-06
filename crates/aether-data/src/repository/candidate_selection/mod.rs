@@ -1,10 +1,10 @@
 mod memory;
 mod sql;
-mod types;
 
-pub use memory::InMemoryMinimalCandidateSelectionReadRepository;
-pub use sql::SqlxMinimalCandidateSelectionReadRepository;
-pub use types::{
+#[allow(unused_imports)]
+pub(crate) use aether_data_contracts::repository::candidate_selection::{
     MinimalCandidateSelectionReadRepository, MinimalCandidateSelectionRepository,
     StoredMinimalCandidateSelectionRow, StoredProviderModelMapping,
 };
+pub use memory::InMemoryMinimalCandidateSelectionReadRepository;
+pub use sql::SqlxMinimalCandidateSelectionReadRepository;

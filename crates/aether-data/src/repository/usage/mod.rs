@@ -1,11 +1,11 @@
 mod memory;
 mod sql;
-mod types;
 
-pub use memory::InMemoryUsageReadRepository;
-pub use sql::SqlxUsageReadRepository;
-pub use types::{
+#[allow(unused_imports)]
+pub(crate) use aether_data_contracts::repository::usage::{
     StoredProviderUsageSummary, StoredProviderUsageWindow, StoredRequestUsageAudit,
     UpsertUsageRecord, UsageAuditListQuery, UsageReadRepository, UsageRepository,
     UsageWriteRepository,
 };
+pub use memory::InMemoryUsageReadRepository;
+pub use sql::SqlxUsageReadRepository;

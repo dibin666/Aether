@@ -1,7 +1,7 @@
-use aether_data::repository::provider_catalog::{
+use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
-use aether_data::DataLayerError;
+use aether_data_contracts::DataLayerError;
 use async_trait::async_trait;
 
 use super::auth_config::{absorb_local_auth_config_safe_subset, LocalAuthConfigAbsorption};
@@ -164,14 +164,11 @@ pub async fn read_provider_transport_snapshot(
 }
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
-    use aether_data::repository::provider_catalog::{
-        InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository,
+    use aether_data_contracts::repository::provider_catalog::{
         StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
     };
-    use aether_data::DataLayerError;
+    use aether_data_contracts::DataLayerError;
     use async_trait::async_trait;
 
     use super::super::policy::{
@@ -183,17 +180,23 @@ mod tests {
     };
 
     struct TestSnapshotSource {
-        repository: Arc<InMemoryProviderCatalogReadRepository>,
+        providers: Vec<StoredProviderCatalogProvider>,
+        endpoints: Vec<StoredProviderCatalogEndpoint>,
+        keys: Vec<StoredProviderCatalogKey>,
         encryption_key: Option<String>,
     }
 
     impl TestSnapshotSource {
         fn new(
-            repository: Arc<InMemoryProviderCatalogReadRepository>,
+            providers: Vec<StoredProviderCatalogProvider>,
+            endpoints: Vec<StoredProviderCatalogEndpoint>,
+            keys: Vec<StoredProviderCatalogKey>,
             encryption_key: impl Into<Option<String>>,
         ) -> Self {
             Self {
-                repository,
+                providers,
+                endpoints,
+                keys,
                 encryption_key: encryption_key.into(),
             }
         }
@@ -209,21 +212,36 @@ mod tests {
             &self,
             ids: &[String],
         ) -> Result<Vec<StoredProviderCatalogProvider>, DataLayerError> {
-            self.repository.list_providers_by_ids(ids).await
+            Ok(self
+                .providers
+                .iter()
+                .filter(|provider| ids.iter().any(|id| id == &provider.id))
+                .cloned()
+                .collect())
         }
 
         async fn list_provider_catalog_endpoints_by_ids(
             &self,
             ids: &[String],
         ) -> Result<Vec<StoredProviderCatalogEndpoint>, DataLayerError> {
-            self.repository.list_endpoints_by_ids(ids).await
+            Ok(self
+                .endpoints
+                .iter()
+                .filter(|endpoint| ids.iter().any(|id| id == &endpoint.id))
+                .cloned()
+                .collect())
         }
 
         async fn list_provider_catalog_keys_by_ids(
             &self,
             ids: &[String],
         ) -> Result<Vec<StoredProviderCatalogKey>, DataLayerError> {
-            self.repository.list_keys_by_ids(ids).await
+            Ok(self
+                .keys
+                .iter()
+                .filter(|key| ids.iter().any(|id| id == &key.id))
+                .cloned()
+                .collect())
         }
     }
 
@@ -304,12 +322,12 @@ mod tests {
     }
 
     fn read_state() -> TestSnapshotSource {
-        let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        TestSnapshotSource::new(
             vec![sample_provider()],
             vec![sample_endpoint()],
             vec![sample_key()],
-        ));
-        TestSnapshotSource::new(repository, Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()))
+            Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()),
+        )
     }
 
     #[tokio::test]
@@ -383,12 +401,12 @@ mod tests {
 
     #[tokio::test]
     async fn returns_none_when_encryption_key_is_not_configured() {
-        let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        let state = TestSnapshotSource::new(
             vec![sample_provider()],
             vec![sample_endpoint()],
             vec![sample_key()],
-        ));
-        let state = TestSnapshotSource::new(repository, None);
+            None,
+        );
 
         let snapshot =
             read_provider_transport_snapshot(&state, "provider-1", "endpoint-1", "key-1")
@@ -449,13 +467,12 @@ mod tests {
             None,
         )
         .expect("key transport fields should build");
-        let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        let state = TestSnapshotSource::new(
             vec![provider],
             vec![endpoint],
             vec![key],
-        ));
-        let state =
-            TestSnapshotSource::new(repository, Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()));
+            Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()),
+        );
 
         let snapshot =
             read_provider_transport_snapshot(&state, "provider-1", "endpoint-safe-1", "key-safe-1")
@@ -523,13 +540,12 @@ mod tests {
             None,
         )
         .expect("key transport fields should build");
-        let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        let state = TestSnapshotSource::new(
             vec![provider],
             vec![endpoint],
             vec![key],
-        ));
-        let state =
-            TestSnapshotSource::new(repository, Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()));
+            Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()),
+        );
 
         let snapshot = read_provider_transport_snapshot(
             &state,
@@ -702,13 +718,12 @@ mod tests {
             None,
         )
         .expect("key transport fields should build");
-        let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        let state = TestSnapshotSource::new(
             vec![provider],
             vec![endpoint],
             vec![key],
-        ));
-        let state =
-            TestSnapshotSource::new(repository, Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()));
+            Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()),
+        );
 
         let snapshot =
             read_provider_transport_snapshot(&state, "provider-1", "endpoint-safe-2", "key-safe-2")
@@ -778,13 +793,12 @@ mod tests {
             None,
         )
         .expect("key transport fields should build");
-        let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        let state = TestSnapshotSource::new(
             vec![provider],
             vec![endpoint],
             vec![key],
-        ));
-        let state =
-            TestSnapshotSource::new(repository, Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()));
+            Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()),
+        );
 
         let snapshot =
             read_provider_transport_snapshot(&state, "provider-1", "endpoint-safe-3", "key-safe-3")
@@ -859,13 +873,12 @@ mod tests {
             None,
         )
         .expect("key transport fields should build");
-        let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        let state = TestSnapshotSource::new(
             vec![provider],
             vec![endpoint],
             vec![key],
-        ));
-        let state =
-            TestSnapshotSource::new(repository, Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()));
+            Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()),
+        );
 
         let snapshot =
             read_provider_transport_snapshot(&state, "provider-1", "endpoint-safe-4", "key-safe-4")
@@ -948,13 +961,12 @@ mod tests {
             Some(serde_json::Value::Null),
         )
         .expect("key transport fields should build");
-        let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        let state = TestSnapshotSource::new(
             vec![provider],
             vec![endpoint],
             vec![key],
-        ));
-        let state =
-            TestSnapshotSource::new(repository, Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()));
+            Some(DEVELOPMENT_ENCRYPTION_KEY.to_string()),
+        );
 
         let snapshot = read_provider_transport_snapshot(
             &state,

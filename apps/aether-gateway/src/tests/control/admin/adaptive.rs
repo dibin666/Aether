@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository, StoredProviderCatalogKey,
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+use aether_data_contracts::repository::provider_catalog::{
+    ProviderCatalogReadRepository, StoredProviderCatalogKey,
 };
 use axum::body::Body;
 use axum::routing::any;
@@ -222,9 +223,7 @@ async fn gateway_handles_admin_adaptive_mode_returns_service_unavailable_without
     let repository = adaptive_repository_with_keys(vec![adaptive_key]);
 
     assert_adaptive_route_returns_local_503(
-        crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(
-            repository,
-        ),
+        crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(repository),
         http::Method::PATCH,
         "/api/admin/adaptive/keys/key-adaptive/mode",
         Some(json!({ "enabled": false, "fixed_limit": 20 })),

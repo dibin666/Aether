@@ -1,6 +1,6 @@
-use aether_data::repository::settlement::{StoredUsageSettlement, UsageSettlementInput};
-use aether_data::repository::usage::StoredRequestUsageAudit;
-use aether_data::{DataLayerError, DataLayerError::InvalidInput};
+use aether_data_contracts::repository::settlement::{StoredUsageSettlement, UsageSettlementInput};
+use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
+use aether_data_contracts::{DataLayerError, DataLayerError::InvalidInput};
 use async_trait::async_trait;
 
 #[async_trait]
@@ -57,8 +57,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{settle_usage_if_needed, UsageSettlementWriter};
-    use aether_data::repository::settlement::UsageSettlementInput;
-    use aether_data::repository::usage::StoredRequestUsageAudit;
+    use aether_data_contracts::repository::settlement::UsageSettlementInput;
+    use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
     use async_trait::async_trait;
 
     #[derive(Default)]
@@ -77,8 +77,8 @@ mod tests {
             &self,
             input: UsageSettlementInput,
         ) -> Result<
-            Option<aether_data::repository::settlement::StoredUsageSettlement>,
-            aether_data::DataLayerError,
+            Option<aether_data_contracts::repository::settlement::StoredUsageSettlement>,
+            aether_data_contracts::DataLayerError,
         > {
             self.inputs
                 .lock()
@@ -183,7 +183,10 @@ mod tests {
             .await
             .expect_err("non-finite costs should be rejected");
 
-        assert!(matches!(err, aether_data::DataLayerError::InvalidInput(_)));
+        assert!(matches!(
+            err,
+            aether_data_contracts::DataLayerError::InvalidInput(_)
+        ));
         let inputs = writer.inputs.lock().expect("settlement inputs lock");
         assert!(inputs.is_empty());
     }

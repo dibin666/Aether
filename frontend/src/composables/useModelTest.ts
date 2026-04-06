@@ -53,6 +53,14 @@ export function useModelTest(options: UseModelTestOptions) {
     return `provider-test-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
   }
 
+  function resultHasTraceContext(result: TestModelFailoverResponse): boolean {
+    if (result.success) return true
+    if (Array.isArray(result.attempts) && result.attempts.length > 0) return true
+    if (typeof result.total_attempts === 'number' && result.total_attempts > 0) return true
+    if (typeof result.total_candidates === 'number' && result.total_candidates > 0) return true
+    return false
+  }
+
   async function pollTestTrace(reqId: string, token: number) {
     try {
       const trace = await requestTraceApi.getRequestTrace(reqId, { attemptedOnly: false })
@@ -90,7 +98,6 @@ export function useModelTest(options: UseModelTestOptions) {
     requestId.value = reqId
     testTrace.value = null
     const token = ++tracePollToken
-    void pollTestTrace(reqId, token)
     tracePollTimer = setInterval(() => {
       void pollTestTrace(reqId, token)
     }, pollInterval)
@@ -137,6 +144,7 @@ export function useModelTest(options: UseModelTestOptions) {
         provider_id: providerId(),
         mode: params.mode,
         model_name: params.modelName,
+        failover_models: [params.modelName],
         api_format: params.apiFormat,
         endpoint_id: params.endpointId,
         ...(normalizedMessage ? { message: normalizedMessage } : {}),
@@ -148,9 +156,14 @@ export function useModelTest(options: UseModelTestOptions) {
         signal: abortController.signal,
       })
 
+      const keepTraceContext = resultHasTraceContext(result)
       if (result.success) {
-        await refreshTraceSnapshot(reqId)
-        stopPolling({ clearState: false })
+        if (keepTraceContext) {
+          await refreshTraceSnapshot(reqId)
+          stopPolling({ clearState: false })
+        } else {
+          stopPolling()
+        }
         testResult.value = result
         const successAttempt = result.attempts.find(a => a.status === 'success')
         const latency = successAttempt?.latency_ms != null ? ` (${successAttempt.latency_ms}ms)` : ''
@@ -162,8 +175,12 @@ export function useModelTest(options: UseModelTestOptions) {
         return
       }
 
-      await refreshTraceSnapshot(reqId)
-      stopPolling({ clearState: false })
+      if (keepTraceContext) {
+        await refreshTraceSnapshot(reqId)
+        stopPolling({ clearState: false })
+      } else {
+        stopPolling()
+      }
       const handled = params.onFailure?.(result)
       if (!handled) {
         testResult.value = result

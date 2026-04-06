@@ -11,14 +11,6 @@ use aether_data::repository::auth::{
 use aether_data::repository::auth_modules::{
     InMemoryAuthModuleReadRepository, StoredLdapModuleConfig, StoredOAuthProviderModuleConfig,
 };
-use aether_data::repository::candidates::{
-    InMemoryRequestCandidateRepository, RequestCandidateStatus, StoredRequestCandidate,
-};
-use aether_data::repository::global_models::{
-    GlobalModelReadRepository, InMemoryGlobalModelReadRepository, StoredAdminGlobalModel,
-    StoredAdminProviderModel, StoredProviderActiveGlobalModel, StoredProviderModelStats,
-    StoredPublicGlobalModel,
-};
 use aether_data::repository::management_tokens::{
     InMemoryManagementTokenRepository, ManagementTokenReadRepository, StoredManagementToken,
     StoredManagementTokenUserSummary, StoredManagementTokenWithUser,
@@ -26,17 +18,24 @@ use aether_data::repository::management_tokens::{
 use aether_data::repository::oauth_providers::{
     InMemoryOAuthProviderRepository, OAuthProviderReadRepository, StoredOAuthProviderConfig,
 };
-use aether_data::repository::provider_catalog::{
-    InMemoryProviderCatalogReadRepository, ProviderCatalogReadRepository,
-    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
-};
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
 use aether_data::repository::proxy_nodes::{
     InMemoryProxyNodeRepository, ProxyNodeReadRepository, StoredProxyNode, StoredProxyNodeEvent,
 };
-use aether_data::repository::quota::{
-    InMemoryProviderQuotaRepository, StoredProviderQuotaSnapshot,
-};
+use aether_data::repository::quota::InMemoryProviderQuotaRepository;
 use aether_data::repository::wallet::InMemoryWalletRepository;
+use aether_data_contracts::repository::{
+    candidates::{RequestCandidateStatus, StoredRequestCandidate},
+    global_models::{
+        GlobalModelReadRepository, StoredAdminGlobalModel, StoredAdminProviderModel,
+        StoredProviderActiveGlobalModel, StoredProviderModelStats, StoredPublicGlobalModel,
+    },
+    provider_catalog::{
+        ProviderCatalogReadRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
+        StoredProviderCatalogProvider,
+    },
+    quota::StoredProviderQuotaSnapshot,
+};
 use axum::body::{to_bytes, Body, Bytes};
 use axum::response::Response;
 use axum::routing::{any, post};
