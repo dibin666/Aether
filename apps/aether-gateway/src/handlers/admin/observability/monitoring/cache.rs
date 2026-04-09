@@ -49,6 +49,7 @@ pub(super) async fn build_admin_monitoring_cache_stats_response(
             "affinity_stats": {
                 "storage_type": snapshot.storage_type,
                 "total_affinities": snapshot.total_affinities,
+                "active_affinities": snapshot.total_affinities,
                 "cache_hits": snapshot.cache_hits,
                 "cache_misses": snapshot.cache_misses,
                 "cache_hit_rate": snapshot.cache_hit_rate,

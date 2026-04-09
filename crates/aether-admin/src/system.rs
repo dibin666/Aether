@@ -1198,7 +1198,7 @@ pub fn build_admin_proxy_node_payload(node: &StoredProxyNode) -> serde_json::Val
         ("config_version".to_string(), json!(node.config_version)),
         (
             "created_at".to_string(),
-            json!(node.created_at_unix_secs.and_then(unix_secs_to_rfc3339)),
+            json!(node.created_at_unix_ms.and_then(unix_secs_to_rfc3339)),
         ),
         (
             "updated_at".to_string(),
@@ -1225,7 +1225,7 @@ pub fn build_admin_proxy_node_event_payload(event: &StoredProxyNodeEvent) -> ser
         "id": event.id,
         "event_type": event.event_type,
         "detail": event.detail,
-        "created_at": event.created_at_unix_secs.and_then(unix_secs_to_rfc3339),
+        "created_at": event.created_at_unix_ms.and_then(unix_secs_to_rfc3339),
     })
 }
 

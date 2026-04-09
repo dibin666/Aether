@@ -3,6 +3,7 @@ use crate::handlers::admin::shared::unix_secs_to_rfc3339;
 use crate::handlers::public::{
     api_format_display_name, build_public_health_timeline, provider_key_api_formats,
 };
+use crate::handlers::shared::unix_ms_to_rfc3339;
 use aether_data_contracts::repository::candidates::PublicHealthTimelineBucket;
 use aether_scheduler_core::{is_provider_key_circuit_open, provider_key_health_score};
 use serde_json::json;
@@ -124,28 +125,24 @@ pub(crate) async fn build_admin_endpoint_health_status_payload(
                 total_count: 0,
                 success_count: 0,
                 failed_count: 0,
-                min_created_at_unix_secs: None,
-                max_created_at_unix_secs: None,
+                min_created_at_unix_ms: None,
+                max_created_at_unix_ms: None,
             });
         bucket.total_count += row.total_count;
         bucket.success_count += row.success_count;
         bucket.failed_count += row.failed_count;
-        bucket.min_created_at_unix_secs = match (
-            bucket.min_created_at_unix_secs,
-            row.min_created_at_unix_secs,
-        ) {
-            (Some(left), Some(right)) => Some(left.min(right)),
-            (None, Some(right)) => Some(right),
-            (left, None) => left,
-        };
-        bucket.max_created_at_unix_secs = match (
-            bucket.max_created_at_unix_secs,
-            row.max_created_at_unix_secs,
-        ) {
-            (Some(left), Some(right)) => Some(left.max(right)),
-            (None, Some(right)) => Some(right),
-            (left, None) => left,
-        };
+        bucket.min_created_at_unix_ms =
+            match (bucket.min_created_at_unix_ms, row.min_created_at_unix_ms) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (None, Some(right)) => Some(right),
+                (left, None) => left,
+            };
+        bucket.max_created_at_unix_ms =
+            match (bucket.max_created_at_unix_ms, row.max_created_at_unix_ms) {
+                (Some(left), Some(right)) => Some(left.max(right)),
+                (None, Some(right)) => Some(right),
+                (left, None) => left,
+            };
     }
 
     let mut payload = endpoint_ids_by_format
@@ -182,8 +179,8 @@ pub(crate) async fn build_admin_endpoint_health_status_payload(
                 "display_name": api_format_display_name(&api_format),
                 "health_score": health_score,
                 "timeline": timeline,
-                "time_range_start": time_range_start.and_then(unix_secs_to_rfc3339),
-                "time_range_end": time_range_end.or(Some(now_unix_secs)).and_then(unix_secs_to_rfc3339),
+                "time_range_start": time_range_start.and_then(unix_ms_to_rfc3339),
+                "time_range_end": time_range_end.map(|ms| unix_ms_to_rfc3339(ms)).unwrap_or_else(|| unix_secs_to_rfc3339(now_unix_secs)),
                 "total_endpoints": endpoint_ids.len(),
                 "total_keys": total_keys,
                 "active_keys": active_keys_by_format.get(&api_format).map(BTreeSet::len).unwrap_or(0),

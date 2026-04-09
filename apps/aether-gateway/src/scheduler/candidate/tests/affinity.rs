@@ -9,15 +9,41 @@ use aether_data_contracts::repository::candidate_selection::StoredProviderModelM
 use aether_data_contracts::repository::candidates::{
     RequestCandidateStatus, StoredRequestCandidate,
 };
+use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 
 use crate::cache::SchedulerAffinityTarget;
-use crate::data::candidate_selection::read_minimal_candidate_selection;
+use crate::data::auth::GatewayAuthApiKeySnapshot;
+use crate::data::candidate_selection::{
+    read_minimal_candidate_selection, MinimalCandidateSelectionRowSource,
+};
 use crate::data::GatewayDataState;
-use crate::AppState;
+use crate::{AppState, GatewayError};
 
 use super::super::affinity::{build_scheduler_affinity_cache_key, candidate_affinity_hash};
-use super::super::selection::select_minimal_candidate as select_candidate;
+use super::super::selection::select_minimal_candidate as select_candidate_impl;
 use super::support::{sample_auth_snapshot, sample_key, sample_provider, sample_row};
+
+async fn select_candidate(
+    selection_row_source: &(impl MinimalCandidateSelectionRowSource + Sync),
+    runtime_state: &AppState,
+    api_format: &str,
+    global_model_name: &str,
+    require_streaming: bool,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    now_unix_secs: u64,
+) -> Result<Option<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
+    select_candidate_impl(
+        selection_row_source,
+        runtime_state,
+        api_format,
+        global_model_name,
+        require_streaming,
+        None,
+        auth_snapshot,
+        now_unix_secs,
+    )
+    .await
+}
 
 #[tokio::test]
 async fn same_priority_candidates_are_distributed_by_affinity_key() {
@@ -196,9 +222,9 @@ async fn cached_affinity_candidate_can_use_reserved_provider_key_rpm_capacity() 
             Some(9),
             None,
             None,
-            95,
-            Some(95),
-            Some(96),
+            95_000,
+            Some(95_000),
+            Some(96_000),
         )
         .expect("candidate should build"),
     ]));

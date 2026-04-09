@@ -17,7 +17,7 @@ use super::{
 fn sample_video_task(
     id: &str,
     status: VideoTaskStatus,
-    created_at_unix_secs: u64,
+    created_at_unix_ms: u64,
     model: &str,
     user_id: &str,
     client_api_format: &str,
@@ -54,20 +54,20 @@ fn sample_video_task(
         retry_count: 0,
         poll_interval_seconds: 10,
         next_poll_at_unix_secs: if status.is_active() {
-            Some(created_at_unix_secs.saturating_add(10))
+            Some(created_at_unix_ms.saturating_add(10))
         } else {
             None
         },
         poll_count: 0,
         max_poll_count: 360,
-        created_at_unix_secs,
-        submitted_at_unix_secs: Some(created_at_unix_secs),
+        created_at_unix_ms,
+        submitted_at_unix_secs: Some(created_at_unix_ms),
         completed_at_unix_secs: if matches!(status, VideoTaskStatus::Completed) {
-            Some(created_at_unix_secs.saturating_add(30))
+            Some(created_at_unix_ms.saturating_add(30))
         } else {
             None
         },
-        updated_at_unix_secs: created_at_unix_secs.saturating_add(5),
+        updated_at_unix_secs: created_at_unix_ms.saturating_add(5),
         error_code: None,
         error_message: None,
         video_url: None,
@@ -513,7 +513,7 @@ async fn gateway_cancels_openai_video_task_via_internal_async_task_endpoint() {
             "OpenAi": {
                 "local_task_id": "task-openai-cancel",
                 "upstream_task_id": "ext-video-task-123",
-                "created_at_unix_secs": 100,
+                "created_at_unix_ms": 100,
                 "user_id": "user-1",
                 "api_key_id": "api-key-task-openai-cancel",
                 "model": "sora-2",
@@ -675,7 +675,7 @@ async fn gateway_cancels_openai_video_task_via_internal_async_task_endpoint_with
             "OpenAi": {
                 "local_task_id": "task-openai-cancel-direct",
                 "upstream_task_id": "ext-video-task-123",
-                "created_at_unix_secs": 100,
+                "created_at_unix_ms": 100,
                 "user_id": "user-1",
                 "api_key_id": "api-key-task-openai-cancel",
                 "model": "sora-2",

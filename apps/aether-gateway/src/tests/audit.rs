@@ -377,7 +377,7 @@ fn sample_request_candidate(
     request_id: &str,
     candidate_index: i32,
     status: RequestCandidateStatus,
-    started_at_unix_secs: Option<i64>,
+    started_at_unix_ms: Option<i64>,
     latency_ms: Option<i32>,
     status_code: Option<i32>,
 ) -> StoredRequestCandidate {
@@ -403,9 +403,9 @@ fn sample_request_candidate(
         Some(1),
         None,
         None,
-        100 + i64::from(candidate_index),
-        started_at_unix_secs,
-        started_at_unix_secs.map(|value| value + 1),
+        (100 + i64::from(candidate_index)) * 1_000,
+        started_at_unix_ms.map(|v| v * 1_000),
+        started_at_unix_ms.map(|value| (value + 1) * 1_000),
     )
     .expect("candidate should build")
 }

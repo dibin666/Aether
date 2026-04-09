@@ -201,6 +201,8 @@ fn sample_request_candidate(
     created_at_unix_secs: i64,
     finished_at_unix_secs: Option<i64>,
 ) -> StoredRequestCandidate {
+    let created_at_unix_ms = created_at_unix_secs * 1_000;
+    let finished_at_unix_ms = finished_at_unix_secs.map(|v| v * 1_000);
     StoredRequestCandidate::new(
         id.to_string(),
         request_id.to_string(),
@@ -223,9 +225,9 @@ fn sample_request_candidate(
         Some(1),
         None,
         None,
-        created_at_unix_secs,
-        Some(created_at_unix_secs),
-        finished_at_unix_secs,
+        created_at_unix_ms,
+        Some(created_at_unix_ms),
+        finished_at_unix_ms,
     )
     .expect("request candidate should build")
 }

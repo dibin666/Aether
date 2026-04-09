@@ -6,6 +6,7 @@ use aether_data_contracts::DataLayerError;
 use base64::Engine as _;
 use serde_json::{json, Map, Value};
 
+use crate::request_metadata::{build_usage_request_metadata_seed, merge_usage_request_metadata};
 use crate::{
     map_usage_from_response, GatewayStreamReportRequest, GatewaySyncReportRequest, UsageEvent,
     UsageEventData, UsageEventType,
@@ -224,7 +225,10 @@ pub fn build_terminal_usage_event_from_outcome(
         response_body: outcome.provider_response.clone(),
         client_response_headers: outcome.client_response_headers,
         client_response_body: outcome.client_response.clone(),
-        request_metadata: merge_json_value(outcome.request_metadata, outcome.audit_payload),
+        request_metadata: merge_usage_request_metadata(
+            outcome.request_metadata,
+            outcome.audit_payload,
+        ),
         ..UsageEventData::default()
     };
 
@@ -323,19 +327,7 @@ fn build_terminal_usage_outcome_base(
         provider_response: provider_response.clone(),
         client_response_headers,
         client_response,
-        request_metadata: Some(Value::Object(Map::from_iter([
-            (
-                "request_id".to_string(),
-                Value::String(plan.request_id.clone()),
-            ),
-            (
-                "candidate_id".to_string(),
-                plan.candidate_id
-                    .clone()
-                    .map(Value::String)
-                    .unwrap_or(Value::Null),
-            ),
-        ]))),
+        request_metadata: build_usage_request_metadata_seed(plan, context),
         audit_payload: report_context.cloned(),
     }
 }
@@ -440,7 +432,7 @@ fn build_upsert_usage_record(
         client_response_body: data.client_response_body,
         request_metadata: data.request_metadata,
         finalized_at_unix_secs,
-        created_at_unix_secs: Some(updated_at_unix_secs),
+        created_at_unix_ms: Some(updated_at_unix_secs),
         updated_at_unix_secs,
     })
 }
@@ -458,23 +450,6 @@ fn build_base_usage_data(plan: &ExecutionPlan, report_context: Option<&Value>) -
         .or_else(|| plan.provider_name.clone())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "unknown".to_string());
-    let mut request_metadata = Map::from_iter([
-        (
-            "request_id".to_string(),
-            Value::String(plan.request_id.clone()),
-        ),
-        (
-            "candidate_id".to_string(),
-            plan.candidate_id
-                .clone()
-                .map(Value::String)
-                .unwrap_or(Value::Null),
-        ),
-    ]);
-    if let Some(key_name) = context_string(context, "key_name") {
-        request_metadata.insert("key_name".to_string(), Value::String(key_name));
-    }
-
     UsageEventData {
         user_id: context_string(context, "user_id"),
         api_key_id: context_string(context, "api_key_id"),
@@ -517,7 +492,7 @@ fn build_base_usage_data(plan: &ExecutionPlan, report_context: Option<&Value>) -
             .or_else(|| Some(headers_to_json(&plan.headers))),
         provider_request_body: context_value(context, "provider_request_body")
             .or_else(|| plan.body.json_body.clone()),
-        request_metadata: Some(Value::Object(request_metadata)),
+        request_metadata: build_usage_request_metadata_seed(plan, context),
         ..UsageEventData::default()
     }
 }

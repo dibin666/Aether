@@ -86,8 +86,8 @@ impl AppState {
                 .collect::<Vec<_>>();
             items.sort_by(|left, right| {
                 right
-                    .created_at_unix_secs
-                    .cmp(&left.created_at_unix_secs)
+                    .created_at_unix_ms
+                    .cmp(&left.created_at_unix_ms)
                     .then_with(|| right.id.cmp(&left.id))
             });
             let total = items.len() as u64;
@@ -137,8 +137,8 @@ impl AppState {
                 .collect::<Vec<_>>();
             items.sort_by(|left, right| {
                 right
-                    .created_at_unix_secs
-                    .cmp(&left.created_at_unix_secs)
+                    .created_at_unix_ms
+                    .cmp(&left.created_at_unix_ms)
                     .then_with(|| right.id.cmp(&left.id))
             });
             let total = items.len() as u64;
@@ -182,8 +182,8 @@ impl AppState {
                 .collect::<Vec<_>>();
             items.sort_by(|left, right| {
                 right
-                    .created_at_unix_secs
-                    .cmp(&left.created_at_unix_secs)
+                    .created_at_unix_ms
+                    .cmp(&left.created_at_unix_ms)
                     .then_with(|| right.id.cmp(&left.id))
             });
             let total = items.len() as u64;
@@ -209,7 +209,7 @@ impl AppState {
                     operator_name: None,
                     operator_email: None,
                     description: record.description,
-                    created_at_unix_secs: Some(record.created_at_unix_secs),
+                    created_at_unix_ms: Some(record.created_at_unix_ms),
                 })
                 .collect::<Vec<_>>();
             return Ok((items, total));
@@ -240,8 +240,8 @@ impl AppState {
                 .collect::<Vec<_>>();
             items.sort_by(|left, right| {
                 right
-                    .created_at_unix_secs
-                    .cmp(&left.created_at_unix_secs)
+                    .created_at_unix_ms
+                    .cmp(&left.created_at_unix_ms)
                     .then_with(|| right.id.cmp(&left.id))
             });
             let total = items.len() as u64;
@@ -296,8 +296,8 @@ impl AppState {
                 .collect::<Vec<_>>();
             items.sort_by(|left, right| {
                 right
-                    .created_at_unix_secs
-                    .cmp(&left.created_at_unix_secs)
+                    .created_at_unix_ms
+                    .cmp(&left.created_at_unix_ms)
                     .then_with(|| right.id.cmp(&left.id))
             });
             let total = items.len() as u64;
@@ -332,7 +332,7 @@ impl AppState {
                             wallet_api_key_id: wallet.api_key_id.clone(),
                             api_key_name: None,
                             wallet_status: wallet.status.clone(),
-                            created_at_unix_secs: Some(refund.created_at_unix_secs),
+                            created_at_unix_ms: Some(refund.created_at_unix_ms),
                             updated_at_unix_secs: Some(refund.updated_at_unix_secs),
                             processed_at_unix_secs: refund.processed_at_unix_secs,
                             completed_at_unix_secs: refund.completed_at_unix_secs,
@@ -406,7 +406,7 @@ fn stored_admin_payment_order_to_gateway(
         gateway_order_id: record.gateway_order_id,
         status: record.status,
         gateway_response: record.gateway_response,
-        created_at_unix_secs: record.created_at_unix_secs,
+        created_at_unix_ms: record.created_at_unix_ms,
         paid_at_unix_secs: record.paid_at_unix_secs,
         credited_at_unix_secs: record.credited_at_unix_secs,
         expires_at_unix_secs: record.expires_at_unix_secs,
@@ -428,7 +428,7 @@ fn stored_admin_payment_callback_to_gateway(
         status: record.status,
         payload: record.payload,
         error_message: record.error_message,
-        created_at_unix_secs: record.created_at_unix_secs,
+        created_at_unix_ms: record.created_at_unix_ms,
         processed_at_unix_secs: record.processed_at_unix_secs,
     }
 }
@@ -456,7 +456,7 @@ fn stored_admin_wallet_refund_to_gateway(
         requested_by: record.requested_by,
         approved_by: record.approved_by,
         processed_by: record.processed_by,
-        created_at_unix_secs: record.created_at_unix_secs,
+        created_at_unix_ms: record.created_at_unix_ms,
         updated_at_unix_secs: record.updated_at_unix_secs,
         processed_at_unix_secs: record.processed_at_unix_secs,
         completed_at_unix_secs: record.completed_at_unix_secs,

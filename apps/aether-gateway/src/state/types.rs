@@ -315,7 +315,7 @@ pub(crate) struct GatewayAdminPaymentCallbackView {
     pub(crate) status: String,
     pub(crate) payload: Option<serde_json::Value>,
     pub(crate) error_message: Option<String>,
-    pub(crate) created_at_unix_secs: u64,
+    pub(crate) created_at_unix_ms: u64,
     pub(crate) processed_at_unix_secs: Option<u64>,
 }
 
@@ -333,7 +333,7 @@ impl From<super::AdminPaymentCallbackRecord> for GatewayAdminPaymentCallbackView
             status: value.status,
             payload: value.payload,
             error_message: value.error_message,
-            created_at_unix_secs: value.created_at_unix_secs,
+            created_at_unix_ms: value.created_at_unix_ms,
             processed_at_unix_secs: value.processed_at_unix_secs,
         }
     }

@@ -31,9 +31,9 @@ pub struct SchedulerResolvedReportRequestCandidateSlot {
     pub endpoint_id: Option<String>,
     pub key_id: Option<String>,
     pub extra_data: Option<Value>,
-    pub created_at_unix_secs: u64,
-    pub started_at_unix_secs: Option<u64>,
-    pub finished_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: u64,
+    pub started_at_unix_ms: Option<u64>,
+    pub finished_at_unix_ms: Option<u64>,
 }
 
 pub struct SchedulerExecutionRequestCandidateSeed {
@@ -48,8 +48,8 @@ pub struct SchedulerRequestCandidateStatusUpdate {
     pub error_type: Option<String>,
     pub error_message: Option<String>,
     pub latency_ms: Option<u64>,
-    pub started_at_unix_secs: Option<u64>,
-    pub finished_at_unix_secs: Option<u64>,
+    pub started_at_unix_ms: Option<u64>,
+    pub finished_at_unix_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -63,7 +63,7 @@ pub struct LocalRequestCandidateStatusRecordInput<'a> {
 pub struct ReportRequestCandidateStatusRecordInput {
     pub slot: SchedulerResolvedReportRequestCandidateSlot,
     pub status_update: SchedulerRequestCandidateStatusUpdate,
-    pub now_unix_secs: u64,
+    pub now_unix_ms: u64,
 }
 
 pub fn execution_error_details(
@@ -115,16 +115,16 @@ pub fn parse_request_candidate_report_context(
 pub fn resolve_report_request_candidate_slot(
     existing_candidates: &[StoredRequestCandidate],
     metadata: SchedulerRequestCandidateReportContext,
-    now_unix_secs: u64,
+    now_unix_ms: u64,
     generated_candidate_id: String,
 ) -> Option<SchedulerResolvedReportRequestCandidateSlot> {
     let request_id = metadata.request_id.clone()?;
     let matched_candidate = match_existing_report_candidate(existing_candidates, &metadata);
     let synthesized_extra_data = build_report_candidate_extra_data(&metadata);
-    let created_at_unix_secs = matched_candidate
+    let created_at_unix_ms = matched_candidate
         .as_ref()
-        .map(|candidate| candidate.created_at_unix_secs)
-        .unwrap_or(now_unix_secs);
+        .map(|candidate| candidate.created_at_unix_ms)
+        .unwrap_or(now_unix_ms);
     let candidate_index = matched_candidate
         .as_ref()
         .map(|candidate| candidate.candidate_index)
@@ -168,20 +168,20 @@ pub fn resolve_report_request_candidate_slot(
             .as_ref()
             .and_then(|candidate| candidate.extra_data.clone())
             .or(synthesized_extra_data),
-        created_at_unix_secs,
-        started_at_unix_secs: matched_candidate
+        created_at_unix_ms,
+        started_at_unix_ms: matched_candidate
             .as_ref()
-            .and_then(|candidate| candidate.started_at_unix_secs),
-        finished_at_unix_secs: matched_candidate
+            .and_then(|candidate| candidate.started_at_unix_ms),
+        finished_at_unix_ms: matched_candidate
             .as_ref()
-            .and_then(|candidate| candidate.finished_at_unix_secs),
+            .and_then(|candidate| candidate.finished_at_unix_ms),
     })
 }
 
 pub fn build_execution_request_candidate_seed(
     plan: &ExecutionPlan,
     report_context: Option<&Value>,
-    started_at_unix_secs: u64,
+    started_at_unix_ms: u64,
     generated_candidate_id: String,
 ) -> SchedulerExecutionRequestCandidateSeed {
     let mut context = report_context
@@ -247,9 +247,9 @@ pub fn build_execution_request_candidate_seed(
             concurrent_requests: None,
             extra_data: None,
             required_capabilities: None,
-            created_at_unix_secs: Some(started_at_unix_secs),
-            started_at_unix_secs: Some(started_at_unix_secs),
-            finished_at_unix_secs: None,
+            created_at_unix_ms: Some(started_at_unix_ms),
+            started_at_unix_ms: Some(started_at_unix_ms),
+            finished_at_unix_ms: None,
         },
         report_context: Value::Object(context),
     }
@@ -269,8 +269,8 @@ pub fn build_local_request_candidate_status_record(
         error_type,
         error_message,
         latency_ms,
-        started_at_unix_secs,
-        finished_at_unix_secs,
+        started_at_unix_ms,
+        finished_at_unix_ms,
     } = status_update;
 
     let candidate_id = plan
@@ -303,9 +303,9 @@ pub fn build_local_request_candidate_status_record(
         concurrent_requests: None,
         extra_data: None,
         required_capabilities: None,
-        created_at_unix_secs: None,
-        started_at_unix_secs,
-        finished_at_unix_secs,
+        created_at_unix_ms: None,
+        started_at_unix_ms,
+        finished_at_unix_ms,
     })
 }
 
@@ -315,7 +315,7 @@ pub fn build_report_request_candidate_status_record(
     let ReportRequestCandidateStatusRecordInput {
         slot,
         status_update,
-        now_unix_secs,
+        now_unix_ms,
     } = input;
     let SchedulerRequestCandidateStatusUpdate {
         status,
@@ -323,16 +323,16 @@ pub fn build_report_request_candidate_status_record(
         error_type,
         error_message,
         latency_ms,
-        started_at_unix_secs,
-        finished_at_unix_secs,
+        started_at_unix_ms,
+        finished_at_unix_ms,
     } = status_update;
 
-    let terminal_unix_secs = finished_at_unix_secs.unwrap_or(now_unix_secs);
-    let started_at_unix_secs = started_at_unix_secs
-        .or(slot.started_at_unix_secs)
+    let terminal_unix_secs = finished_at_unix_ms.unwrap_or(now_unix_ms);
+    let started_at_unix_ms = started_at_unix_ms
+        .or(slot.started_at_unix_ms)
         .or_else(|| status.is_attempted(None).then_some(terminal_unix_secs));
-    let finished_at_unix_secs = finished_at_unix_secs
-        .or(slot.finished_at_unix_secs)
+    let finished_at_unix_ms = finished_at_unix_ms
+        .or(slot.finished_at_unix_ms)
         .or_else(|| is_terminal_candidate_status(status).then_some(terminal_unix_secs));
 
     UpsertRequestCandidateRecord {
@@ -357,9 +357,9 @@ pub fn build_report_request_candidate_status_record(
         concurrent_requests: None,
         extra_data: slot.extra_data,
         required_capabilities: None,
-        created_at_unix_secs: Some(slot.created_at_unix_secs),
-        started_at_unix_secs,
-        finished_at_unix_secs,
+        created_at_unix_ms: Some(slot.created_at_unix_ms),
+        started_at_unix_ms,
+        finished_at_unix_ms,
     }
 }
 
@@ -443,7 +443,7 @@ fn match_existing_report_candidate<'a>(
             (
                 candidate.retry_index,
                 candidate.candidate_index,
-                candidate.created_at_unix_secs,
+                candidate.created_at_unix_ms,
             )
         })
 }
@@ -524,8 +524,8 @@ mod tests {
             None,
             None,
             None,
-            100,
-            Some(110),
+            100_000,
+            Some(110_000),
             None,
         )
         .expect("candidate should build")
@@ -660,8 +660,8 @@ mod tests {
                     error_type: Some("Upstream5xx".to_string()),
                     error_message: Some("boom".to_string()),
                     latency_ms: Some(42),
-                    started_at_unix_secs: Some(100),
-                    finished_at_unix_secs: Some(101),
+                    started_at_unix_ms: Some(100),
+                    finished_at_unix_ms: Some(101),
                 },
             })
             .expect("record should build");
@@ -688,9 +688,9 @@ mod tests {
                     endpoint_id: Some("endpoint-1".to_string()),
                     key_id: Some("key-1".to_string()),
                     extra_data: None,
-                    created_at_unix_secs: 10,
-                    started_at_unix_secs: None,
-                    finished_at_unix_secs: None,
+                    created_at_unix_ms: 10,
+                    started_at_unix_ms: None,
+                    finished_at_unix_ms: None,
                 },
                 status_update: SchedulerRequestCandidateStatusUpdate {
                     status: RequestCandidateStatus::Success,
@@ -698,15 +698,15 @@ mod tests {
                     error_type: None,
                     error_message: None,
                     latency_ms: Some(12),
-                    started_at_unix_secs: None,
-                    finished_at_unix_secs: None,
+                    started_at_unix_ms: None,
+                    finished_at_unix_ms: None,
                 },
-                now_unix_secs: 123,
+                now_unix_ms: 123,
             });
 
-        assert_eq!(record.started_at_unix_secs, Some(123));
-        assert_eq!(record.finished_at_unix_secs, Some(123));
-        assert_eq!(record.created_at_unix_secs, Some(10));
+        assert_eq!(record.started_at_unix_ms, Some(123));
+        assert_eq!(record.finished_at_unix_ms, Some(123));
+        assert_eq!(record.created_at_unix_ms, Some(10));
         assert_eq!(record.status, RequestCandidateStatus::Success);
     }
 }

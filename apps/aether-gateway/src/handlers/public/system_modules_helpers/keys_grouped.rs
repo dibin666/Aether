@@ -156,7 +156,7 @@ pub(crate) async fn build_admin_keys_grouped_by_format_payload(
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
                 "last_used_at": key.last_used_at_unix_secs.and_then(unix_secs_to_rfc3339),
-                "created_at": unix_secs_to_rfc3339(key.created_at_unix_secs.unwrap_or(now_unix_secs)),
+                "created_at": unix_secs_to_rfc3339(key.created_at_unix_ms.unwrap_or(now_unix_secs)),
                 "updated_at": unix_secs_to_rfc3339(key.updated_at_unix_secs.unwrap_or(now_unix_secs)),
             }));
         }

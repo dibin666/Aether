@@ -1,25 +1,83 @@
-use aether_contracts::ExecutionResult;
+use std::collections::BTreeSet;
 
-fn is_local_candidate_attempt(report_context: Option<&serde_json::Value>) -> bool {
+use aether_contracts::{ExecutionPlan, ExecutionResult};
+use regex::Regex;
+
+use crate::AppState;
+
+fn local_candidate_index(report_context: Option<&serde_json::Value>) -> Option<u64> {
     report_context
         .and_then(serde_json::Value::as_object)
         .and_then(|context| context.get("candidate_index"))
         .and_then(serde_json::Value::as_u64)
-        .is_some()
 }
 
 fn is_retryable_local_upstream_status(status_code: u16) -> bool {
     status_code == 429 || status_code >= 500
 }
 
-pub(crate) fn should_retry_next_local_candidate_sync(
-    plan_kind: &str,
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct LocalFailoverPolicy {
+    max_retries: Option<u64>,
+    stop_status_codes: BTreeSet<u16>,
+    continue_status_codes: BTreeSet<u16>,
+    success_failover_patterns: Vec<LocalFailoverRegexRule>,
+    error_stop_patterns: Vec<LocalFailoverRegexRule>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalFailoverRegexRule {
+    pattern: String,
+    status_codes: BTreeSet<u16>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalFailoverDecision {
+    UseDefault,
+    RetryNextCandidate,
+    StopLocalFailover,
+}
+
+pub(crate) async fn should_retry_next_local_candidate_sync(
+    state: &AppState,
+    plan: &ExecutionPlan,
+    _plan_kind: &str,
     report_context: Option<&serde_json::Value>,
     result: &ExecutionResult,
+    response_text: Option<&str>,
 ) -> bool {
-    is_local_candidate_attempt(report_context)
-        && plan_kind == "openai_chat_sync"
-        && is_retryable_local_upstream_status(result.status_code)
+    matches!(
+        resolve_local_failover_decision(
+            state,
+            plan,
+            report_context,
+            result.status_code,
+            response_text,
+        )
+        .await,
+        LocalFailoverDecision::RetryNextCandidate
+    )
+}
+
+pub(crate) async fn should_stop_local_candidate_failover_sync(
+    state: &AppState,
+    plan: &ExecutionPlan,
+    _plan_kind: &str,
+    report_context: Option<&serde_json::Value>,
+    result: &ExecutionResult,
+    response_text: Option<&str>,
+) -> bool {
+    matches!(
+        resolve_local_failover_decision(
+            state,
+            plan,
+            report_context,
+            result.status_code,
+            response_text,
+        )
+        .await,
+        LocalFailoverDecision::StopLocalFailover
+    )
 }
 
 pub(crate) fn should_fallback_to_control_sync(
@@ -102,14 +160,245 @@ pub(crate) fn resolve_core_sync_error_finalize_report_kind(
     Some(report_kind.to_string())
 }
 
-pub(crate) fn should_retry_next_local_candidate_stream(
-    plan_kind: &str,
+pub(crate) async fn should_retry_next_local_candidate_stream(
+    state: &AppState,
+    plan: &ExecutionPlan,
+    _plan_kind: &str,
     report_context: Option<&serde_json::Value>,
     status_code: u16,
+    response_text: Option<&str>,
 ) -> bool {
-    is_local_candidate_attempt(report_context)
-        && plan_kind == "openai_chat_stream"
-        && is_retryable_local_upstream_status(status_code)
+    matches!(
+        resolve_local_failover_decision(state, plan, report_context, status_code, response_text)
+            .await,
+        LocalFailoverDecision::RetryNextCandidate
+    )
+}
+
+pub(crate) async fn should_stop_local_candidate_failover_stream(
+    state: &AppState,
+    plan: &ExecutionPlan,
+    _plan_kind: &str,
+    report_context: Option<&serde_json::Value>,
+    status_code: u16,
+    response_text: Option<&str>,
+) -> bool {
+    matches!(
+        resolve_local_failover_decision(state, plan, report_context, status_code, response_text)
+            .await,
+        LocalFailoverDecision::StopLocalFailover
+    )
+}
+
+pub(crate) fn local_failover_response_text(
+    body_json: Option<&serde_json::Value>,
+    body_bytes: &[u8],
+    fallback_text: Option<&str>,
+) -> Option<String> {
+    if let Some(body_json) = body_json {
+        return serde_json::to_string(body_json).ok();
+    }
+    if !body_bytes.is_empty() {
+        return Some(String::from_utf8_lossy(body_bytes).into_owned());
+    }
+    fallback_text
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+async fn resolve_local_failover_decision(
+    state: &AppState,
+    plan: &ExecutionPlan,
+    report_context: Option<&serde_json::Value>,
+    status_code: u16,
+    response_text: Option<&str>,
+) -> LocalFailoverDecision {
+    let Some(candidate_index) = local_candidate_index(report_context) else {
+        return LocalFailoverDecision::UseDefault;
+    };
+    let policy = resolve_local_failover_policy(state, plan).await;
+    let response_text = response_text
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if policy.stop_status_codes.contains(&status_code) {
+        return LocalFailoverDecision::StopLocalFailover;
+    }
+
+    if status_code >= 400
+        && response_text.is_some_and(|text| {
+            policy
+                .error_stop_patterns
+                .iter()
+                .any(|rule| local_failover_regex_rule_matches(rule, text, status_code))
+        })
+    {
+        return LocalFailoverDecision::StopLocalFailover;
+    }
+
+    if policy
+        .max_retries
+        .is_some_and(|max_retries| candidate_index >= max_retries)
+    {
+        return LocalFailoverDecision::UseDefault;
+    }
+
+    if status_code == 200
+        && response_text.is_some_and(|text| {
+            policy
+                .success_failover_patterns
+                .iter()
+                .any(|rule| local_failover_regex_rule_matches(rule, text, status_code))
+        })
+    {
+        return LocalFailoverDecision::RetryNextCandidate;
+    }
+
+    if policy.continue_status_codes.contains(&status_code) {
+        return LocalFailoverDecision::RetryNextCandidate;
+    }
+
+    if is_retryable_local_upstream_status(status_code) {
+        return LocalFailoverDecision::RetryNextCandidate;
+    }
+
+    LocalFailoverDecision::UseDefault
+}
+
+async fn resolve_local_failover_policy(
+    state: &AppState,
+    plan: &ExecutionPlan,
+) -> LocalFailoverPolicy {
+    let transport = match state
+        .read_provider_transport_snapshot(&plan.provider_id, &plan.endpoint_id, &plan.key_id)
+        .await
+    {
+        Ok(Some(transport)) => transport,
+        Ok(None) | Err(_) => return LocalFailoverPolicy::default(),
+    };
+
+    let rules = transport
+        .provider
+        .config
+        .as_ref()
+        .and_then(|config| config.get("failover_rules"))
+        .and_then(serde_json::Value::as_object);
+    let max_retries = rules
+        .and_then(|value| value.get("max_retries"))
+        .and_then(parse_u64_value)
+        .or_else(|| {
+            transport
+                .endpoint
+                .max_retries
+                .and_then(|value| u64::try_from(value).ok())
+        })
+        .or_else(|| {
+            transport
+                .provider
+                .max_retries
+                .and_then(|value| u64::try_from(value).ok())
+        });
+
+    LocalFailoverPolicy {
+        max_retries,
+        stop_status_codes: rules
+            .map(|value| {
+                parse_status_code_set(
+                    value,
+                    &[
+                        "stop_on_status_codes",
+                        "early_stop_status_codes",
+                        "non_retryable_status_codes",
+                        "stop_status_codes",
+                    ],
+                )
+            })
+            .unwrap_or_default(),
+        continue_status_codes: rules
+            .map(|value| {
+                parse_status_code_set(
+                    value,
+                    &[
+                        "continue_on_status_codes",
+                        "retryable_status_codes",
+                        "retry_on_status_codes",
+                        "continue_status_codes",
+                    ],
+                )
+            })
+            .unwrap_or_default(),
+        success_failover_patterns: rules
+            .map(|value| parse_regex_rules(value, "success_failover_patterns"))
+            .unwrap_or_default(),
+        error_stop_patterns: rules
+            .map(|value| parse_regex_rules(value, "error_stop_patterns"))
+            .unwrap_or_default(),
+    }
+}
+
+fn parse_regex_rules(
+    rules: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Vec<LocalFailoverRegexRule> {
+    rules
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flat_map(|items| items.iter())
+        .filter_map(parse_regex_rule)
+        .collect()
+}
+
+fn parse_regex_rule(value: &serde_json::Value) -> Option<LocalFailoverRegexRule> {
+    let object = value.as_object()?;
+    let pattern = object
+        .get("pattern")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    Some(LocalFailoverRegexRule {
+        pattern: pattern.to_string(),
+        status_codes: object
+            .get("status_codes")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flat_map(|values| values.iter())
+            .filter_map(|value| parse_u64_value(value).and_then(|value| u16::try_from(value).ok()))
+            .collect(),
+    })
+}
+
+fn local_failover_regex_rule_matches(
+    rule: &LocalFailoverRegexRule,
+    response_text: &str,
+    status_code: u16,
+) -> bool {
+    if !rule.status_codes.is_empty() && !rule.status_codes.contains(&status_code) {
+        return false;
+    }
+
+    Regex::new(&rule.pattern)
+        .ok()
+        .is_some_and(|regex| regex.is_match(response_text))
+}
+
+fn parse_status_code_set(
+    rules: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> BTreeSet<u16> {
+    keys.iter()
+        .filter_map(|key| rules.get(*key))
+        .filter_map(serde_json::Value::as_array)
+        .flat_map(|values| values.iter())
+        .filter_map(|value| parse_u64_value(value).and_then(|value| u16::try_from(value).ok()))
+        .collect()
+}
+
+fn parse_u64_value(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|value| u64::try_from(value).ok()))
 }
 
 pub(crate) fn should_fallback_to_control_stream(
@@ -172,14 +461,121 @@ pub(crate) fn resolve_core_stream_direct_finalize_report_kind(plan_kind: &str) -
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use aether_contracts::ExecutionResult;
+    use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+    use aether_data_contracts::repository::provider_catalog::{
+        StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
+    };
 
     use super::{
         resolve_core_stream_error_finalize_report_kind,
-        resolve_core_sync_error_finalize_report_kind, should_fallback_to_control_stream,
-        should_fallback_to_control_sync, should_retry_next_local_candidate_stream,
-        should_retry_next_local_candidate_sync,
+        resolve_core_sync_error_finalize_report_kind, resolve_local_failover_policy,
+        should_fallback_to_control_stream, should_fallback_to_control_sync,
+        should_retry_next_local_candidate_stream, should_retry_next_local_candidate_sync,
+        should_stop_local_candidate_failover_stream, should_stop_local_candidate_failover_sync,
+        LocalFailoverPolicy, LocalFailoverRegexRule,
     };
+    use crate::data::GatewayDataState;
+    use crate::AppState;
+
+    fn sample_plan() -> aether_contracts::ExecutionPlan {
+        aether_contracts::ExecutionPlan {
+            request_id: "req-1".to_string(),
+            candidate_id: Some("cand-1".to_string()),
+            provider_name: Some("provider-1".to_string()),
+            provider_id: "provider-1".to_string(),
+            endpoint_id: "endpoint-1".to_string(),
+            key_id: "key-1".to_string(),
+            method: "POST".to_string(),
+            url: "https://example.com/v1/chat/completions".to_string(),
+            headers: Default::default(),
+            content_type: Some("application/json".to_string()),
+            content_encoding: None,
+            body: aether_contracts::RequestBody::from_json(serde_json::json!({"model":"gpt-5"})),
+            stream: false,
+            client_api_format: "openai:chat".to_string(),
+            provider_api_format: "openai:chat".to_string(),
+            model_name: Some("gpt-5".to_string()),
+            proxy: None,
+            tls_profile: None,
+            timeouts: None,
+        }
+    }
+
+    fn sample_provider(config: Option<serde_json::Value>) -> StoredProviderCatalogProvider {
+        StoredProviderCatalogProvider::new(
+            "provider-1".to_string(),
+            "provider-1".to_string(),
+            Some("https://provider.example".to_string()),
+            "custom".to_string(),
+        )
+        .expect("provider should build")
+        .with_transport_fields(true, false, false, None, Some(3), None, None, None, config)
+    }
+
+    fn sample_endpoint() -> StoredProviderCatalogEndpoint {
+        StoredProviderCatalogEndpoint::new(
+            "endpoint-1".to_string(),
+            "provider-1".to_string(),
+            "openai:chat".to_string(),
+            Some("openai".to_string()),
+            Some("chat".to_string()),
+            true,
+        )
+        .expect("endpoint should build")
+        .with_transport_fields(
+            "https://api.provider.example".to_string(),
+            None,
+            None,
+            Some(2),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("endpoint transport should build")
+    }
+
+    fn sample_key() -> StoredProviderCatalogKey {
+        StoredProviderCatalogKey::new(
+            "key-1".to_string(),
+            "provider-1".to_string(),
+            "key-1".to_string(),
+            "api_key".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build")
+        .with_transport_fields(
+            Some(serde_json::json!(["openai:chat"])),
+            "plain-upstream-key".to_string(),
+            None,
+            None,
+            Some(serde_json::json!({"openai:chat": 1})),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("key transport should build")
+    }
+
+    fn build_state_with_provider_config(config: Option<serde_json::Value>) -> AppState {
+        let provider_catalog = InMemoryProviderCatalogReadRepository::seed(
+            vec![sample_provider(config)],
+            vec![sample_endpoint()],
+            vec![sample_key()],
+        );
+        let data_state = GatewayDataState::with_provider_transport_reader_for_tests(
+            std::sync::Arc::new(provider_catalog),
+            "development-key",
+        );
+        AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data_state)
+    }
 
     #[test]
     fn sync_failover_marks_chat_errors() {
@@ -220,8 +616,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn sync_retry_next_candidate_is_local_openai_chat_only() {
+    #[tokio::test]
+    async fn sync_retry_next_candidate_requires_local_candidate_context() {
         let result = ExecutionResult {
             request_id: "req-1".to_string(),
             candidate_id: None,
@@ -235,26 +631,57 @@ mod tests {
             "candidate_index": 0,
             "retry_index": 0,
         });
+        let state = build_state_with_provider_config(None);
+        let plan = sample_plan();
 
-        assert!(should_retry_next_local_candidate_sync(
-            "openai_chat_sync",
-            Some(&local_report_context),
-            &result,
-        ));
-        assert!(!should_retry_next_local_candidate_sync(
-            "openai_chat_sync",
-            None,
-            &result,
-        ));
-        assert!(!should_retry_next_local_candidate_sync(
-            "claude_chat_sync",
-            None,
-            &result,
-        ));
+        assert!(
+            should_retry_next_local_candidate_sync(
+                &state,
+                &plan,
+                "openai_chat_sync",
+                Some(&local_report_context),
+                &result,
+                None,
+            )
+            .await
+        );
+        assert!(
+            should_retry_next_local_candidate_sync(
+                &state,
+                &plan,
+                "claude_cli_sync",
+                Some(&local_report_context),
+                &result,
+                None,
+            )
+            .await
+        );
+        assert!(
+            !should_retry_next_local_candidate_sync(
+                &state,
+                &plan,
+                "openai_chat_sync",
+                None,
+                &result,
+                None,
+            )
+            .await
+        );
+        assert!(
+            !should_retry_next_local_candidate_sync(
+                &state,
+                &plan,
+                "claude_chat_sync",
+                None,
+                &result,
+                None,
+            )
+            .await
+        );
     }
 
-    #[test]
-    fn sync_retry_next_candidate_treats_rate_limit_as_retryable() {
+    #[tokio::test]
+    async fn sync_retry_next_candidate_treats_rate_limit_as_retryable() {
         let result = ExecutionResult {
             request_id: "req-1".to_string(),
             candidate_id: None,
@@ -268,49 +695,304 @@ mod tests {
             "candidate_index": 0,
             "retry_index": 0,
         });
+        let state = build_state_with_provider_config(None);
+        let plan = sample_plan();
 
-        assert!(should_retry_next_local_candidate_sync(
-            "openai_chat_sync",
-            Some(&local_report_context),
-            &result,
-        ));
+        assert!(
+            should_retry_next_local_candidate_sync(
+                &state,
+                &plan,
+                "openai_chat_sync",
+                Some(&local_report_context),
+                &result,
+                None,
+            )
+            .await
+        );
     }
 
-    #[test]
-    fn stream_retry_next_candidate_is_local_openai_chat_only() {
+    #[tokio::test]
+    async fn stream_retry_next_candidate_requires_local_candidate_context() {
         let local_report_context = serde_json::json!({
             "candidate_index": 0,
             "retry_index": 0,
         });
+        let state = build_state_with_provider_config(None);
+        let plan = sample_plan();
 
-        assert!(should_retry_next_local_candidate_stream(
-            "openai_chat_stream",
-            Some(&local_report_context),
-            502,
-        ));
-        assert!(!should_retry_next_local_candidate_stream(
-            "openai_chat_stream",
-            None,
-            502,
-        ));
-        assert!(!should_retry_next_local_candidate_stream(
-            "claude_chat_stream",
-            Some(&local_report_context),
-            502,
-        ));
+        assert!(
+            should_retry_next_local_candidate_stream(
+                &state,
+                &plan,
+                "openai_chat_stream",
+                Some(&local_report_context),
+                502,
+                None,
+            )
+            .await
+        );
+        assert!(
+            should_retry_next_local_candidate_stream(
+                &state,
+                &plan,
+                "gemini_cli_stream",
+                Some(&local_report_context),
+                502,
+                None,
+            )
+            .await
+        );
+        assert!(
+            !should_retry_next_local_candidate_stream(
+                &state,
+                &plan,
+                "openai_chat_stream",
+                None,
+                502,
+                None,
+            )
+            .await
+        );
+        assert!(
+            !should_retry_next_local_candidate_stream(
+                &state,
+                &plan,
+                "claude_chat_stream",
+                None,
+                502,
+                None,
+            )
+            .await
+        );
     }
 
-    #[test]
-    fn stream_retry_next_candidate_treats_rate_limit_as_retryable() {
+    #[tokio::test]
+    async fn stream_retry_next_candidate_treats_rate_limit_as_retryable() {
         let local_report_context = serde_json::json!({
             "candidate_index": 0,
             "retry_index": 0,
         });
+        let state = build_state_with_provider_config(None);
+        let plan = sample_plan();
 
-        assert!(should_retry_next_local_candidate_stream(
-            "openai_chat_stream",
-            Some(&local_report_context),
-            429,
-        ));
+        assert!(
+            should_retry_next_local_candidate_stream(
+                &state,
+                &plan,
+                "openai_chat_stream",
+                Some(&local_report_context),
+                429,
+                None,
+            )
+            .await
+        );
+    }
+
+    #[test]
+    fn resolve_local_failover_policy_reads_provider_rules() {
+        let state = build_state_with_provider_config(Some(serde_json::json!({
+            "failover_rules": {
+                "max_retries": 1,
+                "stop_on_status_codes": [503],
+                "continue_on_status_codes": [409, 429]
+            }
+        })));
+        let plan = sample_plan();
+        let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+
+        let policy = runtime.block_on(resolve_local_failover_policy(&state, &plan));
+        assert_eq!(
+            policy,
+            LocalFailoverPolicy {
+                max_retries: Some(1),
+                stop_status_codes: [503].into_iter().collect(),
+                continue_status_codes: [409, 429].into_iter().collect(),
+                success_failover_patterns: Vec::new(),
+                error_stop_patterns: Vec::new(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn local_failover_policy_can_stop_retryable_statuses_and_continue_non_retryable_statuses()
+    {
+        let state = build_state_with_provider_config(Some(serde_json::json!({
+            "failover_rules": {
+                "max_retries": 2,
+                "stop_on_status_codes": [503],
+                "continue_on_status_codes": [409]
+            }
+        })));
+        let plan = sample_plan();
+        let first_candidate = serde_json::json!({
+            "candidate_index": 0,
+            "retry_index": 0,
+        });
+        let third_candidate = serde_json::json!({
+            "candidate_index": 2,
+            "retry_index": 0,
+        });
+
+        assert!(
+            !should_retry_next_local_candidate_stream(
+                &state,
+                &plan,
+                "openai_chat_stream",
+                Some(&first_candidate),
+                503,
+                None,
+            )
+            .await
+        );
+        assert!(
+            should_stop_local_candidate_failover_stream(
+                &state,
+                &plan,
+                "openai_chat_stream",
+                Some(&first_candidate),
+                503,
+                None,
+            )
+            .await
+        );
+        assert!(
+            should_retry_next_local_candidate_stream(
+                &state,
+                &plan,
+                "openai_chat_stream",
+                Some(&first_candidate),
+                409,
+                None,
+            )
+            .await
+        );
+        assert!(
+            !should_retry_next_local_candidate_stream(
+                &state,
+                &plan,
+                "openai_chat_stream",
+                Some(&third_candidate),
+                429,
+                None,
+            )
+            .await
+        );
+    }
+
+    #[test]
+    fn resolve_local_failover_policy_reads_regex_rules() {
+        let state = build_state_with_provider_config(Some(serde_json::json!({
+            "failover_rules": {
+                "success_failover_patterns": [
+                    {"pattern": "relay:.*格式错误"}
+                ],
+                "error_stop_patterns": [
+                    {"pattern": "content_policy_violation", "status_codes": [400, 403]}
+                ]
+            }
+        })));
+        let plan = sample_plan();
+        let runtime = tokio::runtime::Runtime::new().expect("runtime should build");
+
+        let policy = runtime.block_on(resolve_local_failover_policy(&state, &plan));
+        assert_eq!(
+            policy.success_failover_patterns,
+            vec![LocalFailoverRegexRule {
+                pattern: "relay:.*格式错误".to_string(),
+                status_codes: BTreeSet::new(),
+            }]
+        );
+        assert_eq!(
+            policy.error_stop_patterns,
+            vec![LocalFailoverRegexRule {
+                pattern: "content_policy_violation".to_string(),
+                status_codes: [400, 403].into_iter().collect(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn success_failover_pattern_can_retry_sync_candidate() {
+        let result = ExecutionResult {
+            request_id: "req-1".to_string(),
+            candidate_id: None,
+            status_code: 200,
+            headers: Default::default(),
+            body: None,
+            telemetry: None,
+            error: None,
+        };
+        let local_report_context = serde_json::json!({
+            "candidate_index": 0,
+            "retry_index": 0,
+        });
+        let state = build_state_with_provider_config(Some(serde_json::json!({
+            "failover_rules": {
+                "success_failover_patterns": [
+                    {"pattern": "relay:.*格式错误"}
+                ]
+            }
+        })));
+        let plan = sample_plan();
+
+        assert!(
+            should_retry_next_local_candidate_sync(
+                &state,
+                &plan,
+                "openai_chat_sync",
+                Some(&local_report_context),
+                &result,
+                Some("{\"error\":\"relay: 返回格式错误\"}"),
+            )
+            .await
+        );
+    }
+
+    #[tokio::test]
+    async fn error_stop_pattern_can_stop_sync_failover() {
+        let result = ExecutionResult {
+            request_id: "req-1".to_string(),
+            candidate_id: None,
+            status_code: 400,
+            headers: Default::default(),
+            body: None,
+            telemetry: None,
+            error: None,
+        };
+        let local_report_context = serde_json::json!({
+            "candidate_index": 0,
+            "retry_index": 0,
+        });
+        let state = build_state_with_provider_config(Some(serde_json::json!({
+            "failover_rules": {
+                "error_stop_patterns": [
+                    {"pattern": "content_policy_violation", "status_codes": [400]}
+                ]
+            }
+        })));
+        let plan = sample_plan();
+
+        assert!(
+            should_stop_local_candidate_failover_sync(
+                &state,
+                &plan,
+                "openai_chat_sync",
+                Some(&local_report_context),
+                &result,
+                Some("{\"error\":\"content_policy_violation\"}"),
+            )
+            .await
+        );
+        assert!(
+            !should_retry_next_local_candidate_sync(
+                &state,
+                &plan,
+                "openai_chat_sync",
+                Some(&local_report_context),
+                &result,
+                Some("{\"error\":\"content_policy_violation\"}"),
+            )
+            .await
+        );
     }
 }

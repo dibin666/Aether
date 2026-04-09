@@ -6,7 +6,7 @@ use aether_scheduler_core::{execution_error_details, SchedulerRequestCandidateSt
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use crate::clock::current_unix_secs;
+use crate::clock::{current_unix_ms, current_unix_secs};
 use crate::log_ids::short_request_id;
 use crate::request_candidate_runtime::record_report_request_candidate_status;
 use crate::{AppState, GatewayError};
@@ -188,7 +188,7 @@ pub(crate) async fn submit_stream_report(
 
 async fn handle_local_sync_report(state: &AppState, payload: &GatewaySyncReportRequest) {
     apply_local_gemini_file_mapping_side_effect(state, payload).await;
-    let terminal_unix_secs = current_unix_secs();
+    let terminal_unix_ms = current_unix_ms();
     let (error_type, error_message) =
         execution_error_details(None::<&ExecutionError>, payload.body_json.as_ref());
     let status = if sync_report_represents_failure(payload, error_type.as_deref()) {
@@ -209,15 +209,15 @@ async fn handle_local_sync_report(state: &AppState, payload: &GatewaySyncReportR
             error_type,
             error_message,
             latency_ms,
-            started_at_unix_secs: Some(terminal_unix_secs),
-            finished_at_unix_secs: Some(terminal_unix_secs),
+            started_at_unix_ms: None,
+            finished_at_unix_ms: Some(terminal_unix_ms),
         },
     )
     .await;
 }
 
 async fn handle_local_stream_report(state: &AppState, payload: &GatewayStreamReportRequest) {
-    let terminal_unix_secs = current_unix_secs();
+    let terminal_unix_ms = current_unix_ms();
     let latency_ms = payload
         .telemetry
         .as_ref()
@@ -231,8 +231,8 @@ async fn handle_local_stream_report(state: &AppState, payload: &GatewayStreamRep
             error_type: None,
             error_message: None,
             latency_ms,
-            started_at_unix_secs: Some(terminal_unix_secs),
-            finished_at_unix_secs: Some(terminal_unix_secs),
+            started_at_unix_ms: None,
+            finished_at_unix_ms: Some(terminal_unix_ms),
         },
     )
     .await;
@@ -419,8 +419,8 @@ mod tests {
             None,
             None,
             None,
-            1_700_000_000,
-            Some(1_700_000_000),
+            1_700_000_000_000,
+            Some(1_700_000_000_000),
             None,
         )
         .expect("request candidate should build")
@@ -457,8 +457,8 @@ mod tests {
             None,
             None,
             None,
-            1_700_000_000,
-            Some(1_700_000_000),
+            1_700_000_000_000,
+            Some(1_700_000_000_000),
             None,
         )
         .expect("request candidate should build")
@@ -547,7 +547,7 @@ mod tests {
                 next_poll_at_unix_secs: Some(1_700_000_010),
                 poll_count: 0,
                 max_poll_count: 360,
-                created_at_unix_secs: 1_700_000_000,
+                created_at_unix_ms: 1_700_000_000,
                 submitted_at_unix_secs: Some(1_700_000_000),
                 completed_at_unix_secs: None,
                 updated_at_unix_secs: 1_700_000_000,
@@ -1054,7 +1054,7 @@ mod tests {
                 next_poll_at_unix_secs: Some(1_700_000_010),
                 poll_count: 0,
                 max_poll_count: 360,
-                created_at_unix_secs: 1_700_000_000,
+                created_at_unix_ms: 1_700_000_000,
                 submitted_at_unix_secs: Some(1_700_000_000),
                 completed_at_unix_secs: None,
                 updated_at_unix_secs: 1_700_000_000,

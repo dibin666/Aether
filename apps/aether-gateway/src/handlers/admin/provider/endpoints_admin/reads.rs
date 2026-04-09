@@ -28,9 +28,9 @@ pub(crate) async fn build_admin_provider_endpoints_payload(
         .unwrap_or_default();
     endpoints.sort_by(|left, right| {
         right
-            .created_at_unix_secs
+            .created_at_unix_ms
             .unwrap_or_default()
-            .cmp(&left.created_at_unix_secs.unwrap_or_default())
+            .cmp(&left.created_at_unix_ms.unwrap_or_default())
             .then_with(|| left.id.cmp(&right.id))
     });
     let keys = state

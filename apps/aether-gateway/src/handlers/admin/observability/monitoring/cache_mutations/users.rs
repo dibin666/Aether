@@ -11,6 +11,7 @@ use super::super::cache_route_helpers::{
     admin_monitoring_cache_users_user_identifier_from_path,
 };
 use super::super::cache_store::{
+    admin_monitoring_has_runtime_scheduler_affinity_entries,
     list_admin_monitoring_cache_affinity_records_by_affinity_keys,
     load_admin_monitoring_cache_affinity_entries_for_tests,
 };
@@ -37,6 +38,7 @@ pub(in super::super) async fn build_admin_monitoring_cache_users_delete_response
 
     if state.redis_kv_runner().is_none()
         && load_admin_monitoring_cache_affinity_entries_for_tests(state).is_empty()
+        && !admin_monitoring_has_runtime_scheduler_affinity_entries(state)
     {
         return Ok(admin_monitoring_cache_affinity_unavailable_response());
     }

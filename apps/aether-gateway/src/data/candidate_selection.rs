@@ -4,9 +4,10 @@ use aether_scheduler_core::{
     auth_constraints_allow_api_format, build_minimal_candidate_selection,
     collect_global_model_names_for_required_capability, normalize_api_format,
     resolve_requested_global_model_name, SchedulerAuthConstraints,
-    SchedulerMinimalCandidateSelectionCandidate,
+    SchedulerMinimalCandidateSelectionCandidate, SchedulerPriorityMode,
 };
 use async_trait::async_trait;
+use std::collections::BTreeSet;
 
 use super::auth::GatewayAuthApiKeySnapshot;
 
@@ -63,6 +64,91 @@ pub(crate) async fn read_minimal_candidate_selection(
     require_streaming: bool,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
 ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
+    read_minimal_candidate_selection_with_priority_mode(
+        state,
+        api_format,
+        requested_model_name,
+        require_streaming,
+        auth_snapshot,
+        SchedulerPriorityMode::Provider,
+    )
+    .await
+}
+
+pub(crate) async fn read_minimal_candidate_selection_with_priority_mode(
+    state: &(impl MinimalCandidateSelectionRowSource + Sync),
+    api_format: &str,
+    requested_model_name: &str,
+    require_streaming: bool,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    priority_mode: SchedulerPriorityMode,
+) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
+    read_minimal_candidate_selection_with_priority_mode_and_affinity_key(
+        state,
+        api_format,
+        requested_model_name,
+        require_streaming,
+        auth_snapshot,
+        priority_mode,
+        auth_snapshot_affinity_key(auth_snapshot),
+    )
+    .await
+}
+
+pub(crate) async fn read_minimal_candidate_selection_with_priority_mode_and_required_capabilities(
+    state: &(impl MinimalCandidateSelectionRowSource + Sync),
+    api_format: &str,
+    requested_model_name: &str,
+    require_streaming: bool,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    priority_mode: SchedulerPriorityMode,
+    required_capabilities: Option<&serde_json::Value>,
+) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
+    read_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
+        state,
+        api_format,
+        requested_model_name,
+        require_streaming,
+        auth_snapshot,
+        priority_mode,
+        auth_snapshot_affinity_key(auth_snapshot),
+        required_capabilities,
+    )
+    .await
+}
+
+pub(crate) async fn read_minimal_candidate_selection_with_priority_mode_and_affinity_key(
+    state: &(impl MinimalCandidateSelectionRowSource + Sync),
+    api_format: &str,
+    requested_model_name: &str,
+    require_streaming: bool,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    priority_mode: SchedulerPriorityMode,
+    affinity_key: Option<&str>,
+) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
+    read_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
+        state,
+        api_format,
+        requested_model_name,
+        require_streaming,
+        auth_snapshot,
+        priority_mode,
+        affinity_key,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn read_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
+    state: &(impl MinimalCandidateSelectionRowSource + Sync),
+    api_format: &str,
+    requested_model_name: &str,
+    require_streaming: bool,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    priority_mode: SchedulerPriorityMode,
+    affinity_key: Option<&str>,
+    required_capabilities: Option<&serde_json::Value>,
+) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
     let normalized_api_format = normalize_api_format(api_format);
     if normalized_api_format.is_empty() {
         return Ok(Vec::new());
@@ -81,17 +167,16 @@ pub(crate) async fn read_minimal_candidate_selection(
         return Ok(Vec::new());
     };
     let auth_constraints = auth_snapshot.map(auth_snapshot_constraints);
-    let affinity_key = auth_snapshot
-        .map(|snapshot| snapshot.api_key_id.trim())
-        .filter(|value| !value.is_empty());
     build_minimal_candidate_selection(
         rows,
         &normalized_api_format,
         requested_model_name,
         resolved_global_model_name.as_str(),
         require_streaming,
+        required_capabilities,
         auth_constraints.as_ref(),
         affinity_key,
+        priority_mode,
     )
 }
 
@@ -126,6 +211,60 @@ pub(crate) async fn read_global_model_names_for_required_capability(
         require_streaming,
         auth_constraints.as_ref(),
     ))
+}
+
+pub(crate) async fn read_global_model_names_for_api_format(
+    state: &(impl MinimalCandidateSelectionRowSource + Sync),
+    api_format: &str,
+    require_streaming: bool,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+) -> Result<Vec<String>, DataLayerError> {
+    let normalized_api_format = normalize_api_format(api_format);
+    if normalized_api_format.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if !auth_constraints_allow_api_format(
+        auth_snapshot.map(auth_snapshot_constraints).as_ref(),
+        &normalized_api_format,
+    ) {
+        return Ok(Vec::new());
+    }
+
+    let rows = state
+        .read_minimal_candidate_selection_rows_for_api_format(&normalized_api_format)
+        .await?;
+    let auth_constraints = auth_snapshot.map(auth_snapshot_constraints);
+    let mut model_names = BTreeSet::new();
+
+    for row in rows {
+        if require_streaming && !row.supports_streaming() {
+            continue;
+        }
+        if !aether_scheduler_core::auth_constraints_allow_provider(
+            auth_constraints.as_ref(),
+            &row.provider_id,
+            &row.provider_name,
+        ) {
+            continue;
+        }
+        if !aether_scheduler_core::auth_constraints_allow_model(
+            auth_constraints.as_ref(),
+            &row.global_model_name,
+            &row.global_model_name,
+        ) {
+            continue;
+        }
+        model_names.insert(row.global_model_name);
+    }
+
+    Ok(model_names.into_iter().collect())
+}
+
+fn auth_snapshot_affinity_key(auth_snapshot: Option<&GatewayAuthApiKeySnapshot>) -> Option<&str> {
+    auth_snapshot
+        .map(|snapshot| snapshot.api_key_id.trim())
+        .filter(|value| !value.is_empty())
 }
 
 fn auth_snapshot_constraints(snapshot: &GatewayAuthApiKeySnapshot) -> SchedulerAuthConstraints {

@@ -59,7 +59,7 @@ SELECT
   client_response_headers,
   client_response_body,
   request_metadata,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM COALESCE(finalized_at, created_at)) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM finalized_at) AS BIGINT) AS finalized_at_unix_secs
 FROM "usage"
@@ -116,7 +116,7 @@ SELECT
   client_response_headers,
   client_response_body,
   request_metadata,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM COALESCE(finalized_at, created_at)) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM finalized_at) AS BIGINT) AS finalized_at_unix_secs
 FROM "usage"
@@ -203,7 +203,7 @@ SELECT
   NULL::jsonb AS client_response_headers,
   NULL::jsonb AS client_response_body,
   NULL::jsonb AS request_metadata,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM COALESCE(finalized_at, created_at)) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM finalized_at) AS BIGINT) AS finalized_at_unix_secs
 FROM "usage"
@@ -258,7 +258,7 @@ SELECT
   NULL::jsonb AS client_response_headers,
   NULL::jsonb AS client_response_body,
   NULL::jsonb AS request_metadata,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM COALESCE(finalized_at, created_at)) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM finalized_at) AS BIGINT) AS finalized_at_unix_secs
 FROM "usage"
@@ -465,7 +465,7 @@ RETURNING
   client_response_headers,
   client_response_body,
   request_metadata,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM COALESCE(finalized_at, created_at)) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM finalized_at) AS BIGINT) AS finalized_at_unix_secs
 "#;
@@ -713,7 +713,7 @@ impl SqlxUsageReadRepository {
                         .bind(&usage.client_response_body)
                         .bind(&usage.request_metadata)
                         .bind(usage.finalized_at_unix_secs.map(|value| value as f64))
-                        .bind(usage.created_at_unix_secs.map(|value| value as f64))
+                        .bind(usage.created_at_unix_ms.map(|value| value as f64))
                         .fetch_one(&mut **tx)
                         .await
                         .map_postgres_err()?;
@@ -816,7 +816,7 @@ fn map_usage_row(row: &sqlx::postgres::PgRow) -> Result<StoredRequestUsageAudit,
         row.try_get("first_byte_time_ms").map_postgres_err()?,
         row.try_get("status").map_postgres_err()?,
         row.try_get("billing_status").map_postgres_err()?,
-        row.try_get("created_at_unix_secs").map_postgres_err()?,
+        row.try_get("created_at_unix_ms").map_postgres_err()?,
         row.try_get("updated_at_unix_secs").map_postgres_err()?,
         row.try_get("finalized_at_unix_secs").map_postgres_err()?,
     )?;
@@ -953,7 +953,7 @@ mod tests {
                 client_response_body: None,
                 request_metadata: None,
                 finalized_at_unix_secs: None,
-                created_at_unix_secs: Some(100),
+                created_at_unix_ms: Some(100),
                 updated_at_unix_secs: 101,
             })
             .await;

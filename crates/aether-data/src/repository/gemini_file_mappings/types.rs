@@ -38,7 +38,7 @@ pub struct StoredGeminiFileMapping {
     pub display_name: Option<String>,
     pub mime_type: Option<String>,
     pub source_hash: Option<String>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub expires_at_unix_secs: u64,
 }
 
@@ -47,7 +47,7 @@ impl StoredGeminiFileMapping {
         id: String,
         file_name: String,
         key_id: String,
-        created_at_unix_secs: i64,
+        created_at_unix_ms: i64,
         expires_at_unix_secs: i64,
     ) -> Result<Self, crate::DataLayerError> {
         if file_name.trim().is_empty() {
@@ -60,9 +60,9 @@ impl StoredGeminiFileMapping {
                 "gemini_file_mappings.key_id is empty".to_string(),
             ));
         }
-        let created_at_unix_secs = u64::try_from(created_at_unix_secs).map_err(|_| {
+        let created_at_unix_ms = u64::try_from(created_at_unix_ms).map_err(|_| {
             crate::DataLayerError::UnexpectedValue(format!(
-                "invalid gemini_file_mappings.created_at: {created_at_unix_secs}"
+                "invalid gemini_file_mappings.created_at: {created_at_unix_ms}"
             ))
         })?;
         let expires_at_unix_secs = u64::try_from(expires_at_unix_secs).map_err(|_| {
@@ -78,7 +78,7 @@ impl StoredGeminiFileMapping {
             display_name: None,
             mime_type: None,
             source_hash: None,
-            created_at_unix_secs,
+            created_at_unix_ms,
             expires_at_unix_secs,
         })
     }

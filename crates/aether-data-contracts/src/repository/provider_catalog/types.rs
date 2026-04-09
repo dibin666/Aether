@@ -23,7 +23,7 @@ pub struct StoredProviderCatalogProvider {
     pub request_timeout_secs: Option<f64>,
     pub stream_first_byte_timeout_secs: Option<f64>,
     pub config: Option<serde_json::Value>,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_secs: Option<u64>,
 }
 
@@ -67,7 +67,7 @@ impl StoredProviderCatalogProvider {
             request_timeout_secs: None,
             stream_first_byte_timeout_secs: None,
             config: None,
-            created_at_unix_secs: None,
+            created_at_unix_ms: None,
             updated_at_unix_secs: None,
         })
     }
@@ -128,10 +128,10 @@ impl StoredProviderCatalogProvider {
 
     pub fn with_timestamps(
         mut self,
-        created_at_unix_secs: Option<u64>,
+        created_at_unix_ms: Option<u64>,
         updated_at_unix_secs: Option<u64>,
     ) -> Self {
-        self.created_at_unix_secs = created_at_unix_secs;
+        self.created_at_unix_ms = created_at_unix_ms;
         self.updated_at_unix_secs = updated_at_unix_secs;
         self
     }
@@ -154,7 +154,7 @@ pub struct StoredProviderCatalogEndpoint {
     pub config: Option<serde_json::Value>,
     pub format_acceptance_config: Option<serde_json::Value>,
     pub proxy: Option<serde_json::Value>,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_secs: Option<u64>,
 }
 
@@ -189,7 +189,7 @@ impl StoredProviderCatalogEndpoint {
             config: None,
             format_acceptance_config: None,
             proxy: None,
-            created_at_unix_secs: None,
+            created_at_unix_ms: None,
             updated_at_unix_secs: None,
         })
     }
@@ -230,10 +230,10 @@ impl StoredProviderCatalogEndpoint {
 
     pub fn with_timestamps(
         mut self,
-        created_at_unix_secs: Option<u64>,
+        created_at_unix_ms: Option<u64>,
         updated_at_unix_secs: Option<u64>,
     ) -> Self {
-        self.created_at_unix_secs = created_at_unix_secs;
+        self.created_at_unix_ms = created_at_unix_ms;
         self.updated_at_unix_secs = updated_at_unix_secs;
         self
     }
@@ -286,7 +286,7 @@ pub struct StoredProviderCatalogKey {
     pub oauth_invalid_at_unix_secs: Option<u64>,
     pub oauth_invalid_reason: Option<String>,
     pub status_snapshot: Option<serde_json::Value>,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_secs: Option<u64>,
     pub health_by_format: Option<serde_json::Value>,
     pub circuit_breaker_by_format: Option<serde_json::Value>,
@@ -358,7 +358,7 @@ impl StoredProviderCatalogKey {
             oauth_invalid_at_unix_secs: None,
             oauth_invalid_reason: None,
             status_snapshot: None,
-            created_at_unix_secs: None,
+            created_at_unix_ms: None,
             updated_at_unix_secs: None,
             health_by_format: None,
             circuit_breaker_by_format: None,

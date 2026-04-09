@@ -268,7 +268,7 @@ async fn gateway_executes_openai_video_delete_via_reconstructed_data_backed_loca
             next_poll_at_unix_secs: None,
             poll_count: 0,
             max_poll_count: 360,
-            created_at_unix_secs: 123,
+            created_at_unix_ms: 123,
             submitted_at_unix_secs: Some(123),
             completed_at_unix_secs: Some(456),
             updated_at_unix_secs: 456,

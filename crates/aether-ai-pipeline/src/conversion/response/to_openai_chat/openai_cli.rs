@@ -11,6 +11,8 @@ pub fn convert_openai_cli_response_to_openai_chat(
     let mut content_parts = Vec::new();
     let mut reasoning_content = String::new();
     let mut tool_calls = Vec::new();
+    let mut annotations = Vec::new();
+    let mut refusal = Vec::new();
     let mut has_non_text_content = false;
 
     if let Some(output_items) = body.get("output").and_then(Value::as_array) {
@@ -36,11 +38,32 @@ pub fn convert_openai_cli_response_to_openai_chat(
                             if matches!(part_type.as_str(), "output_text" | "text") {
                                 if let Some(piece) = part_object.get("text").and_then(Value::as_str)
                                 {
+                                    let annotation_offset = text.chars().count() as i64;
+                                    if let Some(raw_annotations) =
+                                        part_object.get("annotations").and_then(Value::as_array)
+                                    {
+                                        annotations.extend(raw_annotations.iter().map(
+                                            |annotation| {
+                                                offset_annotation_indices(
+                                                    annotation,
+                                                    annotation_offset,
+                                                )
+                                            },
+                                        ));
+                                    }
                                     text.push_str(piece);
                                     content_parts.push(json!({
                                         "type": "text",
                                         "text": piece,
                                     }));
+                                }
+                            } else if part_type == "refusal" {
+                                if let Some(piece) =
+                                    part_object.get("refusal").and_then(Value::as_str)
+                                {
+                                    if !piece.trim().is_empty() {
+                                        refusal.push(piece.to_string());
+                                    }
                                 }
                             } else if matches!(part_type.as_str(), "output_image" | "image_url") {
                                 if let Some((image_url, detail)) =
@@ -151,6 +174,18 @@ pub fn convert_openai_cli_response_to_openai_chat(
         .get("id")
         .and_then(Value::as_str)
         .unwrap_or("chatcmpl-local-openai-cli");
+    let created = body.get("created_at").and_then(Value::as_i64).or_else(|| {
+        body.get("created_at")
+            .and_then(Value::as_u64)
+            .map(|value| value as i64)
+    });
+    let service_tier = body.get("service_tier").cloned().or_else(|| {
+        report_context
+            .get("original_request_body")
+            .and_then(Value::as_object)
+            .and_then(|request| request.get("service_tier"))
+            .cloned()
+    });
 
     let usage = body.get("usage").and_then(Value::as_object);
     let prompt_tokens = usage
@@ -181,11 +216,17 @@ pub fn convert_openai_cli_response_to_openai_chat(
             Value::String(reasoning_content),
         );
     }
+    if !refusal.is_empty() {
+        message.insert("refusal".to_string(), Value::String(refusal.join("\n")));
+    }
+    if !annotations.is_empty() {
+        message.insert("annotations".to_string(), Value::Array(annotations));
+    }
     if !tool_calls.is_empty() {
         message.insert("tool_calls".to_string(), Value::Array(tool_calls));
     }
 
-    Some(json!({
+    let mut response = json!({
         "id": id,
         "object": "chat.completion",
         "model": model,
@@ -199,7 +240,27 @@ pub fn convert_openai_cli_response_to_openai_chat(
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
         }
-    }))
+    });
+    if let Some(created) = created {
+        response["created"] = Value::from(created);
+    }
+    if let Some(service_tier) = service_tier {
+        response["service_tier"] = service_tier;
+    }
+    if let Some(input_details) = usage
+        .and_then(|value| value.get("input_tokens_details"))
+        .cloned()
+    {
+        response["usage"]["prompt_tokens_details"] = input_details;
+    }
+    if let Some(output_details) = usage
+        .and_then(|value| value.get("output_tokens_details"))
+        .cloned()
+    {
+        response["usage"]["completion_tokens_details"] = output_details;
+    }
+
+    Some(response)
 }
 
 fn extract_openai_response_image(
@@ -235,4 +296,82 @@ fn extract_openai_response_image(
                 .map(ToOwned::to_owned)
         });
     Some((image_url, detail))
+}
+
+fn offset_annotation_indices(annotation: &Value, offset: i64) -> Value {
+    let Some(object) = annotation.as_object() else {
+        return annotation.clone();
+    };
+    let mut adjusted = object.clone();
+    for key in [
+        "start_index",
+        "end_index",
+        "start_char",
+        "end_char",
+        "index",
+    ] {
+        if let Some(value) = adjusted.get(key).and_then(Value::as_i64) {
+            adjusted.insert(key.to_string(), Value::from(value + offset));
+        }
+    }
+    Value::Object(adjusted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::convert_openai_cli_response_to_openai_chat;
+    use serde_json::json;
+
+    #[test]
+    fn preserves_created_refusal_annotations_and_usage_details_when_converting_to_chat() {
+        let response = json!({
+            "id": "resp_123",
+            "object": "response",
+            "created_at": 1741476542i64,
+            "model": "gpt-5",
+            "service_tier": "flex",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "Hello",
+                        "annotations": [{"type": "file_citation", "start_index": 0, "end_index": 5}]
+                    },
+                    {"type": "refusal", "refusal": "partial refusal"}
+                ]
+            }],
+            "usage": {
+                "input_tokens": 10,
+                "input_tokens_details": {"cached_tokens": 2},
+                "output_tokens": 4,
+                "output_tokens_details": {"reasoning_tokens": 1},
+                "total_tokens": 14
+            }
+        });
+
+        let converted = convert_openai_cli_response_to_openai_chat(&response, &json!({}))
+            .expect("responses response should convert to chat");
+
+        assert_eq!(converted["created"], 1741476542i64);
+        assert_eq!(converted["service_tier"], "flex");
+        assert_eq!(converted["choices"][0]["message"]["content"], "Hello");
+        assert_eq!(
+            converted["choices"][0]["message"]["refusal"],
+            "partial refusal"
+        );
+        assert_eq!(
+            converted["choices"][0]["message"]["annotations"],
+            json!([{"type": "file_citation", "start_index": 0, "end_index": 5}])
+        );
+        assert_eq!(
+            converted["usage"]["prompt_tokens_details"],
+            json!({"cached_tokens": 2})
+        );
+        assert_eq!(
+            converted["usage"]["completion_tokens_details"],
+            json!({"reasoning_tokens": 1})
+        );
+    }
 }

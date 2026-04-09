@@ -90,7 +90,7 @@ mod tests {
             match_status: ShadowResultMatchStatus::Match,
             status_code: Some(200),
             error_message: None,
-            created_at_unix_secs: updated_at_unix_secs.saturating_sub(10),
+            created_at_unix_ms: updated_at_unix_secs.saturating_sub(10),
             updated_at_unix_secs,
         }
     }
@@ -149,7 +149,7 @@ mod tests {
             match_status: ShadowResultMatchStatus::Mismatch,
             status_code: Some(502),
             error_message: Some("mismatch".to_string()),
-            created_at_unix_secs: 100,
+            created_at_unix_ms: 100,
             updated_at_unix_secs: 200,
         })
         .await

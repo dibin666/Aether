@@ -272,7 +272,7 @@ fn build_successful_poll_update(
     record.resolution = task.resolution.clone();
     record.aspect_ratio = task.aspect_ratio.clone();
     record.size = task.size.clone();
-    record.created_at_unix_secs = task.created_at_unix_secs;
+    record.created_at_unix_ms = task.created_at_unix_ms;
     record.submitted_at_unix_secs = task.submitted_at_unix_secs;
     record.updated_at_unix_secs = now_unix_secs;
     record.retry_count = task.retry_count;
@@ -379,7 +379,7 @@ fn stored_task_to_upsert(task: &StoredVideoTask) -> UpsertVideoTask {
         next_poll_at_unix_secs: task.next_poll_at_unix_secs,
         poll_count: task.poll_count,
         max_poll_count: task.max_poll_count.max(1),
-        created_at_unix_secs: task.created_at_unix_secs,
+        created_at_unix_ms: task.created_at_unix_ms,
         submitted_at_unix_secs: task.submitted_at_unix_secs,
         completed_at_unix_secs: task.completed_at_unix_secs,
         updated_at_unix_secs: task.updated_at_unix_secs,

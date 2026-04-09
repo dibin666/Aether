@@ -182,6 +182,15 @@ pub(crate) fn unix_secs_to_rfc3339(unix_secs: u64) -> Option<String> {
     )
 }
 
+pub(crate) fn unix_ms_to_rfc3339(unix_ms: u64) -> Option<String> {
+    let secs = i64::try_from(unix_ms / 1000).ok()?;
+    let nanos = ((unix_ms % 1000) * 1_000_000) as u32;
+    Some(
+        chrono::DateTime::<Utc>::from_timestamp(secs, nanos)?
+            .to_rfc3339_opts(SecondsFormat::Millis, true),
+    )
+}
+
 pub(crate) fn json_string_list(value: Option<&serde_json::Value>) -> Vec<String> {
     value
         .and_then(serde_json::Value::as_array)

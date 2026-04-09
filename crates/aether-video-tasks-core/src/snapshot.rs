@@ -36,7 +36,7 @@ impl LocalVideoTaskSnapshot {
                 Some(Self::OpenAi(OpenAiVideoTaskSeed {
                     local_task_id: task.id.clone(),
                     upstream_task_id,
-                    created_at_unix_secs: task.created_at_unix_secs,
+                    created_at_unix_ms: task.created_at_unix_ms,
                     user_id: task.user_id.clone(),
                     api_key_id: task.api_key_id.clone(),
                     model: non_empty_owned(task.model.as_ref()),

@@ -220,7 +220,7 @@ fn rust_authoritative_service_reads_openai_task_from_local_registry() {
     let snapshot = LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
         local_task_id: "task-local-123".to_string(),
         upstream_task_id: "ext-video-task-123".to_string(),
-        created_at_unix_secs: 1712345678,
+        created_at_unix_ms: 1712345678,
         user_id: Some("user-123".to_string()),
         api_key_id: Some("key-123".to_string()),
         model: Some("sora-2".to_string()),
@@ -261,7 +261,7 @@ fn rust_authoritative_service_applies_cancel_and_delete_mutations() {
     service.record_snapshot(LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
         local_task_id: "task-local-123".to_string(),
         upstream_task_id: "ext-video-task-123".to_string(),
-        created_at_unix_secs: 1712345678,
+        created_at_unix_ms: 1712345678,
         user_id: Some("user-123".to_string()),
         api_key_id: Some("key-123".to_string()),
         model: Some("sora-2".to_string()),

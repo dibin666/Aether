@@ -23,7 +23,7 @@ use super::super::async_task::{
 };
 use super::super::cache::{
     AuthApiKeyLastUsedCache, AuthContextCache, DirectPlanBypassCache, SchedulerAffinityCache,
-    SchedulerAffinityTarget,
+    SchedulerAffinitySnapshotEntry, SchedulerAffinityTarget,
 };
 use super::super::data::{GatewayDataConfig, GatewayDataState};
 use super::super::fallback_metrics;
@@ -47,6 +47,45 @@ use crate::maintenance::spawn_usage_cleanup_worker;
 use crate::maintenance::spawn_wallet_daily_usage_aggregation_worker;
 
 impl AppState {
+    fn spawn_scheduler_affinity_redis_write(
+        &self,
+        cache_key: &str,
+        target: &SchedulerAffinityTarget,
+        ttl: Duration,
+    ) {
+        let Some(runner) = self.redis_kv_runner() else {
+            return;
+        };
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+
+        let cache_key = cache_key.to_string();
+        let provider_id = target.provider_id.clone();
+        let endpoint_id = target.endpoint_id.clone();
+        let key_id = target.key_id.clone();
+        let ttl_seconds = ttl.as_secs();
+        let now_unix_secs = chrono::Utc::now().timestamp().max(0) as u64;
+        let expire_at = now_unix_secs.saturating_add(ttl_seconds);
+
+        handle.spawn(async move {
+            let payload = serde_json::json!({
+                "provider_id": provider_id,
+                "endpoint_id": endpoint_id,
+                "key_id": key_id,
+                "created_at": now_unix_secs,
+                "expire_at": expire_at,
+                "request_count": 0,
+            });
+            let Ok(serialized) = serde_json::to_string(&payload) else {
+                return;
+            };
+            let _ = runner
+                .setex(&cache_key, &serialized, Some(ttl_seconds))
+                .await;
+        });
+    }
+
     pub(crate) fn replace_data_state(&mut self, data: Arc<GatewayDataState>) {
         self.clear_provider_transport_snapshot_cache();
         self.tunnel = crate::tunnel::EmbeddedTunnelState::with_data(Arc::clone(&data));
@@ -572,8 +611,16 @@ impl AppState {
         ttl: Duration,
         max_entries: usize,
     ) {
+        self.spawn_scheduler_affinity_redis_write(cache_key, &target, ttl);
         self.scheduler_affinity_cache
             .insert(cache_key.to_string(), target, ttl, max_entries);
+    }
+
+    pub(crate) fn list_scheduler_affinity_entries(
+        &self,
+        ttl: Duration,
+    ) -> Vec<SchedulerAffinitySnapshotEntry> {
+        self.scheduler_affinity_cache.fresh_entries(ttl)
     }
 
     pub fn with_video_task_store_path(

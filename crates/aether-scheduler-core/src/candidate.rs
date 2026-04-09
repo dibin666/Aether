@@ -5,6 +5,18 @@ use aether_data_contracts::repository::candidates::StoredRequestCandidate;
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 use aether_data_contracts::DataLayerError;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SchedulerPriorityMode {
+    Provider,
+    GlobalKey,
+}
+
+impl Default for SchedulerPriorityMode {
+    fn default() -> Self {
+        Self::Provider
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SchedulerMinimalCandidateSelectionCandidate {
     pub provider_id: String,
@@ -63,6 +75,34 @@ pub fn candidate_supports_required_capability(
     false
 }
 
+pub fn requested_capability_priority_for_candidate(
+    required_capabilities: Option<&serde_json::Value>,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
+) -> (u32, u32) {
+    let Some(required_capabilities) = required_capabilities.and_then(serde_json::Value::as_object)
+    else {
+        return (0, 0);
+    };
+
+    let mut exclusive_misses = 0u32;
+    let mut compatible_misses = 0u32;
+    for (capability, value) in required_capabilities {
+        if !requested_capability_is_enabled(value) {
+            continue;
+        }
+        if candidate_supports_required_capability(candidate, capability) {
+            continue;
+        }
+        if requested_capability_is_compatible(capability) {
+            compatible_misses += 1;
+        } else {
+            exclusive_misses += 1;
+        }
+    }
+
+    (exclusive_misses, compatible_misses)
+}
+
 pub fn auth_api_key_concurrency_limit_reached(
     recent_candidates: &[StoredRequestCandidate],
     now_unix_secs: u64,
@@ -83,8 +123,10 @@ pub fn build_minimal_candidate_selection(
     requested_model_name: &str,
     resolved_global_model_name: &str,
     require_streaming: bool,
+    required_capabilities: Option<&serde_json::Value>,
     auth_constraints: Option<&crate::SchedulerAuthConstraints>,
     affinity_key: Option<&str>,
+    priority_mode: SchedulerPriorityMode,
 ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
     if normalized_api_format.is_empty() {
         return Ok(Vec::new());
@@ -143,22 +185,57 @@ pub fn build_minimal_candidate_selection(
     }
 
     candidates.sort_by(|left, right| {
-        left.key_global_priority_for_format
+        requested_capability_priority_for_candidate(required_capabilities, left)
+            .cmp(&requested_capability_priority_for_candidate(
+                required_capabilities,
+                right,
+            ))
+            .then_with(|| {
+                compare_candidates_by_priority_mode(left, right, priority_mode, affinity_key)
+            })
+    });
+
+    Ok(candidates)
+}
+
+fn requested_capability_is_enabled(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Bool(value) => *value,
+        serde_json::Value::String(value) => value.eq_ignore_ascii_case("true"),
+        serde_json::Value::Number(value) => value.as_i64().is_some_and(|value| value > 0),
+        _ => false,
+    }
+}
+
+fn requested_capability_is_compatible(capability: &str) -> bool {
+    matches!(
+        capability.trim().to_ascii_lowercase().as_str(),
+        "cache_1h" | "context_1m"
+    )
+}
+
+pub fn compare_candidates_by_priority_mode(
+    left: &SchedulerMinimalCandidateSelectionCandidate,
+    right: &SchedulerMinimalCandidateSelectionCandidate,
+    priority_mode: SchedulerPriorityMode,
+    affinity_key: Option<&str>,
+) -> std::cmp::Ordering {
+    match priority_mode {
+        SchedulerPriorityMode::Provider => left
+            .provider_priority
+            .cmp(&right.provider_priority)
+            .then(left.key_internal_priority.cmp(&right.key_internal_priority))
+            .then_with(|| crate::compare_affinity_order(left, right, affinity_key))
+            .then_with(|| compare_candidate_identity(left, right)),
+        SchedulerPriorityMode::GlobalKey => left
+            .key_global_priority_for_format
             .unwrap_or(i32::MAX)
             .cmp(&right.key_global_priority_for_format.unwrap_or(i32::MAX))
             .then_with(|| crate::compare_affinity_order(left, right, affinity_key))
             .then(left.provider_priority.cmp(&right.provider_priority))
             .then(left.key_internal_priority.cmp(&right.key_internal_priority))
-            .then(left.provider_id.cmp(&right.provider_id))
-            .then(left.endpoint_id.cmp(&right.endpoint_id))
-            .then(left.key_id.cmp(&right.key_id))
-            .then(
-                left.selected_provider_model_name
-                    .cmp(&right.selected_provider_model_name),
-            )
-    });
-
-    Ok(candidates)
+            .then_with(|| compare_candidate_identity(left, right)),
+    }
 }
 
 pub fn collect_global_model_names_for_required_capability(
@@ -238,23 +315,38 @@ pub fn collect_selectable_candidates_from_keys(
 pub fn reorder_candidates_by_scheduler_health(
     candidates: &mut [SchedulerMinimalCandidateSelectionCandidate],
     provider_key_rpm_states: &BTreeMap<String, StoredProviderCatalogKey>,
+    required_capabilities: Option<&serde_json::Value>,
     affinity_key: Option<&str>,
+    priority_mode: SchedulerPriorityMode,
 ) {
     candidates.sort_by(|left, right| {
-        left.key_global_priority_for_format
-            .unwrap_or(i32::MAX)
-            .cmp(&right.key_global_priority_for_format.unwrap_or(i32::MAX))
-            .then_with(|| compare_provider_key_health_order(left, right, provider_key_rpm_states))
-            .then_with(|| crate::compare_affinity_order(left, right, affinity_key))
-            .then(left.provider_priority.cmp(&right.provider_priority))
-            .then(left.key_internal_priority.cmp(&right.key_internal_priority))
-            .then(left.provider_id.cmp(&right.provider_id))
-            .then(left.endpoint_id.cmp(&right.endpoint_id))
-            .then(left.key_id.cmp(&right.key_id))
-            .then(
-                left.selected_provider_model_name
-                    .cmp(&right.selected_provider_model_name),
-            )
+        requested_capability_priority_for_candidate(required_capabilities, left)
+            .cmp(&requested_capability_priority_for_candidate(
+                required_capabilities,
+                right,
+            ))
+            .then_with(|| match priority_mode {
+                SchedulerPriorityMode::Provider => left
+                    .provider_priority
+                    .cmp(&right.provider_priority)
+                    .then(left.key_internal_priority.cmp(&right.key_internal_priority))
+                    .then_with(|| {
+                        compare_provider_key_health_order(left, right, provider_key_rpm_states)
+                    })
+                    .then_with(|| crate::compare_affinity_order(left, right, affinity_key))
+                    .then_with(|| compare_candidate_identity(left, right)),
+                SchedulerPriorityMode::GlobalKey => left
+                    .key_global_priority_for_format
+                    .unwrap_or(i32::MAX)
+                    .cmp(&right.key_global_priority_for_format.unwrap_or(i32::MAX))
+                    .then_with(|| {
+                        compare_provider_key_health_order(left, right, provider_key_rpm_states)
+                    })
+                    .then_with(|| crate::compare_affinity_order(left, right, affinity_key))
+                    .then(left.provider_priority.cmp(&right.provider_priority))
+                    .then(left.key_internal_priority.cmp(&right.key_internal_priority))
+                    .then_with(|| compare_candidate_identity(left, right)),
+            })
     });
 }
 
@@ -362,6 +454,20 @@ fn candidate_provider_key_health_bucket(
         })
 }
 
+fn compare_candidate_identity(
+    left: &SchedulerMinimalCandidateSelectionCandidate,
+    right: &SchedulerMinimalCandidateSelectionCandidate,
+) -> std::cmp::Ordering {
+    left.provider_id
+        .cmp(&right.provider_id)
+        .then(left.endpoint_id.cmp(&right.endpoint_id))
+        .then(left.key_id.cmp(&right.key_id))
+        .then(
+            left.selected_provider_model_name
+                .cmp(&right.selected_provider_model_name),
+        )
+}
+
 fn candidate_provider_key_health_score(
     candidate: &SchedulerMinimalCandidateSelectionCandidate,
     provider_key_rpm_states: &BTreeMap<String, StoredProviderCatalogKey>,
@@ -392,6 +498,7 @@ mod tests {
         collect_global_model_names_for_required_capability,
         collect_selectable_candidates_from_keys, reorder_candidates_by_scheduler_health,
         CandidateRuntimeSelectabilityInput, SchedulerMinimalCandidateSelectionCandidate,
+        SchedulerPriorityMode,
     };
     use crate::SchedulerAuthConstraints;
 
@@ -478,11 +585,11 @@ mod tests {
     fn stored_candidate(
         id: &str,
         status: RequestCandidateStatus,
-        created_at_unix_secs: i64,
+        created_at_unix_ms: i64,
     ) -> StoredRequestCandidate {
-        let finished_at_unix_secs = match status {
+        let finished_at_unix_ms = match status {
             RequestCandidateStatus::Pending | RequestCandidateStatus::Streaming => None,
-            _ => Some(created_at_unix_secs),
+            _ => Some(created_at_unix_ms),
         };
         StoredRequestCandidate::new(
             id.to_string(),
@@ -506,9 +613,9 @@ mod tests {
             None,
             None,
             None,
-            created_at_unix_secs,
-            Some(created_at_unix_secs),
-            finished_at_unix_secs,
+            created_at_unix_ms,
+            Some(created_at_unix_ms),
+            finished_at_unix_ms,
         )
         .expect("candidate should build")
     }
@@ -546,8 +653,10 @@ mod tests {
             "gpt-5",
             "gpt-5",
             false,
+            None,
             Some(&constraints),
             None,
+            SchedulerPriorityMode::Provider,
         )
         .expect("candidate selection should build");
 
@@ -580,6 +689,35 @@ mod tests {
     }
 
     #[test]
+    fn minimal_candidate_selection_prefers_matching_requested_capabilities_before_priority() {
+        let mut missing_capability = sample_row("1");
+        missing_capability.key_capabilities = Some(serde_json::json!({"cache_1h": false}));
+        missing_capability.provider_priority = 0;
+
+        let mut matching_capability = sample_row("2");
+        matching_capability.key_capabilities = Some(serde_json::json!({"cache_1h": true}));
+        matching_capability.provider_priority = 10;
+
+        let required_capabilities = serde_json::json!({"cache_1h": true});
+        let candidates = build_minimal_candidate_selection(
+            vec![missing_capability, matching_capability],
+            "openai:chat",
+            "gpt-5",
+            "gpt-5",
+            false,
+            Some(&required_capabilities),
+            None,
+            None,
+            SchedulerPriorityMode::Provider,
+        )
+        .expect("candidate selection should build");
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].key_id, "key-2");
+        assert_eq!(candidates[1].key_id, "key-1");
+    }
+
+    #[test]
     fn reorders_candidates_by_health_before_affinity_tiebreak() {
         let mut candidates = vec![
             sample_candidate("1", None),
@@ -595,7 +733,9 @@ mod tests {
         reorder_candidates_by_scheduler_health(
             &mut candidates,
             &provider_key_rpm_states,
+            None,
             Some("api-key-1"),
+            SchedulerPriorityMode::GlobalKey,
         );
 
         assert_ne!(candidates[0].key_id, "key-2");

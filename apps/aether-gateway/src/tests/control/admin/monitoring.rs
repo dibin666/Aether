@@ -124,7 +124,7 @@ fn sample_usage(
     total_cost_usd: f64,
     status: &str,
     status_code: Option<i32>,
-    created_at_unix_secs: i64,
+    created_at_unix_ms: i64,
 ) -> StoredRequestUsageAudit {
     let is_error = status_code.is_some_and(|value| value >= 400)
         || status.trim().eq_ignore_ascii_case("failed")
@@ -163,9 +163,9 @@ fn sample_usage(
         Some(30),
         status.to_string(),
         "billed".to_string(),
-        created_at_unix_secs,
-        created_at_unix_secs,
-        Some(created_at_unix_secs),
+        created_at_unix_ms,
+        created_at_unix_ms,
+        Some(created_at_unix_ms),
     )
     .expect("usage should build")
 }
@@ -285,7 +285,7 @@ fn sample_candidate(
     request_id: &str,
     candidate_index: i32,
     status: RequestCandidateStatus,
-    started_at_unix_secs: Option<i64>,
+    started_at_unix_ms: Option<i64>,
     latency_ms: Option<i32>,
     status_code: Option<i32>,
 ) -> StoredRequestCandidate {
@@ -311,9 +311,9 @@ fn sample_candidate(
         Some(1),
         None,
         Some(json!({"cache_1h": true})),
-        100 + i64::from(candidate_index),
-        started_at_unix_secs,
-        started_at_unix_secs.map(|value| value + 1),
+        (100 + i64::from(candidate_index)) * 1_000,
+        started_at_unix_ms.map(|v| v * 1_000),
+        started_at_unix_ms.map(|value| (value + 1) * 1_000),
     )
     .expect("candidate should build")
 }

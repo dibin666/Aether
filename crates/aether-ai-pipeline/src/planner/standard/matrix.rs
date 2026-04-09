@@ -13,7 +13,10 @@ use crate::conversion::request::{
     normalize_openai_cli_request_to_openai_chat_request,
 };
 
-use super::codex::apply_codex_openai_cli_special_body_edits;
+use super::{
+    codex::apply_codex_openai_cli_special_body_edits,
+    normalize::build_local_openai_chat_request_body,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub fn build_standard_request_body(
@@ -59,9 +62,11 @@ pub fn build_standard_request_body_from_canonical(
     upstream_is_stream: bool,
 ) -> Option<Value> {
     match provider_api_format.trim().to_ascii_lowercase().as_str() {
-        "openai:chat" => {
-            build_openai_chat_request_body(canonical_request, mapped_model, upstream_is_stream)
-        }
+        "openai:chat" => build_local_openai_chat_request_body(
+            canonical_request,
+            mapped_model,
+            upstream_is_stream,
+        ),
         "openai:cli" => convert_openai_chat_request_to_openai_cli_request(
             canonical_request,
             mapped_model,
@@ -154,24 +159,6 @@ pub fn build_standard_upstream_url(
     }
 }
 
-fn build_openai_chat_request_body(
-    body_json: &Value,
-    mapped_model: &str,
-    upstream_is_stream: bool,
-) -> Option<Value> {
-    let request_body_object = body_json.as_object()?;
-    let mut provider_request_body = serde_json::Map::from_iter(
-        request_body_object
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone())),
-    );
-    provider_request_body.insert("model".to_string(), Value::String(mapped_model.to_string()));
-    if upstream_is_stream {
-        provider_request_body.insert("stream".to_string(), Value::Bool(true));
-    }
-    Some(Value::Object(provider_request_body))
-}
-
 #[cfg(test)]
 mod tests {
     use super::build_standard_request_body;
@@ -209,6 +196,37 @@ mod tests {
         assert_eq!(converted["messages"][0]["content"], "You are concise.");
         assert_eq!(converted["messages"][1]["role"], "user");
         assert_eq!(converted["messages"][1]["content"], "Hello from Claude");
+    }
+
+    #[test]
+    fn builds_streaming_openai_chat_request_from_gemini_chat_source_with_include_usage() {
+        let request = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "Hello from Gemini"}]
+                }
+            ]
+        });
+
+        let converted = build_standard_request_body(
+            &request,
+            "gemini:chat",
+            "gpt-5",
+            "openai",
+            "openai:chat",
+            "/v1beta/models/gemini-2.5-pro:streamGenerateContent",
+            true,
+            None,
+            None,
+        )
+        .expect("gemini chat stream should convert to openai chat");
+
+        assert_eq!(converted["model"], "gpt-5");
+        assert_eq!(converted["stream"], true);
+        assert_eq!(converted["stream_options"]["include_usage"], true);
+        assert_eq!(converted["messages"][0]["role"], "user");
+        assert_eq!(converted["messages"][0]["content"], "Hello from Gemini");
     }
 
     #[test]

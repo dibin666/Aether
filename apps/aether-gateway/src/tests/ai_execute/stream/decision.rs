@@ -1895,8 +1895,8 @@ async fn gateway_retries_next_local_openai_chat_stream_candidate_with_local_fail
     assert_eq!(stored_candidates[1].candidate_index, 1);
     assert_eq!(stored_candidates[1].status, RequestCandidateStatus::Success);
     assert_eq!(stored_candidates[1].status_code, Some(200));
-    assert!(stored_candidates[1].started_at_unix_secs.is_some());
-    assert!(stored_candidates[1].finished_at_unix_secs.is_some());
+    assert!(stored_candidates[1].started_at_unix_ms.is_some());
+    assert!(stored_candidates[1].finished_at_unix_ms.is_some());
 
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(

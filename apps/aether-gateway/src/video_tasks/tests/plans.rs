@@ -13,7 +13,7 @@ fn rust_authoritative_service_builds_openai_cancel_follow_up_plan() {
     service.record_snapshot(LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
         local_task_id: "task-local-123".to_string(),
         upstream_task_id: "ext-video-task-123".to_string(),
-        created_at_unix_secs: 1712345678,
+        created_at_unix_ms: 1712345678,
         user_id: Some("user-123".to_string()),
         api_key_id: Some("key-123".to_string()),
         model: Some("sora-2".to_string()),
@@ -70,7 +70,7 @@ fn rust_authoritative_service_builds_openai_remix_follow_up_plan() {
     service.record_snapshot(LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
         local_task_id: "task-local-123".to_string(),
         upstream_task_id: "ext-video-task-123".to_string(),
-        created_at_unix_secs: 1712345678,
+        created_at_unix_ms: 1712345678,
         user_id: Some("user-123".to_string()),
         api_key_id: Some("key-123".to_string()),
         model: Some("sora-2".to_string()),
@@ -131,7 +131,7 @@ fn rust_authoritative_service_builds_openai_delete_follow_up_plan() {
     service.record_snapshot(LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
         local_task_id: "task-local-123".to_string(),
         upstream_task_id: "ext-video-task-123".to_string(),
-        created_at_unix_secs: 1712345678,
+        created_at_unix_ms: 1712345678,
         user_id: Some("user-123".to_string()),
         api_key_id: Some("key-123".to_string()),
         model: Some("sora-2".to_string()),
@@ -238,7 +238,7 @@ fn rust_authoritative_service_builds_openai_read_refresh_plan() {
     service.record_snapshot(LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
         local_task_id: "task-local-123".to_string(),
         upstream_task_id: "ext-video-task-123".to_string(),
-        created_at_unix_secs: 1712345678,
+        created_at_unix_ms: 1712345678,
         user_id: Some("user-123".to_string()),
         api_key_id: Some("key-123".to_string()),
         model: Some("sora-2".to_string()),
@@ -313,7 +313,7 @@ fn rust_authoritative_service_builds_poll_refresh_batch_for_active_tasks_only() 
     service.record_snapshot(LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
         local_task_id: "task-active-123".to_string(),
         upstream_task_id: "ext-video-task-123".to_string(),
-        created_at_unix_secs: 1712345678,
+        created_at_unix_ms: 1712345678,
         user_id: Some("user-123".to_string()),
         api_key_id: Some("key-123".to_string()),
         model: Some("sora-2".to_string()),
@@ -334,7 +334,7 @@ fn rust_authoritative_service_builds_poll_refresh_batch_for_active_tasks_only() 
     service.record_snapshot(LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
         local_task_id: "task-completed-123".to_string(),
         upstream_task_id: "ext-video-task-999".to_string(),
-        created_at_unix_secs: 1712345678,
+        created_at_unix_ms: 1712345678,
         user_id: Some("user-123".to_string()),
         api_key_id: Some("key-123".to_string()),
         model: Some("sora-2".to_string()),
@@ -373,7 +373,7 @@ fn file_video_task_store_persists_snapshots_across_service_rebuilds() {
     service.record_snapshot(LocalVideoTaskSnapshot::OpenAi(OpenAiVideoTaskSeed {
         local_task_id: "task-file-123".to_string(),
         upstream_task_id: "ext-video-task-123".to_string(),
-        created_at_unix_secs: 1712345678,
+        created_at_unix_ms: 1712345678,
         user_id: Some("user-123".to_string()),
         api_key_id: Some("key-123".to_string()),
         model: Some("sora-2".to_string()),

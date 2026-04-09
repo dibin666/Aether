@@ -5,7 +5,9 @@ use uuid::Uuid;
 
 use super::{LocalVideoCreateFamily, LocalVideoCreateSpec};
 use crate::ai_pipeline::contracts::ExecutionRuntimeAuthContext;
-use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::planner::candidate_affinity::{
+    rank_local_execution_candidates, remember_scheduler_affinity_for_candidate,
+};
 use crate::ai_pipeline::{
     resolve_local_decision_execution_runtime_auth_context, GatewayControlDecision,
 };
@@ -18,6 +20,7 @@ pub(super) struct LocalVideoCreateDecisionInput {
     pub(super) auth_context: ExecutionRuntimeAuthContext,
     pub(super) requested_model: String,
     pub(super) auth_snapshot: GatewayAuthApiKeySnapshot,
+    pub(super) required_capabilities: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,10 +74,20 @@ pub(super) async fn resolve_local_video_create_decision_input(
         }
     };
 
+    let required_capabilities = planner_state
+        .resolve_request_candidate_required_capabilities(
+            &auth_context.user_id,
+            &auth_context.api_key_id,
+            Some(requested_model.as_str()),
+            None,
+        )
+        .await;
+
     Some(LocalVideoCreateDecisionInput {
         auth_context,
         requested_model,
         auth_snapshot,
+        required_capabilities,
     })
 }
 
@@ -91,6 +104,7 @@ pub(super) async fn list_local_video_create_candidate_attempts(
             api_format,
             &input.requested_model,
             false,
+            input.required_capabilities.as_ref(),
             Some(&input.auth_snapshot),
             current_unix_secs(),
         )
@@ -127,12 +141,29 @@ async fn materialize_local_video_create_candidate_attempts(
     candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
     api_format: &str,
 ) -> Vec<LocalVideoCreateCandidateAttempt> {
-    let candidates = prefer_local_tunnel_owner_candidates(state, candidates).await;
-    let created_at_unix_secs = current_unix_secs();
+    let candidates = rank_local_execution_candidates(
+        state,
+        candidates,
+        api_format,
+        input.required_capabilities.as_ref(),
+    )
+    .await;
+    let created_at_unix_ms = current_unix_secs();
     let mut attempts = Vec::with_capacity(candidates.len());
+    let mut affinity_remembered = false;
 
     for (candidate_index, candidate) in candidates.into_iter().enumerate() {
         let generated_candidate_id = Uuid::new_v4().to_string();
+        if !affinity_remembered {
+            remember_scheduler_affinity_for_candidate(
+                state,
+                Some(&input.auth_snapshot),
+                api_format,
+                &input.requested_model,
+                &candidate,
+            );
+            affinity_remembered = true;
+        }
         let extra_data = json!({
             "provider_api_format": api_format,
             "client_api_format": api_format,
@@ -153,8 +184,9 @@ async fn materialize_local_video_create_candidate_attempts(
                 &candidate,
                 candidate_index as u32,
                 &generated_candidate_id,
+                input.required_capabilities.as_ref(),
                 Some(extra_data),
-                created_at_unix_secs,
+                created_at_unix_ms,
                 "gateway local video decision request candidate upsert failed",
             )
             .await;
@@ -186,6 +218,7 @@ pub(super) async fn mark_skipped_local_video_candidate(
             candidate,
             candidate_index,
             candidate_id,
+            input.required_capabilities.as_ref(),
             skip_reason,
             current_unix_secs(),
             "gateway local video decision failed to persist skipped candidate",

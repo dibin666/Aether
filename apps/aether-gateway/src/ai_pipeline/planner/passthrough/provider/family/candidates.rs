@@ -2,7 +2,9 @@ use serde_json::json;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::planner::candidate_affinity::{
+    rank_local_execution_candidates, remember_scheduler_affinity_for_candidate,
+};
 use crate::ai_pipeline::{
     resolve_local_decision_execution_runtime_auth_context, ConversionMode, ExecutionStrategy,
     GatewayControlDecision, PlannerAppState,
@@ -61,10 +63,20 @@ pub(crate) async fn resolve_local_same_format_provider_decision_input(
         }
     };
 
+    let required_capabilities = planner_state
+        .resolve_request_candidate_required_capabilities(
+            &auth_context.user_id,
+            &auth_context.api_key_id,
+            Some(requested_model.as_str()),
+            None,
+        )
+        .await;
+
     Some(LocalSameFormatProviderDecisionInput {
         auth_context,
         requested_model,
         auth_snapshot,
+        required_capabilities,
     })
 }
 
@@ -80,16 +92,34 @@ pub(crate) async fn materialize_local_same_format_provider_candidate_attempts(
             spec.api_format,
             &input.requested_model,
             spec.require_streaming,
+            input.required_capabilities.as_ref(),
             Some(&input.auth_snapshot),
             current_unix_secs(),
         )
         .await?;
-    let candidates = prefer_local_tunnel_owner_candidates(planner_state, candidates).await;
+    let candidates = rank_local_execution_candidates(
+        planner_state,
+        candidates,
+        spec.api_format,
+        input.required_capabilities.as_ref(),
+    )
+    .await;
 
-    let created_at_unix_secs = current_unix_secs();
+    let created_at_unix_ms = current_unix_secs();
     let mut attempts = Vec::with_capacity(candidates.len());
+    let mut affinity_remembered = false;
     for (candidate_index, candidate) in candidates.into_iter().enumerate() {
         let generated_candidate_id = Uuid::new_v4().to_string();
+        if !affinity_remembered {
+            remember_scheduler_affinity_for_candidate(
+                planner_state,
+                Some(&input.auth_snapshot),
+                spec.api_format,
+                &input.requested_model,
+                &candidate,
+            );
+            affinity_remembered = true;
+        }
         let extra_data = append_execution_contract_fields_to_value(
             json!({
                 "provider_api_format": spec.api_format,
@@ -116,8 +146,9 @@ pub(crate) async fn materialize_local_same_format_provider_candidate_attempts(
                 &candidate,
                 candidate_index as u32,
                 &generated_candidate_id,
+                input.required_capabilities.as_ref(),
                 Some(extra_data),
-                created_at_unix_secs,
+                created_at_unix_ms,
                 "gateway local same-format decision request candidate upsert failed",
             )
             .await;

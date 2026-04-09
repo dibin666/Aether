@@ -13,7 +13,7 @@ pub struct StoredAnnouncement {
     pub author_username: Option<String>,
     pub start_time_unix_secs: Option<u64>,
     pub end_time_unix_secs: Option<u64>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub updated_at_unix_secs: u64,
 }
 
@@ -31,7 +31,7 @@ impl StoredAnnouncement {
         author_username: Option<String>,
         start_time_unix_secs: Option<i64>,
         end_time_unix_secs: Option<i64>,
-        created_at_unix_secs: i64,
+        created_at_unix_ms: i64,
         updated_at_unix_secs: i64,
     ) -> Result<Self, crate::DataLayerError> {
         if id.trim().is_empty() {
@@ -71,10 +71,7 @@ impl StoredAnnouncement {
             end_time_unix_secs: end_time_unix_secs
                 .map(|value| parse_timestamp(value, "announcements.end_time"))
                 .transpose()?,
-            created_at_unix_secs: parse_timestamp(
-                created_at_unix_secs,
-                "announcements.created_at",
-            )?,
+            created_at_unix_ms: parse_timestamp(created_at_unix_ms, "announcements.created_at")?,
             updated_at_unix_secs: parse_timestamp(
                 updated_at_unix_secs,
                 "announcements.updated_at",

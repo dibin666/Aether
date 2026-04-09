@@ -95,7 +95,7 @@ fn users_me_usage_total_input_context(item: &StoredRequestUsageAudit) -> u64 {
 
 fn users_me_usage_effective_unix_secs(item: &StoredRequestUsageAudit) -> u64 {
     item.finalized_at_unix_secs
-        .unwrap_or(item.created_at_unix_secs)
+        .unwrap_or(item.created_at_unix_ms)
 }
 
 fn users_me_usage_cache_hit_rate(total_input_context: u64, cache_read_tokens: u64) -> f64 {
@@ -159,7 +159,7 @@ fn build_users_me_usage_record_payload(
         "first_byte_time_ms": item.first_byte_time_ms,
         "is_stream": item.is_stream,
         "status": item.status,
-        "created_at": unix_secs_to_rfc3339(item.created_at_unix_secs),
+        "created_at": unix_secs_to_rfc3339(item.created_at_unix_ms),
         "cache_creation_input_tokens": item.cache_creation_input_tokens,
         "cache_read_input_tokens": item.cache_read_input_tokens,
         "status_code": item.status_code,
@@ -649,8 +649,8 @@ pub(super) async fn handle_users_me_usage_get(
         .collect::<Vec<_>>();
     records.sort_by(|left, right| {
         right
-            .created_at_unix_secs
-            .cmp(&left.created_at_unix_secs)
+            .created_at_unix_ms
+            .cmp(&left.created_at_unix_ms)
             .then_with(|| left.id.cmp(&right.id))
     });
     let total_record_count = records.len();
@@ -735,8 +735,8 @@ pub(super) async fn handle_users_me_usage_active_get(
         .collect::<Vec<_>>();
     items.sort_by(|left, right| {
         right
-            .created_at_unix_secs
-            .cmp(&left.created_at_unix_secs)
+            .created_at_unix_ms
+            .cmp(&left.created_at_unix_ms)
             .then_with(|| left.id.cmp(&right.id))
     });
     if ids.is_none() && items.len() > 50 {
@@ -798,20 +798,19 @@ pub(super) async fn handle_users_me_usage_interval_timeline_get(
     };
     items.retain(|item| item.status == "completed");
     items.sort_by(|left, right| {
-        left.created_at_unix_secs
-            .cmp(&right.created_at_unix_secs)
+        left.created_at_unix_ms
+            .cmp(&right.created_at_unix_ms)
             .then_with(|| left.id.cmp(&right.id))
     });
 
     let mut points = Vec::new();
-    let mut previous_created_at_unix_secs = None;
+    let mut previous_created_at_unix_ms = None;
     for item in items {
-        if let Some(previous) = previous_created_at_unix_secs {
-            let interval_minutes =
-                (item.created_at_unix_secs.saturating_sub(previous) as f64) / 60.0;
+        if let Some(previous) = previous_created_at_unix_ms {
+            let interval_minutes = (item.created_at_unix_ms.saturating_sub(previous) as f64) / 60.0;
             if interval_minutes <= 120.0 {
                 points.push(json!({
-                    "x": unix_secs_to_rfc3339(item.created_at_unix_secs),
+                    "x": unix_secs_to_rfc3339(item.created_at_unix_ms),
                     "y": round_to(interval_minutes, 2),
                     "model": item.model,
                 }));
@@ -820,7 +819,7 @@ pub(super) async fn handle_users_me_usage_interval_timeline_get(
                 }
             }
         }
-        previous_created_at_unix_secs = Some(item.created_at_unix_secs);
+        previous_created_at_unix_ms = Some(item.created_at_unix_ms);
     }
 
     Json(json!({

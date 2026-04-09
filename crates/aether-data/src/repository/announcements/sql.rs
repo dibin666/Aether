@@ -21,7 +21,7 @@ SELECT
   u.username AS author_username,
   EXTRACT(EPOCH FROM a.start_time)::bigint AS start_time_unix_secs,
   EXTRACT(EPOCH FROM a.end_time)::bigint AS end_time_unix_secs,
-  EXTRACT(EPOCH FROM a.created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM a.created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM a.updated_at)::bigint AS updated_at_unix_secs
 FROM announcements a
 LEFT JOIN users u ON u.id = a.author_id
@@ -42,7 +42,7 @@ SELECT
   u.username AS author_username,
   EXTRACT(EPOCH FROM a.start_time)::bigint AS start_time_unix_secs,
   EXTRACT(EPOCH FROM a.end_time)::bigint AS end_time_unix_secs,
-  EXTRACT(EPOCH FROM a.created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM a.created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM a.updated_at)::bigint AS updated_at_unix_secs
 FROM announcements a
 LEFT JOIN users u ON u.id = a.author_id
@@ -125,7 +125,7 @@ RETURNING
   (SELECT username FROM users WHERE id = announcements.author_id) AS author_username,
   EXTRACT(EPOCH FROM start_time)::bigint AS start_time_unix_secs,
   EXTRACT(EPOCH FROM end_time)::bigint AS end_time_unix_secs,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 "#;
 
@@ -154,7 +154,7 @@ RETURNING
   (SELECT username FROM users WHERE id = announcements.author_id) AS author_username,
   EXTRACT(EPOCH FROM start_time)::bigint AS start_time_unix_secs,
   EXTRACT(EPOCH FROM end_time)::bigint AS end_time_unix_secs,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 "#;
 
@@ -350,7 +350,7 @@ fn map_announcement_row(row: &PgRow) -> Result<StoredAnnouncement, DataLayerErro
         row.try_get("author_username").map_postgres_err()?,
         row.try_get("start_time_unix_secs").map_postgres_err()?,
         row.try_get("end_time_unix_secs").map_postgres_err()?,
-        row.try_get("created_at_unix_secs").map_postgres_err()?,
+        row.try_get("created_at_unix_ms").map_postgres_err()?,
         row.try_get("updated_at_unix_secs").map_postgres_err()?,
     )
 }

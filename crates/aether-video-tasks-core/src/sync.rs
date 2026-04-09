@@ -30,7 +30,7 @@ impl LocalVideoTaskSeed {
                     local_task_id: context_text(report_context, "local_task_id")
                         .unwrap_or_else(|| Uuid::new_v4().to_string()),
                     upstream_task_id: upstream_id.to_string(),
-                    created_at_unix_secs: context_u64(report_context, "local_created_at")
+                    created_at_unix_ms: context_u64(report_context, "local_created_at")
                         .unwrap_or_else(current_unix_timestamp_secs),
                     user_id: context_text(report_context, "user_id"),
                     api_key_id: context_text(report_context, "api_key_id"),
@@ -61,7 +61,7 @@ impl LocalVideoTaskSeed {
                     local_task_id: context_text(report_context, "local_task_id")
                         .unwrap_or_else(|| Uuid::new_v4().to_string()),
                     upstream_task_id: upstream_id.to_string(),
-                    created_at_unix_secs: context_u64(report_context, "local_created_at")
+                    created_at_unix_ms: context_u64(report_context, "local_created_at")
                         .unwrap_or_else(current_unix_timestamp_secs),
                     user_id: context_text(report_context, "user_id"),
                     api_key_id: context_text(report_context, "api_key_id"),
@@ -130,7 +130,7 @@ impl LocalVideoTaskSeed {
                 );
                 report_context.insert(
                     "local_created_at".to_string(),
-                    Value::Number(seed.created_at_unix_secs.into()),
+                    Value::Number(seed.created_at_unix_ms.into()),
                 );
             }
             Self::GeminiCreate(seed) => {

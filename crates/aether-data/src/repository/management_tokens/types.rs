@@ -52,7 +52,7 @@ pub struct StoredManagementToken {
     pub last_used_ip: Option<String>,
     pub usage_count: u64,
     pub is_active: bool,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_secs: Option<u64>,
 }
 
@@ -85,7 +85,7 @@ impl StoredManagementToken {
             last_used_ip: None,
             usage_count: 0,
             is_active: true,
-            created_at_unix_secs: None,
+            created_at_unix_ms: None,
             updated_at_unix_secs: None,
         })
     }
@@ -120,10 +120,10 @@ impl StoredManagementToken {
 
     pub fn with_timestamps(
         mut self,
-        created_at_unix_secs: Option<u64>,
+        created_at_unix_ms: Option<u64>,
         updated_at_unix_secs: Option<u64>,
     ) -> Self {
-        self.created_at_unix_secs = created_at_unix_secs;
+        self.created_at_unix_ms = created_at_unix_ms;
         self.updated_at_unix_secs = updated_at_unix_secs;
         self
     }

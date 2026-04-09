@@ -146,7 +146,7 @@ impl WalletReadRepository for InMemoryWalletRepository {
                 total_adjusted: wallet.total_adjusted,
                 user_name: None,
                 api_key_name: None,
-                created_at_unix_secs: None,
+                created_at_unix_ms: None,
                 updated_at_unix_secs: Some(wallet.updated_at_unix_secs),
             })
             .collect::<Vec<_>>();
@@ -299,7 +299,7 @@ impl WalletWriteRepository for InMemoryWalletRepository {
                 gateway_order_id: Some(input.gateway_order_id),
                 gateway_response: Some(input.gateway_response),
                 status: "pending".to_string(),
-                created_at_unix_secs: 0,
+                created_at_unix_ms: 0,
                 paid_at_unix_secs: None,
                 credited_at_unix_secs: None,
                 expires_at_unix_secs: Some(input.expires_at_unix_secs),
@@ -343,7 +343,7 @@ impl WalletWriteRepository for InMemoryWalletRepository {
                 requested_by: None,
                 approved_by: None,
                 processed_by: None,
-                created_at_unix_secs: 0,
+                created_at_unix_ms: 0,
                 updated_at_unix_secs: 0,
                 processed_at_unix_secs: None,
                 completed_at_unix_secs: None,

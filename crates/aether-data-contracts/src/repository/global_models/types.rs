@@ -187,7 +187,7 @@ pub struct StoredAdminGlobalModel {
     pub provider_count: u64,
     pub active_provider_count: u64,
     pub usage_count: u64,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_secs: Option<u64>,
 }
 
@@ -205,7 +205,7 @@ impl StoredAdminGlobalModel {
         provider_count: u64,
         active_provider_count: u64,
         usage_count: u64,
-        created_at_unix_secs: Option<u64>,
+        created_at_unix_ms: Option<u64>,
         updated_at_unix_secs: Option<u64>,
     ) -> Result<Self, crate::DataLayerError> {
         if id.trim().is_empty() {
@@ -236,7 +236,7 @@ impl StoredAdminGlobalModel {
             provider_count,
             active_provider_count,
             usage_count,
-            created_at_unix_secs,
+            created_at_unix_ms,
             updated_at_unix_secs,
         })
     }
@@ -267,7 +267,7 @@ pub struct StoredAdminProviderModel {
     pub is_active: bool,
     pub is_available: bool,
     pub config: Option<Value>,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_secs: Option<u64>,
     pub global_model_name: Option<String>,
     pub global_model_display_name: Option<String>,
@@ -294,7 +294,7 @@ impl StoredAdminProviderModel {
         is_active: bool,
         is_available: bool,
         config: Option<Value>,
-        created_at_unix_secs: Option<u64>,
+        created_at_unix_ms: Option<u64>,
         updated_at_unix_secs: Option<u64>,
         global_model_name: Option<String>,
         global_model_display_name: Option<String>,
@@ -339,7 +339,7 @@ impl StoredAdminProviderModel {
             is_active,
             is_available,
             config,
-            created_at_unix_secs,
+            created_at_unix_ms,
             updated_at_unix_secs,
             global_model_name,
             global_model_display_name,

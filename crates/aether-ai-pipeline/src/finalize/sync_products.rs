@@ -170,7 +170,7 @@ pub fn maybe_build_openai_chat_cross_format_sync_product_from_normalized_payload
         "gemini:chat" | "gemini:cli" => {
             convert_gemini_chat_response_to_openai_chat(&provider_body_json, report_context)
         }
-        "openai:cli" | "openai:compact" => {
+        "openai:cli" => {
             convert_openai_cli_response_to_openai_chat(&provider_body_json, report_context)
         }
         _ => None,
@@ -211,7 +211,7 @@ pub fn maybe_build_openai_cli_cross_format_sync_product_from_normalized_payload(
         .trim()
         .to_ascii_lowercase();
 
-    if !is_openai_cli_family_api_format(&client_api_format)
+    if client_api_format != "openai:cli"
         || sync_cli_response_conversion_kind(&provider_api_format, &client_api_format).is_none()
     {
         return Ok(None);
@@ -228,7 +228,7 @@ pub fn maybe_build_openai_cli_cross_format_sync_product_from_normalized_payload(
     };
 
     let Some(client_body_json) = (match provider_api_format.as_str() {
-        "openai:cli" | "openai:compact" => Some(provider_body_json.clone()),
+        "openai:cli" => Some(provider_body_json.clone()),
         "claude:chat" | "claude:cli" => {
             convert_claude_cli_response_to_openai_cli(&provider_body_json, report_context)
         }
@@ -351,7 +351,12 @@ fn maybe_build_standard_same_format_sync_body(
         return None;
     }
 
-    body_json.cloned()
+    let body_json = body_json?;
+    if is_error_like_sync_body(body_json) {
+        return None;
+    }
+
+    Some(body_json.clone())
 }
 
 fn maybe_build_standard_same_format_stream_sync_body(
@@ -429,14 +434,25 @@ fn maybe_build_openai_cli_same_family_sync_body(
         .unwrap_or_default()
         .trim()
         .to_ascii_lowercase();
+    let needs_conversion = report_context
+        .get("needs_conversion")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     if !is_openai_cli_family_api_format(&provider_api_format)
         || !is_openai_cli_family_api_format(&client_api_format)
+        || provider_api_format != client_api_format
+        || needs_conversion
     {
         return None;
     }
 
-    body_json.cloned()
+    let body_json = body_json?;
+    if is_error_like_sync_body(body_json) {
+        return None;
+    }
+
+    Some(body_json.clone())
 }
 
 fn maybe_build_openai_cli_same_family_stream_sync_body(
@@ -472,7 +488,8 @@ fn maybe_build_openai_cli_same_family_stream_sync_body(
 
     if !is_openai_cli_family_api_format(&provider_api_format)
         || !is_openai_cli_family_api_format(&client_api_format)
-        || (provider_api_format == client_api_format && needs_conversion)
+        || provider_api_format != client_api_format
+        || needs_conversion
     {
         return Ok(None);
     }
@@ -505,6 +522,32 @@ fn maybe_build_openai_cross_format_provider_body_from_normalized_payload(
     };
 
     Ok(aggregated_stream_body.or_else(|| body_json.cloned()))
+}
+
+fn is_error_like_sync_body(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+
+    object.contains_key("error")
+        || object
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value == "error")
+        || object
+            .get("chunks")
+            .and_then(Value::as_array)
+            .is_some_and(|chunks| {
+                chunks.iter().any(|chunk| {
+                    chunk.as_object().is_some_and(|chunk_object| {
+                        chunk_object.contains_key("error")
+                            || chunk_object
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .is_some_and(|value| value == "error")
+                    })
+                })
+            })
 }
 
 pub fn maybe_build_standard_cross_format_sync_product(
@@ -1403,6 +1446,33 @@ mod tests {
     }
 
     #[test]
+    fn rejects_standard_same_format_error_body_json() {
+        let report_context = json!({
+            "provider_api_format": "claude:chat",
+            "client_api_format": "claude:chat",
+            "needs_conversion": false,
+        });
+        let provider_body_json = json!({
+            "type": "error",
+            "error": {
+                "type": "rate_limit_error",
+                "message": "slow down"
+            }
+        });
+
+        let body_json = maybe_build_standard_same_format_sync_body_from_normalized_payload(
+            "claude_chat_sync_finalize",
+            200,
+            Some(&report_context),
+            Some(&provider_body_json),
+            None,
+        )
+        .expect("same-format error guard should not error");
+
+        assert!(body_json.is_none());
+    }
+
+    #[test]
     fn builds_openai_cli_same_family_body_from_stream_payload() {
         let body = concat!(
             "event: response.created\n",
@@ -1412,12 +1482,12 @@ mod tests {
         );
         let report_context = json!({
             "provider_api_format": "openai:compact",
-            "client_api_format": "openai:cli",
-            "needs_conversion": true,
+            "client_api_format": "openai:compact",
+            "needs_conversion": false,
         });
 
         let body_json = maybe_build_openai_cli_same_family_sync_body_from_normalized_payload(
-            "openai_cli_sync_finalize",
+            "openai_compact_sync_finalize",
             200,
             Some(&report_context),
             None,
@@ -1458,7 +1528,7 @@ mod tests {
     fn falls_back_to_body_json_for_openai_cli_same_family_sync_payload() {
         let report_context = json!({
             "provider_api_format": "openai:compact",
-            "client_api_format": "openai:cli",
+            "client_api_format": "openai:compact",
             "needs_conversion": false,
         });
         let provider_body_json = json!({
@@ -1479,6 +1549,32 @@ mod tests {
         .expect("body should exist");
 
         assert_eq!(body_json, provider_body_json);
+    }
+
+    #[test]
+    fn rejects_openai_cli_same_family_error_body_json() {
+        let report_context = json!({
+            "provider_api_format": "openai:cli",
+            "client_api_format": "openai:cli",
+            "needs_conversion": false,
+        });
+        let provider_body_json = json!({
+            "error": {
+                "message": "quota reached",
+                "type": "rate_limit_error"
+            }
+        });
+
+        let body_json = maybe_build_openai_cli_same_family_sync_body_from_normalized_payload(
+            "openai_cli_sync_finalize",
+            200,
+            Some(&report_context),
+            Some(&provider_body_json),
+            None,
+        )
+        .expect("openai-cli same-family error guard should not error");
+
+        assert!(body_json.is_none());
     }
 
     #[test]
@@ -1641,54 +1737,6 @@ mod tests {
     }
 
     #[test]
-    fn builds_openai_compact_cross_format_sync_product_for_function_call_case() {
-        let report_context = json!({
-            "provider_api_format": "gemini:cli",
-            "client_api_format": "openai:compact",
-            "model": "gpt-5",
-        });
-        let provider_body_json = json!({
-            "responseId": "resp_cli_tool_123",
-            "candidates": [{
-                "content": {
-                    "parts": [
-                        {"text": "Need a tool."},
-                        {"functionCall": {"name": "get_weather", "args": {"location": "Tokyo"}}}
-                    ],
-                    "role": "model"
-                },
-                "finishReason": "STOP",
-                "index": 0
-            }],
-            "modelVersion": "gemini-cli-upstream",
-            "usageMetadata": {
-                "promptTokenCount": 3,
-                "candidatesTokenCount": 5,
-                "thoughtsTokenCount": 2,
-                "totalTokenCount": 10
-            }
-        });
-
-        let product = maybe_build_openai_cli_cross_format_sync_product_from_normalized_payload(
-            "openai_compact_sync_finalize",
-            200,
-            Some(&report_context),
-            Some(&provider_body_json),
-            None,
-        )
-        .expect("openai-compact cross-format should succeed")
-        .expect("product should exist");
-
-        assert_eq!(product.provider_body_json, provider_body_json);
-        assert_eq!(product.client_body_json["object"], "response");
-        assert_eq!(
-            product.client_body_json["output"][1]["type"],
-            "function_call"
-        );
-        assert_eq!(product.client_body_json["output"][1]["name"], "get_weather");
-    }
-
-    #[test]
     fn rejects_openai_chat_cross_format_for_unsupported_matrix() {
         let report_context = json!({
             "provider_api_format": "openai:chat",
@@ -1741,8 +1789,8 @@ mod tests {
     fn standard_sync_finalize_product_handles_openai_cli_same_family_body() {
         let report_context = json!({
             "provider_api_format": "openai:compact",
-            "client_api_format": "openai:cli",
-            "needs_conversion": true,
+            "client_api_format": "openai:compact",
+            "needs_conversion": false,
         });
         let provider_body_json = json!({
             "id": "resp_123",
@@ -1752,7 +1800,7 @@ mod tests {
         });
 
         let product = maybe_build_standard_sync_finalize_product_from_normalized_payload(
-            "openai_cli_sync_finalize",
+            "openai_compact_sync_finalize",
             200,
             Some(&report_context),
             Some(&provider_body_json),

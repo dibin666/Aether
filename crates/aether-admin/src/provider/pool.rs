@@ -572,7 +572,7 @@ pub fn build_admin_pool_key_payload(
         "total_cost_usd": "0.00000000",
         "sticky_sessions": context.sticky_sessions,
         "lru_score": context.lru_score,
-        "created_at": key.created_at_unix_secs.and_then(unix_secs_to_rfc3339),
+        "created_at": key.created_at_unix_ms.and_then(unix_secs_to_rfc3339),
         "last_used_at": key.last_used_at_unix_secs.and_then(unix_secs_to_rfc3339),
         "scheduling_status": scheduling_status,
         "scheduling_reason": scheduling_reason,
@@ -817,7 +817,7 @@ pub fn build_admin_pool_batch_import_key_record(
     record.total_response_time_ms = Some(0);
     record.health_by_format = Some(json!({}));
     record.circuit_breaker_by_format = Some(json!({}));
-    record.created_at_unix_secs = Some(now_unix_secs);
+    record.created_at_unix_ms = Some(now_unix_secs);
     record.updated_at_unix_secs = Some(now_unix_secs);
     Ok(record)
 }

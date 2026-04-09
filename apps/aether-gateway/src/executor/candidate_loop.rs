@@ -125,8 +125,8 @@ where
                 error_type: None,
                 error_message: None,
                 latency_ms: None,
-                started_at_unix_secs: None,
-                finished_at_unix_secs: None,
+                started_at_unix_ms: None,
+                finished_at_unix_ms: None,
             },
         )
         .await;
@@ -153,8 +153,8 @@ pub(crate) async fn mark_unused_local_candidate_items<T, FPlan, FContext>(
                 error_type: None,
                 error_message: None,
                 latency_ms: None,
-                started_at_unix_secs: None,
-                finished_at_unix_secs: None,
+                started_at_unix_ms: None,
+                finished_at_unix_ms: None,
             },
         )
         .await;

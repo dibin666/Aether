@@ -108,9 +108,19 @@ pub(crate) async fn resolve_local_openai_chat_decision_input(
         }
     };
 
+    let required_capabilities = planner_state
+        .resolve_request_candidate_required_capabilities(
+            &auth_context.user_id,
+            &auth_context.api_key_id,
+            Some(requested_model.as_str()),
+            None,
+        )
+        .await;
+
     Some(LocalOpenAiChatDecisionInput {
         auth_context,
         requested_model,
         auth_snapshot,
+        required_capabilities,
     })
 }

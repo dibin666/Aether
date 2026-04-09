@@ -161,7 +161,7 @@ pub(super) async fn build_admin_monitoring_resilience_snapshot(
         .filter(admin_monitoring_usage_is_error)
         .collect::<Vec<_>>();
     recent_usage_errors
-        .sort_by(|left, right| right.created_at_unix_secs.cmp(&left.created_at_unix_secs));
+        .sort_by(|left, right| right.created_at_unix_ms.cmp(&left.created_at_unix_ms));
 
     let total_errors = recent_usage_errors.len();
     let mut error_breakdown = BTreeMap::<String, usize>::new();
@@ -200,7 +200,7 @@ pub(super) async fn build_admin_monitoring_resilience_snapshot(
                 "error_id": item.id,
                 "error_type": error_type,
                 "operation": operation,
-                "timestamp": unix_secs_to_rfc3339(item.created_at_unix_secs),
+                "timestamp": unix_secs_to_rfc3339(item.created_at_unix_ms),
                 "context": {
                     "request_id": item.request_id,
                     "provider_id": item.provider_id,

@@ -59,7 +59,7 @@ pub struct StoredRequestUsageAudit {
     pub client_response_body: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_metadata: Option<Value>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub updated_at_unix_secs: u64,
     pub finalized_at_unix_secs: Option<u64>,
 }
@@ -100,7 +100,7 @@ impl StoredRequestUsageAudit {
         first_byte_time_ms: Option<i32>,
         status: String,
         billing_status: String,
-        created_at_unix_secs: i64,
+        created_at_unix_ms: i64,
         updated_at_unix_secs: i64,
         finalized_at_unix_secs: Option<i64>,
     ) -> Result<Self, crate::DataLayerError> {
@@ -188,10 +188,7 @@ impl StoredRequestUsageAudit {
             client_response_headers: None,
             client_response_body: None,
             request_metadata: None,
-            created_at_unix_secs: parse_timestamp(
-                created_at_unix_secs,
-                "usage.created_at_unix_secs",
-            )?,
+            created_at_unix_ms: parse_timestamp(created_at_unix_ms, "usage.created_at_unix_ms")?,
             updated_at_unix_secs: parse_timestamp(
                 updated_at_unix_secs,
                 "usage.updated_at_unix_secs",
@@ -372,7 +369,7 @@ pub struct UpsertUsageRecord {
     pub client_response_body: Option<Value>,
     pub request_metadata: Option<Value>,
     pub finalized_at_unix_secs: Option<u64>,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_secs: u64,
 }
 
@@ -630,7 +627,7 @@ mod tests {
             client_response_body: None,
             request_metadata: None,
             finalized_at_unix_secs: None,
-            created_at_unix_secs: Some(100),
+            created_at_unix_ms: Some(100),
             updated_at_unix_secs: 101,
         };
 

@@ -1,18 +1,21 @@
 use serde_json::Value;
 
+use crate::conversion::{build_core_error_body_for_client_format, LocalCoreSyncErrorKind};
+use crate::finalize::sse::encode_json_sse;
 use crate::finalize::standard::claude::stream::{ClaudeClientEmitter, ClaudeProviderState};
 use crate::finalize::standard::gemini::stream::{GeminiClientEmitter, GeminiProviderState};
 use crate::finalize::standard::openai::stream::{
     OpenAIChatClientEmitter, OpenAIChatProviderState, OpenAICliClientEmitter,
     OpenAICliProviderState,
 };
-use crate::finalize::standard::stream_core::common::CanonicalStreamFrame;
+use crate::finalize::standard::stream_core::common::{decode_json_data_line, CanonicalStreamFrame};
 use crate::finalize::PipelineFinalizeError;
 
 #[derive(Default)]
 pub struct StreamingStandardFormatMatrix {
     provider: Option<ProviderStreamParser>,
     client: Option<ClientStreamEmitter>,
+    terminated: bool,
 }
 
 impl StreamingStandardFormatMatrix {
@@ -21,7 +24,14 @@ impl StreamingStandardFormatMatrix {
         report_context: &Value,
         line: Vec<u8>,
     ) -> Result<Vec<u8>, PipelineFinalizeError> {
+        if self.terminated {
+            return Ok(Vec::new());
+        }
         self.ensure_initialized(report_context);
+        if let Some(error_body) = build_client_error_body_for_line(report_context, &line) {
+            self.terminated = true;
+            return self.emit_error(error_body);
+        }
         let Some(provider) = self.provider.as_mut() else {
             return Ok(Vec::new());
         };
@@ -30,6 +40,9 @@ impl StreamingStandardFormatMatrix {
     }
 
     pub fn finish(&mut self, report_context: &Value) -> Result<Vec<u8>, PipelineFinalizeError> {
+        if self.terminated {
+            return Ok(Vec::new());
+        }
         self.ensure_initialized(report_context);
         let Some(provider) = self.provider.as_mut() else {
             return Ok(Vec::new());
@@ -76,6 +89,13 @@ impl StreamingStandardFormatMatrix {
             out.extend(client.emit(frame)?);
         }
         Ok(out)
+    }
+
+    fn emit_error(&mut self, error_body: Value) -> Result<Vec<u8>, PipelineFinalizeError> {
+        let Some(client) = self.client.as_mut() else {
+            return Ok(Vec::new());
+        };
+        client.emit_error(error_body)
     }
 }
 
@@ -156,6 +176,401 @@ impl ClientStreamEmitter {
             ClientStreamEmitter::OpenAICli(state) => state.finish(),
             ClientStreamEmitter::Claude(state) => state.finish(),
             ClientStreamEmitter::Gemini(state) => state.finish(),
+        }
+    }
+
+    fn emit_error(&mut self, error_body: Value) -> Result<Vec<u8>, PipelineFinalizeError> {
+        match self {
+            ClientStreamEmitter::OpenAICli(state) => state.emit_error(error_body),
+            ClientStreamEmitter::Claude(_) => {
+                let event = error_body.get("type").and_then(Value::as_str);
+                encode_json_sse(event, &error_body)
+            }
+            ClientStreamEmitter::OpenAIChat(_) | ClientStreamEmitter::Gemini(_) => {
+                encode_json_sse(None, &error_body)
+            }
+        }
+    }
+}
+
+fn build_client_error_body_for_line(report_context: &Value, line: &[u8]) -> Option<Value> {
+    let value = decode_json_data_line(line)?;
+    let provider_api_format = report_context
+        .get("provider_api_format")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let client_api_format = report_context
+        .get("client_api_format")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let (message, code, kind) = parse_provider_error(&provider_api_format, &value)?;
+    build_core_error_body_for_client_format(&client_api_format, &message, code.as_deref(), kind)
+}
+
+fn parse_provider_error(
+    provider_api_format: &str,
+    payload: &Value,
+) -> Option<(String, Option<String>, LocalCoreSyncErrorKind)> {
+    match provider_api_format {
+        "openai:chat" | "openai:cli" | "openai:compact" => parse_openai_error(payload),
+        "claude:chat" | "claude:cli" => parse_claude_error(payload),
+        "gemini:chat" | "gemini:cli" => parse_gemini_error(payload),
+        _ => None,
+    }
+}
+
+fn parse_openai_error(payload: &Value) -> Option<(String, Option<String>, LocalCoreSyncErrorKind)> {
+    let error = payload.get("error")?.as_object()?;
+    let message = error.get("message").and_then(Value::as_str)?.to_string();
+    let code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let kind = match error
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "invalid_request_error" => LocalCoreSyncErrorKind::InvalidRequest,
+        "authentication_error" => LocalCoreSyncErrorKind::Authentication,
+        "permission_error" => LocalCoreSyncErrorKind::PermissionDenied,
+        "not_found_error" => LocalCoreSyncErrorKind::NotFound,
+        "rate_limit_error" => LocalCoreSyncErrorKind::RateLimit,
+        "context_length_exceeded" => LocalCoreSyncErrorKind::ContextLengthExceeded,
+        "overloaded_error" => LocalCoreSyncErrorKind::Overloaded,
+        _ => LocalCoreSyncErrorKind::ServerError,
+    };
+    Some((message, code, kind))
+}
+
+fn parse_claude_error(payload: &Value) -> Option<(String, Option<String>, LocalCoreSyncErrorKind)> {
+    let error = payload.get("error")?.as_object()?;
+    let message = error.get("message").and_then(Value::as_str)?.to_string();
+    let code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let kind = match error
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "invalid_request_error" => LocalCoreSyncErrorKind::InvalidRequest,
+        "authentication_error" => LocalCoreSyncErrorKind::Authentication,
+        "permission_error" => LocalCoreSyncErrorKind::PermissionDenied,
+        "not_found_error" => LocalCoreSyncErrorKind::NotFound,
+        "rate_limit_error" => LocalCoreSyncErrorKind::RateLimit,
+        "overloaded_error" => LocalCoreSyncErrorKind::Overloaded,
+        _ => LocalCoreSyncErrorKind::ServerError,
+    };
+    Some((message, code, kind))
+}
+
+fn parse_gemini_error(payload: &Value) -> Option<(String, Option<String>, LocalCoreSyncErrorKind)> {
+    let error = payload.get("error")?.as_object()?;
+    let message = error.get("message").and_then(Value::as_str)?.to_string();
+    let code = error.get("code").map(|value| match value {
+        Value::String(text) => text.clone(),
+        Value::Number(number) => number.to_string(),
+        _ => String::new(),
+    });
+    let kind = match error
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "INVALID_ARGUMENT" => LocalCoreSyncErrorKind::InvalidRequest,
+        "UNAUTHENTICATED" => LocalCoreSyncErrorKind::Authentication,
+        "PERMISSION_DENIED" => LocalCoreSyncErrorKind::PermissionDenied,
+        "NOT_FOUND" => LocalCoreSyncErrorKind::NotFound,
+        "RESOURCE_EXHAUSTED" => LocalCoreSyncErrorKind::RateLimit,
+        "UNAVAILABLE" => LocalCoreSyncErrorKind::Overloaded,
+        _ => LocalCoreSyncErrorKind::ServerError,
+    };
+    let code = code.filter(|value| !value.is_empty());
+    Some((message, code, kind))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StreamingStandardFormatMatrix;
+    use serde_json::{json, Value};
+
+    fn report_context(provider_api_format: &str, client_api_format: &str) -> Value {
+        json!({
+            "provider_api_format": provider_api_format,
+            "client_api_format": client_api_format,
+            "mapped_model": "test-model",
+        })
+    }
+
+    fn data_line(value: Value) -> Vec<u8> {
+        format!("data: {}\n", value).into_bytes()
+    }
+
+    #[test]
+    fn transforms_provider_errors_to_openai_chat_error_bodies() {
+        let cases = [
+            (
+                "openai:chat",
+                data_line(json!({
+                    "error": {
+                        "message": "bad request",
+                        "type": "invalid_request_error",
+                        "code": "invalid_request",
+                    }
+                })),
+                "\"message\":\"bad request\"",
+                "\"type\":\"invalid_request_error\"",
+                "\"code\":\"invalid_request\"",
+            ),
+            (
+                "claude:chat",
+                data_line(json!({
+                    "type": "error",
+                    "error": {
+                        "message": "slow down",
+                        "type": "rate_limit_error",
+                        "code": "rate_limit",
+                    }
+                })),
+                "\"message\":\"slow down\"",
+                "\"type\":\"rate_limit_error\"",
+                "\"code\":\"rate_limit\"",
+            ),
+            (
+                "gemini:cli",
+                data_line(json!({
+                    "error": {
+                        "code": 429,
+                        "message": "quota exceeded",
+                        "status": "RESOURCE_EXHAUSTED",
+                    }
+                })),
+                "\"message\":\"quota exceeded\"",
+                "\"type\":\"rate_limit_error\"",
+                "\"code\":\"429\"",
+            ),
+        ];
+
+        for (provider_api_format, line, message, err_type, code) in cases {
+            let report_context = report_context(provider_api_format, "openai:chat");
+            let mut matrix = StreamingStandardFormatMatrix::default();
+            let output = matrix
+                .transform_line(&report_context, line)
+                .expect("error should convert");
+            let sse = String::from_utf8(output).expect("sse should be utf8");
+
+            assert!(sse.starts_with("data: {\"error\":"));
+            assert!(!sse.contains("event: "));
+            assert!(sse.contains(message));
+            assert!(sse.contains(err_type));
+            assert!(sse.contains(code));
+            assert!(matrix
+                .finish(&report_context)
+                .expect("finish should succeed")
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn transforms_provider_errors_to_claude_error_events() {
+        let cases = [
+            (
+                "openai:chat",
+                data_line(json!({
+                    "error": {
+                        "message": "bad request",
+                        "type": "invalid_request_error",
+                        "code": "invalid_request",
+                    }
+                })),
+                "\"message\":\"bad request\"",
+                "\"type\":\"invalid_request_error\"",
+                "\"code\":\"invalid_request\"",
+            ),
+            (
+                "claude:chat",
+                data_line(json!({
+                    "type": "error",
+                    "error": {
+                        "message": "slow down",
+                        "type": "rate_limit_error",
+                        "code": "rate_limit",
+                    }
+                })),
+                "\"message\":\"slow down\"",
+                "\"type\":\"rate_limit_error\"",
+                "\"code\":\"rate_limit\"",
+            ),
+            (
+                "gemini:cli",
+                data_line(json!({
+                    "error": {
+                        "code": 429,
+                        "message": "quota exceeded",
+                        "status": "RESOURCE_EXHAUSTED",
+                    }
+                })),
+                "\"message\":\"quota exceeded\"",
+                "\"type\":\"rate_limit_error\"",
+                "\"code\":\"429\"",
+            ),
+        ];
+
+        for (provider_api_format, line, message, err_type, code) in cases {
+            let report_context = report_context(provider_api_format, "claude:chat");
+            let mut matrix = StreamingStandardFormatMatrix::default();
+            let output = matrix
+                .transform_line(&report_context, line)
+                .expect("error should convert");
+            let sse = String::from_utf8(output).expect("sse should be utf8");
+
+            assert!(sse.starts_with("event: error\n"));
+            assert!(sse.contains("data: {"));
+            assert!(sse.contains("\"type\":\"error\""));
+            assert!(sse.contains("\"error\":{"));
+            assert!(sse.contains(message));
+            assert!(sse.contains(err_type));
+            assert!(sse.contains(code));
+            assert!(matrix
+                .finish(&report_context)
+                .expect("finish should succeed")
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn transforms_provider_errors_to_gemini_error_bodies() {
+        let cases = [
+            (
+                "openai:chat",
+                data_line(json!({
+                    "error": {
+                        "message": "bad request",
+                        "type": "invalid_request_error",
+                        "code": "invalid_request",
+                    }
+                })),
+                "\"message\":\"bad request\"",
+                "\"code\":400",
+                "\"status\":\"INVALID_ARGUMENT\"",
+            ),
+            (
+                "claude:chat",
+                data_line(json!({
+                    "type": "error",
+                    "error": {
+                        "message": "slow down",
+                        "type": "rate_limit_error",
+                        "code": "rate_limit",
+                    }
+                })),
+                "\"message\":\"slow down\"",
+                "\"code\":429",
+                "\"status\":\"RESOURCE_EXHAUSTED\"",
+            ),
+            (
+                "gemini:cli",
+                data_line(json!({
+                    "error": {
+                        "code": 429,
+                        "message": "quota exceeded",
+                        "status": "RESOURCE_EXHAUSTED",
+                    }
+                })),
+                "\"message\":\"quota exceeded\"",
+                "\"code\":429",
+                "\"status\":\"RESOURCE_EXHAUSTED\"",
+            ),
+        ];
+
+        for (provider_api_format, line, message, code, status) in cases {
+            let report_context = report_context(provider_api_format, "gemini:chat");
+            let mut matrix = StreamingStandardFormatMatrix::default();
+            let output = matrix
+                .transform_line(&report_context, line)
+                .expect("error should convert");
+            let sse = String::from_utf8(output).expect("sse should be utf8");
+
+            assert!(sse.starts_with("data: {\"error\":"));
+            assert!(!sse.contains("event: "));
+            assert!(sse.contains(message));
+            assert!(sse.contains(code));
+            assert!(sse.contains(status));
+            assert!(matrix
+                .finish(&report_context)
+                .expect("finish should succeed")
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn transforms_provider_errors_to_openai_cli_failed_events() {
+        let cases = [
+            (
+                "openai:chat",
+                data_line(json!({
+                    "error": {
+                        "message": "bad request",
+                        "type": "invalid_request_error",
+                        "code": "invalid_request",
+                    }
+                })),
+                "\"message\":\"bad request\"",
+                "\"type\":\"invalid_request_error\"",
+                "\"code\":\"invalid_request\"",
+            ),
+            (
+                "claude:chat",
+                data_line(json!({
+                    "type": "error",
+                    "error": {
+                        "message": "slow down",
+                        "type": "rate_limit_error",
+                        "code": "rate_limit",
+                    }
+                })),
+                "\"message\":\"slow down\"",
+                "\"type\":\"rate_limit_error\"",
+                "\"code\":\"rate_limit\"",
+            ),
+            (
+                "gemini:cli",
+                data_line(json!({
+                    "error": {
+                        "code": 429,
+                        "message": "quota exceeded",
+                        "status": "RESOURCE_EXHAUSTED",
+                    }
+                })),
+                "\"message\":\"quota exceeded\"",
+                "\"type\":\"rate_limit_error\"",
+                "\"code\":\"429\"",
+            ),
+        ];
+
+        for (provider_api_format, line, message, err_type, code) in cases {
+            let report_context = report_context(provider_api_format, "openai:cli");
+            let mut matrix = StreamingStandardFormatMatrix::default();
+            let output = matrix
+                .transform_line(&report_context, line)
+                .expect("error should convert");
+            let sse = String::from_utf8(output).expect("sse should be utf8");
+
+            assert!(sse.starts_with("event: response.failed\n"));
+            assert!(sse.contains("\"sequence_number\":1"));
+            assert!(sse.contains(message));
+            assert!(sse.contains(err_type));
+            assert!(sse.contains(code));
+            assert!(matrix
+                .finish(&report_context)
+                .expect("finish should succeed")
+                .is_empty());
         }
     }
 }

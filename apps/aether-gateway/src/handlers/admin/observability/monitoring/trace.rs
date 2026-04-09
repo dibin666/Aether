@@ -13,7 +13,7 @@ use axum::{
     body::Body,
     response::{IntoResponse, Response},
 };
-use tracing::warn;
+use tracing::debug;
 
 pub(super) async fn build_admin_monitoring_trace_request_response(
     state: &AdminAppState<'_>,
@@ -38,7 +38,7 @@ pub(super) async fn build_admin_monitoring_trace_request_response(
         .await
         .map_err(|err| GatewayError::Internal(err.to_string()))?
     else {
-        warn!(
+        debug!(
             event_name = "admin_monitoring_request_trace_not_found",
             log_type = "admin_monitoring",
             request_id = %short_request_id(request_id.as_str()),

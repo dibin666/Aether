@@ -167,14 +167,14 @@ async fn gateway_handles_admin_proxy_node_events_locally_with_trusted_admin_prin
                 node_id: "node-1".to_string(),
                 event_type: "connected".to_string(),
                 detail: Some("older".to_string()),
-                created_at_unix_secs: Some(1_710_000_000),
+                created_at_unix_ms: Some(1_710_000_000),
             },
             StoredProxyNodeEvent {
                 id: 2,
                 node_id: "node-1".to_string(),
                 event_type: "disconnected".to_string(),
                 detail: Some("newer".to_string()),
-                created_at_unix_secs: Some(1_710_000_100),
+                created_at_unix_ms: Some(1_710_000_100),
             },
         ],
     ));

@@ -11,6 +11,7 @@ pub struct CanonicalUsage {
 pub enum CanonicalStreamEvent {
     Start,
     TextDelta(String),
+    ReasoningDelta(String),
     ToolCallStart {
         index: usize,
         call_id: String,
@@ -214,5 +215,25 @@ pub fn build_openai_chat_finish_chunk(id: &str, model: &str, finish_reason: Opti
             "delta": {},
             "finish_reason": finish_reason,
         }]
+    })
+}
+
+pub fn build_openai_chat_usage_chunk(
+    id: &str,
+    model: &str,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+) -> Value {
+    json!({
+        "id": id,
+        "object": "chat.completion.chunk",
+        "model": model,
+        "choices": [],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
     })
 }

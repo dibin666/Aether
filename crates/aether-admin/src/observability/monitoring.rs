@@ -289,6 +289,8 @@ pub fn build_admin_monitoring_trace_request_candidate_payload(
         "provider_id": candidate.provider_id,
         "provider_name": item.provider_name,
         "provider_website": item.provider_website,
+        "provider_priority": item.provider_priority,
+        "provider_keep_priority_on_conversion": item.provider_keep_priority_on_conversion,
         "endpoint_id": candidate.endpoint_id,
         "endpoint_name": item.endpoint_api_format,
         "key_id": candidate.key_id,
@@ -296,6 +298,8 @@ pub fn build_admin_monitoring_trace_request_candidate_payload(
         "key_account_label": serde_json::Value::Null,
         "key_preview": serde_json::Value::Null,
         "key_auth_type": item.provider_key_auth_type,
+        "key_internal_priority": item.provider_key_internal_priority,
+        "key_global_priority_by_format": item.provider_key_global_priority_by_format,
         "key_oauth_plan_type": serde_json::Value::Null,
         "key_capabilities": item.provider_key_capabilities,
         "required_capabilities": candidate.required_capabilities,
@@ -308,9 +312,9 @@ pub fn build_admin_monitoring_trace_request_candidate_payload(
         "latency_ms": candidate.latency_ms,
         "concurrent_requests": candidate.concurrent_requests,
         "extra_data": candidate.extra_data,
-        "created_at": unix_secs_to_rfc3339(candidate.created_at_unix_secs),
-        "started_at": candidate.started_at_unix_secs.and_then(unix_secs_to_rfc3339),
-        "finished_at": candidate.finished_at_unix_secs.and_then(unix_secs_to_rfc3339),
+        "created_at": unix_ms_to_rfc3339(candidate.created_at_unix_ms),
+        "started_at": candidate.started_at_unix_ms.and_then(unix_ms_to_rfc3339),
+        "finished_at": candidate.finished_at_unix_ms.and_then(unix_ms_to_rfc3339),
     })
 }
 
@@ -745,9 +749,11 @@ fn path_identifier_from_path(request_path: &str, prefix: &str) -> Option<String>
     }
 }
 
-fn unix_secs_to_rfc3339(unix_secs: u64) -> Option<String> {
-    chrono::DateTime::<chrono::Utc>::from_timestamp(unix_secs as i64, 0)
-        .map(|value| value.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+fn unix_ms_to_rfc3339(unix_ms: u64) -> Option<String> {
+    let secs = (unix_ms / 1000) as i64;
+    let nanos = ((unix_ms % 1000) * 1_000_000) as u32;
+    chrono::DateTime::<chrono::Utc>::from_timestamp(secs, nanos)
+        .map(|value| value.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
 }
 
 fn query_param_value(query: Option<&str>, key: &str) -> Option<String> {

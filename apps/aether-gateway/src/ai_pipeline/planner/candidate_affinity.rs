@@ -1,15 +1,30 @@
 use tracing::warn;
 
 use crate::ai_pipeline::transport::resolve_transport_proxy_snapshot;
-use crate::ai_pipeline::PlannerAppState;
-use crate::AppState;
-use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
+use crate::ai_pipeline::{
+    GatewayAuthApiKeySnapshot, GatewayProviderTransportSnapshot, PlannerAppState,
+};
+use crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL;
+use crate::scheduler::config::{read_scheduler_ordering_config, SchedulerOrderingConfig};
+use aether_scheduler_core::{
+    build_scheduler_affinity_cache_key_for_api_key_id, compare_candidates_by_priority_mode,
+    requested_capability_priority_for_candidate, SchedulerAffinityTarget,
+    SchedulerMinimalCandidateSelectionCandidate,
+};
+
+const PLANNER_SCHEDULER_AFFINITY_MAX_ENTRIES: usize = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum TunnelOwnerAffinityBucket {
     LocalTunnel = 0,
     Neutral = 1,
     RemoteTunnel = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CandidateExecutionOrdering {
+    tunnel_bucket: TunnelOwnerAffinityBucket,
+    keep_priority_on_conversion: bool,
 }
 
 pub(crate) async fn prefer_local_tunnel_owner_candidates(
@@ -28,11 +43,127 @@ pub(crate) async fn prefer_local_tunnel_owner_candidates(
         .collect()
 }
 
+pub(crate) async fn rank_local_execution_candidates(
+    state: PlannerAppState<'_>,
+    candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
+    client_api_format: &str,
+    required_capabilities: Option<&serde_json::Value>,
+) -> Vec<SchedulerMinimalCandidateSelectionCandidate> {
+    let normalized_client_api_format = client_api_format.trim().to_ascii_lowercase();
+    let ordering_config = read_scheduler_ordering_config_or_default(state).await;
+    let mut ranked = Vec::with_capacity(candidates.len());
+
+    for (original_index, candidate) in candidates.into_iter().enumerate() {
+        let ordering =
+            resolve_candidate_execution_ordering(state, &candidate, ordering_config).await;
+        let is_same_format = candidate
+            .endpoint_api_format
+            .trim()
+            .eq_ignore_ascii_case(normalized_client_api_format.as_str());
+        let demote_cross_format = !is_same_format && !ordering.keep_priority_on_conversion;
+        let capability_priority =
+            requested_capability_priority_for_candidate(required_capabilities, &candidate);
+        ranked.push((
+            capability_priority.0,
+            capability_priority.1,
+            ordering.tunnel_bucket,
+            demote_cross_format,
+            original_index,
+            candidate,
+        ));
+    }
+
+    ranked.sort_by(|left, right| {
+        left.0
+            .cmp(&right.0)
+            .then(left.1.cmp(&right.1))
+            .then(left.2.cmp(&right.2))
+            .then(left.3.cmp(&right.3))
+            .then_with(|| {
+                compare_candidates_by_priority_mode(
+                    &left.5,
+                    &right.5,
+                    ordering_config.priority_mode,
+                    None,
+                )
+            })
+            .then(left.4.cmp(&right.4))
+    });
+
+    ranked
+        .into_iter()
+        .map(|(_, _, _, _, _, candidate)| candidate)
+        .collect()
+}
+
+pub(crate) fn remember_scheduler_affinity_for_candidate(
+    state: PlannerAppState<'_>,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    client_api_format: &str,
+    requested_model: &str,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
+) {
+    let Some(api_key_id) = auth_snapshot
+        .map(|snapshot| snapshot.api_key_id.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let Some(cache_key) = build_scheduler_affinity_cache_key_for_api_key_id(
+        api_key_id,
+        client_api_format,
+        requested_model,
+    ) else {
+        return;
+    };
+
+    state.app().remember_scheduler_affinity_target(
+        &cache_key,
+        SchedulerAffinityTarget {
+            provider_id: candidate.provider_id.clone(),
+            endpoint_id: candidate.endpoint_id.clone(),
+            key_id: candidate.key_id.clone(),
+        },
+        SCHEDULER_AFFINITY_TTL,
+        PLANNER_SCHEDULER_AFFINITY_MAX_ENTRIES,
+    );
+}
+
 async fn resolve_candidate_tunnel_owner_affinity(
     state: PlannerAppState<'_>,
     candidate: &SchedulerMinimalCandidateSelectionCandidate,
 ) -> TunnelOwnerAffinityBucket {
-    let transport = match state
+    let Some(transport) = read_candidate_transport_snapshot(state, candidate).await else {
+        return TunnelOwnerAffinityBucket::Neutral;
+    };
+
+    resolve_tunnel_owner_affinity_from_transport(state, &transport).await
+}
+
+async fn resolve_candidate_execution_ordering(
+    state: PlannerAppState<'_>,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
+    ordering_config: SchedulerOrderingConfig,
+) -> CandidateExecutionOrdering {
+    let Some(transport) = read_candidate_transport_snapshot(state, candidate).await else {
+        return CandidateExecutionOrdering {
+            tunnel_bucket: TunnelOwnerAffinityBucket::Neutral,
+            keep_priority_on_conversion: ordering_config.keep_priority_on_conversion,
+        };
+    };
+
+    CandidateExecutionOrdering {
+        tunnel_bucket: resolve_tunnel_owner_affinity_from_transport(state, &transport).await,
+        keep_priority_on_conversion: ordering_config.keep_priority_on_conversion
+            || transport.provider.keep_priority_on_conversion,
+    }
+}
+
+async fn read_candidate_transport_snapshot(
+    state: PlannerAppState<'_>,
+    candidate: &SchedulerMinimalCandidateSelectionCandidate,
+) -> Option<GatewayProviderTransportSnapshot> {
+    match state
         .read_provider_transport_snapshot(
             &candidate.provider_id,
             &candidate.endpoint_id,
@@ -40,8 +171,8 @@ async fn resolve_candidate_tunnel_owner_affinity(
         )
         .await
     {
-        Ok(Some(transport)) => transport,
-        Ok(None) => return TunnelOwnerAffinityBucket::Neutral,
+        Ok(Some(transport)) => Some(transport),
+        Ok(None) => None,
         Err(error) => {
             warn!(
                 event_name = "candidate_affinity_transport_load_failed",
@@ -50,12 +181,17 @@ async fn resolve_candidate_tunnel_owner_affinity(
                 endpoint_id = %candidate.endpoint_id,
                 key_id = %candidate.key_id,
                 error = ?error,
-                "failed to load provider transport while evaluating tunnel owner affinity"
+                "failed to load provider transport while evaluating execution ordering"
             );
-            return TunnelOwnerAffinityBucket::Neutral;
+            None
         }
-    };
+    }
+}
 
+async fn resolve_tunnel_owner_affinity_from_transport(
+    state: PlannerAppState<'_>,
+    transport: &GatewayProviderTransportSnapshot,
+) -> TunnelOwnerAffinityBucket {
     let Some(proxy) = resolve_transport_proxy_snapshot(&transport) else {
         return TunnelOwnerAffinityBucket::Neutral;
     };
@@ -99,6 +235,23 @@ async fn resolve_candidate_tunnel_owner_affinity(
     }
 }
 
+async fn read_scheduler_ordering_config_or_default(
+    state: PlannerAppState<'_>,
+) -> SchedulerOrderingConfig {
+    match read_scheduler_ordering_config(state.app()).await {
+        Ok(config) => config,
+        Err(error) => {
+            warn!(
+                event_name = "planner_scheduler_ordering_config_load_failed",
+                log_type = "event",
+                error = ?error,
+                "failed to load scheduler ordering config while ranking local execution candidates"
+            );
+            SchedulerOrderingConfig::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -110,11 +263,15 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        prefer_local_tunnel_owner_candidates, AppState, PlannerAppState,
+        prefer_local_tunnel_owner_candidates, rank_local_execution_candidates,
+        remember_scheduler_affinity_for_candidate, PlannerAppState,
         SchedulerMinimalCandidateSelectionCandidate,
     };
+    use crate::data::auth::GatewayAuthApiKeySnapshot;
     use crate::data::GatewayDataState;
     use crate::tunnel::TunnelAttachmentRecord;
+    use crate::{scheduler::affinity::SCHEDULER_AFFINITY_TTL, AppState};
+    use aether_data::repository::auth::StoredAuthApiKeySnapshot;
 
     fn sample_candidate(
         endpoint_id: &str,
@@ -142,22 +299,55 @@ mod tests {
     }
 
     fn sample_provider() -> StoredProviderCatalogProvider {
+        sample_provider_with_options("provider-1", false, 0)
+    }
+
+    fn sample_provider_with_options(
+        id: &str,
+        keep_priority_on_conversion: bool,
+        provider_priority: i32,
+    ) -> StoredProviderCatalogProvider {
         StoredProviderCatalogProvider::new(
-            "provider-1".to_string(),
-            "provider-1".to_string(),
+            id.to_string(),
+            id.to_string(),
             Some("https://provider.example".to_string()),
             "custom".to_string(),
         )
         .expect("provider should build")
-        .with_transport_fields(true, false, false, None, None, None, None, None, None)
+        .with_transport_fields(
+            true,
+            keep_priority_on_conversion,
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .with_routing_fields(provider_priority)
     }
 
     fn sample_endpoint(id: &str) -> StoredProviderCatalogEndpoint {
+        sample_endpoint_for_provider("provider-1", id, "openai:chat")
+    }
+
+    fn sample_endpoint_for_provider(
+        provider_id: &str,
+        id: &str,
+        api_format: &str,
+    ) -> StoredProviderCatalogEndpoint {
         StoredProviderCatalogEndpoint::new(
             id.to_string(),
-            "provider-1".to_string(),
-            "openai:chat".to_string(),
-            Some("openai".to_string()),
+            provider_id.to_string(),
+            api_format.to_string(),
+            Some(
+                api_format
+                    .split(':')
+                    .next()
+                    .unwrap_or(api_format)
+                    .to_string(),
+            ),
             Some("chat".to_string()),
             true,
         )
@@ -176,9 +366,17 @@ mod tests {
     }
 
     fn sample_key(id: &str, node_id: &str) -> StoredProviderCatalogKey {
+        sample_key_for_provider("provider-1", id, node_id)
+    }
+
+    fn sample_key_for_provider(
+        provider_id: &str,
+        id: &str,
+        node_id: &str,
+    ) -> StoredProviderCatalogKey {
         StoredProviderCatalogKey::new(
             id.to_string(),
-            "provider-1".to_string(),
+            provider_id.to_string(),
             id.to_string(),
             "api_key".to_string(),
             None,
@@ -212,6 +410,35 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs()
+    }
+
+    fn sample_priority_candidate(
+        provider_id: &str,
+        endpoint_id: &str,
+        key_id: &str,
+        endpoint_api_format: &str,
+        key_global_priority_for_format: Option<i32>,
+        provider_priority: i32,
+    ) -> SchedulerMinimalCandidateSelectionCandidate {
+        SchedulerMinimalCandidateSelectionCandidate {
+            provider_id: provider_id.to_string(),
+            provider_name: provider_id.to_string(),
+            provider_type: "custom".to_string(),
+            provider_priority,
+            endpoint_id: endpoint_id.to_string(),
+            endpoint_api_format: endpoint_api_format.to_string(),
+            key_id: key_id.to_string(),
+            key_name: key_id.to_string(),
+            key_auth_type: "api_key".to_string(),
+            key_internal_priority: 0,
+            key_global_priority_for_format,
+            key_capabilities: None,
+            model_id: format!("model-{provider_id}"),
+            global_model_id: "global-model-1".to_string(),
+            global_model_name: "gpt-4.1".to_string(),
+            selected_provider_model_name: "gpt-4.1".to_string(),
+            mapping_matched_model: None,
+        }
     }
 
     #[tokio::test]
@@ -299,5 +526,340 @@ mod tests {
 
         assert_eq!(reordered[0].endpoint_id, "endpoint-a");
         assert_eq!(reordered[1].endpoint_id, "endpoint-b");
+    }
+
+    #[tokio::test]
+    async fn local_execution_ranking_demotes_cross_format_candidates_without_keep_priority() {
+        let provider_catalog = InMemoryProviderCatalogReadRepository::seed(
+            vec![
+                sample_provider_with_options("provider-same", false, 10),
+                sample_provider_with_options("provider-cross", false, 0),
+            ],
+            vec![
+                sample_endpoint_for_provider("provider-same", "endpoint-same", "openai:chat"),
+                sample_endpoint_for_provider("provider-cross", "endpoint-cross", "claude:chat"),
+            ],
+            vec![
+                sample_key_for_provider("provider-same", "key-same", ""),
+                sample_key_for_provider("provider-cross", "key-cross", ""),
+            ],
+        );
+        let data_state = GatewayDataState::with_provider_transport_reader_for_tests(
+            std::sync::Arc::new(provider_catalog),
+            "development-key",
+        );
+        let state = AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data_state);
+
+        let ranked = rank_local_execution_candidates(
+            PlannerAppState::new(&state),
+            vec![
+                sample_priority_candidate(
+                    "provider-cross",
+                    "endpoint-cross",
+                    "key-cross",
+                    "claude:chat",
+                    Some(0),
+                    0,
+                ),
+                sample_priority_candidate(
+                    "provider-same",
+                    "endpoint-same",
+                    "key-same",
+                    "openai:chat",
+                    Some(10),
+                    10,
+                ),
+            ],
+            "openai:chat",
+            None,
+        )
+        .await;
+
+        assert_eq!(ranked[0].endpoint_id, "endpoint-same");
+        assert_eq!(ranked[1].endpoint_id, "endpoint-cross");
+    }
+
+    #[tokio::test]
+    async fn local_execution_ranking_keeps_cross_format_priority_when_enabled() {
+        let provider_catalog = InMemoryProviderCatalogReadRepository::seed(
+            vec![
+                sample_provider_with_options("provider-same", false, 10),
+                sample_provider_with_options("provider-cross", true, 0),
+            ],
+            vec![
+                sample_endpoint_for_provider("provider-same", "endpoint-same", "openai:chat"),
+                sample_endpoint_for_provider("provider-cross", "endpoint-cross", "claude:chat"),
+            ],
+            vec![
+                sample_key_for_provider("provider-same", "key-same", ""),
+                sample_key_for_provider("provider-cross", "key-cross", ""),
+            ],
+        );
+        let data_state = GatewayDataState::with_provider_transport_reader_for_tests(
+            std::sync::Arc::new(provider_catalog),
+            "development-key",
+        );
+        let state = AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data_state);
+
+        let ranked = rank_local_execution_candidates(
+            PlannerAppState::new(&state),
+            vec![
+                sample_priority_candidate(
+                    "provider-cross",
+                    "endpoint-cross",
+                    "key-cross",
+                    "claude:chat",
+                    Some(0),
+                    0,
+                ),
+                sample_priority_candidate(
+                    "provider-same",
+                    "endpoint-same",
+                    "key-same",
+                    "openai:chat",
+                    Some(10),
+                    10,
+                ),
+            ],
+            "openai:chat",
+            None,
+        )
+        .await;
+
+        assert_eq!(ranked[0].endpoint_id, "endpoint-cross");
+        assert_eq!(ranked[1].endpoint_id, "endpoint-same");
+    }
+
+    #[tokio::test]
+    async fn local_execution_ranking_keeps_cross_format_priority_when_global_override_is_enabled() {
+        let provider_catalog = InMemoryProviderCatalogReadRepository::seed(
+            vec![
+                sample_provider_with_options("provider-same", false, 10),
+                sample_provider_with_options("provider-cross", false, 0),
+            ],
+            vec![
+                sample_endpoint_for_provider("provider-same", "endpoint-same", "openai:chat"),
+                sample_endpoint_for_provider("provider-cross", "endpoint-cross", "claude:chat"),
+            ],
+            vec![
+                sample_key_for_provider("provider-same", "key-same", ""),
+                sample_key_for_provider("provider-cross", "key-cross", ""),
+            ],
+        );
+        let data_state = GatewayDataState::with_provider_transport_reader_for_tests(
+            std::sync::Arc::new(provider_catalog),
+            "development-key",
+        )
+        .with_system_config_values_for_tests(vec![(
+            "keep_priority_on_conversion".to_string(),
+            json!(true),
+        )]);
+        let state = AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data_state);
+
+        let ranked = rank_local_execution_candidates(
+            PlannerAppState::new(&state),
+            vec![
+                sample_priority_candidate(
+                    "provider-cross",
+                    "endpoint-cross",
+                    "key-cross",
+                    "claude:chat",
+                    Some(0),
+                    0,
+                ),
+                sample_priority_candidate(
+                    "provider-same",
+                    "endpoint-same",
+                    "key-same",
+                    "openai:chat",
+                    Some(10),
+                    10,
+                ),
+            ],
+            "openai:chat",
+            None,
+        )
+        .await;
+
+        assert_eq!(ranked[0].endpoint_id, "endpoint-cross");
+        assert_eq!(ranked[1].endpoint_id, "endpoint-same");
+    }
+
+    #[tokio::test]
+    async fn local_execution_ranking_uses_provider_priority_mode_when_configured() {
+        let provider_catalog = InMemoryProviderCatalogReadRepository::seed(
+            vec![
+                sample_provider_with_options("provider-provider-first", false, 0),
+                sample_provider_with_options("provider-global-first", false, 10),
+            ],
+            vec![
+                sample_endpoint_for_provider(
+                    "provider-provider-first",
+                    "endpoint-provider-first",
+                    "openai:chat",
+                ),
+                sample_endpoint_for_provider(
+                    "provider-global-first",
+                    "endpoint-global-first",
+                    "openai:chat",
+                ),
+            ],
+            vec![
+                sample_key_for_provider("provider-provider-first", "key-provider-first", ""),
+                sample_key_for_provider("provider-global-first", "key-global-first", ""),
+            ],
+        );
+        let data_state = GatewayDataState::with_provider_transport_reader_for_tests(
+            std::sync::Arc::new(provider_catalog),
+            "development-key",
+        )
+        .with_system_config_values_for_tests(vec![(
+            "provider_priority_mode".to_string(),
+            json!("provider"),
+        )]);
+        let state = AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data_state);
+
+        let ranked = rank_local_execution_candidates(
+            PlannerAppState::new(&state),
+            vec![
+                sample_priority_candidate(
+                    "provider-global-first",
+                    "endpoint-global-first",
+                    "key-global-first",
+                    "openai:chat",
+                    Some(0),
+                    10,
+                ),
+                sample_priority_candidate(
+                    "provider-provider-first",
+                    "endpoint-provider-first",
+                    "key-provider-first",
+                    "openai:chat",
+                    Some(10),
+                    0,
+                ),
+            ],
+            "openai:chat",
+            None,
+        )
+        .await;
+
+        assert_eq!(ranked[0].endpoint_id, "endpoint-provider-first");
+        assert_eq!(ranked[1].endpoint_id, "endpoint-global-first");
+    }
+
+    #[tokio::test]
+    async fn local_execution_ranking_prefers_candidates_matching_requested_capabilities() {
+        let provider_catalog = InMemoryProviderCatalogReadRepository::seed(
+            vec![
+                sample_provider_with_options("provider-miss", false, 0),
+                sample_provider_with_options("provider-hit", false, 0),
+            ],
+            vec![
+                sample_endpoint_for_provider("provider-miss", "endpoint-miss", "openai:chat"),
+                sample_endpoint_for_provider("provider-hit", "endpoint-hit", "openai:chat"),
+            ],
+            vec![
+                sample_key_for_provider("provider-miss", "key-miss", ""),
+                sample_key_for_provider("provider-hit", "key-hit", ""),
+            ],
+        );
+        let data_state = GatewayDataState::with_provider_transport_reader_for_tests(
+            std::sync::Arc::new(provider_catalog),
+            "development-key",
+        );
+        let state = AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data_state);
+
+        let mut candidate_miss = sample_priority_candidate(
+            "provider-miss",
+            "endpoint-miss",
+            "key-miss",
+            "openai:chat",
+            Some(0),
+            0,
+        );
+        let mut candidate_hit = sample_priority_candidate(
+            "provider-hit",
+            "endpoint-hit",
+            "key-hit",
+            "openai:chat",
+            Some(0),
+            0,
+        );
+        candidate_miss.key_capabilities = Some(json!({"cache_1h": false}));
+        candidate_hit.key_capabilities = Some(json!({"cache_1h": true}));
+
+        let required_capabilities = json!({"cache_1h": true});
+        let ranked = rank_local_execution_candidates(
+            PlannerAppState::new(&state),
+            vec![candidate_miss, candidate_hit],
+            "openai:chat",
+            Some(&required_capabilities),
+        )
+        .await;
+
+        assert_eq!(ranked[0].endpoint_id, "endpoint-hit");
+        assert_eq!(ranked[1].endpoint_id, "endpoint-miss");
+    }
+
+    #[tokio::test]
+    async fn remembers_scheduler_affinity_for_candidate_using_requested_model_key() {
+        let state = AppState::new().expect("state should build");
+        let auth_snapshot = GatewayAuthApiKeySnapshot::from_stored(
+            StoredAuthApiKeySnapshot::new(
+                "user-1".to_string(),
+                "alice".to_string(),
+                Some("alice@example.com".to_string()),
+                "user".to_string(),
+                "local".to_string(),
+                true,
+                false,
+                None,
+                None,
+                None,
+                "api-key-1".to_string(),
+                Some("default".to_string()),
+                true,
+                false,
+                false,
+                Some(60),
+                Some(5),
+                Some(4_102_444_800),
+                None,
+                None,
+                None,
+            )
+            .expect("stored auth snapshot should build"),
+            current_unix_secs(),
+        );
+        let candidate = sample_candidate("endpoint-1", "key-1");
+
+        remember_scheduler_affinity_for_candidate(
+            PlannerAppState::new(&state),
+            Some(&auth_snapshot),
+            "openai:chat",
+            "gpt-5",
+            &candidate,
+        );
+
+        let remembered = state
+            .read_scheduler_affinity_target(
+                "scheduler_affinity:api-key-1:openai:chat:gpt-5",
+                SCHEDULER_AFFINITY_TTL,
+            )
+            .expect("affinity target should be cached");
+        assert_eq!(remembered.provider_id, "provider-1");
+        assert_eq!(remembered.endpoint_id, "endpoint-1");
+        assert_eq!(remembered.key_id, "key-1");
     }
 }

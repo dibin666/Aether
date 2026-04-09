@@ -248,6 +248,8 @@ pub(super) async fn maybe_build_local_video_create_decision_payload_for_candidat
         report_context: Some(json!({
             "user_id": input.auth_context.user_id.clone(),
             "api_key_id": input.auth_context.api_key_id.clone(),
+            "username": input.auth_context.username.clone(),
+            "api_key_name": input.auth_context.api_key_name.clone(),
             "request_id": trace_id,
             "candidate_id": candidate_id,
             "candidate_index": candidate_index,

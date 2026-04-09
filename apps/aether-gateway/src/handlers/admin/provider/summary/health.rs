@@ -1,6 +1,7 @@
 use crate::handlers::admin::request::AdminAppState;
 use crate::handlers::admin::shared::unix_secs_to_rfc3339;
-use crate::handlers::public::{request_candidate_event_unix_secs, request_candidate_status_label};
+use crate::handlers::public::{request_candidate_event_unix_ms, request_candidate_status_label};
+use crate::handlers::shared::unix_ms_to_rfc3339;
 use aether_data_contracts::repository::candidates::{
     RequestCandidateStatus, StoredRequestCandidate,
 };
@@ -82,14 +83,14 @@ pub(crate) async fn build_admin_provider_health_monitor_payload(
     for candidates in attempts_by_endpoint.values_mut() {
         candidates.sort_by(|left, right| {
             right
-                .created_at_unix_secs
-                .cmp(&left.created_at_unix_secs)
+                .created_at_unix_ms
+                .cmp(&left.created_at_unix_ms)
                 .then_with(|| right.id.cmp(&left.id))
         });
         candidates.truncate(per_endpoint_limit);
         candidates.sort_by(|left, right| {
-            request_candidate_event_unix_secs(left)
-                .cmp(&request_candidate_event_unix_secs(right))
+            request_candidate_event_unix_ms(left)
+                .cmp(&request_candidate_event_unix_ms(right))
                 .then_with(|| left.id.cmp(&right.id))
         });
     }
@@ -118,12 +119,12 @@ pub(crate) async fn build_admin_provider_health_monitor_payload(
             };
             let last_event_at = candidates
                 .last()
-                .and_then(|candidate| unix_secs_to_rfc3339(request_candidate_event_unix_secs(candidate)));
+                .and_then(|candidate| unix_ms_to_rfc3339(request_candidate_event_unix_ms(candidate)));
             let events = candidates
                 .into_iter()
                 .filter_map(|candidate| {
                     Some(json!({
-                        "timestamp": unix_secs_to_rfc3339(request_candidate_event_unix_secs(&candidate))?,
+                        "timestamp": unix_ms_to_rfc3339(request_candidate_event_unix_ms(&candidate))?,
                         "status": request_candidate_status_label(candidate.status),
                         "status_code": candidate.status_code,
                         "latency_ms": candidate.latency_ms,

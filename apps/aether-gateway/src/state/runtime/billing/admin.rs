@@ -60,7 +60,7 @@ impl AppState {
                 variables: input.variables.clone(),
                 dimension_mappings: input.dimension_mappings.clone(),
                 is_enabled: input.is_enabled,
-                created_at_unix_secs: now_unix_secs,
+                created_at_unix_ms: now_unix_secs,
                 updated_at_unix_secs: now_unix_secs,
             };
             store
@@ -187,7 +187,7 @@ impl AppState {
                 default_value: input.default_value.clone(),
                 priority: input.priority,
                 is_enabled: input.is_enabled,
-                created_at_unix_secs: now_unix_secs,
+                created_at_unix_ms: now_unix_secs,
                 updated_at_unix_secs: now_unix_secs,
             };
             store
@@ -369,7 +369,7 @@ impl AppState {
                             default_value: collector.default_value.clone(),
                             priority: collector.priority,
                             is_enabled: collector.is_enabled,
-                            created_at_unix_secs: now_unix_secs,
+                            created_at_unix_ms: now_unix_secs,
                             updated_at_unix_secs: now_unix_secs,
                         };
                         guard.insert(record.id.clone(), record);

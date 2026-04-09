@@ -69,7 +69,7 @@ pub(in super::super) async fn build_admin_wallet_ledger_response(
                 "operator_name": entry.operator_name,
                 "operator_email": entry.operator_email,
                 "description": entry.description,
-                "created_at": entry.created_at_unix_secs.and_then(unix_secs_to_rfc3339),
+                "created_at": entry.created_at_unix_ms.and_then(unix_secs_to_rfc3339),
             })
         })
         .collect::<Vec<_>>();

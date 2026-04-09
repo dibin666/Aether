@@ -272,7 +272,7 @@ pub(super) async fn maybe_build_local_admin_video_tasks_response(
             payload.insert("max_poll_count".to_string(), json!(task.max_poll_count));
             payload.insert(
                 "created_at".to_string(),
-                json!(admin_video_task_timestamp(Some(task.created_at_unix_secs))),
+                json!(admin_video_task_timestamp(Some(task.created_at_unix_ms))),
             );
             payload.insert(
                 "updated_at".to_string(),

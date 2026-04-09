@@ -84,7 +84,7 @@ pub(in super::super) async fn build_admin_wallet_fail_refund_response(
                             transaction.link_id.as_deref(),
                             transaction.operator_id.as_deref(),
                             transaction.description.as_deref(),
-                            unix_secs_to_rfc3339(transaction.created_at_unix_secs),
+                            unix_secs_to_rfc3339(transaction.created_at_unix_ms),
                         )
                     })
                     .unwrap_or(serde_json::Value::Null),

@@ -155,7 +155,12 @@ export const cacheApi = {
     const response = await api.get('/api/admin/monitoring/cache/affinities', {
       params: keyword ? { keyword } : undefined
     })
-    return response.data.data
+    const data = response.data.data ?? {}
+    return {
+      items: data.items ?? [],
+      total: data.meta?.total ?? data.items?.length ?? 0,
+      matched_user_id: data.matched_user_id ?? null
+    }
   }
 }
 

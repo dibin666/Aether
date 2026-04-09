@@ -181,7 +181,7 @@ pub fn build_admin_provider_model_response(
         "effective_config": effective_config,
         "global_model_name": model.global_model_name.clone(),
         "global_model_display_name": model.global_model_display_name.clone(),
-        "created_at": timestamp_or_now(model.created_at_unix_secs, now_unix_secs),
+        "created_at": timestamp_or_now(model.created_at_unix_ms, now_unix_secs),
         "updated_at": timestamp_or_now(model.updated_at_unix_secs, now_unix_secs),
     })
 }

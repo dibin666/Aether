@@ -282,7 +282,7 @@ async fn gateway_handles_admin_billing_rule_routes_locally_with_trusted_admin_pr
                         "input_tokens": { "source": "dimension", "dimension": "input_tokens" }
                     }),
                     is_enabled: true,
-                    created_at_unix_secs: 1_710_000_000,
+                    created_at_unix_ms: 1_710_000_000,
                     updated_at_unix_secs: 1_710_000_100,
                 },
                 crate::AdminBillingRuleRecord {
@@ -297,7 +297,7 @@ async fn gateway_handles_admin_billing_rule_routes_locally_with_trusted_admin_pr
                         "images": { "source": "dimension", "dimension": "image_count" }
                     }),
                     is_enabled: false,
-                    created_at_unix_secs: 1_710_000_000,
+                    created_at_unix_ms: 1_710_000_000,
                     updated_at_unix_secs: 1_710_000_050,
                 },
             ]),
@@ -516,7 +516,7 @@ async fn gateway_handles_admin_billing_collector_routes_locally_with_trusted_adm
                     default_value: None,
                     priority: 10,
                     is_enabled: true,
-                    created_at_unix_secs: 1_710_000_000,
+                    created_at_unix_ms: 1_710_000_000,
                     updated_at_unix_secs: 1_710_000_100,
                 },
                 crate::AdminBillingCollectorRecord {
@@ -531,7 +531,7 @@ async fn gateway_handles_admin_billing_collector_routes_locally_with_trusted_adm
                     default_value: Some("1".to_string()),
                     priority: 5,
                     is_enabled: false,
-                    created_at_unix_secs: 1_710_000_000,
+                    created_at_unix_ms: 1_710_000_000,
                     updated_at_unix_secs: 1_710_000_050,
                 },
             ]),

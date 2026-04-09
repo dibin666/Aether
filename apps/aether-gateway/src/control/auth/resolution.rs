@@ -27,6 +27,10 @@ const AUTH_CONTEXT_CACHE_MAX_ENTRIES: usize = 256;
 pub(crate) struct GatewayControlAuthContext {
     pub(crate) user_id: String,
     pub(crate) api_key_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) api_key_name: Option<String>,
     pub(crate) balance_remaining: Option<f64>,
     pub(crate) access_allowed: bool,
     #[serde(skip)]
@@ -489,6 +493,8 @@ pub(super) async fn resolve_data_backed_auth_context(
                 return Ok(Some(GatewayControlAuthContext {
                     user_id: String::new(),
                     api_key_id: String::new(),
+                    username: None,
+                    api_key_name: None,
                     balance_remaining: None,
                     access_allowed: false,
                     user_rate_limit: None,
@@ -539,6 +545,8 @@ async fn resolve_trusted_auth_context(
         return Ok(Some(GatewayControlAuthContext {
             user_id: trusted_headers.user_id,
             api_key_id: trusted_headers.api_key_id,
+            username: None,
+            api_key_name: None,
             balance_remaining: trusted_headers.balance_remaining,
             access_allowed: false,
             user_rate_limit: None,
@@ -620,6 +628,8 @@ fn build_data_backed_auth_context(
     };
 
     GatewayControlAuthContext {
+        username: Some(snapshot.username.clone()),
+        api_key_name: snapshot.api_key_name.clone(),
         user_id: snapshot.user_id,
         api_key_id: snapshot.api_key_id,
         balance_remaining: wallet_remaining.or(balance_remaining),

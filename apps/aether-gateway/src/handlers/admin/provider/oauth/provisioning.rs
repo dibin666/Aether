@@ -128,7 +128,7 @@ pub(crate) async fn create_provider_oauth_catalog_key(
     record.total_response_time_ms = Some(0);
     record.health_by_format = Some(json!({}));
     record.circuit_breaker_by_format = Some(json!({}));
-    record.created_at_unix_secs = Some(now_unix_secs);
+    record.created_at_unix_ms = Some(now_unix_secs);
     record.updated_at_unix_secs = Some(now_unix_secs);
     state.create_provider_catalog_key(&record).await
 }

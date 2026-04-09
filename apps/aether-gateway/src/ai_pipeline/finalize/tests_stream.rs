@@ -53,6 +53,130 @@ fn gemini_cli_v1internal_stream_rewriter_unwraps_response_object() {
 }
 
 #[test]
+fn openai_chat_error_to_openai_cli_stream_rewriter_converts_to_response_failed() {
+    let report_context = json!({
+        "provider_api_format": "openai:chat",
+        "client_api_format": "openai:cli",
+        "needs_conversion": true,
+        "mapped_model": "gpt-5.4",
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+    let output = rewriter
+        .push_chunk(
+            b"data: {\"error\":{\"message\":\"bad request\",\"type\":\"invalid_request_error\",\"code\":\"invalid_request\"}}\n\n",
+        )
+        .expect("rewrite should succeed");
+    let output_text = utf8(output);
+    assert!(output_text.contains("event: response.failed"));
+    assert!(output_text.contains("\"sequence_number\":1"));
+    assert!(output_text.contains("\"message\":\"bad request\""));
+    assert!(output_text.contains("\"type\":\"invalid_request_error\""));
+    assert!(!output_text.contains("data: [DONE]"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
+}
+
+#[test]
+fn claude_error_to_openai_cli_stream_rewriter_converts_to_response_failed() {
+    let report_context = json!({
+        "provider_api_format": "claude:chat",
+        "client_api_format": "openai:cli",
+        "needs_conversion": true,
+        "mapped_model": "claude-sonnet-4-5",
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+    let output = rewriter
+        .push_chunk(
+            concat!(
+                "event: error\n",
+                "data: {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"slow down\",\"code\":\"rate_limit\"}}\n\n"
+            )
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let output_text = utf8(output);
+    assert!(output_text.contains("event: response.failed"));
+    assert!(output_text.contains("\"sequence_number\":1"));
+    assert!(output_text.contains("\"message\":\"slow down\""));
+    assert!(output_text.contains("\"type\":\"rate_limit_error\""));
+    assert!(!output_text.contains("data: [DONE]"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
+}
+
+#[test]
+fn gemini_error_to_openai_cli_stream_rewriter_converts_to_response_failed() {
+    let report_context = json!({
+        "provider_api_format": "gemini:cli",
+        "client_api_format": "openai:cli",
+        "needs_conversion": true,
+        "mapped_model": "gemini-2.5-pro",
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+    let output = rewriter
+        .push_chunk(
+            b"data: {\"error\":{\"code\":429,\"message\":\"quota exceeded\",\"status\":\"RESOURCE_EXHAUSTED\"}}\n\n",
+        )
+        .expect("rewrite should succeed");
+    let output_text = utf8(output);
+    assert!(output_text.contains("event: response.failed"));
+    assert!(output_text.contains("\"sequence_number\":1"));
+    assert!(output_text.contains("\"message\":\"quota exceeded\""));
+    assert!(output_text.contains("\"type\":\"rate_limit_error\""));
+    assert!(!output_text.contains("data: [DONE]"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
+}
+
+#[test]
+fn openai_chat_error_to_claude_chat_stream_rewriter_uses_error_event_line() {
+    let report_context = json!({
+        "provider_api_format": "openai:chat",
+        "client_api_format": "claude:chat",
+        "needs_conversion": true,
+        "mapped_model": "gpt-5.4",
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+    let output = rewriter
+        .push_chunk(
+            b"data: {\"error\":{\"message\":\"bad request\",\"type\":\"invalid_request_error\",\"code\":\"invalid_request\"}}\n\n",
+        )
+        .expect("rewrite should succeed");
+    let output_text = utf8(output);
+    assert!(output_text.contains("event: error"));
+    assert!(output_text.contains("\"type\":\"error\""));
+    assert!(output_text.contains("\"message\":\"bad request\""));
+    assert!(output_text.contains("\"code\":\"invalid_request\""));
+    assert!(!output_text.contains("data: [DONE]"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
+}
+
+#[test]
+fn openai_chat_error_to_gemini_chat_stream_rewriter_keeps_data_only_error() {
+    let report_context = json!({
+        "provider_api_format": "openai:chat",
+        "client_api_format": "gemini:chat",
+        "needs_conversion": true,
+        "mapped_model": "gpt-5.4",
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+    let output = rewriter
+        .push_chunk(
+            b"data: {\"error\":{\"message\":\"rate limited\",\"type\":\"rate_limit_error\",\"code\":\"rate_limit\"}}\n\n",
+        )
+        .expect("rewrite should succeed");
+    let output_text = utf8(output);
+    assert!(output_text.starts_with("data: {\"error\":"));
+    assert!(!output_text.contains("event: "));
+    assert!(output_text.contains("\"message\":\"rate limited\""));
+    assert!(output_text.contains("\"status\":\"RESOURCE_EXHAUSTED\""));
+    assert!(!output_text.contains("data: [DONE]"));
+    assert!(rewriter.finish().expect("finish should succeed").is_empty());
+}
+
+#[test]
 fn claude_to_openai_chat_stream_rewriter_converts_text_deltas() {
     let report_context = json!({
         "provider_api_format": "claude:chat",
@@ -234,6 +358,22 @@ fn openai_cli_to_openai_chat_stream_rewriter_converts_text_deltas_immediately() 
         .expect("rewrite should succeed");
     let completed_text = String::from_utf8(completed).expect("utf8 should decode");
     assert!(completed_text.contains("\"finish_reason\":\"stop\""));
+    assert!(
+        completed_text.contains("\"choices\":[]"),
+        "{completed_text}"
+    );
+    assert!(
+        completed_text.contains("\"prompt_tokens\":1"),
+        "{completed_text}"
+    );
+    assert!(
+        completed_text.contains("\"completion_tokens\":2"),
+        "{completed_text}"
+    );
+    assert!(
+        completed_text.contains("\"total_tokens\":3"),
+        "{completed_text}"
+    );
     assert!(completed_text.contains("data: [DONE]"));
     assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
@@ -262,6 +402,13 @@ fn openai_cli_to_openai_chat_stream_rewriter_converts_completed_event_without_bu
     assert!(output_text.contains("\"role\":\"assistant\""));
     assert!(output_text.contains("\"content\":\"Hello Codex\""));
     assert!(output_text.contains("\"finish_reason\":\"stop\""));
+    assert!(output_text.contains("\"choices\":[]"), "{output_text}");
+    assert!(output_text.contains("\"prompt_tokens\":1"), "{output_text}");
+    assert!(
+        output_text.contains("\"completion_tokens\":2"),
+        "{output_text}"
+    );
+    assert!(output_text.contains("\"total_tokens\":3"), "{output_text}");
     assert!(output_text.contains("data: [DONE]"));
     assert!(rewriter.finish().expect("finish should succeed").is_empty());
 }
@@ -514,6 +661,7 @@ fn openai_chat_to_claude_chat_stream_rewriter_converts_via_standard_matrix() {
     assert!(first_text.contains("event: content_block_start"));
     assert!(first_text.contains("event: content_block_delta"));
     assert!(first_text.contains("\"text\":\"Hello Claude\""));
+    assert!(first_text.contains("\"usage\":{\"input_tokens\":0,\"output_tokens\":0}"));
 
     let second = rewriter
         .push_chunk(
@@ -529,6 +677,44 @@ fn openai_chat_to_claude_chat_stream_rewriter_converts_via_standard_matrix() {
     assert!(output_text.contains("event: message_delta"));
     assert!(output_text.contains("event: message_stop"));
     assert!(rewriter.finish().expect("finish should succeed").is_empty());
+}
+
+#[test]
+fn openai_chat_to_claude_chat_stream_rewriter_injects_default_usage_when_finish_chunk_lacks_usage()
+{
+    let report_context = json!({
+        "provider_api_format": "openai:chat",
+        "client_api_format": "claude:chat",
+        "needs_conversion": true,
+        "mapped_model": "gpt-5.4",
+    });
+    let mut rewriter =
+        maybe_build_local_stream_rewriter(Some(&report_context)).expect("rewriter should exist");
+    let first = rewriter
+        .push_chunk(
+            "data: {\"id\":\"chatcmpl_usage_missing_123\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n"
+                .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let first_text = utf8(first);
+    assert!(first_text.contains("event: message_start"));
+
+    let second = rewriter
+        .push_chunk(
+            concat!(
+                "data: {\"id\":\"chatcmpl_usage_missing_123\",\"object\":\"chat.completion.chunk\",\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                "data: [DONE]\n\n"
+            )
+            .as_bytes(),
+        )
+        .expect("rewrite should succeed");
+    let output_text = utf8(second);
+    assert!(output_text.is_empty(), "{output_text}");
+    let final_text = utf8(rewriter.finish().expect("finish should succeed"));
+    assert!(final_text.contains("event: message_delta"));
+    assert!(final_text.contains("\"stop_reason\":\"end_turn\""));
+    assert!(final_text.contains("\"usage\":{\"input_tokens\":0,\"output_tokens\":0}"));
+    assert!(final_text.contains("event: message_stop"));
 }
 
 #[test]

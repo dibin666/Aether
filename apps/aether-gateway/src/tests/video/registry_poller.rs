@@ -45,7 +45,7 @@ fn sample_due_openai_task(upstream_base_url: &str) -> UpsertVideoTask {
         next_poll_at_unix_secs: Some(0),
         poll_count: 0,
         max_poll_count: 360,
-        created_at_unix_secs: 123,
+        created_at_unix_ms: 123,
         submitted_at_unix_secs: Some(123),
         completed_at_unix_secs: None,
         updated_at_unix_secs: 123,
@@ -57,7 +57,7 @@ fn sample_due_openai_task(upstream_base_url: &str) -> UpsertVideoTask {
                 "OpenAi": {
                     "local_task_id": "task-local-123",
                     "upstream_task_id": "ext-video-task-123",
-                    "created_at_unix_secs": 123,
+                    "created_at_unix_ms": 123,
                     "user_id": "user-video-poller-123",
                     "api_key_id": "key-video-poller-123",
                     "model": "sora-2",

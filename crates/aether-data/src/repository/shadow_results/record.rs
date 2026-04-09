@@ -67,8 +67,8 @@ pub fn merge_shadow_result_sample(
         match_status,
         status_code: status_code.or(existing.and_then(|row| row.status_code)),
         error_message: resolve_error_message(existing, error_message, match_status),
-        created_at_unix_secs: existing
-            .map(|row| row.created_at_unix_secs)
+        created_at_unix_ms: existing
+            .map(|row| row.created_at_unix_ms)
             .unwrap_or(recorded_at_unix_secs),
         updated_at_unix_secs: recorded_at_unix_secs,
     }
@@ -161,7 +161,7 @@ mod tests {
         let merged = merge_shadow_result_sample(Some(&existing), python_sample("digest-1", 200));
 
         assert_eq!(merged.match_status, ShadowResultMatchStatus::Match);
-        assert_eq!(merged.created_at_unix_secs, 100);
+        assert_eq!(merged.created_at_unix_ms, 100);
         assert_eq!(merged.updated_at_unix_secs, 200);
         assert_eq!(merged.request_id.as_deref(), Some("req-1"));
         assert_eq!(merged.rust_result_digest.as_deref(), Some("digest-1"));

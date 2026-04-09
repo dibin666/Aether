@@ -73,7 +73,7 @@ pub struct StoredVideoTask {
     pub next_poll_at_unix_secs: Option<u64>,
     pub poll_count: u32,
     pub max_poll_count: u32,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub submitted_at_unix_secs: Option<u64>,
     pub completed_at_unix_secs: Option<u64>,
     pub updated_at_unix_secs: u64,
@@ -115,7 +115,7 @@ impl StoredVideoTask {
         next_poll_at_unix_secs: Option<i64>,
         poll_count: i32,
         max_poll_count: i32,
-        created_at_unix_secs: i64,
+        created_at_unix_ms: i64,
         submitted_at_unix_secs: Option<i64>,
         completed_at_unix_secs: Option<i64>,
         updated_at_unix_secs: i64,
@@ -147,9 +147,9 @@ impl StoredVideoTask {
                 "invalid max_poll_count: {max_poll_count}"
             ))
         })?;
-        let created_at_unix_secs = u64::try_from(created_at_unix_secs).map_err(|_| {
+        let created_at_unix_ms = u64::try_from(created_at_unix_ms).map_err(|_| {
             crate::DataLayerError::UnexpectedValue(format!(
-                "invalid created_at_unix_secs: {created_at_unix_secs}"
+                "invalid created_at_unix_ms: {created_at_unix_ms}"
             ))
         })?;
         let submitted_at_unix_secs =
@@ -198,7 +198,7 @@ impl StoredVideoTask {
             next_poll_at_unix_secs,
             poll_count,
             max_poll_count,
-            created_at_unix_secs,
+            created_at_unix_ms,
             submitted_at_unix_secs,
             completed_at_unix_secs,
             updated_at_unix_secs,
@@ -241,7 +241,7 @@ pub struct UpsertVideoTask {
     pub next_poll_at_unix_secs: Option<u64>,
     pub poll_count: u32,
     pub max_poll_count: u32,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub submitted_at_unix_secs: Option<u64>,
     pub completed_at_unix_secs: Option<u64>,
     pub updated_at_unix_secs: u64,
@@ -283,7 +283,7 @@ impl UpsertVideoTask {
             next_poll_at_unix_secs: self.next_poll_at_unix_secs,
             poll_count: self.poll_count,
             max_poll_count: self.max_poll_count,
-            created_at_unix_secs: self.created_at_unix_secs,
+            created_at_unix_ms: self.created_at_unix_ms,
             submitted_at_unix_secs: self.submitted_at_unix_secs,
             completed_at_unix_secs: self.completed_at_unix_secs,
             updated_at_unix_secs: self.updated_at_unix_secs,
@@ -327,7 +327,7 @@ impl From<StoredVideoTask> for UpsertVideoTask {
             next_poll_at_unix_secs: task.next_poll_at_unix_secs,
             poll_count: task.poll_count,
             max_poll_count: task.max_poll_count,
-            created_at_unix_secs: task.created_at_unix_secs,
+            created_at_unix_ms: task.created_at_unix_ms,
             submitted_at_unix_secs: task.submitted_at_unix_secs,
             completed_at_unix_secs: task.completed_at_unix_secs,
             updated_at_unix_secs: task.updated_at_unix_secs,

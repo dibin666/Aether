@@ -56,8 +56,8 @@ impl ManagementTokenReadRepository for InMemoryManagementTokenRepository {
         filtered.sort_by(|left, right| {
             right
                 .token
-                .created_at_unix_secs
-                .cmp(&left.token.created_at_unix_secs)
+                .created_at_unix_ms
+                .cmp(&left.token.created_at_unix_ms)
                 .then_with(|| right.token.id.cmp(&left.token.id))
         });
 

@@ -91,6 +91,33 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
         }
     };
 
+    if !crate::ai_pipeline::conversion::request_pair_allowed_for_transport(
+        &transport,
+        spec.api_format,
+        provider_api_format.as_str(),
+    ) {
+        let skip_reason = if crate::ai_pipeline::conversion::request_conversion_requires_enable_flag(
+            spec.api_format,
+            provider_api_format.as_str(),
+        ) && !transport.provider.enable_format_conversion
+        {
+            "format_conversion_disabled"
+        } else {
+            "transport_unsupported"
+        };
+        mark_skipped_local_standard_candidate(
+            state,
+            input,
+            trace_id,
+            &candidate,
+            candidate_index,
+            &candidate_id,
+            skip_reason,
+        )
+        .await;
+        return None;
+    }
+
     if !crate::ai_pipeline::conversion::request_conversion_transport_supported(
         &transport,
         conversion_kind,
@@ -301,6 +328,8 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
             json!({
                 "user_id": input.auth_context.user_id,
                 "api_key_id": input.auth_context.api_key_id,
+                "username": input.auth_context.username,
+                "api_key_name": input.auth_context.api_key_name,
                 "request_id": trace_id,
                 "candidate_id": candidate_id,
                 "candidate_index": candidate_index,
@@ -349,6 +378,7 @@ pub(super) async fn mark_skipped_local_standard_candidate(
             candidate,
             candidate_index,
             candidate_id,
+            input.required_capabilities.as_ref(),
             skip_reason,
             current_unix_secs(),
             "gateway local standard decision failed to persist skipped candidate",

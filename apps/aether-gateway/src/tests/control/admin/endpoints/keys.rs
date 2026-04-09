@@ -46,7 +46,7 @@ async fn gateway_handles_admin_provider_keys_locally_with_trusted_admin_principa
     key_a.success_count = Some(9);
     key_a.error_count = Some(3);
     key_a.total_response_time_ms = Some(1800);
-    key_a.created_at_unix_secs = Some(1_711_000_000);
+    key_a.created_at_unix_ms = Some(1_711_000_000);
     key_a.updated_at_unix_secs = Some(1_711_000_100);
     key_a.last_used_at_unix_secs = Some(1_711_000_120);
     key_a.note = Some("primary key".to_string());
@@ -67,7 +67,7 @@ async fn gateway_handles_admin_provider_keys_locally_with_trusted_admin_principa
     key_b.success_count = Some(4);
     key_b.error_count = Some(0);
     key_b.total_response_time_ms = Some(400);
-    key_b.created_at_unix_secs = Some(1_711_100_000);
+    key_b.created_at_unix_ms = Some(1_711_100_000);
     key_b.updated_at_unix_secs = Some(1_711_100_100);
 
     let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
@@ -895,7 +895,7 @@ async fn gateway_handles_admin_keys_grouped_by_format_locally_with_trusted_admin
     key_a.internal_priority = 10;
     key_a.request_count = Some(12);
     key_a.success_count = Some(9);
-    key_a.created_at_unix_secs = Some(1_711_000_000);
+    key_a.created_at_unix_ms = Some(1_711_000_000);
     key_a.updated_at_unix_secs = Some(1_711_000_100);
     key_a.capabilities = Some(json!({"cache_1h": true, "gemini_files": false}));
     key_a.global_priority_by_format = Some(json!({"openai:chat": 3}));
@@ -906,7 +906,7 @@ async fn gateway_handles_admin_keys_grouped_by_format_locally_with_trusted_admin
     key_b.internal_priority = 20;
     key_b.request_count = Some(2);
     key_b.success_count = Some(1);
-    key_b.created_at_unix_secs = Some(1_711_100_000);
+    key_b.created_at_unix_ms = Some(1_711_100_000);
     key_b.updated_at_unix_secs = Some(1_711_100_100);
 
     let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(

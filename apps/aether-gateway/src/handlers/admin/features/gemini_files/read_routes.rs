@@ -140,7 +140,7 @@ fn build_admin_gemini_file_mapping_payload(
         "username": username,
         "display_name": mapping.display_name,
         "mime_type": mapping.mime_type,
-        "created_at": unix_secs_to_rfc3339(mapping.created_at_unix_secs),
+        "created_at": unix_secs_to_rfc3339(mapping.created_at_unix_ms),
         "expires_at": unix_secs_to_rfc3339(mapping.expires_at_unix_secs),
         "is_expired": mapping.expires_at_unix_secs <= now_unix_secs,
     })

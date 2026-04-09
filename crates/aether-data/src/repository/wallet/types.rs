@@ -118,7 +118,7 @@ pub struct StoredAdminWalletListItem {
     pub total_adjusted: f64,
     pub user_name: Option<String>,
     pub api_key_name: Option<String>,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_secs: Option<u64>,
 }
 
@@ -161,7 +161,7 @@ pub struct StoredAdminWalletLedgerItem {
     pub wallet_api_key_id: Option<String>,
     pub api_key_name: Option<String>,
     pub wallet_status: String,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -203,7 +203,7 @@ pub struct StoredAdminWalletRefundRequestItem {
     pub wallet_api_key_id: Option<String>,
     pub api_key_name: Option<String>,
     pub wallet_status: String,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_secs: Option<u64>,
     pub processed_at_unix_secs: Option<u64>,
     pub completed_at_unix_secs: Option<u64>,
@@ -234,7 +234,7 @@ pub struct StoredAdminWalletTransaction {
     pub operator_name: Option<String>,
     pub operator_email: Option<String>,
     pub description: Option<String>,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -254,7 +254,7 @@ pub struct AdminWalletTransactionRecord {
     pub link_id: Option<String>,
     pub operator_id: Option<String>,
     pub description: Option<String>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -306,7 +306,7 @@ pub struct StoredAdminWalletRefund {
     pub requested_by: Option<String>,
     pub approved_by: Option<String>,
     pub processed_by: Option<String>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub updated_at_unix_secs: u64,
     pub processed_at_unix_secs: Option<u64>,
     pub completed_at_unix_secs: Option<u64>,
@@ -333,7 +333,7 @@ pub struct AdminWalletRefundRecord {
     pub requested_by: Option<String>,
     pub approved_by: Option<String>,
     pub processed_by: Option<String>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub updated_at_unix_secs: u64,
     pub processed_at_unix_secs: Option<u64>,
     pub completed_at_unix_secs: Option<u64>,
@@ -369,7 +369,7 @@ pub struct StoredAdminPaymentOrder {
     pub gateway_order_id: Option<String>,
     pub gateway_response: Option<serde_json::Value>,
     pub status: String,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub paid_at_unix_secs: Option<u64>,
     pub credited_at_unix_secs: Option<u64>,
     pub expires_at_unix_secs: Option<u64>,
@@ -391,7 +391,7 @@ pub struct AdminWalletPaymentOrderRecord {
     pub gateway_order_id: Option<String>,
     pub status: String,
     pub gateway_response: Option<serde_json::Value>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub paid_at_unix_secs: Option<u64>,
     pub credited_at_unix_secs: Option<u64>,
     pub expires_at_unix_secs: Option<u64>,
@@ -416,7 +416,7 @@ pub struct StoredAdminPaymentCallback {
     pub status: String,
     pub payload: Option<serde_json::Value>,
     pub error_message: Option<String>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub processed_at_unix_secs: Option<u64>,
 }
 
@@ -433,7 +433,7 @@ pub struct AdminPaymentCallbackRecord {
     pub status: String,
     pub payload: Option<serde_json::Value>,
     pub error_message: Option<String>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub processed_at_unix_secs: Option<u64>,
 }
 

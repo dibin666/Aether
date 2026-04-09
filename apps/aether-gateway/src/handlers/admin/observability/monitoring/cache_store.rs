@@ -1,41 +1,25 @@
-use super::cache_affinity::admin_monitoring_cache_affinity_record;
+use super::cache_affinity::{
+    admin_monitoring_cache_affinity_record, admin_monitoring_cache_affinity_record_identity,
+    admin_monitoring_scheduler_affinity_record,
+    admin_monitoring_scheduler_affinity_record_from_raw,
+};
 use super::cache_types::{AdminMonitoringCacheAffinityRecord, AdminMonitoringCacheSnapshot};
 use crate::handlers::admin::observability::stats::round_to;
 use crate::handlers::admin::request::AdminAppState;
+use crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL;
 use crate::GatewayError;
 use aether_data_contracts::repository::usage::UsageAuditListQuery;
 
 async fn count_admin_monitoring_cache_affinity_entries(state: &AdminAppState<'_>) -> usize {
-    let Some(runner) = state.redis_kv_runner() else {
-        return 0;
-    };
-    let mut connection = match runner.client().get_multiplexed_async_connection().await {
-        Ok(value) => value,
-        Err(_) => return 0,
-    };
-    let pattern = runner.keyspace().key("cache_affinity:*");
-    let mut cursor = 0u64;
-    let mut total = 0usize;
-    loop {
-        let (next_cursor, keys) = match redis::cmd("SCAN")
-            .arg(cursor)
-            .arg("MATCH")
-            .arg(&pattern)
-            .arg("COUNT")
-            .arg(200)
-            .query_async::<(u64, Vec<String>)>(&mut connection)
-            .await
-        {
-            Ok(value) => value,
-            Err(_) => return total,
-        };
-        total += keys.len();
-        if next_cursor == 0 {
-            break;
-        }
-        cursor = next_cursor;
-    }
-    total
+    list_admin_monitoring_cache_affinity_records(state)
+        .await
+        .map(|items| items.len())
+        .unwrap_or_else(|_| {
+            state
+                .as_ref()
+                .list_scheduler_affinity_entries(SCHEDULER_AFFINITY_TTL)
+                .len()
+        })
 }
 
 async fn scan_admin_monitoring_namespaced_keys(
@@ -191,12 +175,27 @@ pub(super) async fn list_admin_monitoring_cache_affinity_records_by_affinity_key
     list_admin_monitoring_cache_affinity_records_matching(state, Some(affinity_keys)).await
 }
 
+pub(super) fn admin_monitoring_has_runtime_scheduler_affinity_entries(
+    state: &AdminAppState<'_>,
+) -> bool {
+    !state
+        .as_ref()
+        .list_scheduler_affinity_entries(SCHEDULER_AFFINITY_TTL)
+        .is_empty()
+}
+
 async fn list_admin_monitoring_cache_affinity_records_matching(
     state: &AdminAppState<'_>,
     affinity_keys: Option<&std::collections::BTreeSet<String>>,
 ) -> Result<Vec<AdminMonitoringCacheAffinityRecord>, GatewayError> {
     let mut records = Vec::new();
-    let mut seen_raw_keys = std::collections::BTreeSet::new();
+    let mut seen_record_ids = std::collections::BTreeSet::new();
+
+    let mut push_record = |record: AdminMonitoringCacheAffinityRecord| {
+        if seen_record_ids.insert(admin_monitoring_cache_affinity_record_identity(&record)) {
+            records.push(record);
+        }
+    };
 
     if let Some(runner) = state.redis_kv_runner() {
         let mut connection = runner
@@ -209,14 +208,24 @@ async fn list_admin_monitoring_cache_affinity_records_matching(
         let patterns = affinity_keys
             .map(|keys| {
                 keys.iter()
-                    .map(|affinity_key| {
-                        runner
-                            .keyspace()
-                            .key(&format!("cache_affinity:{affinity_key}:*"))
+                    .flat_map(|affinity_key| {
+                        [
+                            runner
+                                .keyspace()
+                                .key(&format!("cache_affinity:{affinity_key}:*")),
+                            runner
+                                .keyspace()
+                                .key(&format!("scheduler_affinity:{affinity_key}:*")),
+                        ]
                     })
                     .collect::<Vec<_>>()
             })
-            .unwrap_or_else(|| vec![runner.keyspace().key("cache_affinity:*")]);
+            .unwrap_or_else(|| {
+                vec![
+                    runner.keyspace().key("cache_affinity:*"),
+                    runner.keyspace().key("scheduler_affinity:*"),
+                ]
+            });
 
         for pattern in patterns {
             let mut cursor = 0u64;
@@ -246,16 +255,18 @@ async fn list_admin_monitoring_cache_affinity_records_matching(
                         let Some(raw_value) = raw_value else {
                             continue;
                         };
-                        let Some(record) = admin_monitoring_cache_affinity_record(&key, &raw_value)
-                        else {
+                        let record = if key.contains("scheduler_affinity:") {
+                            admin_monitoring_scheduler_affinity_record_from_raw(&key, &raw_value)
+                        } else {
+                            admin_monitoring_cache_affinity_record(&key, &raw_value)
+                        };
+                        let Some(record) = record else {
                             continue;
                         };
                         if affinity_keys.is_some_and(|keys| !keys.contains(&record.affinity_key)) {
                             continue;
                         }
-                        if seen_raw_keys.insert(record.raw_key.clone()) {
-                            records.push(record);
-                        }
+                        push_record(record);
                     }
                 }
                 if next_cursor == 0 {
@@ -264,7 +275,6 @@ async fn list_admin_monitoring_cache_affinity_records_matching(
                 cursor = next_cursor;
             }
         }
-        return Ok(records);
     }
 
     for (key, raw_value) in load_admin_monitoring_cache_affinity_entries_for_tests(state) {
@@ -274,9 +284,27 @@ async fn list_admin_monitoring_cache_affinity_records_matching(
         if affinity_keys.is_some_and(|keys| !keys.contains(&record.affinity_key)) {
             continue;
         }
-        if seen_raw_keys.insert(record.raw_key.clone()) {
-            records.push(record);
+        push_record(record);
+    }
+
+    let now_unix_secs = chrono::Utc::now().timestamp().max(0) as u64;
+    for entry in state
+        .as_ref()
+        .list_scheduler_affinity_entries(SCHEDULER_AFFINITY_TTL)
+    {
+        let Some(record) = admin_monitoring_scheduler_affinity_record(
+            &entry.cache_key,
+            &entry.target,
+            entry.age,
+            SCHEDULER_AFFINITY_TTL,
+            now_unix_secs,
+        ) else {
+            continue;
+        };
+        if affinity_keys.is_some_and(|keys| !keys.contains(&record.affinity_key)) {
+            continue;
         }
+        push_record(record);
     }
 
     Ok(records)

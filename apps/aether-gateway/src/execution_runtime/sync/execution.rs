@@ -15,7 +15,7 @@ use crate::ai_pipeline_api::{
 use crate::api::response::{
     attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
 };
-use crate::clock::current_unix_secs as current_request_candidate_unix_secs;
+use crate::clock::current_unix_ms as current_request_candidate_unix_ms;
 use crate::constants::{CONTROL_CANDIDATE_ID_HEADER, CONTROL_REQUEST_ID_HEADER};
 use crate::control::GatewayControlDecision;
 #[cfg(test)]
@@ -23,8 +23,9 @@ use crate::execution_runtime::remote_compat::post_sync_plan_to_remote_execution_
 use crate::execution_runtime::submission::submit_local_core_error_or_sync_finalize;
 use crate::execution_runtime::transport::DirectSyncExecutionRuntime;
 use crate::execution_runtime::{
-    resolve_core_sync_error_finalize_report_kind, should_fallback_to_control_sync,
-    should_finalize_sync_response, should_retry_next_local_candidate_sync,
+    local_failover_response_text, resolve_core_sync_error_finalize_report_kind,
+    should_fallback_to_control_sync, should_finalize_sync_response,
+    should_retry_next_local_candidate_sync, should_stop_local_candidate_failover_sync,
 };
 use crate::log_ids::short_request_id;
 use crate::request_candidate_runtime::{
@@ -85,6 +86,7 @@ pub(crate) async fn execute_execution_runtime_sync(
     let plan_request_id = plan.request_id.as_str();
     let plan_request_id_for_log = short_request_id(plan_request_id);
     let plan_candidate_id = plan.candidate_id.as_deref();
+    let candidate_started_unix_secs = current_request_candidate_unix_ms();
     #[cfg(not(test))]
     let result = {
         match DirectSyncExecutionRuntime::new()
@@ -140,6 +142,7 @@ pub(crate) async fn execute_execution_runtime_sync(
                 plan_request_id,
                 plan_candidate_id,
                 report_context.as_ref(),
+                candidate_started_unix_secs,
             )
             .await?;
             match remote_outcome {
@@ -159,8 +162,34 @@ pub(crate) async fn execute_execution_runtime_sync(
         .telemetry
         .as_ref()
         .and_then(|telemetry| telemetry.elapsed_ms);
-    if should_retry_next_local_candidate_sync(plan_kind, report_context.as_ref(), &result) {
-        let terminal_unix_secs = current_request_candidate_unix_secs();
+    let mut headers = result.headers.clone();
+    let (body_bytes, body_json, body_base64) = decode_execution_result_body(&result, &mut headers)?;
+    let local_failover_response_text = local_failover_response_text(
+        body_json.as_ref(),
+        &body_bytes,
+        result.error.as_ref().map(|error| error.message.as_str()),
+    );
+    let stop_local_failover = should_stop_local_candidate_failover_sync(
+        state,
+        &plan,
+        plan_kind,
+        report_context.as_ref(),
+        &result,
+        local_failover_response_text.as_deref(),
+    )
+    .await;
+    if should_retry_next_local_candidate_sync(
+        state,
+        &plan,
+        plan_kind,
+        report_context.as_ref(),
+        &result,
+        local_failover_response_text.as_deref(),
+    )
+    .await
+        && !stop_local_failover
+    {
+        let terminal_unix_secs = current_request_candidate_unix_ms();
         record_local_request_candidate_status(
             state,
             &plan,
@@ -171,8 +200,8 @@ pub(crate) async fn execute_execution_runtime_sync(
                 error_type: result_error_type.clone(),
                 error_message: result_error_message.clone(),
                 latency_ms: result_latency_ms,
-                started_at_unix_secs: Some(terminal_unix_secs),
-                finished_at_unix_secs: Some(terminal_unix_secs),
+                started_at_unix_ms: Some(candidate_started_unix_secs),
+                finished_at_unix_ms: Some(terminal_unix_secs),
             },
         )
         .await;
@@ -191,8 +220,6 @@ pub(crate) async fn execute_execution_runtime_sync(
         .or(Some(plan_request_id));
     let request_id_for_log = short_request_id(request_id.unwrap_or("-"));
     let candidate_id = result.candidate_id.as_deref().or(plan_candidate_id);
-    let mut headers = result.headers.clone();
-    let (body_bytes, body_json, body_base64) = decode_execution_result_body(&result, &mut headers)?;
     let has_body_bytes = body_base64.is_some();
     let explicit_finalize = should_finalize_sync_response(report_kind.as_deref());
     let mapped_error_finalize_kind =
@@ -220,15 +247,17 @@ pub(crate) async fn execute_execution_runtime_sync(
         mapped_error_finalize_kind.clone()
     };
 
-    if should_fallback_to_control_sync(
-        plan_kind,
-        &result,
-        body_json.as_ref(),
-        has_body_bytes,
-        explicit_finalize || implicit_finalize.is_some(),
-        mapped_error_finalize_kind.is_some(),
-    ) {
-        let terminal_unix_secs = current_request_candidate_unix_secs();
+    if !stop_local_failover
+        && should_fallback_to_control_sync(
+            plan_kind,
+            &result,
+            body_json.as_ref(),
+            has_body_bytes,
+            explicit_finalize || implicit_finalize.is_some(),
+            mapped_error_finalize_kind.is_some(),
+        )
+    {
+        let terminal_unix_secs = current_request_candidate_unix_ms();
         record_local_request_candidate_status(
             state,
             &plan,
@@ -239,8 +268,8 @@ pub(crate) async fn execute_execution_runtime_sync(
                 error_type: result_error_type.clone(),
                 error_message: result_error_message.clone(),
                 latency_ms: result_latency_ms,
-                started_at_unix_secs: Some(terminal_unix_secs),
-                finished_at_unix_secs: Some(terminal_unix_secs),
+                started_at_unix_ms: Some(candidate_started_unix_secs),
+                finished_at_unix_ms: Some(terminal_unix_secs),
             },
         )
         .await;
@@ -251,7 +280,7 @@ pub(crate) async fn execute_execution_runtime_sync(
         .usage_runtime
         .record_pending(state.data.as_ref(), &plan, report_context.as_ref())
         .await;
-    let terminal_unix_secs = current_request_candidate_unix_secs();
+    let terminal_unix_secs = current_request_candidate_unix_ms();
     record_local_request_candidate_status(
         state,
         &plan,
@@ -266,8 +295,8 @@ pub(crate) async fn execute_execution_runtime_sync(
             error_type: result_error_type.clone(),
             error_message: result_error_message.clone(),
             latency_ms: result_latency_ms,
-            started_at_unix_secs: Some(terminal_unix_secs),
-            finished_at_unix_secs: Some(terminal_unix_secs),
+            started_at_unix_ms: Some(candidate_started_unix_secs),
+            finished_at_unix_ms: Some(terminal_unix_secs),
         },
     )
     .await;
@@ -579,6 +608,7 @@ async fn execute_sync_via_remote_execution_runtime(
     plan_request_id: &str,
     plan_candidate_id: Option<&str>,
     report_context: Option<&serde_json::Value>,
+    candidate_started_unix_secs: u64,
 ) -> Result<RemoteSyncFallbackOutcome, GatewayError> {
     let response = match post_sync_plan_to_remote_execution_runtime(
         state,
@@ -604,7 +634,7 @@ async fn execute_sync_via_remote_execution_runtime(
     };
 
     if response.status() != http::StatusCode::OK {
-        let terminal_unix_secs = current_request_candidate_unix_secs();
+        let terminal_unix_secs = current_request_candidate_unix_ms();
         record_local_request_candidate_status(
             state,
             plan,
@@ -618,8 +648,8 @@ async fn execute_sync_via_remote_execution_runtime(
                     response.status()
                 )),
                 latency_ms: None,
-                started_at_unix_secs: Some(terminal_unix_secs),
-                finished_at_unix_secs: Some(terminal_unix_secs),
+                started_at_unix_ms: Some(candidate_started_unix_secs),
+                finished_at_unix_ms: Some(terminal_unix_secs),
             },
         )
         .await;

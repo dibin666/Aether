@@ -96,7 +96,7 @@ pub(super) async fn maybe_build_local_openai_chat_decision_payload_for_candidate
             )
             .await
         }
-        "claude:chat" | "gemini:chat" | "openai:cli" | "openai:compact" => {
+        "claude:chat" | "claude:cli" | "gemini:chat" | "gemini:cli" | "openai:cli" => {
             build_cross_format_local_openai_chat_decision_payload_for_candidate(
                 state,
                 parts,

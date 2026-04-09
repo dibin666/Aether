@@ -210,6 +210,136 @@ async fn admin_monitoring_cache_affinities_and_affinity_return_local_payload_fro
 }
 
 #[tokio::test]
+async fn admin_monitoring_cache_affinities_and_delete_use_runtime_scheduler_affinity_cache() {
+    let user_repository = Arc::new(
+        InMemoryUserReadRepository::seed_auth_users(vec![sample_monitoring_auth_user("user-1")])
+            .with_export_users(vec![sample_monitoring_export_user("user-1")]),
+    );
+    let auth_repository = Arc::new(
+        InMemoryAuthApiKeySnapshotRepository::default().with_export_records(vec![
+            sample_monitoring_export_api_key("user-1", "user-key-1"),
+        ]),
+    );
+    let provider_catalog = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![sample_provider()],
+        vec![sample_monitoring_catalog_endpoint()],
+        vec![sample_monitoring_catalog_key()],
+    ));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            crate::data::GatewayDataState::with_provider_catalog_reader_for_tests(provider_catalog)
+                .with_user_reader(user_repository)
+                .with_auth_api_key_reader(auth_repository),
+        );
+    let affinity_cache_key =
+        aether_scheduler_core::build_scheduler_affinity_cache_key_for_api_key_id(
+            "user-key-1",
+            "openai:chat",
+            "model-alpha",
+        )
+        .expect("scheduler affinity cache key should build");
+    state.scheduler_affinity_cache.insert(
+        affinity_cache_key.clone(),
+        crate::cache::SchedulerAffinityTarget {
+            provider_id: "provider-1".to_string(),
+            endpoint_id: "endpoint-1".to_string(),
+            key_id: "provider-key-1".to_string(),
+        },
+        crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL,
+        128,
+    );
+
+    let list_context = request_context(
+        http::Method::GET,
+        "/api/admin/monitoring/cache/affinities?keyword=alice&limit=20&offset=0",
+    );
+    let list_response = local_monitoring_response(&state, &list_context)
+        .await
+        .expect("handler should not error")
+        .expect("route should be handled locally");
+    assert_eq!(list_response.status(), http::StatusCode::OK);
+    let list_body = to_bytes(list_response.into_body(), usize::MAX)
+        .await
+        .expect("body should read");
+    let list_payload: serde_json::Value =
+        serde_json::from_slice(&list_body).expect("json body should parse");
+    assert_eq!(list_payload["status"], json!("ok"));
+    assert_eq!(list_payload["data"]["meta"]["total"], json!(1));
+    assert_eq!(list_payload["data"]["matched_user_id"], json!("user-1"));
+    assert_eq!(
+        list_payload["data"]["items"][0]["affinity_key"],
+        json!("user-key-1")
+    );
+    assert_eq!(
+        list_payload["data"]["items"][0]["api_format"],
+        json!("openai:chat")
+    );
+    assert_eq!(
+        list_payload["data"]["items"][0]["provider_name"],
+        json!("OpenAI")
+    );
+    assert_eq!(
+        list_payload["data"]["items"][0]["endpoint_url"],
+        json!("https://api.openai.example/v1")
+    );
+    assert_eq!(list_payload["data"]["items"][0]["request_count"], json!(0));
+    assert!(list_payload["data"]["items"][0]["expire_at"]
+        .as_u64()
+        .is_some_and(|value| value > 0));
+
+    let detail_context = request_context(
+        http::Method::GET,
+        "/api/admin/monitoring/cache/affinity/alice",
+    );
+    let detail_response = local_monitoring_response(&state, &detail_context)
+        .await
+        .expect("handler should not error")
+        .expect("route should be handled locally");
+    assert_eq!(detail_response.status(), http::StatusCode::OK);
+    let detail_body = to_bytes(detail_response.into_body(), usize::MAX)
+        .await
+        .expect("body should read");
+    let detail_payload: serde_json::Value =
+        serde_json::from_slice(&detail_body).expect("json body should parse");
+    assert_eq!(detail_payload["status"], json!("ok"));
+    assert_eq!(
+        detail_payload["affinities"][0]["api_format"],
+        json!("openai:chat")
+    );
+    assert_eq!(detail_payload["total_endpoints"], json!(1));
+
+    let delete_response = local_monitoring_response(
+        &state,
+        &request_context(
+            http::Method::DELETE,
+            "/api/admin/monitoring/cache/affinity/user-key-1/endpoint-1/model-alpha/openai:chat",
+        ),
+    )
+    .await
+    .expect("handler should not error")
+    .expect("route should be handled locally");
+    assert_eq!(delete_response.status(), http::StatusCode::OK);
+    let delete_body = to_bytes(delete_response.into_body(), usize::MAX)
+        .await
+        .expect("body should read");
+    let delete_payload: serde_json::Value =
+        serde_json::from_slice(&delete_body).expect("json body should parse");
+    assert_eq!(
+        delete_payload["message"],
+        json!("已清除缓存亲和性: Alice Key")
+    );
+    assert_eq!(delete_payload["affinity_key"], json!("user-key-1"));
+    assert_eq!(
+        state.read_scheduler_affinity_target(
+            &affinity_cache_key,
+            crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL,
+        ),
+        None
+    );
+}
+
+#[tokio::test]
 async fn admin_monitoring_cache_users_delete_returns_local_payload_from_test_store() {
     let user_repository = Arc::new(
         InMemoryUserReadRepository::seed_auth_users(vec![sample_monitoring_auth_user("user-1")])

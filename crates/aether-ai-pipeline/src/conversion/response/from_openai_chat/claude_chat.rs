@@ -14,6 +14,14 @@ pub fn convert_openai_chat_response_to_claude_chat(
     let message = first_choice.get("message")?.as_object()?;
     let mut content = Vec::new();
 
+    if let Some(reasoning_content) = message.get("reasoning_content").and_then(Value::as_str) {
+        if !reasoning_content.trim().is_empty() {
+            content.push(json!({
+                "type": "thinking",
+                "thinking": reasoning_content,
+            }));
+        }
+    }
     if let Some(text) = extract_openai_assistant_text(message.get("content")) {
         if !text.trim().is_empty() {
             content.push(json!({
@@ -92,4 +100,62 @@ pub fn convert_openai_chat_response_to_claude_chat(
             "output_tokens": output_tokens,
         }
     }))
+    .map(|mut response| {
+        if let Some(cached_tokens) = usage
+            .and_then(|value| value.get("prompt_tokens_details"))
+            .and_then(Value::as_object)
+            .and_then(|details| details.get("cached_tokens"))
+            .and_then(Value::as_u64)
+        {
+            response["usage"]["cache_read_input_tokens"] = Value::from(cached_tokens);
+        }
+        if let Some(cached_creation_tokens) = usage
+            .and_then(|value| value.get("prompt_tokens_details"))
+            .and_then(Value::as_object)
+            .and_then(|details| details.get("cached_creation_tokens"))
+            .and_then(Value::as_u64)
+        {
+            response["usage"]["cache_creation_input_tokens"] = Value::from(cached_creation_tokens);
+        }
+        response
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::convert_openai_chat_response_to_claude_chat;
+    use serde_json::json;
+
+    #[test]
+    fn preserves_openai_reasoning_and_cache_usage_in_claude_response() {
+        let response = json!({
+            "id": "chatcmpl_123",
+            "model": "gpt-5.4",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "hello",
+                    "reasoning_content": "step by step"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 7,
+                "prompt_tokens_details": {
+                    "cached_tokens": 3,
+                    "cached_creation_tokens": 2
+                }
+            }
+        });
+
+        let converted = convert_openai_chat_response_to_claude_chat(&response, &json!({}))
+            .expect("response should convert");
+
+        assert_eq!(converted["content"][0]["type"], "thinking");
+        assert_eq!(converted["content"][0]["thinking"], "step by step");
+        assert_eq!(converted["usage"]["cache_read_input_tokens"], 3);
+        assert_eq!(converted["usage"]["cache_creation_input_tokens"], 2);
+    }
 }

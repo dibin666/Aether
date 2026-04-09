@@ -10,8 +10,8 @@ use crate::ai_pipeline::transport::antigravity::{
 };
 use crate::ai_pipeline::transport::apply_local_body_rules;
 use crate::ai_pipeline::transport::url::{
-    build_claude_messages_url, build_gemini_content_url, build_openai_cli_url,
-    build_passthrough_path_url,
+    build_claude_messages_url, build_gemini_content_url, build_openai_chat_url,
+    build_openai_cli_url, build_passthrough_path_url,
 };
 use crate::ai_pipeline::{
     build_cross_format_openai_cli_request_body as pipeline_build_cross_format_openai_cli_request_body,
@@ -140,15 +140,14 @@ pub(crate) fn build_cross_format_openai_cli_upstream_url(
             build_passthrough_path_url(&transport.endpoint.base_url, path, parts.uri.query(), &[])
         }
         None => match conversion_kind {
+            RequestConversionKind::ToOpenAIChat => Some(build_openai_chat_url(
+                &transport.endpoint.base_url,
+                parts.uri.query(),
+            )),
             RequestConversionKind::ToOpenAIFamilyCli => Some(build_openai_cli_url(
                 &transport.endpoint.base_url,
                 parts.uri.query(),
                 false,
-            )),
-            RequestConversionKind::ToOpenAICompact => Some(build_openai_cli_url(
-                &transport.endpoint.base_url,
-                parts.uri.query(),
-                true,
             )),
             RequestConversionKind::ToClaudeStandard => Some(build_claude_messages_url(
                 &transport.endpoint.base_url,
@@ -160,7 +159,6 @@ pub(crate) fn build_cross_format_openai_cli_upstream_url(
                 upstream_is_stream,
                 parts.uri.query(),
             ),
-            _ => None,
         },
     }
 }

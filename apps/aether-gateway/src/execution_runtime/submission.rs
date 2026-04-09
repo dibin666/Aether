@@ -297,29 +297,39 @@ fn resolve_local_sync_error_status_code(status_code: u16, body_json: &serde_json
         return status_code;
     }
 
-    let Some(error_object) = body_json.get("error").and_then(|value| value.as_object()) else {
-        return 400;
-    };
+    let body_object = body_json.as_object();
+    let error_object = body_object
+        .and_then(|object| object.get("error"))
+        .and_then(|value| value.as_object());
 
-    for key in ["code", "status"] {
-        let Some(value) = error_object.get(key) else {
-            continue;
-        };
-        if let Some(number) = value.as_u64() {
+    let raw_code = first_non_empty_error_text(error_object, body_object, &["code"]);
+    let raw_status = first_non_empty_error_text(error_object, body_object, &["status"]);
+    for numeric_hint in [raw_code.as_deref(), raw_status.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        if let Ok(number) = numeric_hint.parse::<u16>() {
             if (400..600).contains(&number) {
-                return number as u16;
-            }
-        }
-        if let Some(text) = value.as_str() {
-            if let Ok(number) = text.parse::<u16>() {
-                if (400..600).contains(&number) {
-                    return number;
-                }
+                return number;
             }
         }
     }
 
-    400
+    let raw_type = first_non_empty_error_text(error_object, body_object, &["type", "__type"]);
+    let message = first_non_empty_error_text(
+        error_object,
+        body_object,
+        &["message", "detail", "reason", "status", "type", "__type"],
+    )
+    .unwrap_or_else(|| "HTTP 400".to_string());
+    let kind = classify_local_sync_error_kind(
+        status_code,
+        raw_type.as_deref(),
+        raw_status.as_deref(),
+        raw_code.as_deref(),
+        message.as_str(),
+    );
+    default_status_code_for_local_sync_error_kind(kind)
 }
 
 fn extract_local_sync_error_details(
@@ -436,6 +446,20 @@ fn classify_local_sync_error_kind(
     LocalCoreSyncErrorKind::InvalidRequest
 }
 
+fn default_status_code_for_local_sync_error_kind(kind: LocalCoreSyncErrorKind) -> u16 {
+    match kind {
+        LocalCoreSyncErrorKind::InvalidRequest | LocalCoreSyncErrorKind::ContextLengthExceeded => {
+            400
+        }
+        LocalCoreSyncErrorKind::Authentication => 401,
+        LocalCoreSyncErrorKind::PermissionDenied => 403,
+        LocalCoreSyncErrorKind::NotFound => 404,
+        LocalCoreSyncErrorKind::RateLimit => 429,
+        LocalCoreSyncErrorKind::Overloaded => 503,
+        LocalCoreSyncErrorKind::ServerError => 500,
+    }
+}
+
 pub(crate) fn strip_utf8_bom_and_ws(mut body: &[u8]) -> &[u8] {
     loop {
         while let Some(first) = body.first() {
@@ -533,4 +557,129 @@ pub(crate) async fn submit_local_core_error_or_sync_finalize(
     }
 
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::to_bytes;
+    use serde_json::json;
+
+    use super::maybe_build_local_core_error_response;
+    use crate::control::GatewayControlDecision;
+    use crate::usage::GatewaySyncReportRequest;
+
+    fn test_decision() -> GatewayControlDecision {
+        GatewayControlDecision::synthetic(
+            "/v1/chat/completions",
+            Some("ai_public".to_string()),
+            Some("openai".to_string()),
+            Some("chat".to_string()),
+            Some("openai:chat".to_string()),
+        )
+        .with_execution_runtime_candidate(true)
+    }
+
+    fn core_finalize_payload(
+        report_kind: &str,
+        client_api_format: &str,
+        provider_api_format: &str,
+        status_code: u16,
+        body_json: serde_json::Value,
+    ) -> GatewaySyncReportRequest {
+        GatewaySyncReportRequest {
+            trace_id: "trace-core-error-status-123".to_string(),
+            report_kind: report_kind.to_string(),
+            report_context: Some(json!({
+                "client_api_format": client_api_format,
+                "provider_api_format": provider_api_format,
+            })),
+            status_code,
+            headers: Default::default(),
+            body_json: Some(body_json),
+            client_body_json: None,
+            body_base64: None,
+            telemetry: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn maybe_build_local_core_error_response_infers_status_from_semantic_error_type() {
+        let payload = core_finalize_payload(
+            "openai_chat_sync_finalize",
+            "openai:chat",
+            "claude:chat",
+            200,
+            json!({
+                "type": "error",
+                "error": {
+                    "type": "rate_limit_error",
+                    "message": "slow down"
+                }
+            }),
+        );
+
+        let response = maybe_build_local_core_error_response(
+            "trace-sync-status-type",
+            &test_decision(),
+            &payload,
+        )
+        .expect("response build should not error")
+        .expect("response should exist");
+
+        assert_eq!(response.status(), http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .expect("body should read"),
+            )
+            .expect("body should decode"),
+            json!({
+                "error": {
+                    "message": "slow down",
+                    "type": "rate_limit_error"
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn maybe_build_local_core_error_response_infers_status_from_gemini_status_text() {
+        let payload = core_finalize_payload(
+            "gemini_chat_sync_finalize",
+            "gemini:chat",
+            "gemini:chat",
+            200,
+            json!({
+                "error": {
+                    "message": "quota reached",
+                    "status": "RESOURCE_EXHAUSTED"
+                }
+            }),
+        );
+
+        let response = maybe_build_local_core_error_response(
+            "trace-sync-status-gemini",
+            &test_decision(),
+            &payload,
+        )
+        .expect("response build should not error")
+        .expect("response should exist");
+
+        assert_eq!(response.status(), http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .expect("body should read"),
+            )
+            .expect("body should decode"),
+            json!({
+                "error": {
+                    "message": "quota reached",
+                    "status": "RESOURCE_EXHAUSTED"
+                }
+            })
+        );
+    }
 }

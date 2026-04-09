@@ -6,7 +6,9 @@ use tracing::warn;
 
 use crate::ai_pipeline::collect_control_headers;
 use crate::ai_pipeline::conversion::{
-    request_conversion_direct_auth, request_conversion_kind, request_conversion_transport_supported,
+    request_conversion_direct_auth, request_conversion_kind,
+    request_conversion_requires_enable_flag, request_conversion_transport_supported,
+    request_pair_allowed_for_transport,
 };
 use crate::ai_pipeline::planner::common::OPENAI_CHAT_STREAM_PLAN_KIND;
 use crate::ai_pipeline::planner::standard::{
@@ -50,6 +52,28 @@ pub(super) async fn build_cross_format_local_openai_chat_decision_payload_for_ca
     else {
         return None;
     };
+    if !request_pair_allowed_for_transport(&transport, "openai:chat", provider_api_format.as_str())
+    {
+        let skip_reason =
+            if request_conversion_requires_enable_flag("openai:chat", provider_api_format.as_str())
+                && !transport.provider.enable_format_conversion
+            {
+                "format_conversion_disabled"
+            } else {
+                "transport_unsupported"
+            };
+        mark_skipped_local_openai_chat_candidate(
+            state,
+            input,
+            trace_id,
+            candidate,
+            candidate_index,
+            candidate_id,
+            skip_reason,
+        )
+        .await;
+        return None;
+    }
     if !request_conversion_transport_supported(transport, conversion_kind) {
         mark_skipped_local_openai_chat_candidate(
             state,
@@ -63,7 +87,6 @@ pub(super) async fn build_cross_format_local_openai_chat_decision_payload_for_ca
         .await;
         return None;
     }
-
     let resolve_auth = request_conversion_direct_auth(transport, conversion_kind);
     let oauth_auth = if resolve_auth.is_none() {
         match planner_state
@@ -258,6 +281,8 @@ pub(super) async fn build_cross_format_local_openai_chat_decision_payload_for_ca
             json!({
                 "user_id": input.auth_context.user_id,
                 "api_key_id": input.auth_context.api_key_id,
+                "username": input.auth_context.username,
+                "api_key_name": input.auth_context.api_key_name,
                 "request_id": trace_id,
                 "candidate_id": candidate_id,
                 "candidate_index": candidate_index,

@@ -1,5 +1,7 @@
 use crate::api::ai::public_api_format_local_path;
-use crate::handlers::shared::{query_param_optional_bool, query_param_value, unix_secs_to_rfc3339};
+use crate::handlers::shared::{
+    query_param_optional_bool, query_param_value, unix_ms_to_rfc3339, unix_secs_to_rfc3339,
+};
 use crate::AppState;
 use aether_data_contracts::repository::candidates::{
     PublicHealthTimelineBucket, RequestCandidateStatus, StoredRequestCandidate,
@@ -25,11 +27,11 @@ pub(crate) fn request_candidate_status_label(status: RequestCandidateStatus) -> 
     }
 }
 
-pub(crate) fn request_candidate_event_unix_secs(candidate: &StoredRequestCandidate) -> u64 {
+pub(crate) fn request_candidate_event_unix_ms(candidate: &StoredRequestCandidate) -> u64 {
     candidate
-        .finished_at_unix_secs
-        .or(candidate.started_at_unix_secs)
-        .unwrap_or(candidate.created_at_unix_secs)
+        .finished_at_unix_ms
+        .or(candidate.started_at_unix_ms)
+        .unwrap_or(candidate.created_at_unix_ms)
 }
 
 pub(crate) fn normalize_admin_base_url(base_url: &str) -> Result<String, String> {
@@ -410,28 +412,24 @@ pub(crate) async fn build_api_format_health_monitor_payload(
                 total_count: 0,
                 success_count: 0,
                 failed_count: 0,
-                min_created_at_unix_secs: None,
-                max_created_at_unix_secs: None,
+                min_created_at_unix_ms: None,
+                max_created_at_unix_ms: None,
             });
         bucket.total_count += row.total_count;
         bucket.success_count += row.success_count;
         bucket.failed_count += row.failed_count;
-        bucket.min_created_at_unix_secs = match (
-            bucket.min_created_at_unix_secs,
-            row.min_created_at_unix_secs,
-        ) {
-            (Some(left), Some(right)) => Some(left.min(right)),
-            (None, Some(right)) => Some(right),
-            (left, None) => left,
-        };
-        bucket.max_created_at_unix_secs = match (
-            bucket.max_created_at_unix_secs,
-            row.max_created_at_unix_secs,
-        ) {
-            (Some(left), Some(right)) => Some(left.max(right)),
-            (None, Some(right)) => Some(right),
-            (left, None) => left,
-        };
+        bucket.min_created_at_unix_ms =
+            match (bucket.min_created_at_unix_ms, row.min_created_at_unix_ms) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (None, Some(right)) => Some(right),
+                (left, None) => left,
+            };
+        bucket.max_created_at_unix_ms =
+            match (bucket.max_created_at_unix_ms, row.max_created_at_unix_ms) {
+                (Some(left), Some(right)) => Some(left.max(right)),
+                (None, Some(right)) => Some(right),
+                (left, None) => left,
+            };
     }
 
     let mut formats = Vec::new();
@@ -456,19 +454,19 @@ pub(crate) async fn build_api_format_health_monitor_payload(
         };
         let last_event_at = attempts.first().and_then(|candidate| {
             candidate
-                .finished_at_unix_secs
-                .or(candidate.started_at_unix_secs)
-                .or(Some(candidate.created_at_unix_secs))
+                .finished_at_unix_ms
+                .or(candidate.started_at_unix_ms)
+                .or(Some(candidate.created_at_unix_ms))
         });
         let events = attempts
             .into_iter()
             .filter_map(|candidate| {
                 let timestamp = candidate
-                    .finished_at_unix_secs
-                    .or(candidate.started_at_unix_secs)
-                    .unwrap_or(candidate.created_at_unix_secs);
+                    .finished_at_unix_ms
+                    .or(candidate.started_at_unix_ms)
+                    .unwrap_or(candidate.created_at_unix_ms);
                 Some(json!({
-                    "timestamp": unix_secs_to_rfc3339(timestamp)?,
+                    "timestamp": unix_ms_to_rfc3339(timestamp)?,
                     "status": request_candidate_status_label(candidate.status),
                     "status_code": candidate.status_code,
                     "latency_ms": candidate.latency_ms,
@@ -490,11 +488,11 @@ pub(crate) async fn build_api_format_health_monitor_payload(
             "failed_count": failed_count,
             "skipped_count": skipped_count,
             "success_rate": success_rate,
-            "last_event_at": last_event_at.and_then(unix_secs_to_rfc3339),
+            "last_event_at": last_event_at.and_then(unix_ms_to_rfc3339),
             "events": events,
             "timeline": timeline,
-            "time_range_start": time_range_start.and_then(unix_secs_to_rfc3339),
-            "time_range_end": time_range_end.or(Some(now_unix_secs)).and_then(unix_secs_to_rfc3339),
+            "time_range_start": time_range_start.and_then(unix_ms_to_rfc3339),
+            "time_range_end": time_range_end.map(|ms| unix_ms_to_rfc3339(ms)).unwrap_or_else(|| unix_secs_to_rfc3339(now_unix_secs)),
         });
         if options.include_api_path {
             format_payload["api_path"] = json!(public_api_format_local_path(&api_format));
@@ -536,12 +534,12 @@ pub(crate) fn build_public_health_timeline(
             continue;
         }
 
-        earliest_time = match (earliest_time, bucket.min_created_at_unix_secs) {
+        earliest_time = match (earliest_time, bucket.min_created_at_unix_ms) {
             (Some(left), Some(right)) => Some(left.min(right)),
             (None, Some(right)) => Some(right),
             (left, None) => left,
         };
-        latest_time = match (latest_time, bucket.max_created_at_unix_secs) {
+        latest_time = match (latest_time, bucket.max_created_at_unix_ms) {
             (Some(left), Some(right)) => Some(left.max(right)),
             (None, Some(right)) => Some(right),
             (left, None) => left,
@@ -591,4 +589,51 @@ pub(crate) fn api_format_display_name(api_format: &str) -> String {
         other => other,
     };
     format!("{family_label} {kind_label}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::request_candidate_event_unix_ms;
+    use crate::handlers::shared::unix_ms_to_rfc3339;
+    use aether_data_contracts::repository::candidates::{
+        RequestCandidateStatus, StoredRequestCandidate,
+    };
+
+    #[test]
+    fn request_candidate_event_timestamp_uses_millisecond_precision() {
+        let candidate = StoredRequestCandidate::new(
+            "cand-1".to_string(),
+            "req-1".to_string(),
+            None,
+            None,
+            None,
+            None,
+            0,
+            0,
+            Some("provider-1".to_string()),
+            Some("endpoint-1".to_string()),
+            Some("key-1".to_string()),
+            RequestCandidateStatus::Success,
+            None,
+            false,
+            Some(200),
+            None,
+            None,
+            Some(42),
+            Some(1),
+            None,
+            None,
+            1_700_000_000_000,
+            Some(1_700_000_000_111),
+            Some(1_700_000_000_123),
+        )
+        .expect("candidate should build");
+
+        let event_unix_ms = request_candidate_event_unix_ms(&candidate);
+        assert_eq!(event_unix_ms, 1_700_000_000_123);
+        assert_eq!(
+            unix_ms_to_rfc3339(event_unix_ms).as_deref(),
+            Some("2023-11-14T22:13:20.123Z")
+        );
+    }
 }

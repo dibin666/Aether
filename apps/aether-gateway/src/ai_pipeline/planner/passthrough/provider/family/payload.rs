@@ -265,6 +265,8 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         json!({
             "user_id": input.auth_context.user_id,
             "api_key_id": input.auth_context.api_key_id,
+            "username": input.auth_context.username,
+            "api_key_name": input.auth_context.api_key_name,
             "request_id": trace_id,
             "candidate_id": candidate_id,
             "candidate_index": candidate_index,
@@ -359,6 +361,7 @@ pub(super) async fn mark_skipped_local_same_format_provider_candidate(
             candidate,
             candidate_index,
             candidate_id,
+            input.required_capabilities.as_ref(),
             skip_reason,
             current_unix_secs(),
             "gateway local same-format decision failed to persist skipped candidate",

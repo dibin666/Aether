@@ -207,7 +207,7 @@ pub(crate) fn wallet_payment_order_payload_from_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<serde_json::Value, GatewayError> {
     let created_at = row
-        .try_get::<Option<i64>, _>("created_at_unix_secs")
+        .try_get::<Option<i64>, _>("created_at_unix_ms")
         .map_err(|err| GatewayError::Internal(err.to_string()))?
         .and_then(|value| u64::try_from(value).ok())
         .and_then(unix_secs_to_rfc3339);
@@ -280,7 +280,7 @@ fn wallet_payment_order_payload_from_record(
         record.gateway_order_id.clone(),
         record.gateway_response.clone(),
         record.status.clone(),
-        Some(unix_secs_to_rfc3339(record.created_at_unix_secs)).flatten(),
+        Some(unix_secs_to_rfc3339(record.created_at_unix_ms)).flatten(),
         record.paid_at_unix_secs.and_then(unix_secs_to_rfc3339),
         record.credited_at_unix_secs.and_then(unix_secs_to_rfc3339),
         record.expires_at_unix_secs.and_then(unix_secs_to_rfc3339),

@@ -35,7 +35,7 @@ pub struct StoredShadowResult {
     pub match_status: ShadowResultMatchStatus,
     pub status_code: Option<u16>,
     pub error_message: Option<String>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub updated_at_unix_secs: u64,
 }
 
@@ -53,7 +53,7 @@ impl StoredShadowResult {
         match_status: ShadowResultMatchStatus,
         status_code: Option<i32>,
         error_message: Option<String>,
-        created_at_unix_secs: i64,
+        created_at_unix_ms: i64,
         updated_at_unix_secs: i64,
     ) -> Result<Self, crate::DataLayerError> {
         let status_code = status_code
@@ -63,9 +63,9 @@ impl StoredShadowResult {
                 })
             })
             .transpose()?;
-        let created_at_unix_secs = u64::try_from(created_at_unix_secs).map_err(|_| {
+        let created_at_unix_ms = u64::try_from(created_at_unix_ms).map_err(|_| {
             crate::DataLayerError::UnexpectedValue(format!(
-                "invalid created_at_unix_secs: {created_at_unix_secs}"
+                "invalid created_at_unix_ms: {created_at_unix_ms}"
             ))
         })?;
         let updated_at_unix_secs = u64::try_from(updated_at_unix_secs).map_err(|_| {
@@ -86,7 +86,7 @@ impl StoredShadowResult {
             match_status,
             status_code,
             error_message,
-            created_at_unix_secs,
+            created_at_unix_ms,
             updated_at_unix_secs,
         })
     }
@@ -105,7 +105,7 @@ pub struct UpsertShadowResult {
     pub match_status: ShadowResultMatchStatus,
     pub status_code: Option<u16>,
     pub error_message: Option<String>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub updated_at_unix_secs: u64,
 }
 
@@ -123,7 +123,7 @@ impl UpsertShadowResult {
             match_status: self.match_status,
             status_code: self.status_code,
             error_message: self.error_message,
-            created_at_unix_secs: self.created_at_unix_secs,
+            created_at_unix_ms: self.created_at_unix_ms,
             updated_at_unix_secs: self.updated_at_unix_secs,
         }
     }

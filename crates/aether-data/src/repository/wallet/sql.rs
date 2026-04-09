@@ -151,7 +151,7 @@ SELECT
   CAST(w.total_adjusted AS DOUBLE PRECISION) AS total_adjusted,
   users.username AS user_name,
   api_keys.name AS api_key_name,
-  CAST(EXTRACT(EPOCH FROM w.created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM w.created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM w.updated_at) AS BIGINT) AS updated_at_unix_secs
 FROM wallets w
 LEFT JOIN users ON users.id = w.user_id
@@ -204,7 +204,7 @@ SELECT
   api_keys.name AS api_key_name,
   operator_users.username AS operator_name,
   operator_users.email AS operator_email,
-  CAST(EXTRACT(EPOCH FROM tx.created_at) AS BIGINT) AS created_at_unix_secs
+  CAST(EXTRACT(EPOCH FROM tx.created_at) AS BIGINT) AS created_at_unix_ms
 FROM wallet_transactions tx
 JOIN wallets w ON w.id = tx.wallet_id
 LEFT JOIN users wallet_users ON wallet_users.id = w.user_id
@@ -256,7 +256,7 @@ SELECT
   w.status AS wallet_status,
   wallet_users.username AS wallet_user_name,
   api_keys.name AS api_key_name,
-  CAST(EXTRACT(EPOCH FROM rr.created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM rr.created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM rr.updated_at) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM rr.processed_at) AS BIGINT) AS processed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM rr.completed_at) AS BIGINT) AS completed_at_unix_secs
@@ -296,7 +296,7 @@ SELECT
   tx.description,
   operator_users.username AS operator_name,
   operator_users.email AS operator_email,
-  CAST(EXTRACT(EPOCH FROM tx.created_at) AS BIGINT) AS created_at_unix_secs
+  CAST(EXTRACT(EPOCH FROM tx.created_at) AS BIGINT) AS created_at_unix_ms
 FROM wallet_transactions tx
 LEFT JOIN users operator_users
   ON operator_users.id = tx.operator_id
@@ -384,7 +384,7 @@ SELECT
   requested_by,
   approved_by,
   processed_by,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
@@ -426,7 +426,7 @@ SELECT
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -462,7 +462,7 @@ SELECT
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -496,7 +496,7 @@ SELECT
     WHEN status = 'pending' AND expires_at IS NOT NULL AND expires_at < now() THEN 'expired'
     ELSE status
   END AS status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -526,7 +526,7 @@ SELECT
     WHEN status = 'pending' AND expires_at IS NOT NULL AND expires_at < now() THEN 'expired'
     ELSE status
   END AS status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -557,7 +557,7 @@ SELECT
   requested_by,
   approved_by,
   processed_by,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
@@ -586,7 +586,7 @@ SELECT
   status,
   payload,
   error_message,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs
 FROM payment_callbacks
 WHERE ($1::TEXT IS NULL OR payment_method = $1)
@@ -1110,7 +1110,7 @@ RETURNING
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -1307,7 +1307,7 @@ RETURNING
   requested_by,
   approved_by,
   processed_by,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
@@ -1357,7 +1357,7 @@ SELECT
   requested_by,
   approved_by,
   processed_by,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
@@ -1509,7 +1509,7 @@ SELECT
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -1541,7 +1541,7 @@ SELECT
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -1803,7 +1803,7 @@ RETURNING
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -2020,7 +2020,7 @@ VALUES (
                             operator_name: None,
                             operator_email: None,
                             description: Some(description),
-                            created_at_unix_secs: Some(created_at),
+                            created_at_unix_ms: Some(created_at),
                         },
                     )))
                 })
@@ -2238,7 +2238,7 @@ SELECT
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -2293,7 +2293,7 @@ SELECT
   requested_by,
   approved_by,
   processed_by,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
@@ -2434,7 +2434,7 @@ RETURNING
                     let wallet = map_wallet_row(&wallet_row)?;
 
                     let transaction_id = Uuid::new_v4().to_string();
-                    let created_at_unix_secs = Utc::now().timestamp().max(0) as u64;
+                    let created_at_unix_ms = Utc::now().timestamp().max(0) as u64;
                     sqlx::query(
                         r#"
 INSERT INTO wallet_transactions (
@@ -2520,7 +2520,7 @@ RETURNING
   requested_by,
   approved_by,
   processed_by,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
@@ -2553,7 +2553,7 @@ RETURNING
                             operator_name: None,
                             operator_email: None,
                             description: Some("退款占款".to_string()),
-                            created_at_unix_secs: Some(created_at_unix_secs),
+                            created_at_unix_ms: Some(created_at_unix_ms),
                         },
                     )))
                 })
@@ -2622,7 +2622,7 @@ RETURNING
   requested_by,
   approved_by,
   processed_by,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
@@ -2680,7 +2680,7 @@ SELECT
   requested_by,
   approved_by,
   processed_by,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
@@ -2728,7 +2728,7 @@ RETURNING
   requested_by,
   approved_by,
   processed_by,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
@@ -2847,7 +2847,7 @@ RETURNING
                     let wallet = map_wallet_row(&wallet_row)?;
 
                     let transaction_id = Uuid::new_v4().to_string();
-                    let created_at_unix_secs = Utc::now().timestamp().max(0) as u64;
+                    let created_at_unix_ms = Utc::now().timestamp().max(0) as u64;
                     sqlx::query(
                         r#"
 INSERT INTO wallet_transactions (
@@ -2948,7 +2948,7 @@ RETURNING
   requested_by,
   approved_by,
   processed_by,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM processed_at) AS BIGINT) AS processed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs
@@ -2981,7 +2981,7 @@ RETURNING
                             operator_name: None,
                             operator_email: None,
                             description: Some("退款失败回补".to_string()),
-                            created_at_unix_secs: Some(created_at_unix_secs),
+                            created_at_unix_ms: Some(created_at_unix_ms),
                         }),
                     )))
                 })
@@ -3014,7 +3014,7 @@ SELECT
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -3077,7 +3077,7 @@ RETURNING
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -3122,7 +3122,7 @@ SELECT
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -3176,7 +3176,7 @@ RETURNING
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -3219,7 +3219,7 @@ SELECT
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -3412,7 +3412,7 @@ RETURNING
   gateway_order_id,
   gateway_response,
   status,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM paid_at) AS BIGINT) AS paid_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM credited_at) AS BIGINT) AS credited_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM expires_at) AS BIGINT) AS expires_at_unix_secs
@@ -3574,8 +3574,8 @@ fn map_admin_wallet_list_item_row(
         total_adjusted: row_get(row, "total_adjusted")?,
         user_name: row_get(row, "user_name")?,
         api_key_name: row_get(row, "api_key_name")?,
-        created_at_unix_secs: parse_optional_timestamp(
-            row_get(row, "created_at_unix_secs")?,
+        created_at_unix_ms: parse_optional_timestamp(
+            row_get(row, "created_at_unix_ms")?,
             "wallets.created_at",
         )?,
         updated_at_unix_secs: parse_optional_timestamp(
@@ -3611,8 +3611,8 @@ fn map_admin_wallet_ledger_item_row(
         wallet_api_key_id: row_get(row, "api_key_id")?,
         api_key_name: row_get(row, "api_key_name")?,
         wallet_status: row_get(row, "wallet_status")?,
-        created_at_unix_secs: parse_optional_timestamp(
-            row_get(row, "created_at_unix_secs")?,
+        created_at_unix_ms: parse_optional_timestamp(
+            row_get(row, "created_at_unix_ms")?,
             "wallet_transactions.created_at",
         )?,
     })
@@ -3646,8 +3646,8 @@ fn map_admin_wallet_refund_request_item_row(
         wallet_api_key_id: row_get(row, "wallet_api_key_id")?,
         api_key_name: row_get(row, "api_key_name")?,
         wallet_status: row_get(row, "wallet_status")?,
-        created_at_unix_secs: parse_optional_timestamp(
-            row_get(row, "created_at_unix_secs")?,
+        created_at_unix_ms: parse_optional_timestamp(
+            row_get(row, "created_at_unix_ms")?,
             "refund_requests.created_at",
         )?,
         updated_at_unix_secs: parse_optional_timestamp(
@@ -3686,8 +3686,8 @@ fn map_admin_wallet_transaction_row(
         operator_name: row_get(row, "operator_name")?,
         operator_email: row_get(row, "operator_email")?,
         description: row_get(row, "description")?,
-        created_at_unix_secs: parse_optional_timestamp(
-            row_get(row, "created_at_unix_secs")?,
+        created_at_unix_ms: parse_optional_timestamp(
+            row_get(row, "created_at_unix_ms")?,
             "wallet_transactions.created_at",
         )?,
     })
@@ -3740,8 +3740,8 @@ fn map_admin_wallet_refund_row(row: &PgRow) -> Result<StoredAdminWalletRefund, D
         requested_by: row_get(row, "requested_by")?,
         approved_by: row_get(row, "approved_by")?,
         processed_by: row_get(row, "processed_by")?,
-        created_at_unix_secs: parse_timestamp(
-            row_get(row, "created_at_unix_secs")?,
+        created_at_unix_ms: parse_timestamp(
+            row_get(row, "created_at_unix_ms")?,
             "refund_requests.created_at",
         )?,
         updated_at_unix_secs: parse_timestamp(
@@ -3774,8 +3774,8 @@ fn map_admin_payment_callback_row(
         status: row_get(row, "status")?,
         payload: row_get(row, "payload")?,
         error_message: row_get(row, "error_message")?,
-        created_at_unix_secs: parse_timestamp(
-            row_get(row, "created_at_unix_secs")?,
+        created_at_unix_ms: parse_timestamp(
+            row_get(row, "created_at_unix_ms")?,
             "payment_callbacks.created_at",
         )?,
         processed_at_unix_secs: parse_optional_timestamp(
@@ -3801,8 +3801,8 @@ fn map_admin_payment_order_row(row: &PgRow) -> Result<StoredAdminPaymentOrder, D
         gateway_order_id: row_get(row, "gateway_order_id")?,
         gateway_response: row_get(row, "gateway_response")?,
         status: row_get(row, "status")?,
-        created_at_unix_secs: parse_timestamp(
-            row_get(row, "created_at_unix_secs")?,
+        created_at_unix_ms: parse_timestamp(
+            row_get(row, "created_at_unix_ms")?,
             "payment_orders.created_at",
         )?,
         paid_at_unix_secs: parse_optional_timestamp(

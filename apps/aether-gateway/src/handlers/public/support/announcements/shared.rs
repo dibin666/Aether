@@ -84,7 +84,7 @@ pub(super) fn build_public_announcement_payload(
         },
         "start_time": format_optional_unix_datetime(announcement.start_time_unix_secs),
         "end_time": format_optional_unix_datetime(announcement.end_time_unix_secs),
-        "created_at": format_required_unix_datetime(announcement.created_at_unix_secs),
+        "created_at": format_required_unix_datetime(announcement.created_at_unix_ms),
         "updated_at": format_required_unix_datetime(announcement.updated_at_unix_secs),
     })
 }

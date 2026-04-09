@@ -4,6 +4,7 @@ pub mod queue;
 pub mod record;
 pub mod report;
 pub mod report_context;
+mod request_metadata;
 pub mod runtime;
 pub mod settlement;
 pub mod standardized_usage;

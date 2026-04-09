@@ -14,10 +14,10 @@ use aether_scheduler_core::{
 use aether_usage_runtime::build_locally_actionable_report_context_from_request_candidate;
 use async_trait::async_trait;
 use serde_json::Value;
-use tracing::warn;
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::clock::current_unix_secs;
+use crate::clock::current_unix_ms;
 use crate::log_ids::short_request_id;
 use crate::GatewayError;
 
@@ -39,6 +39,116 @@ pub(crate) trait RequestCandidateRuntimeWriter {
     ) -> Result<Option<StoredRequestCandidate>, GatewayError>;
 }
 
+#[async_trait]
+pub(crate) trait RequestCandidateRuntimeCapabilityReader {
+    async fn read_request_candidate_user_model_capability_settings(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<Value>, GatewayError>;
+
+    async fn read_request_candidate_api_key_force_capabilities(
+        &self,
+        user_id: &str,
+        api_key_id: &str,
+    ) -> Result<Option<Value>, GatewayError>;
+}
+
+pub(crate) async fn resolve_request_candidate_required_capabilities(
+    state: &(impl RequestCandidateRuntimeCapabilityReader + ?Sized),
+    user_id: &str,
+    api_key_id: &str,
+    requested_model: Option<&str>,
+    explicit_required_capabilities: Option<&Value>,
+) -> Option<Value> {
+    let mut merged = serde_json::Map::new();
+
+    match state
+        .read_request_candidate_user_model_capability_settings(user_id)
+        .await
+    {
+        Ok(settings) => merge_capability_object(
+            &mut merged,
+            select_requested_model_capabilities(settings.as_ref(), requested_model),
+        ),
+        Err(error) => {
+            warn!(
+                user_id = %user_id,
+                api_key_id = %api_key_id,
+                requested_model = requested_model.unwrap_or_default(),
+                error = ?error,
+                "gateway request candidate user model capabilities lookup failed"
+            );
+        }
+    }
+
+    match state
+        .read_request_candidate_api_key_force_capabilities(user_id, api_key_id)
+        .await
+    {
+        Ok(force_capabilities) => {
+            merge_capability_object(&mut merged, force_capabilities.as_ref());
+        }
+        Err(error) => {
+            warn!(
+                user_id = %user_id,
+                api_key_id = %api_key_id,
+                requested_model = requested_model.unwrap_or_default(),
+                error = ?error,
+                "gateway request candidate api key capabilities lookup failed"
+            );
+        }
+    }
+
+    merge_capability_object(&mut merged, explicit_required_capabilities);
+
+    (!merged.is_empty()).then_some(Value::Object(merged))
+}
+
+fn merge_capability_object(target: &mut serde_json::Map<String, Value>, source: Option<&Value>) {
+    let Some(source) = source.and_then(Value::as_object) else {
+        return;
+    };
+
+    for (capability, value) in source {
+        if capability.trim().is_empty() {
+            continue;
+        }
+        target.insert(capability.clone(), value.clone());
+    }
+}
+
+fn select_requested_model_capabilities<'a>(
+    settings: Option<&'a Value>,
+    requested_model: Option<&str>,
+) -> Option<&'a Value> {
+    let requested_model = requested_model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let settings = settings?.as_object()?;
+
+    settings.get(requested_model).or_else(|| {
+        settings.iter().find_map(|(model_name, capabilities)| {
+            model_name
+                .trim()
+                .eq_ignore_ascii_case(requested_model)
+                .then_some(capabilities)
+        })
+    })
+}
+
+fn request_candidate_status_label(status: RequestCandidateStatus) -> &'static str {
+    match status {
+        RequestCandidateStatus::Available => "available",
+        RequestCandidateStatus::Unused => "unused",
+        RequestCandidateStatus::Pending => "pending",
+        RequestCandidateStatus::Streaming => "streaming",
+        RequestCandidateStatus::Success => "success",
+        RequestCandidateStatus::Failed => "failed",
+        RequestCandidateStatus::Cancelled => "cancelled",
+        RequestCandidateStatus::Skipped => "skipped",
+    }
+}
+
 pub(crate) async fn record_local_request_candidate_status(
     state: &(impl RequestCandidateRuntimeWriter + ?Sized),
     plan: &ExecutionPlan,
@@ -56,16 +166,47 @@ pub(crate) async fn record_local_request_candidate_status(
     };
     let candidate_id = record.id.clone();
     let request_id = short_request_id(plan.request_id.as_str());
+    let candidate_index = record.candidate_index;
+    let retry_index = record.retry_index;
+    let status = record.status;
 
-    if let Err(err) = state.upsert_request_candidate(record).await {
-        warn!(
-            event_name = "request_candidate_status_persist_failed",
-            log_type = "event",
-            request_id = %request_id,
-            candidate_id = %candidate_id,
-            error = ?err,
-            "gateway failed to persist request candidate status update"
-        );
+    match state.upsert_request_candidate(record).await {
+        Ok(Some(stored)) => {
+            debug!(
+                event_name = "request_candidate_status_persisted",
+                log_type = "event",
+                request_id = %request_id,
+                candidate_id = %stored.id,
+                candidate_index,
+                retry_index,
+                status = request_candidate_status_label(status),
+                source = "local_status",
+                "gateway persisted request candidate status update"
+            );
+        }
+        Ok(None) => {
+            warn!(
+                event_name = "request_candidate_writer_unavailable",
+                log_type = "event",
+                request_id = %request_id,
+                candidate_id = %candidate_id,
+                candidate_index,
+                retry_index,
+                status = request_candidate_status_label(status),
+                source = "local_status",
+                "gateway skipped request candidate persistence because writer is unavailable"
+            );
+        }
+        Err(err) => {
+            warn!(
+                event_name = "request_candidate_status_persist_failed",
+                log_type = "event",
+                request_id = %request_id,
+                candidate_id = %candidate_id,
+                error = ?err,
+                "gateway failed to persist request candidate status update"
+            );
+        }
     }
 }
 
@@ -85,19 +226,49 @@ pub(crate) async fn record_report_request_candidate_status(
         build_report_request_candidate_status_record(ReportRequestCandidateStatusRecordInput {
             slot,
             status_update,
-            now_unix_secs: current_unix_secs(),
+            now_unix_ms: current_unix_ms(),
         });
+    let candidate_id = record.id.clone();
+    let status = record.status;
 
-    if let Err(err) = state.upsert_request_candidate(record).await {
-        warn!(
-            event_name = "request_candidate_report_status_persist_failed",
-            log_type = "event",
-            request_id = %request_id_for_log,
-            candidate_index,
-            retry_index,
-            error = ?err,
-            "gateway failed to persist report-driven request candidate status update"
-        );
+    match state.upsert_request_candidate(record).await {
+        Ok(Some(stored)) => {
+            debug!(
+                event_name = "request_candidate_report_status_persisted",
+                log_type = "event",
+                request_id = %request_id_for_log,
+                candidate_id = %stored.id,
+                candidate_index,
+                retry_index,
+                status = request_candidate_status_label(status),
+                source = "report_status",
+                "gateway persisted report-driven request candidate status update"
+            );
+        }
+        Ok(None) => {
+            warn!(
+                event_name = "request_candidate_writer_unavailable",
+                log_type = "event",
+                request_id = %request_id_for_log,
+                candidate_id = %candidate_id,
+                candidate_index,
+                retry_index,
+                status = request_candidate_status_label(status),
+                source = "report_status",
+                "gateway skipped request candidate persistence because writer is unavailable"
+            );
+        }
+        Err(err) => {
+            warn!(
+                event_name = "request_candidate_report_status_persist_failed",
+                log_type = "event",
+                request_id = %request_id_for_log,
+                candidate_index,
+                retry_index,
+                error = ?err,
+                "gateway failed to persist report-driven request candidate status update"
+            );
+        }
     }
 }
 
@@ -107,6 +278,16 @@ pub(crate) async fn ensure_execution_request_candidate_slot(
     report_context: &mut Option<Value>,
 ) {
     if !state.has_request_candidate_data_writer() {
+        warn!(
+            event_name = "request_candidate_writer_unavailable",
+            log_type = "event",
+            request_id = %short_request_id(plan.request_id.as_str()),
+            provider_id = %plan.provider_id,
+            endpoint_id = %plan.endpoint_id,
+            key_id = %plan.key_id,
+            source = "seed",
+            "gateway skipped request candidate seed because writer is unavailable"
+        );
         return;
     }
     if plan
@@ -121,15 +302,41 @@ pub(crate) async fn ensure_execution_request_candidate_slot(
     let seed = build_execution_request_candidate_seed(
         plan,
         report_context.as_ref(),
-        current_unix_secs(),
+        current_unix_ms(),
         Uuid::new_v4().to_string(),
     );
     let generated_candidate_id = seed.upsert_record.id.clone();
     let request_id = short_request_id(plan.request_id.as_str());
 
     let candidate_id = match state.upsert_request_candidate(seed.upsert_record).await {
-        Ok(Some(stored)) => stored.id,
-        Ok(None) => generated_candidate_id,
+        Ok(Some(stored)) => {
+            info!(
+                event_name = "request_candidate_slot_seeded",
+                log_type = "event",
+                request_id = %request_id,
+                candidate_id = %stored.id,
+                provider_id = %plan.provider_id,
+                endpoint_id = %plan.endpoint_id,
+                key_id = %plan.key_id,
+                source = "seed",
+                "gateway seeded execution request candidate slot"
+            );
+            stored.id
+        }
+        Ok(None) => {
+            warn!(
+                event_name = "request_candidate_writer_unavailable",
+                log_type = "event",
+                request_id = %request_id,
+                candidate_id = %generated_candidate_id,
+                provider_id = %plan.provider_id,
+                endpoint_id = %plan.endpoint_id,
+                key_id = %plan.key_id,
+                source = "seed",
+                "gateway skipped request candidate seed because writer is unavailable"
+            );
+            generated_candidate_id
+        }
         Err(err) => {
             warn!(
                 event_name = "request_candidate_slot_seed_failed",
@@ -157,8 +364,9 @@ pub(crate) async fn persist_available_local_candidate(
     candidate: &SchedulerMinimalCandidateSelectionCandidate,
     candidate_index: u32,
     candidate_id: &str,
+    required_capabilities: Option<&Value>,
     extra_data: Option<serde_json::Value>,
-    created_at_unix_secs: u64,
+    created_at_unix_ms: u64,
     error_context: &'static str,
 ) -> String {
     match state
@@ -183,15 +391,48 @@ pub(crate) async fn persist_available_local_candidate(
             latency_ms: None,
             concurrent_requests: None,
             extra_data,
-            required_capabilities: candidate.key_capabilities.clone(),
-            created_at_unix_secs: Some(created_at_unix_secs),
-            started_at_unix_secs: None,
-            finished_at_unix_secs: None,
+            required_capabilities: required_capabilities.cloned(),
+            created_at_unix_ms: Some(created_at_unix_ms),
+            started_at_unix_ms: None,
+            finished_at_unix_ms: None,
         })
         .await
     {
-        Ok(Some(stored)) => stored.id,
-        Ok(None) => candidate_id.to_string(),
+        Ok(Some(stored)) => {
+            debug!(
+                event_name = "request_candidate_status_persisted",
+                log_type = "event",
+                request_id = %short_request_id(trace_id),
+                candidate_id = %stored.id,
+                candidate_index,
+                retry_index = 0,
+                status = "available",
+                source = "planner_available",
+                provider_id = %candidate.provider_id,
+                endpoint_id = %candidate.endpoint_id,
+                key_id = %candidate.key_id,
+                has_required_capabilities = required_capabilities.is_some(),
+                "gateway persisted available local request candidate"
+            );
+            stored.id
+        }
+        Ok(None) => {
+            warn!(
+                event_name = "request_candidate_writer_unavailable",
+                log_type = "event",
+                request_id = %short_request_id(trace_id),
+                candidate_id = %candidate_id,
+                candidate_index,
+                retry_index = 0,
+                status = "available",
+                source = "planner_available",
+                provider_id = %candidate.provider_id,
+                endpoint_id = %candidate.endpoint_id,
+                key_id = %candidate.key_id,
+                "gateway skipped request candidate persistence because writer is unavailable"
+            );
+            candidate_id.to_string()
+        }
         Err(err) => {
             warn!(
                 trace_id = %trace_id,
@@ -212,11 +453,12 @@ pub(crate) async fn persist_skipped_local_candidate(
     candidate: &SchedulerMinimalCandidateSelectionCandidate,
     candidate_index: u32,
     candidate_id: &str,
+    required_capabilities: Option<&Value>,
     skip_reason: &str,
-    finished_at_unix_secs: u64,
+    finished_at_unix_ms: u64,
     error_context: &'static str,
 ) {
-    if let Err(err) = state
+    match state
         .upsert_request_candidate(UpsertRequestCandidateRecord {
             id: candidate_id.to_string(),
             request_id: trace_id.to_string(),
@@ -238,20 +480,57 @@ pub(crate) async fn persist_skipped_local_candidate(
             latency_ms: None,
             concurrent_requests: None,
             extra_data: None,
-            required_capabilities: candidate.key_capabilities.clone(),
-            created_at_unix_secs: None,
-            started_at_unix_secs: None,
-            finished_at_unix_secs: Some(finished_at_unix_secs),
+            required_capabilities: required_capabilities.cloned(),
+            created_at_unix_ms: None,
+            started_at_unix_ms: None,
+            finished_at_unix_ms: Some(finished_at_unix_ms),
         })
         .await
     {
-        warn!(
-            trace_id = %trace_id,
-            candidate_id = %candidate_id,
-            skip_reason,
-            error = ?err,
-            "{error_context}"
-        );
+        Ok(Some(stored)) => {
+            debug!(
+                event_name = "request_candidate_status_persisted",
+                log_type = "event",
+                request_id = %short_request_id(trace_id),
+                candidate_id = %stored.id,
+                candidate_index,
+                retry_index = 0,
+                status = "skipped",
+                skip_reason,
+                source = "planner_skipped",
+                provider_id = %candidate.provider_id,
+                endpoint_id = %candidate.endpoint_id,
+                key_id = %candidate.key_id,
+                has_required_capabilities = required_capabilities.is_some(),
+                "gateway persisted skipped local request candidate"
+            );
+        }
+        Ok(None) => {
+            warn!(
+                event_name = "request_candidate_writer_unavailable",
+                log_type = "event",
+                request_id = %short_request_id(trace_id),
+                candidate_id = %candidate_id,
+                candidate_index,
+                retry_index = 0,
+                status = "skipped",
+                skip_reason,
+                source = "planner_skipped",
+                provider_id = %candidate.provider_id,
+                endpoint_id = %candidate.endpoint_id,
+                key_id = %candidate.key_id,
+                "gateway skipped request candidate persistence because writer is unavailable"
+            );
+        }
+        Err(err) => {
+            warn!(
+                trace_id = %trace_id,
+                candidate_id = %candidate_id,
+                skip_reason,
+                error = ?err,
+                "{error_context}"
+            );
+        }
     }
 }
 
@@ -289,7 +568,7 @@ async fn resolve_report_request_candidate_slot(
     resolve_report_request_candidate_slot_from_candidates(
         &existing_candidates,
         metadata,
-        current_unix_secs(),
+        current_unix_ms(),
         Uuid::new_v4().to_string(),
     )
 }
@@ -300,15 +579,20 @@ mod tests {
     use std::sync::Arc;
 
     use aether_contracts::{ExecutionPlan, RequestBody};
+    use aether_data::repository::auth::{
+        InMemoryAuthApiKeySnapshotRepository, StoredAuthApiKeyExportRecord,
+    };
     use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
     use aether_data::repository::usage::InMemoryUsageReadRepository;
     use aether_data_contracts::repository::candidates::{
         RequestCandidateReadRepository, RequestCandidateStatus, StoredRequestCandidate,
     };
+    use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
     use serde_json::json;
 
     use super::{
-        ensure_execution_request_candidate_slot, record_report_request_candidate_status,
+        ensure_execution_request_candidate_slot, persist_available_local_candidate,
+        record_report_request_candidate_status, resolve_request_candidate_required_capabilities,
         SchedulerRequestCandidateStatusUpdate,
     };
     use crate::data::GatewayDataState;
@@ -322,6 +606,21 @@ mod tests {
                     repository,
                     Arc::new(InMemoryUsageReadRepository::default()),
                 ),
+            )
+    }
+
+    fn build_test_state_with_auth(
+        repository: Arc<InMemoryRequestCandidateRepository>,
+        auth_repository: Arc<InMemoryAuthApiKeySnapshotRepository>,
+    ) -> AppState {
+        AppState::new()
+            .expect("gateway state should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_request_candidate_and_usage_repository_for_tests(
+                    repository,
+                    Arc::new(InMemoryUsageReadRepository::default()),
+                )
+                .with_auth_api_key_reader(auth_repository),
             )
     }
 
@@ -346,6 +645,28 @@ mod tests {
             proxy: None,
             tls_profile: None,
             timeouts: None,
+        }
+    }
+
+    fn sample_minimal_candidate() -> SchedulerMinimalCandidateSelectionCandidate {
+        SchedulerMinimalCandidateSelectionCandidate {
+            provider_id: "provider-1".to_string(),
+            provider_name: "Provider".to_string(),
+            provider_type: "custom".to_string(),
+            provider_priority: 0,
+            endpoint_id: "endpoint-1".to_string(),
+            endpoint_api_format: "openai:chat".to_string(),
+            key_id: "provider-key-1".to_string(),
+            key_name: "provider-key-1".to_string(),
+            key_auth_type: "api_key".to_string(),
+            key_internal_priority: 0,
+            key_global_priority_for_format: Some(0),
+            key_capabilities: Some(json!({"provider_only_capability": true})),
+            model_id: "model-1".to_string(),
+            global_model_id: "global-model-1".to_string(),
+            global_model_name: "gpt-5".to_string(),
+            selected_provider_model_name: "gpt-5".to_string(),
+            mapping_matched_model: None,
         }
     }
 
@@ -458,8 +779,8 @@ mod tests {
                 None,
                 None,
                 None,
-                100,
-                Some(100),
+                100_000,
+                Some(100_000),
                 None,
             )
             .expect("request candidate should build"),
@@ -484,8 +805,8 @@ mod tests {
                 error_type: None,
                 error_message: None,
                 latency_ms: Some(25),
-                started_at_unix_secs: Some(101),
-                finished_at_unix_secs: Some(102),
+                started_at_unix_ms: Some(101),
+                finished_at_unix_ms: Some(102),
             },
         )
         .await;
@@ -499,7 +820,97 @@ mod tests {
         assert_eq!(stored[0].status, RequestCandidateStatus::Success);
         assert_eq!(stored[0].status_code, Some(200));
         assert_eq!(stored[0].latency_ms, Some(25));
-        assert_eq!(stored[0].started_at_unix_secs, Some(101));
-        assert_eq!(stored[0].finished_at_unix_secs, Some(102));
+        assert_eq!(stored[0].started_at_unix_ms, Some(101));
+        assert_eq!(stored[0].finished_at_unix_ms, Some(102));
+    }
+
+    #[tokio::test]
+    async fn resolves_request_candidate_required_capabilities_from_user_model_and_api_key() {
+        let repository = Arc::new(InMemoryRequestCandidateRepository::default());
+        let auth_repository = Arc::new(
+            InMemoryAuthApiKeySnapshotRepository::default().with_export_records(vec![
+                StoredAuthApiKeyExportRecord::new(
+                    "user-1".to_string(),
+                    "api-key-1".to_string(),
+                    "hash-1".to_string(),
+                    None,
+                    Some("default".to_string()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(json!({"cache_1h": false, "context_1m": true})),
+                    true,
+                    None,
+                    false,
+                    0,
+                    0.0,
+                    false,
+                )
+                .expect("export record should build"),
+            ]),
+        );
+        let state = build_test_state_with_auth(repository, auth_repository)
+            .with_auth_user_model_capability_settings_for_tests(
+                "user-1",
+                json!({
+                    "gpt-5": {
+                        "cache_1h": true,
+                        "context_1m": false
+                    }
+                }),
+            );
+        let explicit_required_capabilities = json!({"gemini_files": true});
+
+        let required_capabilities = resolve_request_candidate_required_capabilities(
+            &state,
+            "user-1",
+            "api-key-1",
+            Some("gpt-5"),
+            Some(&explicit_required_capabilities),
+        )
+        .await
+        .expect("required capabilities should resolve");
+
+        assert_eq!(required_capabilities["cache_1h"], json!(false));
+        assert_eq!(required_capabilities["context_1m"], json!(true));
+        assert_eq!(required_capabilities["gemini_files"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn persists_request_required_capabilities_instead_of_provider_key_capabilities() {
+        let repository = Arc::new(InMemoryRequestCandidateRepository::default());
+        let state = build_test_state(Arc::clone(&repository));
+        let required_capabilities = json!({"cache_1h": true});
+
+        persist_available_local_candidate(
+            &state,
+            "req-runtime-cap-123",
+            "user-1",
+            "api-key-1",
+            &sample_minimal_candidate(),
+            0,
+            "cand-runtime-cap-123",
+            Some(&required_capabilities),
+            None,
+            100_000,
+            "request candidate persist should succeed",
+        )
+        .await;
+
+        let stored = repository
+            .list_by_request_id("req-runtime-cap-123")
+            .await
+            .expect("request candidates should read");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(
+            stored[0].required_capabilities,
+            Some(required_capabilities.clone())
+        );
+        assert_ne!(
+            stored[0].required_capabilities,
+            sample_minimal_candidate().key_capabilities
+        );
     }
 }
