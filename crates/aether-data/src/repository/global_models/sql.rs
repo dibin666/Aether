@@ -91,7 +91,7 @@ SELECT
   m.is_active,
   COALESCE(m.is_available, TRUE) AS is_available,
   m.config,
-  EXTRACT(EPOCH FROM m.created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM m.created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM m.updated_at)::bigint AS updated_at_unix_secs,
   gm.name AS global_model_name,
   gm.display_name AS global_model_display_name,
@@ -115,7 +115,7 @@ SELECT
   COALESCE(gm_stats.provider_count, 0) AS provider_count,
   COALESCE(gm_stats.active_provider_count, 0) AS active_provider_count,
   COALESCE(gm.usage_count, 0)::bigint AS usage_count,
-  EXTRACT(EPOCH FROM gm.created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM gm.created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM gm.updated_at)::bigint AS updated_at_unix_secs
 FROM global_models gm
 LEFT JOIN (
@@ -316,7 +316,7 @@ SELECT
   m.is_active,
   COALESCE(m.is_available, TRUE) AS is_available,
   m.config,
-  EXTRACT(EPOCH FROM m.created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM m.created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM m.updated_at)::bigint AS updated_at_unix_secs,
   gm.name AS global_model_name,
   gm.display_name AS global_model_display_name,
@@ -361,7 +361,7 @@ SELECT
   m.is_active,
   COALESCE(m.is_available, TRUE) AS is_available,
   m.config,
-  EXTRACT(EPOCH FROM m.created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM m.created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM m.updated_at)::bigint AS updated_at_unix_secs,
   gm.name AS global_model_name,
   gm.display_name AS global_model_display_name,
@@ -402,7 +402,7 @@ SELECT
   COALESCE(gm_stats.provider_count, 0) AS provider_count,
   COALESCE(gm_stats.active_provider_count, 0) AS active_provider_count,
   COALESCE(gm.usage_count, 0)::bigint AS usage_count,
-  EXTRACT(EPOCH FROM gm.created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM gm.created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM gm.updated_at)::bigint AS updated_at_unix_secs
 FROM global_models gm
 LEFT JOIN (
@@ -449,7 +449,7 @@ SELECT
   COALESCE(gm_stats.provider_count, 0) AS provider_count,
   COALESCE(gm_stats.active_provider_count, 0) AS active_provider_count,
   COALESCE(gm.usage_count, 0)::bigint AS usage_count,
-  EXTRACT(EPOCH FROM gm.created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM gm.created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM gm.updated_at)::bigint AS updated_at_unix_secs
 FROM global_models gm
 LEFT JOIN (
@@ -500,7 +500,7 @@ SELECT
   m.is_active,
   COALESCE(m.is_available, TRUE) AS is_available,
   m.config,
-  EXTRACT(EPOCH FROM m.created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM m.created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM m.updated_at)::bigint AS updated_at_unix_secs,
   gm.name AS global_model_name,
   gm.display_name AS global_model_display_name,
@@ -1062,8 +1062,8 @@ fn map_public_catalog_model_row(row: &PgRow) -> Result<StoredPublicCatalogModel,
 }
 
 fn map_admin_provider_model_row(row: &PgRow) -> Result<StoredAdminProviderModel, DataLayerError> {
-    let created_at_unix_secs = row
-        .try_get::<Option<i64>, _>("created_at_unix_secs")
+    let created_at_unix_ms = row
+        .try_get::<Option<i64>, _>("created_at_unix_ms")
         .map_postgres_err()?
         .map(|value| value.max(0) as u64);
     let updated_at_unix_secs = row
@@ -1089,7 +1089,7 @@ fn map_admin_provider_model_row(row: &PgRow) -> Result<StoredAdminProviderModel,
         row.try_get("is_active").map_postgres_err()?,
         row.try_get("is_available").map_postgres_err()?,
         row.try_get("config").map_postgres_err()?,
-        created_at_unix_secs,
+        created_at_unix_ms,
         updated_at_unix_secs,
         row.try_get("global_model_name").map_postgres_err()?,
         row.try_get("global_model_display_name")
@@ -1103,8 +1103,8 @@ fn map_admin_provider_model_row(row: &PgRow) -> Result<StoredAdminProviderModel,
 }
 
 fn map_admin_global_model_row(row: &PgRow) -> Result<StoredAdminGlobalModel, DataLayerError> {
-    let created_at_unix_secs = row
-        .try_get::<Option<i64>, _>("created_at_unix_secs")
+    let created_at_unix_ms = row
+        .try_get::<Option<i64>, _>("created_at_unix_ms")
         .map_postgres_err()?
         .map(|value| value.max(0) as u64);
     let updated_at_unix_secs = row
@@ -1136,7 +1136,7 @@ fn map_admin_global_model_row(row: &PgRow) -> Result<StoredAdminGlobalModel, Dat
         provider_count,
         active_provider_count,
         usage_count,
-        created_at_unix_secs,
+        created_at_unix_ms,
         updated_at_unix_secs,
     )
 }

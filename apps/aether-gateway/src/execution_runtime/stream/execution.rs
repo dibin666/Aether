@@ -1,6 +1,7 @@
+use std::collections::VecDeque;
 use std::io::Error as IoError;
 
-use aether_contracts::{ExecutionPlan, ExecutionTelemetry, StreamFramePayload};
+use aether_contracts::{ExecutionPlan, ExecutionTelemetry, StreamFrame, StreamFramePayload};
 use aether_data_contracts::repository::candidates::RequestCandidateStatus;
 use aether_scheduler_core::SchedulerRequestCandidateStatusUpdate;
 use async_stream::stream;
@@ -32,7 +33,7 @@ use crate::ai_pipeline_api::{
 use crate::api::response::{
     attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
 };
-use crate::clock::current_unix_secs as current_request_candidate_unix_secs;
+use crate::clock::current_unix_ms as current_request_candidate_unix_ms;
 use crate::constants::{CONTROL_CANDIDATE_ID_HEADER, CONTROL_REQUEST_ID_HEADER};
 use crate::control::GatewayControlDecision;
 use crate::execution_runtime::build_direct_execution_frame_stream;
@@ -45,9 +46,9 @@ use crate::execution_runtime::transport::{
     DirectSyncExecutionRuntime, DirectUpstreamStreamExecution,
 };
 use crate::execution_runtime::{
-    resolve_core_stream_direct_finalize_report_kind,
+    local_failover_response_text, resolve_core_stream_direct_finalize_report_kind,
     resolve_core_stream_error_finalize_report_kind, should_fallback_to_control_stream,
-    should_retry_next_local_candidate_stream,
+    should_retry_next_local_candidate_stream, should_stop_local_candidate_failover_stream,
 };
 use crate::execution_runtime::{MAX_STREAM_PREFETCH_BYTES, MAX_STREAM_PREFETCH_FRAMES};
 use crate::log_ids::short_request_id;
@@ -165,7 +166,7 @@ pub(crate) async fn execute_execution_runtime_stream(
         };
 
         if response.status() != http::StatusCode::OK {
-            let terminal_unix_secs = current_request_candidate_unix_secs();
+            let terminal_unix_secs = current_request_candidate_unix_ms();
             record_local_request_candidate_status(
                 state,
                 &plan,
@@ -179,8 +180,8 @@ pub(crate) async fn execute_execution_runtime_stream(
                         response.status()
                     )),
                     latency_ms: None,
-                    started_at_unix_secs: Some(terminal_unix_secs),
-                    finished_at_unix_secs: Some(terminal_unix_secs),
+                    started_at_unix_ms: Some(terminal_unix_secs),
+                    finished_at_unix_ms: Some(terminal_unix_secs),
                 },
             )
             .await;
@@ -207,6 +208,60 @@ pub(crate) async fn execute_execution_runtime_stream(
         )
         .await;
     }
+}
+
+fn decode_stream_data_chunk(
+    chunk_b64: Option<&str>,
+    text: Option<&str>,
+) -> Result<Vec<u8>, GatewayError> {
+    if let Some(chunk_b64) = chunk_b64 {
+        return base64::engine::general_purpose::STANDARD
+            .decode(chunk_b64)
+            .map_err(|err| GatewayError::Internal(err.to_string()));
+    }
+    Ok(text.unwrap_or_default().as_bytes().to_vec())
+}
+
+async fn next_stream_frame<R>(
+    buffered_frames: &mut VecDeque<StreamFrame>,
+    lines: &mut FramedRead<R, LinesCodec>,
+) -> Result<Option<StreamFrame>, GatewayError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    if let Some(frame) = buffered_frames.pop_front() {
+        return Ok(Some(frame));
+    }
+    read_next_frame(lines).await
+}
+
+async fn probe_local_stream_success_failover_text<R>(
+    buffered_frames: &mut VecDeque<StreamFrame>,
+    lines: &mut FramedRead<R, LinesCodec>,
+) -> Result<Option<String>, GatewayError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    while let Some(frame) = read_next_frame(lines).await? {
+        let probe_text = match &frame.payload {
+            StreamFramePayload::Data { chunk_b64, text } => {
+                match decode_stream_data_chunk(chunk_b64.as_deref(), text.as_deref()) {
+                    Ok(chunk) if !chunk.is_empty() => {
+                        Some(String::from_utf8_lossy(&chunk).into_owned())
+                    }
+                    Ok(_) | Err(_) => None,
+                }
+            }
+            StreamFramePayload::Error { .. } | StreamFramePayload::Eof { .. } => None,
+            StreamFramePayload::Headers { .. } | StreamFramePayload::Telemetry { .. } => None,
+        };
+        buffered_frames.push_back(frame);
+        if probe_text.is_some() {
+            return Ok(probe_text);
+        }
+    }
+
+    Ok(None)
 }
 
 async fn execute_stream_from_frame_stream(
@@ -237,69 +292,137 @@ async fn execute_stream_from_frame_stream(
             "execution runtime stream must start with headers frame".to_string(),
         ));
     };
+    let mut buffered_frames = VecDeque::new();
 
-    if should_retry_next_local_candidate_stream(plan_kind, report_context.as_ref(), status_code) {
-        let terminal_unix_secs = current_request_candidate_unix_secs();
-        record_local_request_candidate_status(
+    if status_code == 200 {
+        let success_probe_text =
+            probe_local_stream_success_failover_text(&mut buffered_frames, &mut lines).await?;
+        if should_retry_next_local_candidate_stream(
             state,
             &plan,
+            plan_kind,
             report_context.as_ref(),
-            SchedulerRequestCandidateStatusUpdate {
-                status: RequestCandidateStatus::Failed,
-                status_code: Some(status_code),
-                error_type: Some("retryable_upstream_status".to_string()),
-                error_message: Some(format!(
-                    "execution runtime stream returned retryable status {status_code}"
-                )),
-                latency_ms: None,
-                started_at_unix_secs: Some(terminal_unix_secs),
-                finished_at_unix_secs: Some(terminal_unix_secs),
-            },
-        )
-        .await;
-        warn!(
-            event_name = "local_stream_candidate_retry_scheduled",
-            log_type = "event",
-            trace_id = %trace_id,
-            request_id = %request_id_for_log,
             status_code,
-            "gateway local stream decision retrying next candidate after retryable execution runtime status"
-        );
-        return Ok(None);
+            success_probe_text.as_deref(),
+        )
+        .await
+        {
+            let terminal_unix_secs = current_request_candidate_unix_ms();
+            record_local_request_candidate_status(
+                state,
+                &plan,
+                report_context.as_ref(),
+                SchedulerRequestCandidateStatusUpdate {
+                    status: RequestCandidateStatus::Failed,
+                    status_code: Some(status_code),
+                    error_type: Some("success_failover_pattern".to_string()),
+                    error_message: Some(
+                        "execution runtime stream matched provider success failover rule"
+                            .to_string(),
+                    ),
+                    latency_ms: None,
+                    started_at_unix_ms: Some(terminal_unix_secs),
+                    finished_at_unix_ms: Some(terminal_unix_secs),
+                },
+            )
+            .await;
+            warn!(
+                event_name = "local_stream_candidate_retry_scheduled",
+                log_type = "event",
+                trace_id = %trace_id,
+                request_id = %request_id_for_log,
+                status_code,
+                "gateway local stream decision retrying next candidate after success failover rule match"
+            );
+            return Ok(None);
+        }
     }
 
     let stream_error_finalize_kind =
         resolve_core_stream_error_finalize_report_kind(plan_kind, status_code);
 
-    if should_fallback_to_control_stream(
-        plan_kind,
-        status_code,
-        stream_error_finalize_kind.is_some(),
-    ) {
-        let terminal_unix_secs = current_request_candidate_unix_secs();
-        record_local_request_candidate_status(
-            state,
-            &plan,
-            report_context.as_ref(),
-            SchedulerRequestCandidateStatusUpdate {
-                status: RequestCandidateStatus::Failed,
-                status_code: Some(status_code),
-                error_type: Some("control_fallback".to_string()),
-                error_message: Some(format!(
-                    "stream decision fell back to control after status {status_code}"
-                )),
-                latency_ms: None,
-                started_at_unix_secs: Some(terminal_unix_secs),
-                finished_at_unix_secs: Some(terminal_unix_secs),
-            },
-        )
-        .await;
-        return Ok(None);
-    }
-
     if status_code >= 400 {
         let error_body = collect_error_body(&mut lines).await?;
         let (body_json, body_base64) = decode_stream_error_body(&headers, &error_body);
+        let error_response_text =
+            local_failover_response_text(body_json.as_ref(), &error_body, None);
+        let stop_local_failover = should_stop_local_candidate_failover_stream(
+            state,
+            &plan,
+            plan_kind,
+            report_context.as_ref(),
+            status_code,
+            error_response_text.as_deref(),
+        )
+        .await;
+        if !stop_local_failover
+            && should_retry_next_local_candidate_stream(
+                state,
+                &plan,
+                plan_kind,
+                report_context.as_ref(),
+                status_code,
+                error_response_text.as_deref(),
+            )
+            .await
+        {
+            let terminal_unix_secs = current_request_candidate_unix_ms();
+            record_local_request_candidate_status(
+                state,
+                &plan,
+                report_context.as_ref(),
+                SchedulerRequestCandidateStatusUpdate {
+                    status: RequestCandidateStatus::Failed,
+                    status_code: Some(status_code),
+                    error_type: Some("retryable_upstream_status".to_string()),
+                    error_message: Some(format!(
+                        "execution runtime stream returned retryable status {status_code}"
+                    )),
+                    latency_ms: None,
+                    started_at_unix_ms: Some(terminal_unix_secs),
+                    finished_at_unix_ms: Some(terminal_unix_secs),
+                },
+            )
+            .await;
+            warn!(
+                event_name = "local_stream_candidate_retry_scheduled",
+                log_type = "event",
+                trace_id = %trace_id,
+                request_id = %request_id_for_log,
+                status_code,
+                "gateway local stream decision retrying next candidate after retryable execution runtime status"
+            );
+            return Ok(None);
+        }
+
+        if !stop_local_failover
+            && should_fallback_to_control_stream(
+                plan_kind,
+                status_code,
+                stream_error_finalize_kind.is_some(),
+            )
+        {
+            let terminal_unix_secs = current_request_candidate_unix_ms();
+            record_local_request_candidate_status(
+                state,
+                &plan,
+                report_context.as_ref(),
+                SchedulerRequestCandidateStatusUpdate {
+                    status: RequestCandidateStatus::Failed,
+                    status_code: Some(status_code),
+                    error_type: Some("control_fallback".to_string()),
+                    error_message: Some(format!(
+                        "stream decision fell back to control after status {status_code}"
+                    )),
+                    latency_ms: None,
+                    started_at_unix_ms: Some(terminal_unix_secs),
+                    finished_at_unix_ms: Some(terminal_unix_secs),
+                },
+            )
+            .await;
+            return Ok(None);
+        }
+
         let usage_report_kind = stream_error_finalize_kind
             .clone()
             .or_else(|| report_kind.clone())
@@ -324,7 +447,7 @@ async fn execute_stream_from_frame_stream(
                 &usage_payload,
             )
             .await;
-        let terminal_unix_secs = current_request_candidate_unix_secs();
+        let terminal_unix_secs = current_request_candidate_unix_ms();
         record_local_request_candidate_status(
             state,
             &plan,
@@ -337,8 +460,8 @@ async fn execute_stream_from_frame_stream(
                     "execution runtime stream returned error status {status_code}"
                 )),
                 latency_ms: None,
-                started_at_unix_secs: Some(terminal_unix_secs),
-                finished_at_unix_secs: Some(terminal_unix_secs),
+                started_at_unix_ms: Some(terminal_unix_secs),
+                finished_at_unix_ms: Some(terminal_unix_secs),
             },
         )
         .await;
@@ -399,7 +522,7 @@ async fn execute_stream_from_frame_stream(
         while prefetched_chunks.len() < MAX_STREAM_PREFETCH_FRAMES
             && prefetched_inspection_body.len() < MAX_STREAM_PREFETCH_BYTES
         {
-            let Some(frame) = (match read_next_frame(&mut lines).await {
+            let Some(frame) = (match next_stream_frame(&mut buffered_frames, &mut lines).await {
                 Ok(frame) => frame,
                 Err(err) => {
                     let failure = build_stream_failure_report(
@@ -429,14 +552,14 @@ async fn execute_stream_from_frame_stream(
             };
             match frame.payload {
                 StreamFramePayload::Data { chunk_b64, text } => {
-                    let chunk = if let Some(chunk_b64) = chunk_b64 {
-                        match base64::engine::general_purpose::STANDARD.decode(chunk_b64) {
-                            Ok(decoded) => decoded,
+                    let chunk =
+                        match decode_stream_data_chunk(chunk_b64.as_deref(), text.as_deref()) {
+                            Ok(chunk) => chunk,
                             Err(err) => {
                                 let failure = build_stream_failure_report(
                                     "execution_runtime_stream_chunk_decode_error",
                                     format!(
-                                        "failed to decode execution runtime stream chunk: {err}"
+                                        "failed to decode execution runtime stream chunk: {err:?}"
                                     ),
                                     502,
                                 );
@@ -456,12 +579,7 @@ async fn execute_stream_from_frame_stream(
                                 )
                                 .await;
                             }
-                        }
-                    } else if let Some(text) = text {
-                        text.into_bytes()
-                    } else {
-                        Vec::new()
-                    };
+                        };
 
                     if chunk.is_empty() {
                         continue;
@@ -621,7 +739,7 @@ async fn execute_stream_from_frame_stream(
         }
     }
 
-    let candidate_started_unix_secs = current_request_candidate_unix_secs();
+    let candidate_started_unix_secs = current_request_candidate_unix_ms();
     state
         .usage_runtime
         .record_pending(state.data.as_ref(), &plan, report_context.as_ref())
@@ -649,8 +767,8 @@ async fn execute_stream_from_frame_stream(
             latency_ms: prefetched_telemetry
                 .as_ref()
                 .and_then(|telemetry| telemetry.elapsed_ms),
-            started_at_unix_secs: Some(candidate_started_unix_secs),
-            finished_at_unix_secs: None,
+            started_at_unix_ms: Some(candidate_started_unix_secs),
+            finished_at_unix_ms: None,
         },
     )
     .await;
@@ -672,6 +790,7 @@ async fn execute_stream_from_frame_stream(
     let request_id_for_report = request_id.to_string();
     let request_id_for_report_log = short_request_id(request_id);
     let candidate_id_for_report = candidate_id.map(ToOwned::to_owned);
+    let mut buffered_frames = buffered_frames;
     tokio::spawn(async move {
         let mut provider_buffered_body = provider_prefetched_body_for_report;
         let mut buffered_body = prefetched_body_for_report;
@@ -682,7 +801,7 @@ async fn execute_stream_from_frame_stream(
 
         if !reached_eof {
             loop {
-                let next_frame = match read_next_frame(&mut lines).await {
+                let next_frame = match next_stream_frame(&mut buffered_frames, &mut lines).await {
                     Ok(frame) => frame,
                     Err(err) => {
                         warn!(
@@ -707,9 +826,9 @@ async fn execute_stream_from_frame_stream(
                 };
                 match frame.payload {
                     StreamFramePayload::Data { chunk_b64, text } => {
-                        let chunk = if let Some(chunk_b64) = chunk_b64 {
-                            match base64::engine::general_purpose::STANDARD.decode(chunk_b64) {
-                                Ok(decoded) => decoded,
+                        let chunk =
+                            match decode_stream_data_chunk(chunk_b64.as_deref(), text.as_deref()) {
+                                Ok(chunk) => chunk,
                                 Err(err) => {
                                     warn!(
                                         event_name = "stream_execution_chunk_decode_failed",
@@ -717,22 +836,19 @@ async fn execute_stream_from_frame_stream(
                                         trace_id = %trace_id_owned,
                                         request_id = %request_id_for_report_log,
                                         candidate_id = ?candidate_id_for_report.as_deref(),
-                                        error = %err,
+                                        error = ?err,
                                         "gateway failed to decode execution runtime chunk"
                                     );
                                     terminal_failure = Some(build_stream_failure_report(
                                         "execution_runtime_stream_chunk_decode_error",
-                                        format!("failed to decode execution runtime stream chunk: {err}"),
+                                        format!(
+                                        "failed to decode execution runtime stream chunk: {err:?}"
+                                    ),
                                         502,
                                     ));
                                     break;
                                 }
-                            }
-                        } else if let Some(text) = text {
-                            text.into_bytes()
-                        } else {
-                            Vec::new()
-                        };
+                            };
 
                         if chunk.is_empty() {
                             continue;
@@ -998,8 +1114,8 @@ async fn execute_stream_from_frame_stream(
                     error_type: Some("downstream_disconnect".to_string()),
                     error_message: Some("client disconnected before stream completion".to_string()),
                     latency_ms: telemetry.as_ref().and_then(|value| value.elapsed_ms),
-                    started_at_unix_secs: Some(candidate_started_unix_secs_for_report),
-                    finished_at_unix_secs: Some(current_request_candidate_unix_secs()),
+                    started_at_unix_ms: Some(candidate_started_unix_secs_for_report),
+                    finished_at_unix_ms: Some(current_request_candidate_unix_ms()),
                 },
             )
             .await;
@@ -1055,8 +1171,8 @@ async fn execute_stream_from_frame_stream(
                 error_type: None,
                 error_message: None,
                 latency_ms: telemetry.as_ref().and_then(|value| value.elapsed_ms),
-                started_at_unix_secs: Some(candidate_started_unix_secs_for_report),
-                finished_at_unix_secs: Some(current_request_candidate_unix_secs()),
+                started_at_unix_ms: Some(candidate_started_unix_secs_for_report),
+                finished_at_unix_ms: Some(current_request_candidate_unix_ms()),
             },
         )
         .await;

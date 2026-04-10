@@ -40,7 +40,7 @@ const SELECT_VIDEO_TASK_COLUMNS: &str = r#"
   CAST(EXTRACT(EPOCH FROM next_poll_at) AS BIGINT) AS next_poll_at_unix_secs,
   poll_count,
   max_poll_count,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM submitted_at) AS BIGINT) AS submitted_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM completed_at) AS BIGINT) AS completed_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs,
@@ -599,7 +599,7 @@ impl SqlxVideoTaskRepository {
             .bind(task.error_code)
             .bind(task.error_message)
             .bind(task.request_metadata)
-            .bind(task.created_at_unix_secs as f64)
+            .bind(task.created_at_unix_ms as f64)
             .bind(task.submitted_at_unix_secs.map(|value| value as f64))
             .bind(task.completed_at_unix_secs.map(|value| value as f64))
             .bind(task.updated_at_unix_secs as f64)
@@ -668,7 +668,7 @@ impl SqlxVideoTaskRepository {
             .bind(task.error_code)
             .bind(task.error_message)
             .bind(task.request_metadata)
-            .bind(task.created_at_unix_secs as f64)
+            .bind(task.created_at_unix_ms as f64)
             .bind(task.submitted_at_unix_secs.map(|value| value as f64))
             .bind(task.completed_at_unix_secs.map(|value| value as f64))
             .bind(task.updated_at_unix_secs as f64)
@@ -917,7 +917,7 @@ fn map_video_task_row(row: &sqlx::postgres::PgRow) -> Result<StoredVideoTask, Da
         row.try_get("next_poll_at_unix_secs").map_postgres_err()?,
         row.try_get("poll_count").map_postgres_err()?,
         row.try_get("max_poll_count").map_postgres_err()?,
-        row.try_get("created_at_unix_secs").map_postgres_err()?,
+        row.try_get("created_at_unix_ms").map_postgres_err()?,
         row.try_get("submitted_at_unix_secs").map_postgres_err()?,
         row.try_get("completed_at_unix_secs").map_postgres_err()?,
         row.try_get("updated_at_unix_secs").map_postgres_err()?,
@@ -1017,7 +1017,7 @@ mod tests {
                 next_poll_at_unix_secs: Some(10),
                 poll_count: 0,
                 max_poll_count: 360,
-                created_at_unix_secs: 1,
+                created_at_unix_ms: 1,
                 submitted_at_unix_secs: Some(1),
                 completed_at_unix_secs: None,
                 updated_at_unix_secs: 1,
@@ -1065,7 +1065,7 @@ mod tests {
                 next_poll_at_unix_secs: Some(20),
                 poll_count: 1,
                 max_poll_count: 360,
-                created_at_unix_secs: 1,
+                created_at_unix_ms: 1,
                 submitted_at_unix_secs: Some(1),
                 completed_at_unix_secs: None,
                 updated_at_unix_secs: 20,

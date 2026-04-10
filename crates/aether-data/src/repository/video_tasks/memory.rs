@@ -180,8 +180,8 @@ impl VideoTaskReadRepository for InMemoryVideoTaskRepository {
             .collect::<Vec<_>>();
         tasks.sort_by(|left, right| {
             right
-                .created_at_unix_secs
-                .cmp(&left.created_at_unix_secs)
+                .created_at_unix_ms
+                .cmp(&left.created_at_unix_ms)
                 .then_with(|| right.updated_at_unix_secs.cmp(&left.updated_at_unix_secs))
         });
         Ok(tasks.into_iter().skip(offset).take(limit).collect())
@@ -289,7 +289,7 @@ impl VideoTaskReadRepository for InMemoryVideoTaskRepository {
             .values()
             .filter(|task| {
                 Self::matches_filter(task, filter)
-                    && task.created_at_unix_secs >= created_since_unix_secs
+                    && task.created_at_unix_ms >= created_since_unix_secs
             })
             .count() as u64)
     }
@@ -408,7 +408,7 @@ mod tests {
             next_poll_at_unix_secs: Some(updated_at_unix_secs),
             poll_count: 0,
             max_poll_count: 360,
-            created_at_unix_secs: updated_at_unix_secs.saturating_sub(10),
+            created_at_unix_ms: updated_at_unix_secs.saturating_sub(10),
             submitted_at_unix_secs: Some(updated_at_unix_secs.saturating_sub(10)),
             completed_at_unix_secs: None,
             updated_at_unix_secs,
@@ -505,7 +505,7 @@ mod tests {
             next_poll_at_unix_secs: Some(200),
             poll_count: 2,
             max_poll_count: 360,
-            created_at_unix_secs: 150,
+            created_at_unix_ms: 150,
             submitted_at_unix_secs: Some(150),
             completed_at_unix_secs: None,
             updated_at_unix_secs: 200,
@@ -590,7 +590,7 @@ mod tests {
             model: Some("veo-3-fast".to_string()),
             user_id: Some("user-2".to_string()),
             client_api_format: Some("gemini:video".to_string()),
-            created_at_unix_secs: 250,
+            created_at_unix_ms: 250,
             updated_at_unix_secs: 250,
             ..sample_task("task-2", VideoTaskStatus::Completed, 250)
         })
@@ -600,7 +600,7 @@ mod tests {
             model: Some("veo-3-fast".to_string()),
             user_id: Some("user-2".to_string()),
             client_api_format: Some("gemini:video".to_string()),
-            created_at_unix_secs: 260,
+            created_at_unix_ms: 260,
             updated_at_unix_secs: 260,
             ..sample_task("task-3", VideoTaskStatus::Completed, 260)
         })

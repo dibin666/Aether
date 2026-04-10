@@ -90,9 +90,9 @@ impl ProxyNodeReadRepository for InMemoryProxyNodeRepository {
             .collect::<Vec<_>>();
         items.sort_by(|left, right| {
             right
-                .created_at_unix_secs
+                .created_at_unix_ms
                 .unwrap_or(0)
-                .cmp(&left.created_at_unix_secs.unwrap_or(0))
+                .cmp(&left.created_at_unix_ms.unwrap_or(0))
                 .then(right.id.cmp(&left.id))
         });
         items.truncate(limit);
@@ -191,7 +191,7 @@ impl ProxyNodeWriteRepository for InMemoryProxyNodeRepository {
                     node_id: mutation.node_id.clone(),
                     event_type: event_type.to_string(),
                     detail: Some(format!("[stale_ignored] {event_detail}")),
-                    created_at_unix_secs: Self::now_unix_secs(),
+                    created_at_unix_ms: Self::now_unix_secs(),
                 });
                 return Ok(Some(node.clone()));
             }
@@ -211,7 +211,7 @@ impl ProxyNodeWriteRepository for InMemoryProxyNodeRepository {
             node_id: mutation.node_id.clone(),
             event_type: event_type.to_string(),
             detail: Some(event_detail),
-            created_at_unix_secs: Some(event_time),
+            created_at_unix_ms: Some(event_time),
         });
         Ok(Some(node.clone()))
     }
@@ -341,7 +341,7 @@ mod tests {
             .expect("list events should succeed");
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].event_type, "disconnected");
-        assert_eq!(events[0].created_at_unix_secs, Some(1_800_000_000));
+        assert_eq!(events[0].created_at_unix_ms, Some(1_800_000_000));
         assert_eq!(
             events[0].detail.as_deref(),
             Some("[tunnel_node_status] conn_count=0")
@@ -365,14 +365,14 @@ mod tests {
                     node_id: "node-1".to_string(),
                     event_type: "connected".to_string(),
                     detail: Some("older".to_string()),
-                    created_at_unix_secs: Some(1_710_000_000),
+                    created_at_unix_ms: Some(1_710_000_000),
                 },
                 StoredProxyNodeEvent {
                     id: 2,
                     node_id: "node-1".to_string(),
                     event_type: "disconnected".to_string(),
                     detail: Some("newer".to_string()),
-                    created_at_unix_secs: Some(1_710_000_100),
+                    created_at_unix_ms: Some(1_710_000_100),
                 },
             ],
         );

@@ -3,7 +3,7 @@ use serde_json::json;
 use super::build_cross_format_openai_cli_request_body;
 
 #[test]
-fn builds_openai_family_cross_format_request_body_from_compact_source() {
+fn builds_openai_chat_cross_format_request_body_from_openai_cli_source() {
     let body_json = json!({
         "model": "gpt-5",
         "input": "hello",
@@ -12,18 +12,18 @@ fn builds_openai_family_cross_format_request_body_from_compact_source() {
     let provider_request_body = build_cross_format_openai_cli_request_body(
         &body_json,
         "gpt-5-upstream",
-        "openai:compact",
         "openai:cli",
+        "openai:chat",
         false,
         "openai",
         None,
         None,
     )
-    .expect("compact to openai cli body should build");
+    .expect("openai cli to openai chat body should build");
 
     assert_eq!(provider_request_body["model"], "gpt-5-upstream");
-    assert_eq!(provider_request_body["input"][0]["type"], "message");
-    assert_eq!(provider_request_body["input"][0]["role"], "user");
+    assert_eq!(provider_request_body["messages"][0]["role"], "user");
+    assert_eq!(provider_request_body["messages"][0]["content"], "hello");
 }
 
 #[test]

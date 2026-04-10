@@ -79,7 +79,7 @@ async fn local_admin_video_tasks_response(
 fn sample_admin_video_task(
     id: &str,
     status: VideoTaskStatus,
-    created_at_unix_secs: u64,
+    created_at_unix_ms: u64,
     user_id: &str,
     username: &str,
     provider_id: &str,
@@ -120,14 +120,14 @@ fn sample_admin_video_task(
         next_poll_at_unix_secs: None,
         poll_count: 1,
         max_poll_count: 360,
-        created_at_unix_secs,
-        submitted_at_unix_secs: Some(created_at_unix_secs),
+        created_at_unix_ms,
+        submitted_at_unix_secs: Some(created_at_unix_ms),
         completed_at_unix_secs: if matches!(status, VideoTaskStatus::Completed) {
-            Some(created_at_unix_secs + 30)
+            Some(created_at_unix_ms + 30)
         } else {
             None
         },
-        updated_at_unix_secs: created_at_unix_secs + 5,
+        updated_at_unix_secs: created_at_unix_ms + 5,
         error_code: None,
         error_message: None,
         video_url: Some(format!("https://example.com/{id}.mp4")),
@@ -542,7 +542,7 @@ async fn gateway_cancels_admin_video_task_locally_with_trusted_admin_principal()
             "OpenAi": {
                 "local_task_id": "task-openai-cancel",
                 "upstream_task_id": "ext-video-task-123",
-                "created_at_unix_secs": 1710000400,
+                "created_at_unix_ms": 1710000400,
                 "user_id": "user-1",
                 "api_key_id": "api-key-task-openai-cancel",
                 "model": "sora-2",

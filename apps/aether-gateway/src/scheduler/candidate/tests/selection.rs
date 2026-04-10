@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use aether_data::repository::candidate_selection::InMemoryMinimalCandidateSelectionReadRepository;
 use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
@@ -9,13 +10,65 @@ use aether_data_contracts::repository::candidates::{
     RequestCandidateStatus, StoredRequestCandidate,
 };
 use aether_data_contracts::repository::quota::StoredProviderQuotaSnapshot;
+use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
+use serde_json::json;
 
+use crate::cache::SchedulerAffinityTarget;
+use crate::data::auth::GatewayAuthApiKeySnapshot;
+use crate::data::candidate_selection::MinimalCandidateSelectionRowSource;
 use crate::data::GatewayDataState;
-use crate::AppState;
+use crate::{AppState, GatewayError};
 
 use super::super::runtime::should_skip_provider_quota;
-use super::super::selection::select_minimal_candidate as select_candidate;
+use super::super::selection::{
+    collect_selectable_candidates as collect_selectable_candidates_impl,
+    select_minimal_candidate as select_candidate_impl,
+};
 use super::support::{sample_auth_snapshot, sample_key, sample_provider, sample_row};
+
+async fn select_candidate(
+    selection_row_source: &(impl MinimalCandidateSelectionRowSource + Sync),
+    runtime_state: &AppState,
+    api_format: &str,
+    global_model_name: &str,
+    require_streaming: bool,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    now_unix_secs: u64,
+) -> Result<Option<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
+    select_candidate_impl(
+        selection_row_source,
+        runtime_state,
+        api_format,
+        global_model_name,
+        require_streaming,
+        None,
+        auth_snapshot,
+        now_unix_secs,
+    )
+    .await
+}
+
+async fn collect_selectable_candidates(
+    selection_row_source: &(impl MinimalCandidateSelectionRowSource + Sync),
+    runtime_state: &AppState,
+    api_format: &str,
+    global_model_name: &str,
+    require_streaming: bool,
+    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
+    now_unix_secs: u64,
+) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
+    collect_selectable_candidates_impl(
+        selection_row_source,
+        runtime_state,
+        api_format,
+        global_model_name,
+        require_streaming,
+        None,
+        auth_snapshot,
+        now_unix_secs,
+    )
+    .await
+}
 
 #[test]
 fn skips_inactive_or_exhausted_monthly_quota_provider() {
@@ -57,6 +110,439 @@ fn skips_inactive_or_exhausted_monthly_quota_provider() {
     )
     .expect("quota should build");
     assert!(!should_skip_provider_quota(&payg, 2_000));
+}
+
+#[tokio::test]
+async fn selects_by_provider_priority_when_priority_mode_is_provider() {
+    let mut provider_first = sample_row();
+    provider_first.provider_id = "provider-a".to_string();
+    provider_first.provider_name = "provider-a".to_string();
+    provider_first.endpoint_id = "endpoint-a".to_string();
+    provider_first.key_id = "key-a".to_string();
+    provider_first.key_name = "alpha".to_string();
+    provider_first.provider_priority = 0;
+    provider_first.key_internal_priority = 20;
+    provider_first.key_global_priority_by_format = Some(json!({"openai:chat": 10}));
+
+    let mut global_key_first = sample_row();
+    global_key_first.provider_id = "provider-b".to_string();
+    global_key_first.provider_name = "provider-b".to_string();
+    global_key_first.endpoint_id = "endpoint-b".to_string();
+    global_key_first.key_id = "key-b".to_string();
+    global_key_first.key_name = "beta".to_string();
+    global_key_first.provider_priority = 10;
+    global_key_first.key_internal_priority = 0;
+    global_key_first.key_global_priority_by_format = Some(json!({"openai:chat": 0}));
+
+    let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+        provider_first,
+        global_key_first,
+    ]));
+    let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas)
+                .with_system_config_values_for_tests(vec![(
+                    "provider_priority_mode".to_string(),
+                    json!("provider"),
+                )]),
+        );
+
+    let selected = select_candidate(
+        state.data.as_ref(),
+        &state,
+        "openai:chat",
+        "gpt-4.1",
+        false,
+        None,
+        100,
+    )
+    .await
+    .expect("selection should succeed")
+    .expect("candidate should exist");
+
+    assert_eq!(selected.provider_id, "provider-a");
+    assert_eq!(selected.key_id, "key-a");
+}
+
+#[tokio::test]
+async fn selects_by_global_key_priority_when_priority_mode_is_global_key() {
+    let mut provider_first = sample_row();
+    provider_first.provider_id = "provider-a".to_string();
+    provider_first.provider_name = "provider-a".to_string();
+    provider_first.endpoint_id = "endpoint-a".to_string();
+    provider_first.key_id = "key-a".to_string();
+    provider_first.key_name = "alpha".to_string();
+    provider_first.provider_priority = 0;
+    provider_first.key_internal_priority = 20;
+    provider_first.key_global_priority_by_format = Some(json!({"openai:chat": 10}));
+
+    let mut global_key_first = sample_row();
+    global_key_first.provider_id = "provider-b".to_string();
+    global_key_first.provider_name = "provider-b".to_string();
+    global_key_first.endpoint_id = "endpoint-b".to_string();
+    global_key_first.key_id = "key-b".to_string();
+    global_key_first.key_name = "beta".to_string();
+    global_key_first.provider_priority = 10;
+    global_key_first.key_internal_priority = 0;
+    global_key_first.key_global_priority_by_format = Some(json!({"openai:chat": 0}));
+
+    let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+        provider_first,
+        global_key_first,
+    ]));
+    let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas)
+                .with_system_config_values_for_tests(vec![(
+                    "provider_priority_mode".to_string(),
+                    json!("global_key"),
+                )]),
+        );
+
+    let selected = select_candidate(
+        state.data.as_ref(),
+        &state,
+        "openai:chat",
+        "gpt-4.1",
+        false,
+        None,
+        100,
+    )
+    .await
+    .expect("selection should succeed")
+    .expect("candidate should exist");
+
+    assert_eq!(selected.provider_id, "provider-b");
+    assert_eq!(selected.key_id, "key-b");
+}
+
+#[tokio::test]
+async fn scheduler_selection_prefers_required_capability_matches_before_priority_fallback() {
+    let mut higher_priority_missing_capability = sample_row();
+    higher_priority_missing_capability.provider_id = "provider-a".to_string();
+    higher_priority_missing_capability.provider_name = "provider-a".to_string();
+    higher_priority_missing_capability.endpoint_id = "endpoint-a".to_string();
+    higher_priority_missing_capability.key_id = "key-a".to_string();
+    higher_priority_missing_capability.key_name = "alpha".to_string();
+    higher_priority_missing_capability.provider_priority = 0;
+    higher_priority_missing_capability.key_internal_priority = 0;
+    higher_priority_missing_capability.key_capabilities = Some(json!({"cache_1h": false}));
+
+    let mut lower_priority_matching_capability = sample_row();
+    lower_priority_matching_capability.provider_id = "provider-b".to_string();
+    lower_priority_matching_capability.provider_name = "provider-b".to_string();
+    lower_priority_matching_capability.endpoint_id = "endpoint-b".to_string();
+    lower_priority_matching_capability.key_id = "key-b".to_string();
+    lower_priority_matching_capability.key_name = "beta".to_string();
+    lower_priority_matching_capability.provider_priority = 10;
+    lower_priority_matching_capability.key_internal_priority = 10;
+    lower_priority_matching_capability.key_capabilities = Some(json!({"cache_1h": true}));
+
+    let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+        higher_priority_missing_capability,
+        lower_priority_matching_capability,
+    ]));
+    let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas),
+        );
+    let required_capabilities = json!({"cache_1h": true});
+
+    let selected = select_candidate_impl(
+        state.data.as_ref(),
+        &state,
+        "openai:chat",
+        "gpt-4.1",
+        false,
+        Some(&required_capabilities),
+        None,
+        100,
+    )
+    .await
+    .expect("selection should succeed")
+    .expect("candidate should exist");
+
+    assert_eq!(selected.provider_id, "provider-b");
+    assert_eq!(selected.key_id, "key-b");
+}
+
+#[tokio::test]
+async fn fixed_order_ignores_cached_scheduler_affinity_promotion() {
+    let mut first = sample_row();
+    first.provider_id = "provider-a".to_string();
+    first.provider_name = "provider-a".to_string();
+    first.endpoint_id = "endpoint-a".to_string();
+    first.key_id = "key-a".to_string();
+    first.key_name = "alpha".to_string();
+    first.provider_priority = 0;
+    first.key_internal_priority = 0;
+    first.key_global_priority_by_format = Some(json!({"openai:chat": 0}));
+
+    let mut second = sample_row();
+    second.provider_id = "provider-b".to_string();
+    second.provider_name = "provider-b".to_string();
+    second.endpoint_id = "endpoint-b".to_string();
+    second.key_id = "key-b".to_string();
+    second.key_name = "beta".to_string();
+    second.provider_priority = 1;
+    second.key_internal_priority = 0;
+    second.key_global_priority_by_format = Some(json!({"openai:chat": 1}));
+
+    let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+        first, second,
+    ]));
+    let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas)
+                .with_system_config_values_for_tests(vec![(
+                    "scheduling_mode".to_string(),
+                    json!("fixed_order"),
+                )]),
+        );
+
+    let auth_snapshot = sample_auth_snapshot("affinity-key-1");
+    state.scheduler_affinity_cache.insert(
+        "scheduler_affinity:affinity-key-1:openai:chat:gpt-4.1".to_string(),
+        SchedulerAffinityTarget {
+            provider_id: "provider-b".to_string(),
+            endpoint_id: "endpoint-b".to_string(),
+            key_id: "key-b".to_string(),
+        },
+        Duration::from_secs(300),
+        100,
+    );
+
+    let selected = select_candidate(
+        state.data.as_ref(),
+        &state,
+        "openai:chat",
+        "gpt-4.1",
+        false,
+        Some(&auth_snapshot),
+        100,
+    )
+    .await
+    .expect("selection should succeed")
+    .expect("candidate should exist");
+
+    assert_eq!(selected.provider_id, "provider-a");
+    assert_eq!(selected.key_id, "key-a");
+}
+
+#[tokio::test]
+async fn fixed_order_disables_same_priority_affinity_hash_tiebreaker() {
+    let mut first = sample_row();
+    first.provider_id = "provider-a".to_string();
+    first.provider_name = "provider-a".to_string();
+    first.endpoint_id = "endpoint-a".to_string();
+    first.key_id = "key-a".to_string();
+    first.key_name = "alpha".to_string();
+    first.provider_priority = 0;
+    first.key_internal_priority = 0;
+    first.key_global_priority_by_format = Some(json!({"openai:chat": 0}));
+
+    let mut second = sample_row();
+    second.provider_id = "provider-b".to_string();
+    second.provider_name = "provider-b".to_string();
+    second.endpoint_id = "endpoint-b".to_string();
+    second.key_id = "key-b".to_string();
+    second.key_name = "beta".to_string();
+    second.provider_priority = 0;
+    second.key_internal_priority = 0;
+    second.key_global_priority_by_format = Some(json!({"openai:chat": 0}));
+
+    let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+        first, second,
+    ]));
+    let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas)
+                .with_system_config_values_for_tests(vec![(
+                    "scheduling_mode".to_string(),
+                    json!("fixed_order"),
+                )]),
+        );
+
+    let auth_snapshot = sample_auth_snapshot("affinity-key-1");
+    let selection = collect_selectable_candidates(
+        state.data.as_ref(),
+        &state,
+        "openai:chat",
+        "gpt-4.1",
+        false,
+        Some(&auth_snapshot),
+        100,
+    )
+    .await
+    .expect("selection should succeed");
+
+    assert_eq!(selection.len(), 2);
+    assert_eq!(selection[0].provider_id, "provider-a");
+    assert_eq!(selection[1].provider_id, "provider-b");
+}
+
+#[tokio::test]
+async fn cache_affinity_promotes_cached_scheduler_affinity_candidate_when_enabled() {
+    let mut first = sample_row();
+    first.provider_id = "provider-a".to_string();
+    first.provider_name = "provider-a".to_string();
+    first.endpoint_id = "endpoint-a".to_string();
+    first.key_id = "key-a".to_string();
+    first.key_name = "alpha".to_string();
+    first.provider_priority = 0;
+    first.key_internal_priority = 0;
+    first.key_global_priority_by_format = Some(json!({"openai:chat": 0}));
+
+    let mut second = sample_row();
+    second.provider_id = "provider-b".to_string();
+    second.provider_name = "provider-b".to_string();
+    second.endpoint_id = "endpoint-b".to_string();
+    second.key_id = "key-b".to_string();
+    second.key_name = "beta".to_string();
+    second.provider_priority = 1;
+    second.key_internal_priority = 0;
+    second.key_global_priority_by_format = Some(json!({"openai:chat": 1}));
+
+    let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+        first, second,
+    ]));
+    let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas)
+                .with_system_config_values_for_tests(vec![(
+                    "scheduling_mode".to_string(),
+                    json!("cache_affinity"),
+                )]),
+        );
+
+    let auth_snapshot = sample_auth_snapshot("affinity-key-1");
+    state.scheduler_affinity_cache.insert(
+        "scheduler_affinity:affinity-key-1:openai:chat:gpt-4.1".to_string(),
+        SchedulerAffinityTarget {
+            provider_id: "provider-b".to_string(),
+            endpoint_id: "endpoint-b".to_string(),
+            key_id: "key-b".to_string(),
+        },
+        Duration::from_secs(300),
+        100,
+    );
+
+    let selected = select_candidate(
+        state.data.as_ref(),
+        &state,
+        "openai:chat",
+        "gpt-4.1",
+        false,
+        Some(&auth_snapshot),
+        100,
+    )
+    .await
+    .expect("selection should succeed")
+    .expect("candidate should exist");
+
+    assert_eq!(selected.provider_id, "provider-b");
+    assert_eq!(selected.key_id, "key-b");
+}
+
+#[tokio::test]
+async fn load_balance_rotates_same_priority_group_and_ignores_cached_affinity() {
+    let mut first = sample_row();
+    first.provider_id = "provider-a".to_string();
+    first.provider_name = "provider-a".to_string();
+    first.endpoint_id = "endpoint-a".to_string();
+    first.key_id = "key-a".to_string();
+    first.key_name = "alpha".to_string();
+    first.provider_priority = 0;
+    first.key_internal_priority = 0;
+    first.key_global_priority_by_format = Some(json!({"openai:chat": 0}));
+
+    let mut second = sample_row();
+    second.provider_id = "provider-b".to_string();
+    second.provider_name = "provider-b".to_string();
+    second.endpoint_id = "endpoint-b".to_string();
+    second.key_id = "key-b".to_string();
+    second.key_name = "beta".to_string();
+    second.provider_priority = 0;
+    second.key_internal_priority = 0;
+    second.key_global_priority_by_format = Some(json!({"openai:chat": 0}));
+
+    let candidates = Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![
+        first, second,
+    ]));
+    let quotas = Arc::new(InMemoryProviderQuotaRepository::seed(vec![]));
+    let state = AppState::new()
+        .expect("state should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas)
+                .with_system_config_values_for_tests(vec![(
+                    "scheduling_mode".to_string(),
+                    json!("load_balance"),
+                )]),
+        );
+
+    let auth_snapshot = sample_auth_snapshot("affinity-key-1");
+    state.scheduler_affinity_cache.insert(
+        "scheduler_affinity:affinity-key-1:openai:chat:gpt-4.1".to_string(),
+        SchedulerAffinityTarget {
+            provider_id: "provider-b".to_string(),
+            endpoint_id: "endpoint-b".to_string(),
+            key_id: "key-b".to_string(),
+        },
+        Duration::from_secs(300),
+        100,
+    );
+
+    let first_pass = collect_selectable_candidates(
+        state.data.as_ref(),
+        &state,
+        "openai:chat",
+        "gpt-4.1",
+        false,
+        Some(&auth_snapshot),
+        100,
+    )
+    .await
+    .expect("first pass should succeed");
+    let second_pass = collect_selectable_candidates(
+        state.data.as_ref(),
+        &state,
+        "openai:chat",
+        "gpt-4.1",
+        false,
+        Some(&auth_snapshot),
+        101,
+    )
+    .await
+    .expect("second pass should succeed");
+
+    assert_eq!(first_pass.len(), 2);
+    assert_eq!(second_pass.len(), 2);
+    assert_ne!(first_pass[0].provider_id, second_pass[0].provider_id);
+    assert!(
+        first_pass[0].provider_id != "provider-b" || second_pass[0].provider_id != "provider-b"
+    );
+    assert_ne!(
+        first_pass
+            .iter()
+            .map(|candidate| candidate.provider_id.as_str())
+            .collect::<Vec<_>>(),
+        second_pass
+            .iter()
+            .map(|candidate| candidate.provider_id.as_str())
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -185,9 +671,9 @@ async fn cooled_down_when_recent_failures_are_recorded_for_same_key() {
             None,
             None,
             None,
-            95,
-            Some(95),
-            Some(95),
+            95_000,
+            Some(95_000),
+            Some(95_000),
         )
         .expect("candidate should build"),
         StoredRequestCandidate::new(
@@ -212,9 +698,9 @@ async fn cooled_down_when_recent_failures_are_recorded_for_same_key() {
             None,
             None,
             None,
-            98,
-            Some(98),
-            Some(98),
+            98_000,
+            Some(98_000),
+            Some(98_000),
         )
         .expect("candidate should build"),
     ]));
@@ -298,8 +784,8 @@ async fn selects_next_candidate_when_first_provider_concurrent_limit_is_reached(
             None,
             None,
             None,
-            95,
-            Some(95),
+            95_000,
+            Some(95_000),
             None,
         )
         .expect("candidate should build"),
@@ -366,8 +852,8 @@ async fn returns_none_when_auth_api_key_concurrent_limit_is_reached() {
             None,
             None,
             None,
-            95,
-            Some(95),
+            95_000,
+            Some(95_000),
             None,
         )
         .expect("candidate should build"),
@@ -457,9 +943,9 @@ async fn selects_next_candidate_when_first_provider_key_rpm_slots_are_reserved_f
             Some(9),
             None,
             None,
-            95,
-            Some(95),
-            Some(96),
+            95_000,
+            Some(95_000),
+            Some(96_000),
         )
         .expect("candidate should build"),
     ]));

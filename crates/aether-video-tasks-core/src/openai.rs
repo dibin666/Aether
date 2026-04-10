@@ -40,7 +40,7 @@ fn build_openai_stored_task_body(task: StoredVideoTask, status: VideoTaskStatus)
         "object": "video",
         "status": map_openai_stored_task_status(status),
         "progress": task.progress_percent,
-        "created_at": task.created_at_unix_secs,
+        "created_at": task.created_at_unix_ms,
     });
 
     if let Some(model) = task.model {
@@ -247,7 +247,7 @@ impl OpenAiVideoTaskSeed {
             "object": "video",
             "status": map_openai_task_status(self.status),
             "progress": self.progress_percent,
-            "created_at": self.created_at_unix_secs,
+            "created_at": self.created_at_unix_ms,
         });
 
         if let Some(model) = &self.model {
@@ -575,7 +575,7 @@ impl OpenAiVideoTaskSeed {
             LocalVideoTaskStatus::Submitted
             | LocalVideoTaskStatus::Queued
             | LocalVideoTaskStatus::Processing => Some(
-                self.created_at_unix_secs
+                self.created_at_unix_ms
                     .saturating_add(u64::from(DEFAULT_VIDEO_TASK_POLL_INTERVAL_SECONDS)),
             ),
             _ => None,
@@ -613,8 +613,8 @@ impl OpenAiVideoTaskSeed {
             next_poll_at_unix_secs,
             poll_count: 0,
             max_poll_count: DEFAULT_VIDEO_TASK_MAX_POLL_COUNT,
-            created_at_unix_secs: self.created_at_unix_secs,
-            submitted_at_unix_secs: Some(self.created_at_unix_secs),
+            created_at_unix_ms: self.created_at_unix_ms,
+            submitted_at_unix_secs: Some(self.created_at_unix_ms),
             completed_at_unix_secs: self.completed_at_unix_secs,
             updated_at_unix_secs: self.completed_at_unix_secs.unwrap_or(now_unix_secs),
             error_code: self.error_code.clone(),
@@ -665,7 +665,7 @@ mod tests {
             next_poll_at_unix_secs: None,
             poll_count: 0,
             max_poll_count: 360,
-            created_at_unix_secs: 1712345678,
+            created_at_unix_ms: 1712345678,
             submitted_at_unix_secs: Some(1712345678),
             completed_at_unix_secs: Some(1712345688),
             updated_at_unix_secs: 1712345688,

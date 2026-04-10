@@ -48,7 +48,7 @@ impl RequestCandidateReadRepository for InMemoryRequestCandidateRepository {
             left.candidate_index
                 .cmp(&right.candidate_index)
                 .then(left.retry_index.cmp(&right.retry_index))
-                .then(left.created_at_unix_secs.cmp(&right.created_at_unix_secs))
+                .then(left.created_at_unix_ms.cmp(&right.created_at_unix_ms))
         });
         Ok(rows)
     }
@@ -68,7 +68,7 @@ impl RequestCandidateReadRepository for InMemoryRequestCandidateRepository {
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        rows.sort_by(|left, right| right.created_at_unix_secs.cmp(&left.created_at_unix_secs));
+        rows.sort_by(|left, right| right.created_at_unix_ms.cmp(&left.created_at_unix_ms));
         rows.truncate(limit);
         Ok(rows)
     }
@@ -90,7 +90,7 @@ impl RequestCandidateReadRepository for InMemoryRequestCandidateRepository {
             .filter(|row| row.provider_id.as_deref() == Some(provider_id))
             .cloned()
             .collect::<Vec<_>>();
-        rows.sort_by(|left, right| right.created_at_unix_secs.cmp(&left.created_at_unix_secs));
+        rows.sort_by(|left, right| right.created_at_unix_ms.cmp(&left.created_at_unix_ms));
         rows.truncate(limit);
         Ok(rows)
     }
@@ -115,7 +115,7 @@ impl RequestCandidateReadRepository for InMemoryRequestCandidateRepository {
                 row.endpoint_id
                     .as_ref()
                     .is_some_and(|endpoint_id| endpoint_ids.contains(endpoint_id))
-                    && row.created_at_unix_secs >= since_unix_secs
+                    && row.created_at_unix_ms >= since_unix_secs * 1000
                     && matches!(
                         row.status,
                         RequestCandidateStatus::Success
@@ -125,7 +125,7 @@ impl RequestCandidateReadRepository for InMemoryRequestCandidateRepository {
             })
             .cloned()
             .collect::<Vec<_>>();
-        rows.sort_by(|left, right| right.created_at_unix_secs.cmp(&left.created_at_unix_secs));
+        rows.sort_by(|left, right| right.created_at_unix_ms.cmp(&left.created_at_unix_ms));
         rows.truncate(limit);
         Ok(rows)
     }
@@ -150,7 +150,9 @@ impl RequestCandidateReadRepository for InMemoryRequestCandidateRepository {
             let Some(endpoint_id) = row.endpoint_id.as_ref() else {
                 continue;
             };
-            if !endpoint_ids.contains(endpoint_id) || row.created_at_unix_secs < since_unix_secs {
+            if !endpoint_ids.contains(endpoint_id)
+                || row.created_at_unix_ms < since_unix_secs * 1000
+            {
                 continue;
             }
             if !matches!(
@@ -200,7 +202,7 @@ impl RequestCandidateReadRepository for InMemoryRequestCandidateRepository {
         }
 
         let endpoint_ids = endpoint_ids.iter().cloned().collect::<BTreeSet<_>>();
-        let span = until_unix_secs.saturating_sub(since_unix_secs);
+        let span_ms = until_unix_secs.saturating_sub(since_unix_secs) * 1000;
         let mut buckets = BTreeMap::<(String, u32), PublicHealthTimelineBucket>::new();
 
         for row in self
@@ -213,8 +215,8 @@ impl RequestCandidateReadRepository for InMemoryRequestCandidateRepository {
                 continue;
             };
             if !endpoint_ids.contains(endpoint_id)
-                || row.created_at_unix_secs < since_unix_secs
-                || row.created_at_unix_secs > until_unix_secs
+                || row.created_at_unix_ms < since_unix_secs * 1000
+                || row.created_at_unix_ms > until_unix_secs * 1000
             {
                 continue;
             }
@@ -227,11 +229,13 @@ impl RequestCandidateReadRepository for InMemoryRequestCandidateRepository {
                 continue;
             }
 
-            let segment_idx = if span == 0 {
+            let segment_idx = if span_ms == 0 {
                 0
             } else {
-                let offset = row.created_at_unix_secs.saturating_sub(since_unix_secs);
-                let idx = ((offset as u128) * (segments as u128) / (span as u128)) as u32;
+                let offset = row
+                    .created_at_unix_ms
+                    .saturating_sub(since_unix_secs * 1000);
+                let idx = ((offset as u128) * (segments as u128) / (span_ms as u128)) as u32;
                 idx.min(segments.saturating_sub(1))
             };
             let bucket = buckets
@@ -242,8 +246,8 @@ impl RequestCandidateReadRepository for InMemoryRequestCandidateRepository {
                     total_count: 0,
                     success_count: 0,
                     failed_count: 0,
-                    min_created_at_unix_secs: None,
-                    max_created_at_unix_secs: None,
+                    min_created_at_unix_ms: None,
+                    max_created_at_unix_ms: None,
                 });
             bucket.total_count += 1;
             if row.status == RequestCandidateStatus::Success {
@@ -251,17 +255,17 @@ impl RequestCandidateReadRepository for InMemoryRequestCandidateRepository {
             } else if row.status == RequestCandidateStatus::Failed {
                 bucket.failed_count += 1;
             }
-            bucket.min_created_at_unix_secs = Some(
+            bucket.min_created_at_unix_ms = Some(
                 bucket
-                    .min_created_at_unix_secs
-                    .map(|value| value.min(row.created_at_unix_secs))
-                    .unwrap_or(row.created_at_unix_secs),
+                    .min_created_at_unix_ms
+                    .map(|value| value.min(row.created_at_unix_ms))
+                    .unwrap_or(row.created_at_unix_ms),
             );
-            bucket.max_created_at_unix_secs = Some(
+            bucket.max_created_at_unix_ms = Some(
                 bucket
-                    .max_created_at_unix_secs
-                    .map(|value| value.max(row.created_at_unix_secs))
-                    .unwrap_or(row.created_at_unix_secs),
+                    .max_created_at_unix_ms
+                    .map(|value| value.max(row.created_at_unix_ms))
+                    .unwrap_or(row.created_at_unix_ms),
             );
         }
 
@@ -290,12 +294,12 @@ impl RequestCandidateWriteRepository for InMemoryRequestCandidateRepository {
             })
             .cloned();
 
-        let created_at_unix_secs = existing
+        let created_at_unix_ms = existing
             .as_ref()
-            .map(|row| row.created_at_unix_secs)
-            .or(candidate.created_at_unix_secs)
-            .or(candidate.started_at_unix_secs)
-            .or(candidate.finished_at_unix_secs)
+            .map(|row| row.created_at_unix_ms)
+            .or(candidate.created_at_unix_ms)
+            .or(candidate.started_at_unix_ms)
+            .or(candidate.finished_at_unix_ms)
             .unwrap_or_default();
 
         let stored = StoredRequestCandidate {
@@ -357,13 +361,13 @@ impl RequestCandidateWriteRepository for InMemoryRequestCandidateRepository {
                     .as_ref()
                     .and_then(|row| row.required_capabilities.clone())
             }),
-            created_at_unix_secs,
-            started_at_unix_secs: candidate
-                .started_at_unix_secs
-                .or_else(|| existing.as_ref().and_then(|row| row.started_at_unix_secs)),
-            finished_at_unix_secs: candidate
-                .finished_at_unix_secs
-                .or_else(|| existing.as_ref().and_then(|row| row.finished_at_unix_secs)),
+            created_at_unix_ms,
+            started_at_unix_ms: candidate
+                .started_at_unix_ms
+                .or_else(|| existing.as_ref().and_then(|row| row.started_at_unix_ms)),
+            finished_at_unix_ms: candidate
+                .finished_at_unix_ms
+                .or_else(|| existing.as_ref().and_then(|row| row.finished_at_unix_ms)),
         };
 
         by_id.insert(stored.id.clone(), stored.clone());
@@ -385,8 +389,8 @@ impl RequestCandidateWriteRepository for InMemoryRequestCandidateRepository {
             .expect("request candidate repository lock");
         let mut ids = by_id
             .values()
-            .filter(|row| row.created_at_unix_secs < created_before_unix_secs)
-            .map(|row| (row.created_at_unix_secs, row.id.clone()))
+            .filter(|row| row.created_at_unix_ms < created_before_unix_secs * 1000)
+            .map(|row| (row.created_at_unix_ms, row.id.clone()))
             .collect::<Vec<_>>();
         ids.sort();
 
@@ -411,7 +415,7 @@ mod tests {
     fn sample_candidate(
         id: &str,
         request_id: &str,
-        created_at_unix_secs: i64,
+        created_at_unix_ms: i64,
     ) -> StoredRequestCandidate {
         StoredRequestCandidate::new(
             id.to_string(),
@@ -435,9 +439,9 @@ mod tests {
             Some(1),
             None,
             None,
-            created_at_unix_secs,
-            Some(created_at_unix_secs),
-            Some(created_at_unix_secs + 1),
+            created_at_unix_ms,
+            Some(created_at_unix_ms),
+            Some(created_at_unix_ms + 1),
         )
         .expect("candidate should build")
     }
@@ -480,8 +484,8 @@ mod tests {
     #[tokio::test]
     async fn aggregates_finalized_health_data_by_endpoint_ids() {
         let repository = InMemoryRequestCandidateRepository::seed(vec![
-            sample_candidate("cand-1", "req-1", 100),
-            sample_candidate("cand-2", "req-2", 200),
+            sample_candidate("cand-1", "req-1", 100_000),
+            sample_candidate("cand-2", "req-2", 200_000),
         ]);
 
         let counts = repository
@@ -538,9 +542,9 @@ mod tests {
                 concurrent_requests: None,
                 extra_data: None,
                 required_capabilities: None,
-                created_at_unix_secs: Some(100),
-                started_at_unix_secs: None,
-                finished_at_unix_secs: None,
+                created_at_unix_ms: Some(100),
+                started_at_unix_ms: None,
+                finished_at_unix_ms: None,
             })
             .await
             .expect("create should succeed");
@@ -570,9 +574,9 @@ mod tests {
                 concurrent_requests: Some(2),
                 extra_data: None,
                 required_capabilities: None,
-                created_at_unix_secs: None,
-                started_at_unix_secs: Some(101),
-                finished_at_unix_secs: Some(102),
+                created_at_unix_ms: None,
+                started_at_unix_ms: Some(101),
+                finished_at_unix_ms: Some(102),
             })
             .await
             .expect("update should succeed");
@@ -580,7 +584,7 @@ mod tests {
         assert_eq!(updated.status, RequestCandidateStatus::Success);
         assert_eq!(updated.status_code, Some(200));
         assert_eq!(updated.latency_ms, Some(25));
-        assert_eq!(updated.started_at_unix_secs, Some(101));
+        assert_eq!(updated.started_at_unix_ms, Some(101));
     }
 
     #[tokio::test]

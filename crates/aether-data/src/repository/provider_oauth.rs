@@ -17,7 +17,7 @@ pub struct StoredAdminProviderOAuthDeviceSession {
     pub expires_at_unix_secs: u64,
     pub status: String,
     pub proxy_node_id: Option<String>,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub key_id: Option<String>,
     pub email: Option<String>,
     pub replaced: bool,

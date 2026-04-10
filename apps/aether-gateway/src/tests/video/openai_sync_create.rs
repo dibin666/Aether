@@ -671,7 +671,7 @@ async fn gateway_executes_openai_video_remix_via_data_backed_local_follow_up_wit
             next_poll_at_unix_secs: None,
             poll_count: 1,
             max_poll_count: 360,
-            created_at_unix_secs: 123,
+            created_at_unix_ms: 123,
             submitted_at_unix_secs: Some(123),
             completed_at_unix_secs: Some(124),
             updated_at_unix_secs: 124,
@@ -683,7 +683,7 @@ async fn gateway_executes_openai_video_remix_via_data_backed_local_follow_up_wit
                     "OpenAi": {
                         "local_task_id": "task-local-123",
                         "upstream_task_id": "ext-video-task-123",
-                        "created_at_unix_secs": 123,
+                        "created_at_unix_ms": 123,
                         "user_id": "user-openai-video-remix-local-123",
                         "api_key_id": "key-openai-video-remix-local-123",
                         "model": "sora-2",

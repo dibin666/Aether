@@ -166,6 +166,13 @@ pub fn convert_openai_chat_request_to_gemini_request(
     {
         generation_config.insert("candidateCount".to_string(), Value::from(candidate_count));
     }
+    if let Some(seed) = request.get("seed").and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|raw| i64::try_from(raw).ok()))
+    }) {
+        generation_config.insert("seed".to_string(), Value::from(seed));
+    }
     if let Some(stop_sequences) = parse_openai_stop_sequences(request.get("stop")) {
         generation_config.insert("stopSequences".to_string(), Value::Array(stop_sequences));
     }
@@ -342,6 +349,9 @@ fn convert_openai_tools_to_gemini(
     let mut result_tools = Vec::new();
     let tool_values = tools.and_then(Value::as_array);
     let mut declarations = Vec::new();
+    let mut google_search = web_search_options.is_some();
+    let mut code_execution = false;
+    let mut url_context = false;
     if let Some(tool_values) = tool_values {
         for tool in tool_values {
             let tool_object = tool.as_object()?;
@@ -358,6 +368,22 @@ fn convert_openai_tools_to_gemini(
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())?;
+            match normalize_openai_builtin_gemini_tool_name(name) {
+                Some("googleSearch") => {
+                    google_search = true;
+                    continue;
+                }
+                Some("codeExecution") => {
+                    code_execution = true;
+                    continue;
+                }
+                Some("urlContext") => {
+                    url_context = true;
+                    continue;
+                }
+                Some(_) => continue,
+                None => {}
+            }
             let mut declaration = Map::new();
             declaration.insert("name".to_string(), Value::String(name.to_string()));
             if let Some(description) = function.get("description").cloned() {
@@ -373,11 +399,17 @@ fn convert_openai_tools_to_gemini(
             declarations.push(Value::Object(declaration));
         }
     }
+    if code_execution {
+        result_tools.push(json!({ "codeExecution": {} }));
+    }
+    if google_search {
+        result_tools.push(json!({ "googleSearch": {} }));
+    }
+    if url_context {
+        result_tools.push(json!({ "urlContext": {} }));
+    }
     if !declarations.is_empty() {
         result_tools.push(json!({ "functionDeclarations": declarations }));
-    }
-    if web_search_options.is_some() {
-        result_tools.push(json!({ "googleSearch": {} }));
     }
     (!result_tools.is_empty()).then_some(Value::Array(result_tools))
 }
@@ -479,5 +511,111 @@ fn guess_media_type_from_reference(reference: &str, default_mime: &str) -> Strin
         "application/pdf".to_string()
     } else {
         default_mime.to_string()
+    }
+}
+
+fn normalize_openai_builtin_gemini_tool_name(name: &str) -> Option<&'static str> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "googlesearch" => Some("googleSearch"),
+        "codeexecution" => Some("codeExecution"),
+        "urlcontext" => Some("urlContext"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::convert_openai_chat_request_to_gemini_request;
+    use serde_json::json;
+
+    #[test]
+    fn maps_seed_and_builtin_gemini_tools_from_openai_request() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "messages": [
+                { "role": "user", "content": "use tools" }
+            ],
+            "seed": 7,
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "googleSearch",
+                        "parameters": { "type": "object", "properties": {} }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "codeExecution",
+                        "parameters": { "type": "object", "properties": {} }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "urlContext",
+                        "parameters": { "type": "object", "properties": {} }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "lookupWeather",
+                        "parameters": { "type": "object", "properties": { "city": { "type": "string" } } }
+                    }
+                }
+            ]
+        });
+
+        let converted =
+            convert_openai_chat_request_to_gemini_request(&request, "gemini-2.5-pro", false)
+                .expect("request should convert");
+
+        assert_eq!(converted["generationConfig"]["seed"], 7);
+        assert_eq!(converted["tools"][0], json!({ "codeExecution": {} }));
+        assert_eq!(converted["tools"][1], json!({ "googleSearch": {} }));
+        assert_eq!(converted["tools"][2], json!({ "urlContext": {} }));
+        assert_eq!(
+            converted["tools"][3],
+            json!({
+                "functionDeclarations": [
+                    {
+                        "name": "lookupWeather",
+                        "parameters": { "type": "object", "properties": { "city": { "type": "string" } } }
+                    }
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn deduplicates_google_search_when_web_search_options_are_also_present() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "messages": [
+                { "role": "user", "content": "search" }
+            ],
+            "web_search_options": {},
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "googleSearch",
+                        "parameters": { "type": "object", "properties": {} }
+                    }
+                }
+            ]
+        });
+
+        let converted =
+            convert_openai_chat_request_to_gemini_request(&request, "gemini-2.5-pro", false)
+                .expect("request should convert");
+
+        let tools = converted["tools"]
+            .as_array()
+            .expect("tools should be array");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0], json!({ "googleSearch": {} }));
     }
 }

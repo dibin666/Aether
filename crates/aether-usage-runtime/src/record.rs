@@ -1,6 +1,7 @@
 use aether_data_contracts::repository::usage::UpsertUsageRecord;
 use aether_data_contracts::DataLayerError;
 
+use crate::request_metadata::sanitize_usage_request_metadata;
 use crate::{UsageEvent, UsageEventType};
 
 pub fn build_upsert_usage_record_from_event(
@@ -56,9 +57,9 @@ pub fn build_upsert_usage_record_from_event(
         response_body: data.response_body,
         client_response_headers: data.client_response_headers,
         client_response_body: data.client_response_body,
-        request_metadata: data.request_metadata,
+        request_metadata: sanitize_usage_request_metadata(data.request_metadata),
         finalized_at_unix_secs: Some(now_unix_secs),
-        created_at_unix_secs: Some(now_unix_secs),
+        created_at_unix_ms: Some(now_unix_secs),
         updated_at_unix_secs: now_unix_secs,
     })
 }
@@ -112,5 +113,36 @@ mod tests {
         assert_eq!(record.billing_status, "pending");
         assert_eq!(record.total_tokens, Some(30));
         assert_eq!(record.finalized_at_unix_secs, Some(1_700_000_000));
+    }
+
+    #[test]
+    fn sanitizes_request_metadata_before_building_upsert_record() {
+        let record = build_upsert_usage_record_from_event(&UsageEvent {
+            event_type: UsageEventType::Completed,
+            request_id: "req-2".to_string(),
+            timestamp_ms: 1_700_000_000_000,
+            data: UsageEventData {
+                provider_name: "OpenAI".to_string(),
+                model: "gpt-5".to_string(),
+                request_metadata: Some(serde_json::json!({
+                    "request_id": "req-2",
+                    "provider_id": "provider-1",
+                    "candidate_id": "cand-2",
+                    "key_name": "upstream-primary",
+                    "billing_snapshot": { "status": "complete" }
+                })),
+                ..UsageEventData::default()
+            },
+        })
+        .expect("record should build");
+
+        assert_eq!(
+            record.request_metadata,
+            Some(serde_json::json!({
+                "candidate_id": "cand-2",
+                "key_name": "upstream-primary",
+                "billing_snapshot": { "status": "complete" }
+            }))
+        );
     }
 }

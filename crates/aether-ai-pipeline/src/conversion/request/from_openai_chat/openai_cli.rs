@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use serde_json::{json, Map, Value};
 
 use super::super::to_openai_chat::extract_openai_text_content;
-use crate::planner::openai::{copy_request_number_field, extract_openai_reasoning_effort};
+use crate::planner::openai::{
+    copy_request_number_field, extract_openai_reasoning_effort, value_as_u64,
+};
 
 pub fn convert_openai_chat_request_to_openai_cli_request(
     body_json: &Value,
@@ -34,10 +36,21 @@ pub fn convert_openai_chat_request_to_openai_cli_request(
                     }
                 }
                 "user" | "assistant" => {
-                    let content_items = convert_openai_content_to_openai_cli_items(
+                    let mut content_items = convert_openai_content_to_openai_cli_items(
                         message_object.get("content"),
                         role.as_str(),
                     )?;
+                    if role == "assistant" {
+                        if let Some(refusal) = message_object.get("refusal").and_then(Value::as_str)
+                        {
+                            if !refusal.trim().is_empty() {
+                                content_items.push(json!({
+                                    "type": "refusal",
+                                    "refusal": refusal,
+                                }));
+                            }
+                        }
+                    }
                     if !content_items.is_empty() {
                         input_items.push(json!({
                             "type": "message",
@@ -141,7 +154,11 @@ pub fn convert_openai_chat_request_to_openai_cli_request(
     if upstream_is_stream && !compact {
         output.insert("stream".to_string(), Value::Bool(true));
     }
-    if let Some(max_tokens) = request.get("max_tokens").and_then(Value::as_u64) {
+    if let Some(max_tokens) = request
+        .get("max_completion_tokens")
+        .and_then(value_as_u64)
+        .or_else(|| request.get("max_tokens").and_then(value_as_u64))
+    {
         output.insert("max_output_tokens".to_string(), Value::from(max_tokens));
     }
     copy_request_number_field(request, &mut output, "temperature");
@@ -151,9 +168,12 @@ pub fn convert_openai_chat_request_to_openai_cli_request(
 
     for passthrough_key in [
         "prompt_cache_key",
+        "prompt_cache_retention",
         "service_tier",
         "metadata",
         "store",
+        "user",
+        "safety_identifier",
         "previous_response_id",
         "truncation",
         "stop",
@@ -479,5 +499,73 @@ fn copy_request_bool_field(
 ) {
     if let Some(value) = request.get(field).and_then(Value::as_bool) {
         output.insert(field.to_string(), Value::Bool(value));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::convert_openai_chat_request_to_openai_cli_request;
+    use serde_json::json;
+
+    #[test]
+    fn preserves_shared_openai_chat_controls_when_converting_to_openai_cli() {
+        let request = json!({
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_completion_tokens": 256,
+            "verbosity": "low",
+            "prompt_cache_key": "cache-key-123",
+            "prompt_cache_retention": "persist",
+            "service_tier": "priority",
+            "user": "user-123",
+            "safety_identifier": "safe-123",
+            "top_logprobs": 3,
+        });
+
+        let converted = convert_openai_chat_request_to_openai_cli_request(
+            &request,
+            "gpt-5-upstream",
+            false,
+            false,
+        )
+        .expect("chat request should convert to responses");
+
+        assert_eq!(converted["model"], "gpt-5-upstream");
+        assert_eq!(converted["max_output_tokens"], 256);
+        assert_eq!(converted["prompt_cache_key"], "cache-key-123");
+        assert_eq!(converted["prompt_cache_retention"], "persist");
+        assert_eq!(converted["service_tier"], "priority");
+        assert_eq!(converted["user"], "user-123");
+        assert_eq!(converted["safety_identifier"], "safe-123");
+        assert_eq!(converted["top_logprobs"], 3);
+        assert_eq!(converted["text"]["verbosity"], "low");
+    }
+
+    #[test]
+    fn preserves_assistant_refusal_when_converting_to_openai_cli() {
+        let request = json!({
+            "model": "gpt-5",
+            "messages": [{
+                "role": "assistant",
+                "content": "",
+                "refusal": "cannot comply"
+            }]
+        });
+
+        let converted = convert_openai_chat_request_to_openai_cli_request(
+            &request,
+            "gpt-5-upstream",
+            false,
+            false,
+        )
+        .expect("chat request should convert to responses");
+
+        assert_eq!(
+            converted["input"][0]["content"],
+            json!([{
+                "type": "refusal",
+                "refusal": "cannot comply"
+            }])
+        );
     }
 }

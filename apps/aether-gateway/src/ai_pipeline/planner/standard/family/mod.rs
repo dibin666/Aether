@@ -18,6 +18,7 @@ pub(super) struct LocalStandardDecisionInput {
     pub(super) auth_context: ExecutionRuntimeAuthContext,
     pub(super) requested_model: String,
     pub(super) auth_snapshot: GatewayAuthApiKeySnapshot,
+    pub(super) required_capabilities: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]

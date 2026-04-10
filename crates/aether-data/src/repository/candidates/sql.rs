@@ -34,9 +34,9 @@ SELECT
   concurrent_requests,
   extra_data,
   required_capabilities,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM started_at) AS BIGINT) AS started_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM finished_at) AS BIGINT) AS finished_at_unix_secs
+  CAST(EXTRACT(EPOCH FROM created_at) * 1000 AS BIGINT) AS created_at_unix_ms,
+  CAST(EXTRACT(EPOCH FROM started_at) * 1000 AS BIGINT) AS started_at_unix_ms,
+  CAST(EXTRACT(EPOCH FROM finished_at) * 1000 AS BIGINT) AS finished_at_unix_ms
 FROM request_candidates
 WHERE request_id = $1
 ORDER BY candidate_index ASC, retry_index ASC, created_at ASC
@@ -65,9 +65,9 @@ SELECT
   concurrent_requests,
   extra_data,
   required_capabilities,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM started_at) AS BIGINT) AS started_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM finished_at) AS BIGINT) AS finished_at_unix_secs
+  CAST(EXTRACT(EPOCH FROM created_at) * 1000 AS BIGINT) AS created_at_unix_ms,
+  CAST(EXTRACT(EPOCH FROM started_at) * 1000 AS BIGINT) AS started_at_unix_ms,
+  CAST(EXTRACT(EPOCH FROM finished_at) * 1000 AS BIGINT) AS finished_at_unix_ms
 FROM request_candidates
 ORDER BY created_at DESC
 LIMIT $1
@@ -96,9 +96,9 @@ SELECT
   concurrent_requests,
   extra_data,
   required_capabilities,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM started_at) AS BIGINT) AS started_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM finished_at) AS BIGINT) AS finished_at_unix_secs
+  CAST(EXTRACT(EPOCH FROM created_at) * 1000 AS BIGINT) AS created_at_unix_ms,
+  CAST(EXTRACT(EPOCH FROM started_at) * 1000 AS BIGINT) AS started_at_unix_ms,
+  CAST(EXTRACT(EPOCH FROM finished_at) * 1000 AS BIGINT) AS finished_at_unix_ms
 FROM request_candidates
 WHERE provider_id = $1
 ORDER BY created_at DESC
@@ -128,9 +128,9 @@ SELECT
   concurrent_requests,
   extra_data,
   required_capabilities,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM started_at) AS BIGINT) AS started_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM finished_at) AS BIGINT) AS finished_at_unix_secs
+  CAST(EXTRACT(EPOCH FROM created_at) * 1000 AS BIGINT) AS created_at_unix_ms,
+  CAST(EXTRACT(EPOCH FROM started_at) * 1000 AS BIGINT) AS started_at_unix_ms,
+  CAST(EXTRACT(EPOCH FROM finished_at) * 1000 AS BIGINT) AS finished_at_unix_ms
 FROM request_candidates
 WHERE endpoint_id = ANY($1)
   AND created_at >= TO_TIMESTAMP($2)
@@ -158,8 +158,8 @@ SELECT
   COUNT(id) AS total_count,
   SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS success_count,
   SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
-  CAST(EXTRACT(EPOCH FROM MIN(created_at)) AS BIGINT) AS min_created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM MAX(created_at)) AS BIGINT) AS max_created_at_unix_secs
+  CAST(EXTRACT(EPOCH FROM MIN(created_at)) * 1000 AS BIGINT) AS min_created_at_unix_ms,
+  CAST(EXTRACT(EPOCH FROM MAX(created_at)) * 1000 AS BIGINT) AS max_created_at_unix_ms
 FROM request_candidates
 WHERE endpoint_id = ANY($1)
   AND created_at >= TO_TIMESTAMP($2)
@@ -219,9 +219,9 @@ VALUES (
   $19,
   $20,
   $21,
-  TO_TIMESTAMP(COALESCE($22, 0)),
-  TO_TIMESTAMP($23),
-  TO_TIMESTAMP($24)
+  TO_TIMESTAMP(COALESCE($22, 0) / 1000.0),
+  TO_TIMESTAMP($23 / 1000.0),
+  TO_TIMESTAMP($24 / 1000.0)
 )
 ON CONFLICT (request_id, candidate_index, retry_index)
 DO UPDATE SET
@@ -266,9 +266,9 @@ RETURNING
   concurrent_requests,
   extra_data,
   required_capabilities,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM started_at) AS BIGINT) AS started_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM finished_at) AS BIGINT) AS finished_at_unix_secs
+  CAST(EXTRACT(EPOCH FROM created_at) * 1000 AS BIGINT) AS created_at_unix_ms,
+  CAST(EXTRACT(EPOCH FROM started_at) * 1000 AS BIGINT) AS started_at_unix_ms,
+  CAST(EXTRACT(EPOCH FROM finished_at) * 1000 AS BIGINT) AS finished_at_unix_ms
 "#;
 
 const DELETE_CREATED_BEFORE_SQL: &str = r#"
@@ -481,30 +481,24 @@ impl SqlxRequestCandidateReadRepository {
                             )
                         },
                     )?,
-                    min_created_at_unix_secs: row_get::<Option<i64>>(
-                        row,
-                        "min_created_at_unix_secs",
-                    )?
-                    .map(|value| {
-                        u64::try_from(value).map_err(|_| {
-                            DataLayerError::UnexpectedValue(format!(
-                                "public health min_created_at_unix_secs out of range: {value}"
-                            ))
+                    min_created_at_unix_ms: row_get::<Option<i64>>(row, "min_created_at_unix_ms")?
+                        .map(|value| {
+                            u64::try_from(value).map_err(|_| {
+                                DataLayerError::UnexpectedValue(format!(
+                                    "public health min_created_at_unix_ms out of range: {value}"
+                                ))
+                            })
                         })
-                    })
-                    .transpose()?,
-                    max_created_at_unix_secs: row_get::<Option<i64>>(
-                        row,
-                        "max_created_at_unix_secs",
-                    )?
-                    .map(|value| {
-                        u64::try_from(value).map_err(|_| {
-                            DataLayerError::UnexpectedValue(format!(
-                                "public health max_created_at_unix_secs out of range: {value}"
-                            ))
+                        .transpose()?,
+                    max_created_at_unix_ms: row_get::<Option<i64>>(row, "max_created_at_unix_ms")?
+                        .map(|value| {
+                            u64::try_from(value).map_err(|_| {
+                                DataLayerError::UnexpectedValue(format!(
+                                    "public health max_created_at_unix_ms out of range: {value}"
+                                ))
+                            })
                         })
-                    })
-                    .transpose()?,
+                        .transpose()?,
                 })
             })
             .collect()
@@ -544,9 +538,9 @@ impl SqlxRequestCandidateReadRepository {
                         .bind(candidate.concurrent_requests.map(to_i32).transpose()?)
                         .bind(&candidate.extra_data)
                         .bind(&candidate.required_capabilities)
-                        .bind(candidate.created_at_unix_secs.map(|value| value as f64))
-                        .bind(candidate.started_at_unix_secs.map(|value| value as f64))
-                        .bind(candidate.finished_at_unix_secs.map(|value| value as f64))
+                        .bind(candidate.created_at_unix_ms.map(|value| value as f64))
+                        .bind(candidate.started_at_unix_ms.map(|value| value as f64))
+                        .bind(candidate.finished_at_unix_ms.map(|value| value as f64))
                         .fetch_one(&mut **tx)
                         .await
                         .map_postgres_err()?;
@@ -683,9 +677,9 @@ fn map_request_candidate_row(
         row_get(row, "concurrent_requests")?,
         row_get(row, "extra_data")?,
         row_get(row, "required_capabilities")?,
-        row_get(row, "created_at_unix_secs")?,
-        row_get(row, "started_at_unix_secs")?,
-        row_get(row, "finished_at_unix_secs")?,
+        row_get(row, "created_at_unix_ms")?,
+        row_get(row, "started_at_unix_ms")?,
+        row_get(row, "finished_at_unix_ms")?,
     )
 }
 

@@ -59,7 +59,7 @@ pub(in super::super) async fn build_admin_wallet_list_response(
                 "total_consumed": wallet.total_consumed,
                 "total_refunded": wallet.total_refunded,
                 "total_adjusted": wallet.total_adjusted,
-                "created_at": wallet.created_at_unix_secs.and_then(unix_secs_to_rfc3339),
+                "created_at": wallet.created_at_unix_ms.and_then(unix_secs_to_rfc3339),
                 "updated_at": wallet.updated_at_unix_secs.and_then(unix_secs_to_rfc3339),
             })
         })

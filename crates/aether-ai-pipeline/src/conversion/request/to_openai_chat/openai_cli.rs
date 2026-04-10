@@ -34,9 +34,15 @@ pub fn normalize_openai_cli_request_to_openai_chat_request(body_json: &Value) ->
         "metadata",
         "store",
         "service_tier",
+        "prompt_cache_key",
+        "prompt_cache_retention",
         "parallel_tool_calls",
         "stop",
         "stream",
+        "stream_options",
+        "user",
+        "safety_identifier",
+        "top_logprobs",
     ] {
         if let Some(value) = request.get(passthrough_key) {
             output.insert(passthrough_key.to_string(), value.clone());
@@ -55,6 +61,14 @@ pub fn normalize_openai_cli_request_to_openai_chat_request(body_json: &Value) ->
         .cloned()
     {
         output.insert("response_format".to_string(), response_format);
+    }
+    if let Some(verbosity) = request
+        .get("text")
+        .and_then(Value::as_object)
+        .and_then(|text| text.get("verbosity"))
+        .cloned()
+    {
+        output.insert("verbosity".to_string(), verbosity);
     }
     if let Some(tools) = normalize_openai_cli_tools_to_openai_chat(request.get("tools"))? {
         output.insert("tools".to_string(), Value::Array(tools));
@@ -129,10 +143,17 @@ fn normalize_openai_cli_input_to_openai_chat_messages(input: Option<&Value>) -> 
                         }
                         let normalized_content =
                             normalize_openai_cli_message_content(item_object.get("content"))?;
-                        messages.push(json!({
-                            "role": role,
-                            "content": normalized_content,
-                        }));
+                        let mut message = serde_json::Map::new();
+                        message.insert("role".to_string(), Value::String(role.clone()));
+                        message.insert("content".to_string(), normalized_content);
+                        if role == "assistant" {
+                            if let Some(refusal) =
+                                extract_openai_cli_message_refusal(item_object.get("content"))?
+                            {
+                                message.insert("refusal".to_string(), Value::String(refusal));
+                            }
+                        }
+                        messages.push(Value::Object(message));
                     }
                     "function_call" => {
                         let tool_name = item_object
@@ -293,6 +314,39 @@ fn normalize_openai_cli_message_content(content: Option<&Value>) -> Option<Value
     }
 }
 
+fn extract_openai_cli_message_refusal(content: Option<&Value>) -> Option<Option<String>> {
+    let Some(content) = content else {
+        return Some(None);
+    };
+    match content {
+        Value::Array(parts) => {
+            let mut refusals = Vec::new();
+            for part in parts {
+                let part_object = part.as_object()?;
+                let part_type = part_object
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_ascii_lowercase();
+                if part_type == "refusal" {
+                    if let Some(refusal) = part_object.get("refusal").and_then(Value::as_str) {
+                        if !refusal.trim().is_empty() {
+                            refusals.push(refusal.to_string());
+                        }
+                    }
+                }
+            }
+            if refusals.is_empty() {
+                Some(None)
+            } else {
+                Some(Some(refusals.join("\n")))
+            }
+        }
+        _ => Some(None),
+    }
+}
+
 fn normalize_openai_cli_tools_to_openai_chat(tools: Option<&Value>) -> Option<Option<Vec<Value>>> {
     let Some(Value::Array(tool_values)) = tools else {
         return Some(None);
@@ -401,5 +455,111 @@ fn normalize_openai_cli_tool_choice_to_openai_chat(
             })))
         }
         _ => Some(Some(tool_choice.clone())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_openai_cli_request_to_openai_chat_request;
+    use serde_json::json;
+
+    #[test]
+    fn preserves_openai_cli_text_and_passthrough_fields_when_normalizing_to_chat() {
+        let request = json!({
+            "model": "gpt-5",
+            "max_output_tokens": 128,
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hi"}]
+            }],
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "json_schema": {"name": "answer", "schema": {"type": "object"}}
+                },
+                "verbosity": "high"
+            },
+            "prompt_cache_key": "cache-key-456",
+            "prompt_cache_retention": "persist",
+            "service_tier": "flex",
+            "user": "user-456",
+            "safety_identifier": "safe-456",
+            "top_logprobs": 4
+        });
+
+        let converted = normalize_openai_cli_request_to_openai_chat_request(&request)
+            .expect("responses request should normalize to chat");
+
+        assert_eq!(converted["max_completion_tokens"], 128);
+        assert_eq!(
+            converted["response_format"],
+            json!({
+                "type": "json_schema",
+                "json_schema": {"name": "answer", "schema": {"type": "object"}}
+            })
+        );
+        assert_eq!(converted["verbosity"], "high");
+        assert_eq!(converted["prompt_cache_key"], "cache-key-456");
+        assert_eq!(converted["prompt_cache_retention"], "persist");
+        assert_eq!(converted["service_tier"], "flex");
+        assert_eq!(converted["user"], "user-456");
+        assert_eq!(converted["safety_identifier"], "safe-456");
+        assert_eq!(converted["top_logprobs"], 4);
+    }
+
+    #[test]
+    fn preserves_assistant_refusal_when_normalizing_to_chat() {
+        let request = json!({
+            "model": "gpt-5",
+            "input": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "refusal", "refusal": "cannot comply"}]
+            }]
+        });
+
+        let converted = normalize_openai_cli_request_to_openai_chat_request(&request)
+            .expect("responses request should normalize to chat");
+
+        assert_eq!(converted["messages"][0]["role"], "assistant");
+        assert_eq!(converted["messages"][0]["refusal"], "cannot comply");
+        assert_eq!(converted["messages"][0]["content"], json!([]));
+    }
+
+    #[test]
+    fn passes_through_stream_options() {
+        let request = json!({
+            "model": "gpt-5",
+            "stream": true,
+            "stream_options": {
+                "include_usage": true
+            },
+            "input": "hello"
+        });
+
+        let converted = normalize_openai_cli_request_to_openai_chat_request(&request)
+            .expect("responses request should normalize to chat");
+
+        assert_eq!(converted["stream"], true);
+        assert_eq!(converted["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn preserves_stream_options_without_forcing_include_usage_during_normalization() {
+        let request = json!({
+            "model": "gpt-5",
+            "stream": true,
+            "stream_options": {
+                "include_usage": false,
+                "extra": "keep-me"
+            },
+            "input": "hello"
+        });
+
+        let converted = normalize_openai_cli_request_to_openai_chat_request(&request)
+            .expect("responses request should normalize to chat");
+
+        assert_eq!(converted["stream_options"]["include_usage"], false);
+        assert_eq!(converted["stream_options"]["extra"], "keep-me");
     }
 }

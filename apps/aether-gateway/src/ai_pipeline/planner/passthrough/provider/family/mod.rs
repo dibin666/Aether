@@ -21,6 +21,7 @@ pub(crate) struct LocalSameFormatProviderDecisionInput {
     pub(crate) auth_context: ExecutionRuntimeAuthContext,
     pub(crate) requested_model: String,
     pub(crate) auth_snapshot: GatewayAuthApiKeySnapshot,
+    pub(crate) required_capabilities: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]

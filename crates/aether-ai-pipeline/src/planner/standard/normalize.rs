@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::conversion::request::{
     convert_openai_chat_request_to_claude_request, convert_openai_chat_request_to_gemini_request,
@@ -21,6 +21,19 @@ pub fn build_local_openai_chat_request_body(
     provider_request_body.insert("model".to_string(), Value::String(mapped_model.to_string()));
     if upstream_is_stream {
         provider_request_body.insert("stream".to_string(), Value::Bool(true));
+        match provider_request_body.get_mut("stream_options") {
+            Some(Value::Object(stream_options)) => {
+                stream_options.insert("include_usage".to_string(), Value::Bool(true));
+            }
+            _ => {
+                provider_request_body.insert(
+                    "stream_options".to_string(),
+                    json!({
+                        "include_usage": true,
+                    }),
+                );
+            }
+        }
     }
     Some(Value::Object(provider_request_body))
 }
@@ -50,9 +63,6 @@ pub fn build_cross_format_openai_chat_request_body(
                 upstream_is_stream,
                 false,
             )
-        }
-        RequestConversionKind::ToOpenAICompact => {
-            convert_openai_chat_request_to_openai_cli_request(body_json, mapped_model, false, true)
         }
         _ => None,
     }
@@ -86,20 +96,17 @@ pub fn build_cross_format_openai_cli_request_body(
     let chat_like_request = normalize_openai_cli_request_to_openai_chat_request(body_json)?;
     let conversion_kind = request_conversion_kind(client_api_format, provider_api_format)?;
     match conversion_kind {
+        RequestConversionKind::ToOpenAIChat => build_local_openai_chat_request_body(
+            &chat_like_request,
+            mapped_model,
+            upstream_is_stream,
+        ),
         RequestConversionKind::ToOpenAIFamilyCli => {
             convert_openai_chat_request_to_openai_cli_request(
                 &chat_like_request,
                 mapped_model,
                 upstream_is_stream,
                 false,
-            )
-        }
-        RequestConversionKind::ToOpenAICompact => {
-            convert_openai_chat_request_to_openai_cli_request(
-                &chat_like_request,
-                mapped_model,
-                false,
-                true,
             )
         }
         RequestConversionKind::ToClaudeStandard => convert_openai_chat_request_to_claude_request(
@@ -112,17 +119,16 @@ pub fn build_cross_format_openai_cli_request_body(
             mapped_model,
             upstream_is_stream,
         ),
-        _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::build_cross_format_openai_cli_request_body;
+    use super::{build_cross_format_openai_cli_request_body, build_local_openai_chat_request_body};
     use serde_json::json;
 
     #[test]
-    fn builds_openai_family_cross_format_request_body_from_compact_source() {
+    fn builds_openai_chat_cross_format_request_body_from_openai_cli_source() {
         let body_json = json!({
             "model": "gpt-5",
             "input": "hello",
@@ -131,14 +137,62 @@ mod tests {
         let provider_request_body = build_cross_format_openai_cli_request_body(
             &body_json,
             "gpt-5-upstream",
-            "openai:compact",
             "openai:cli",
+            "openai:chat",
             false,
         )
-        .expect("compact to openai cli body should build");
+        .expect("openai cli to openai chat body should build");
 
         assert_eq!(provider_request_body["model"], "gpt-5-upstream");
-        assert_eq!(provider_request_body["input"][0]["type"], "message");
-        assert_eq!(provider_request_body["input"][0]["role"], "user");
+        assert_eq!(provider_request_body["messages"][0]["role"], "user");
+        assert_eq!(provider_request_body["messages"][0]["content"], "hello");
+    }
+
+    #[test]
+    fn builds_streaming_local_openai_chat_request_body_with_include_usage() {
+        let body_json = json!({
+            "model": "gpt-5",
+            "messages": [{
+                "role": "user",
+                "content": "hello"
+            }]
+        });
+
+        let provider_request_body =
+            build_local_openai_chat_request_body(&body_json, "gpt-5-upstream", true)
+                .expect("openai chat body should build");
+
+        assert_eq!(provider_request_body["model"], "gpt-5-upstream");
+        assert_eq!(provider_request_body["stream"], true);
+        assert_eq!(
+            provider_request_body["stream_options"]["include_usage"],
+            true
+        );
+    }
+
+    #[test]
+    fn streaming_local_openai_chat_request_body_preserves_stream_options_while_forcing_include_usage(
+    ) {
+        let body_json = json!({
+            "model": "gpt-5",
+            "messages": [{
+                "role": "user",
+                "content": "hello"
+            }],
+            "stream_options": {
+                "include_usage": false,
+                "extra": "keep-me"
+            }
+        });
+
+        let provider_request_body =
+            build_local_openai_chat_request_body(&body_json, "gpt-5-upstream", true)
+                .expect("openai chat body should build");
+
+        assert_eq!(
+            provider_request_body["stream_options"]["include_usage"],
+            true
+        );
+        assert_eq!(provider_request_body["stream_options"]["extra"], "keep-me");
     }
 }

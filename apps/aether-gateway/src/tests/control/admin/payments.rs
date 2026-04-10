@@ -68,7 +68,7 @@ fn sample_payment_order(
     amount_usd: f64,
     payment_method: &str,
     status: &str,
-    created_at_unix_secs: u64,
+    created_at_unix_ms: u64,
     expires_at_unix_secs: Option<u64>,
 ) -> crate::AdminWalletPaymentOrderRecord {
     crate::AdminWalletPaymentOrderRecord {
@@ -86,7 +86,7 @@ fn sample_payment_order(
         gateway_order_id: None,
         status: status.to_string(),
         gateway_response: None,
-        created_at_unix_secs,
+        created_at_unix_ms,
         paid_at_unix_secs: None,
         credited_at_unix_secs: None,
         expires_at_unix_secs,
@@ -99,7 +99,7 @@ fn sample_payment_callback(
     payment_method: &str,
     callback_key: &str,
     status: &str,
-    created_at_unix_secs: u64,
+    created_at_unix_ms: u64,
 ) -> crate::state::AdminPaymentCallbackRecord {
     crate::state::AdminPaymentCallbackRecord {
         id: callback_id.to_string(),
@@ -113,8 +113,8 @@ fn sample_payment_callback(
         status: status.to_string(),
         payload: Some(json!({ "source": callback_id })),
         error_message: (status == "failed").then(|| "signature mismatch".to_string()),
-        created_at_unix_secs,
-        processed_at_unix_secs: Some(created_at_unix_secs.saturating_add(60)),
+        created_at_unix_ms,
+        processed_at_unix_secs: Some(created_at_unix_ms.saturating_add(60)),
     }
 }
 

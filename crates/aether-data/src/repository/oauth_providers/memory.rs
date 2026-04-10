@@ -76,7 +76,7 @@ impl OAuthProviderWriteRepository for InMemoryOAuthProviderRepository {
         let existing = items.get(&record.provider_type).cloned();
         let created_at = existing
             .as_ref()
-            .and_then(|item| item.created_at_unix_secs)
+            .and_then(|item| item.created_at_unix_ms)
             .or(now);
         let client_secret_encrypted = match (&record.client_secret_encrypted, existing.as_ref()) {
             (EncryptedSecretUpdate::Preserve, Some(item)) => item.client_secret_encrypted.clone(),

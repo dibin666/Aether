@@ -112,11 +112,6 @@ pub(crate) fn build_cross_format_openai_chat_upstream_url(
                 parts.uri.query(),
                 false,
             )),
-            RequestConversionKind::ToOpenAICompact => Some(build_openai_cli_url(
-                &transport.endpoint.base_url,
-                parts.uri.query(),
-                true,
-            )),
             _ => None,
         },
     }

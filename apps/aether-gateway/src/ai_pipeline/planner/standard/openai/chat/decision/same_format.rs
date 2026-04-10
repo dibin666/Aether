@@ -233,6 +233,8 @@ pub(super) async fn build_same_format_local_openai_chat_decision_payload_for_can
             json!({
                 "user_id": input.auth_context.user_id,
                 "api_key_id": input.auth_context.api_key_id,
+                "username": input.auth_context.username,
+                "api_key_name": input.auth_context.api_key_name,
                 "request_id": trace_id,
                 "candidate_id": candidate_id,
                 "candidate_index": candidate_index,

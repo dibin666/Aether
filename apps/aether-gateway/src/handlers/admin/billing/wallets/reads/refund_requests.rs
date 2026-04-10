@@ -79,7 +79,7 @@ pub(in super::super) async fn build_admin_wallet_refund_requests_response(
             "requested_by": refund.requested_by,
             "approved_by": refund.approved_by,
             "processed_by": refund.processed_by,
-            "created_at": refund.created_at_unix_secs.and_then(unix_secs_to_rfc3339),
+            "created_at": refund.created_at_unix_ms.and_then(unix_secs_to_rfc3339),
             "updated_at": refund.updated_at_unix_secs.and_then(unix_secs_to_rfc3339),
             "processed_at": refund.processed_at_unix_secs.and_then(unix_secs_to_rfc3339),
             "completed_at": refund.completed_at_unix_secs.and_then(unix_secs_to_rfc3339),

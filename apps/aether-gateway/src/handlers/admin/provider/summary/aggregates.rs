@@ -177,7 +177,7 @@ pub(crate) async fn build_admin_providers_summary_payload(
             .is_active
             .cmp(&left.is_active)
             .then_with(|| left.provider_priority.cmp(&right.provider_priority))
-            .then_with(|| left.created_at_unix_secs.cmp(&right.created_at_unix_secs))
+            .then_with(|| left.created_at_unix_ms.cmp(&right.created_at_unix_ms))
     });
 
     let total = providers.len();

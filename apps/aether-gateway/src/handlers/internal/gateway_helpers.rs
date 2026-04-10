@@ -463,7 +463,7 @@ pub(crate) fn build_management_token_payload(
         "last_used_ip": token.last_used_ip,
         "usage_count": token.usage_count,
         "is_active": token.is_active,
-        "created_at": token.created_at_unix_secs.and_then(unix_secs_to_rfc3339),
+        "created_at": token.created_at_unix_ms.and_then(unix_secs_to_rfc3339),
         "updated_at": token.updated_at_unix_secs.and_then(unix_secs_to_rfc3339),
     });
     if let Some(user) = user {

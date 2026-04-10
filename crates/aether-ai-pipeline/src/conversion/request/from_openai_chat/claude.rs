@@ -133,10 +133,15 @@ pub fn convert_openai_chat_request_to_claude_request(
     if let Some(stop_sequences) = parse_openai_stop_sequences(request.get("stop")) {
         output.insert("stop_sequences".to_string(), Value::Array(stop_sequences));
     }
-    if let Some(tools) = convert_openai_tools_to_claude(request.get("tools")) {
+    if let Some(tools) =
+        convert_openai_tools_to_claude(request.get("tools"), request.get("web_search_options"))
+    {
         output.insert("tools".to_string(), Value::Array(tools));
     }
-    if let Some(tool_choice) = convert_openai_tool_choice_to_claude(request.get("tool_choice")) {
+    if let Some(tool_choice) = convert_openai_tool_choice_to_claude(
+        request.get("tool_choice"),
+        request.get("parallel_tool_calls"),
+    ) {
         output.insert("tool_choice".to_string(), tool_choice);
     }
     if let Some(metadata) = request.get("metadata").cloned() {
@@ -250,51 +255,106 @@ fn convert_openai_content_to_claude_blocks(
     }
 }
 
-fn convert_openai_tools_to_claude(tools: Option<&Value>) -> Option<Vec<Value>> {
-    let tool_values = tools?.as_array()?;
+fn convert_openai_tools_to_claude(
+    tools: Option<&Value>,
+    web_search_options: Option<&Value>,
+) -> Option<Vec<Value>> {
     let mut converted = Vec::new();
-    for tool in tool_values {
-        let tool_object = tool.as_object()?;
-        if tool_object
-            .get("type")
-            .and_then(Value::as_str)
-            .is_some_and(|value| value != "function")
-        {
-            continue;
+    if let Some(tool_values) = tools.and_then(Value::as_array) {
+        for tool in tool_values {
+            let tool_object = tool.as_object()?;
+            if tool_object
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value != "function")
+            {
+                continue;
+            }
+            let function = tool_object.get("function")?.as_object()?;
+            let name = function
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            let mut converted_tool = Map::new();
+            converted_tool.insert("name".to_string(), Value::String(name.to_string()));
+            if let Some(description) = function.get("description").cloned() {
+                converted_tool.insert("description".to_string(), description);
+            }
+            converted_tool.insert(
+                "input_schema".to_string(),
+                function
+                    .get("parameters")
+                    .cloned()
+                    .unwrap_or_else(|| json!({})),
+            );
+            converted.push(Value::Object(converted_tool));
         }
-        let function = tool_object.get("function")?.as_object()?;
-        let name = function
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())?;
-        let mut converted_tool = Map::new();
-        converted_tool.insert("name".to_string(), Value::String(name.to_string()));
-        if let Some(description) = function.get("description").cloned() {
-            converted_tool.insert("description".to_string(), description);
-        }
-        converted_tool.insert(
-            "input_schema".to_string(),
-            function
-                .get("parameters")
-                .cloned()
-                .unwrap_or_else(|| json!({})),
-        );
-        converted.push(Value::Object(converted_tool));
+    }
+    if let Some(web_search_tool) =
+        convert_openai_web_search_options_to_claude_tool(web_search_options)
+    {
+        converted.push(web_search_tool);
     }
     (!converted.is_empty()).then_some(converted)
 }
 
-fn convert_openai_tool_choice_to_claude(tool_choice: Option<&Value>) -> Option<Value> {
-    let tool_choice = tool_choice?;
-    match tool_choice {
-        Value::String(value) => match value.trim().to_ascii_lowercase().as_str() {
+fn convert_openai_web_search_options_to_claude_tool(
+    web_search_options: Option<&Value>,
+) -> Option<Value> {
+    let web_search_options = web_search_options?.as_object()?;
+    let mut tool = Map::new();
+    tool.insert(
+        "type".to_string(),
+        Value::String("web_search_20250305".to_string()),
+    );
+    tool.insert("name".to_string(), Value::String("web_search".to_string()));
+    if let Some(user_location) = web_search_options
+        .get("user_location")
+        .and_then(Value::as_object)
+    {
+        let approximate = user_location
+            .get("approximate")
+            .and_then(Value::as_object)
+            .unwrap_or(user_location);
+        let mut location = Map::new();
+        location.insert("type".to_string(), Value::String("approximate".to_string()));
+        for field in ["city", "country", "region", "timezone"] {
+            if let Some(value) = approximate.get(field).cloned() {
+                location.insert(field.to_string(), value);
+            }
+        }
+        if location.len() > 1 {
+            tool.insert("user_location".to_string(), Value::Object(location));
+        }
+    }
+    if let Some(max_uses) = web_search_options
+        .get("search_context_size")
+        .and_then(Value::as_str)
+        .and_then(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "low" => Some(1u64),
+            "medium" => Some(5u64),
+            "high" => Some(10u64),
+            _ => None,
+        })
+    {
+        tool.insert("max_uses".to_string(), Value::from(max_uses));
+    }
+    Some(Value::Object(tool))
+}
+
+fn convert_openai_tool_choice_to_claude(
+    tool_choice: Option<&Value>,
+    parallel_tool_calls: Option<&Value>,
+) -> Option<Value> {
+    let mut converted = match tool_choice {
+        Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
             "none" => Some(json!({ "type": "none" })),
             "required" => Some(json!({ "type": "any" })),
             "auto" => Some(json!({ "type": "auto" })),
             _ => None,
         },
-        Value::Object(object) => {
+        Some(Value::Object(object)) => {
             let function_name = object
                 .get("function")
                 .and_then(Value::as_object)
@@ -307,8 +367,29 @@ fn convert_openai_tool_choice_to_claude(tool_choice: Option<&Value>) -> Option<V
                 "name": function_name,
             }))
         }
-        _ => None,
+        Some(_) => None,
+        None => None,
+    };
+    if let Some(parallel_tool_calls) = parallel_tool_calls.and_then(Value::as_bool) {
+        if converted.is_none() {
+            converted = Some(json!({ "type": "auto" }));
+        }
+        if let Some(object) = converted.as_mut().and_then(Value::as_object_mut) {
+            let choice_type = object
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase();
+            if choice_type != "none" {
+                object.insert(
+                    "disable_parallel_tool_use".to_string(),
+                    Value::Bool(!parallel_tool_calls),
+                );
+            }
+        }
     }
+    converted
 }
 
 fn compact_claude_messages(messages: Vec<Value>) -> Vec<Value> {
@@ -408,4 +489,70 @@ fn parse_data_url(value: &str) -> Option<(String, String)> {
         return None;
     }
     Some((media_type.to_string(), data.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::convert_openai_chat_request_to_claude_request;
+    use serde_json::json;
+
+    #[test]
+    fn maps_openai_web_search_options_to_claude_builtin_tool() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "messages": [
+                { "role": "user", "content": "weather in shanghai" }
+            ],
+            "web_search_options": {
+                "search_context_size": "medium",
+                "user_location": {
+                    "approximate": {
+                        "city": "Shanghai",
+                        "country": "CN",
+                        "timezone": "Asia/Shanghai"
+                    }
+                }
+            }
+        });
+
+        let converted =
+            convert_openai_chat_request_to_claude_request(&request, "claude-sonnet-4-5", false)
+                .expect("request should convert");
+
+        assert_eq!(converted["tools"][0]["type"], "web_search_20250305");
+        assert_eq!(converted["tools"][0]["name"], "web_search");
+        assert_eq!(converted["tools"][0]["max_uses"], 5);
+        assert_eq!(
+            converted["tools"][0]["user_location"],
+            json!({
+                "type": "approximate",
+                "city": "Shanghai",
+                "country": "CN",
+                "timezone": "Asia/Shanghai",
+            })
+        );
+    }
+
+    #[test]
+    fn maps_parallel_tool_calls_to_disable_parallel_tool_use() {
+        let request = json!({
+            "model": "gpt-5.4",
+            "messages": [
+                { "role": "user", "content": "call tools if needed" }
+            ],
+            "parallel_tool_calls": true
+        });
+
+        let converted =
+            convert_openai_chat_request_to_claude_request(&request, "claude-sonnet-4-5", false)
+                .expect("request should convert");
+
+        assert_eq!(
+            converted["tool_choice"],
+            json!({
+                "type": "auto",
+                "disable_parallel_tool_use": false,
+            })
+        );
+    }
 }

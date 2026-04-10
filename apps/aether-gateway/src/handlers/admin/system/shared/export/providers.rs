@@ -82,9 +82,9 @@ pub(crate) async fn build_admin_system_export_providers_payload(
                 left.internal_priority
                     .cmp(&right.internal_priority)
                     .then(
-                        left.created_at_unix_secs
+                        left.created_at_unix_ms
                             .unwrap_or(0)
-                            .cmp(&right.created_at_unix_secs.unwrap_or(0)),
+                            .cmp(&right.created_at_unix_ms.unwrap_or(0)),
                     )
                     .then(left.id.cmp(&right.id))
             });

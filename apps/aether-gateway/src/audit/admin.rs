@@ -1,5 +1,5 @@
 use axum::body::Body;
-use axum::http::{self, Response};
+use axum::http::{self, Response, StatusCode};
 use tracing::{info, warn};
 
 use crate::control::GatewayControlDecision;
@@ -68,12 +68,8 @@ pub(crate) fn emit_admin_audit(
         )
     };
 
-    let audit_status = if response.status().is_success() {
-        "completed"
-    } else {
-        "failed"
-    };
-    if response.status().is_success() {
+    let (audit_status, log_level) = classify_admin_audit_response(method, response.status());
+    if log_level == AdminAuditLogLevel::Info {
         info!(
             event_name,
             log_type = "audit",
@@ -116,6 +112,25 @@ pub(crate) fn emit_admin_audit(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdminAuditLogLevel {
+    Info,
+    Warn,
+}
+
+fn classify_admin_audit_response(
+    method: &http::Method,
+    status: StatusCode,
+) -> (&'static str, AdminAuditLogLevel) {
+    if status.is_success() {
+        return ("completed", AdminAuditLogLevel::Info);
+    }
+    if status == StatusCode::NOT_FOUND && is_admin_read_method(method) {
+        return ("not_found", AdminAuditLogLevel::Info);
+    }
+    ("failed", AdminAuditLogLevel::Warn)
+}
+
 fn default_target_type(route_family: &str) -> &str {
     route_family
         .strip_suffix("_manage")
@@ -128,4 +143,30 @@ fn is_admin_mutation_method(method: &http::Method) -> bool {
         *method,
         http::Method::POST | http::Method::PUT | http::Method::PATCH | http::Method::DELETE
     )
+}
+
+fn is_admin_read_method(method: &http::Method) -> bool {
+    matches!(*method, http::Method::GET | http::Method::HEAD)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_admin_audit_response, AdminAuditLogLevel};
+    use axum::http::{Method, StatusCode};
+
+    #[test]
+    fn classifies_read_not_found_as_info_not_found() {
+        assert_eq!(
+            classify_admin_audit_response(&Method::GET, StatusCode::NOT_FOUND),
+            ("not_found", AdminAuditLogLevel::Info)
+        );
+    }
+
+    #[test]
+    fn classifies_mutation_not_found_as_warn_failed() {
+        assert_eq!(
+            classify_admin_audit_response(&Method::DELETE, StatusCode::NOT_FOUND),
+            ("failed", AdminAuditLogLevel::Warn)
+        );
+    }
 }

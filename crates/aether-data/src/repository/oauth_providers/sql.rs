@@ -22,7 +22,7 @@ SELECT
   attribute_mapping,
   extra_config,
   is_enabled,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 FROM oauth_providers
 ORDER BY provider_type ASC
@@ -43,7 +43,7 @@ SELECT
   attribute_mapping,
   extra_config,
   is_enabled,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 FROM oauth_providers
 WHERE provider_type = $1
@@ -156,7 +156,7 @@ RETURNING
   attribute_mapping,
   extra_config,
   is_enabled,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 "#;
 
@@ -343,7 +343,7 @@ fn map_oauth_provider_row(row: &PgRow) -> Result<StoredOAuthProviderConfig, Data
         row.try_get("is_enabled").map_postgres_err()?,
     )
     .with_timestamps(
-        optional_unix_secs(row.try_get("created_at_unix_secs").map_postgres_err()?),
+        optional_unix_secs(row.try_get("created_at_unix_ms").map_postgres_err()?),
         optional_unix_secs(row.try_get("updated_at_unix_secs").map_postgres_err()?),
     ))
 }

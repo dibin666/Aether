@@ -140,9 +140,9 @@ mod tests {
             concurrent_requests: None,
             extra_data: None,
             required_capabilities: None,
-            created_at_unix_secs: 1,
-            started_at_unix_secs: None,
-            finished_at_unix_secs: None,
+            created_at_unix_ms: 1,
+            started_at_unix_ms: None,
+            finished_at_unix_ms: None,
         }
     }
 
@@ -177,7 +177,7 @@ mod tests {
             next_poll_at_unix_secs: None,
             poll_count: 0,
             max_poll_count: 360,
-            created_at_unix_secs: 1,
+            created_at_unix_ms: 1,
             submitted_at_unix_secs: Some(1),
             completed_at_unix_secs: None,
             updated_at_unix_secs: 1,

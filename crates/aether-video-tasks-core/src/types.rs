@@ -135,7 +135,7 @@ pub struct LocalVideoTaskPersistence {
 pub struct OpenAiVideoTaskSeed {
     pub local_task_id: String,
     pub upstream_task_id: String,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub user_id: Option<String>,
     pub api_key_id: Option<String>,
     pub model: Option<String>,

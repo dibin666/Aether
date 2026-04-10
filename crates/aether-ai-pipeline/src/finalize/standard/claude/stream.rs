@@ -145,6 +145,25 @@ impl ClaudeProviderState {
                             },
                         });
                     }
+                    "thinking_delta" => {
+                        let Some(piece) = delta
+                            .get("thinking")
+                            .and_then(Value::as_str)
+                            .or_else(|| delta.get("text").and_then(Value::as_str))
+                        else {
+                            return Ok(out);
+                        };
+                        if piece.is_empty() {
+                            return Ok(out);
+                        }
+                        self.ensure_started(report_context, &mut out);
+                        let (id, model) = self.identity(report_context);
+                        out.push(CanonicalStreamFrame {
+                            id,
+                            model,
+                            event: CanonicalStreamEvent::ReasoningDelta(piece.to_string()),
+                        });
+                    }
                     _ => {}
                 }
             }
@@ -162,6 +181,26 @@ impl ClaudeProviderState {
                     .get("type")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
+                if block_type == "thinking" {
+                    let Some(piece) = block
+                        .get("thinking")
+                        .and_then(Value::as_str)
+                        .or_else(|| block.get("text").and_then(Value::as_str))
+                    else {
+                        return Ok(out);
+                    };
+                    if piece.is_empty() {
+                        return Ok(out);
+                    }
+                    self.ensure_started(report_context, &mut out);
+                    let (id, model) = self.identity(report_context);
+                    out.push(CanonicalStreamFrame {
+                        id,
+                        model,
+                        event: CanonicalStreamEvent::ReasoningDelta(piece.to_string()),
+                    });
+                    return Ok(out);
+                }
                 if block_type == "text" {
                     let Some(text) = block.get("text").and_then(Value::as_str) else {
                         return Ok(out);
@@ -273,10 +312,19 @@ enum ClaudeOpenBlock {
     Text {
         block_index: usize,
     },
+    Thinking {
+        block_index: usize,
+    },
     Tool {
         tool_index: usize,
         block_index: usize,
     },
+}
+
+#[derive(Default)]
+struct ClaudeClientToolState {
+    call_id: String,
+    name: String,
 }
 
 #[derive(Default)]
@@ -288,6 +336,7 @@ pub struct ClaudeClientEmitter {
     next_block_index: usize,
     open_block: Option<ClaudeOpenBlock>,
     tool_block_indices: BTreeMap<usize, usize>,
+    tool_states: BTreeMap<usize, ClaudeClientToolState>,
 }
 
 impl ClaudeClientEmitter {
@@ -313,6 +362,10 @@ impl ClaudeClientEmitter {
                     "content": [],
                     "stop_reason": Value::Null,
                     "stop_sequence": Value::Null,
+                    "usage": {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                    },
                 }
             }),
         )
@@ -324,6 +377,7 @@ impl ClaudeClientEmitter {
         };
         let block_index = match open_block {
             ClaudeOpenBlock::Text { block_index } => block_index,
+            ClaudeOpenBlock::Thinking { block_index } => block_index,
             ClaudeOpenBlock::Tool { block_index, .. } => block_index,
         };
         encode_json_sse(
@@ -352,6 +406,29 @@ impl ClaudeClientEmitter {
                 "content_block": {
                     "type": "text",
                     "text": "",
+                }
+            }),
+        )?);
+        Ok(out)
+    }
+
+    fn ensure_thinking_block(&mut self) -> Result<Vec<u8>, PipelineFinalizeError> {
+        let mut out = Vec::new();
+        if let Some(ClaudeOpenBlock::Thinking { .. }) = self.open_block {
+            return Ok(out);
+        }
+        out.extend(self.close_open_block()?);
+        let block_index = self.next_block_index;
+        self.next_block_index += 1;
+        self.open_block = Some(ClaudeOpenBlock::Thinking { block_index });
+        out.extend(encode_json_sse(
+            Some("content_block_start"),
+            &json!({
+                "type": "content_block_start",
+                "index": block_index,
+                "content_block": {
+                    "type": "thinking",
+                    "thinking": "",
                 }
             }),
         )?);
@@ -429,19 +506,52 @@ impl ClaudeClientEmitter {
                 )?);
                 Ok(out)
             }
+            CanonicalStreamEvent::ReasoningDelta(text) => {
+                let mut out = self.ensure_started()?;
+                out.extend(self.ensure_thinking_block()?);
+                let block_index = match self.open_block {
+                    Some(ClaudeOpenBlock::Thinking { block_index }) => block_index,
+                    _ => return Ok(out),
+                };
+                out.extend(encode_json_sse(
+                    Some("content_block_delta"),
+                    &json!({
+                        "type": "content_block_delta",
+                        "index": block_index,
+                        "delta": {
+                            "type": "thinking_delta",
+                            "thinking": text,
+                        }
+                    }),
+                )?);
+                Ok(out)
+            }
             CanonicalStreamEvent::ToolCallStart {
                 index,
                 call_id,
                 name,
             } => {
                 let mut out = self.ensure_started()?;
+                let state = self.tool_states.entry(index).or_default();
+                state.call_id = call_id.clone();
+                state.name = name.clone();
                 out.extend(self.ensure_tool_block(index, &call_id, &name)?);
                 Ok(out)
             }
             CanonicalStreamEvent::ToolCallArgumentsDelta { index, arguments } => {
                 let mut out = self.ensure_started()?;
-                let call_id = format!("tool_{index}");
-                out.extend(self.ensure_tool_block(index, &call_id, "unknown")?);
+                let state = self.tool_states.entry(index).or_default();
+                let call_id = if state.call_id.is_empty() {
+                    format!("tool_{index}")
+                } else {
+                    state.call_id.clone()
+                };
+                let name = if state.name.is_empty() {
+                    "unknown".to_string()
+                } else {
+                    state.name.clone()
+                };
+                out.extend(self.ensure_tool_block(index, &call_id, &name)?);
                 let block_index = match self.open_block {
                     Some(ClaudeOpenBlock::Tool { block_index, .. }) => block_index,
                     _ => return Ok(out),
@@ -482,15 +592,14 @@ impl ClaudeClientEmitter {
                         "stop_sequence": Value::Null,
                     }),
                 );
-                if let Some(usage) = usage {
-                    payload.insert(
-                        "usage".to_string(),
-                        json!({
-                            "input_tokens": usage.input_tokens,
-                            "output_tokens": usage.output_tokens,
-                        }),
-                    );
-                }
+                let usage = usage.unwrap_or_default();
+                payload.insert(
+                    "usage".to_string(),
+                    json!({
+                        "input_tokens": usage.input_tokens,
+                        "output_tokens": usage.output_tokens,
+                    }),
+                );
                 out.extend(encode_json_sse(
                     Some("message_delta"),
                     &Value::Object(payload),
@@ -522,5 +631,126 @@ impl ClaudeClientEmitter {
                 usage: None,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn data_line(value: Value) -> Vec<u8> {
+        format!("data: {}\n", value).into_bytes()
+    }
+
+    #[test]
+    fn claude_provider_state_parses_thinking_deltas() {
+        let mut state = ClaudeProviderState::default();
+        let report_context = json!({});
+        let _ = state
+            .push_line(
+                &report_context,
+                data_line(json!({
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg_123",
+                        "model": "claude-sonnet-4-5"
+                    }
+                })),
+            )
+            .expect("message_start should parse");
+        let frames = state
+            .push_line(
+                &report_context,
+                data_line(json!({
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {
+                        "type": "thinking_delta",
+                        "thinking": "step by step"
+                    }
+                })),
+            )
+            .expect("thinking delta should parse");
+
+        assert!(frames.iter().any(|frame| matches!(
+            frame.event,
+            CanonicalStreamEvent::ReasoningDelta(ref text) if text == "step by step"
+        )));
+    }
+
+    #[test]
+    fn claude_client_emitter_preserves_tool_identity_and_emits_thinking_blocks() {
+        let mut emitter = ClaudeClientEmitter::default();
+        let mut bytes = emitter
+            .emit(CanonicalStreamFrame {
+                id: "msg_123".to_string(),
+                model: "claude-sonnet-4-5".to_string(),
+                event: CanonicalStreamEvent::Start,
+            })
+            .expect("start should encode");
+        bytes.extend(
+            emitter
+                .emit(CanonicalStreamFrame {
+                    id: "msg_123".to_string(),
+                    model: "claude-sonnet-4-5".to_string(),
+                    event: CanonicalStreamEvent::ReasoningDelta("step by step".to_string()),
+                })
+                .expect("reasoning should encode"),
+        );
+        bytes.extend(
+            emitter
+                .emit(CanonicalStreamFrame {
+                    id: "msg_123".to_string(),
+                    model: "claude-sonnet-4-5".to_string(),
+                    event: CanonicalStreamEvent::ToolCallStart {
+                        index: 0,
+                        call_id: "toolu_1".to_string(),
+                        name: "lookup".to_string(),
+                    },
+                })
+                .expect("tool start should encode"),
+        );
+        bytes.extend(
+            emitter
+                .emit(CanonicalStreamFrame {
+                    id: "msg_123".to_string(),
+                    model: "claude-sonnet-4-5".to_string(),
+                    event: CanonicalStreamEvent::ToolCallArgumentsDelta {
+                        index: 0,
+                        arguments: "{\"city\":\"Shanghai\"}".to_string(),
+                    },
+                })
+                .expect("tool delta should encode"),
+        );
+
+        let sse = String::from_utf8(bytes).expect("sse should be utf8");
+        assert!(sse.contains("\"type\":\"thinking\""));
+        assert!(sse.contains("\"type\":\"thinking_delta\""));
+        assert!(sse.contains("\"id\":\"toolu_1\""));
+        assert!(sse.contains("\"name\":\"lookup\""));
+        assert!(sse.contains("\"partial_json\":\"{\\\"city\\\":\\\"Shanghai\\\"}\""));
+        assert!(sse.contains("\"usage\":{\"input_tokens\":0,\"output_tokens\":0}"));
+    }
+
+    #[test]
+    fn claude_client_emitter_injects_default_usage_into_finish_events() {
+        let mut emitter = ClaudeClientEmitter::default();
+        let bytes = emitter
+            .emit(CanonicalStreamFrame {
+                id: "msg_456".to_string(),
+                model: "gpt-5.4".to_string(),
+                event: CanonicalStreamEvent::Finish {
+                    finish_reason: Some("stop".to_string()),
+                    usage: None,
+                },
+            })
+            .expect("finish should encode");
+
+        let sse = String::from_utf8(bytes).expect("sse should be utf8");
+        assert!(sse.contains("event: message_start"));
+        assert!(sse.contains("event: message_delta"));
+        assert!(sse.contains("\"stop_reason\":\"end_turn\""));
+        assert!(sse.contains("\"usage\":{\"input_tokens\":0,\"output_tokens\":0}"));
     }
 }

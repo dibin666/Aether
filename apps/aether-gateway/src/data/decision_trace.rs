@@ -101,9 +101,9 @@ mod tests {
             Some(1),
             None,
             Some(serde_json::json!({"cache_1h": true})),
-            100,
-            Some(101),
-            Some(102),
+            100_000,
+            Some(101_000),
+            Some(102_000),
         )
         .expect("candidate should build")
     }
@@ -174,11 +174,15 @@ mod tests {
                     provider_name: Some("OpenAI".to_string()),
                     provider_website: Some("https://openai.com".to_string()),
                     provider_type: Some("custom".to_string()),
+                    provider_priority: Some(0),
+                    provider_keep_priority_on_conversion: Some(false),
                     endpoint_api_format: Some("openai:chat".to_string()),
                     endpoint_api_family: Some("openai".to_string()),
                     endpoint_kind: Some("chat".to_string()),
                     provider_key_name: Some("prod-key".to_string()),
                     provider_key_auth_type: Some("api_key".to_string()),
+                    provider_key_internal_priority: Some(50),
+                    provider_key_global_priority_by_format: None,
                     provider_key_capabilities: Some(serde_json::json!({"cache_1h": true})),
                     provider_key_is_active: Some(true),
                 }],

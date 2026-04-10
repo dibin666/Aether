@@ -20,8 +20,8 @@ pub(in super::super) async fn list_recent_completed_usage_for_cache_affinity(
         .await?;
     items.retain(|item| item.status == "completed");
     items.sort_by(|left, right| {
-        left.created_at_unix_secs
-            .cmp(&right.created_at_unix_secs)
+        left.created_at_unix_ms
+            .cmp(&right.created_at_unix_ms)
             .then_with(|| left.id.cmp(&right.id))
     });
     Ok(items)

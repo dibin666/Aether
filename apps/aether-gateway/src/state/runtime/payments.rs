@@ -249,7 +249,7 @@ fn stored_admin_payment_order_to_gateway(
         gateway_order_id: order.gateway_order_id,
         status: order.status,
         gateway_response: order.gateway_response,
-        created_at_unix_secs: order.created_at_unix_secs,
+        created_at_unix_ms: order.created_at_unix_ms,
         paid_at_unix_secs: order.paid_at_unix_secs,
         credited_at_unix_secs: order.credited_at_unix_secs,
         expires_at_unix_secs: order.expires_at_unix_secs,

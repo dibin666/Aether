@@ -803,7 +803,7 @@ pub(super) fn build_admin_pool_key_payload(
     );
     payload.insert(
         "created_at".to_string(),
-        json!(key.created_at_unix_secs.and_then(unix_secs_to_rfc3339)),
+        json!(key.created_at_unix_ms.and_then(unix_secs_to_rfc3339)),
     );
     payload.insert(
         "last_used_at".to_string(),

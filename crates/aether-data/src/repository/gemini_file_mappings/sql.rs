@@ -27,8 +27,8 @@ impl SqlxGeminiFileMappingRepository {
             display_name: row.try_get("display_name").ok().flatten(),
             mime_type: row.try_get("mime_type").ok().flatten(),
             source_hash: row.try_get("source_hash").ok().flatten(),
-            created_at_unix_secs: u64::try_from(
-                row.try_get::<i64, _>("created_at_unix_secs")
+            created_at_unix_ms: u64::try_from(
+                row.try_get::<i64, _>("created_at_unix_ms")
                     .map_postgres_err()?,
             )
             .map_err(|_| {
@@ -65,7 +65,7 @@ SELECT
   display_name,
   mime_type,
   source_hash,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix_secs
 FROM gemini_file_mappings
 WHERE file_name = $1
@@ -204,7 +204,7 @@ RETURNING
   display_name,
   mime_type,
   source_hash,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix_secs
 "#,
         )
@@ -254,7 +254,7 @@ RETURNING
   display_name,
   mime_type,
   source_hash,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix_secs
 "#,
         )
@@ -304,7 +304,7 @@ SELECT
   display_name,
   mime_type,
   source_hash,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM expires_at)::bigint AS expires_at_unix_secs
 FROM gemini_file_mappings
 WHERE 1=1

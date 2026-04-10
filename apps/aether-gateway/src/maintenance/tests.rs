@@ -35,17 +35,17 @@ async fn start_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
 
 #[tokio::test]
 async fn gateway_background_request_candidate_cleanup_deletes_expired_entries_in_batches() {
-    fn now_unix_secs() -> u64 {
+    fn now_unix_ms() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs()
+            .as_millis() as u64
     }
 
     async fn seed_candidate(
         repository: &InMemoryRequestCandidateRepository,
         id: &str,
-        created_at_unix_secs: u64,
+        created_at_unix_ms: u64,
     ) {
         repository
             .upsert(UpsertRequestCandidateRecord {
@@ -70,18 +70,18 @@ async fn gateway_background_request_candidate_cleanup_deletes_expired_entries_in
                 concurrent_requests: Some(1),
                 extra_data: None,
                 required_capabilities: None,
-                created_at_unix_secs: Some(created_at_unix_secs),
-                started_at_unix_secs: Some(created_at_unix_secs),
-                finished_at_unix_secs: Some(created_at_unix_secs.saturating_add(1)),
+                created_at_unix_ms: Some(created_at_unix_ms),
+                started_at_unix_ms: Some(created_at_unix_ms),
+                finished_at_unix_ms: Some(created_at_unix_ms.saturating_add(1)),
             })
             .await
             .expect("candidate should seed");
     }
 
     let repository = Arc::new(InMemoryRequestCandidateRepository::default());
-    seed_candidate(&repository, "cand-expired-1", 1).await;
-    seed_candidate(&repository, "cand-expired-2", 2).await;
-    seed_candidate(&repository, "cand-active", now_unix_secs()).await;
+    seed_candidate(&repository, "cand-expired-1", 1_000).await;
+    seed_candidate(&repository, "cand-expired-2", 2_000).await;
+    seed_candidate(&repository, "cand-active", now_unix_ms()).await;
 
     let data_state = crate::data::GatewayDataState::with_request_candidate_repository_for_tests(
         Arc::clone(&repository),

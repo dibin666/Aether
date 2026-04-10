@@ -83,7 +83,7 @@ RETURNING
   variables,
   dimension_mappings,
   is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
         "#,
     )
@@ -148,7 +148,7 @@ SELECT
   variables,
   dimension_mappings,
   is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
 FROM billing_rules
 WHERE ($1::TEXT IS NULL OR task_type = $1)
@@ -190,7 +190,7 @@ SELECT
   variables,
   dimension_mappings,
   is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
 FROM billing_rules
 WHERE id = $1
@@ -232,7 +232,7 @@ RETURNING
   variables,
   dimension_mappings,
   is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
         "#,
     )
@@ -313,7 +313,7 @@ RETURNING
   default_value,
   priority,
   is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
         "#,
     )
@@ -388,7 +388,7 @@ SELECT
   default_value,
   priority,
   is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
 FROM dimension_collectors
 WHERE ($1::TEXT IS NULL OR api_format = $1)
@@ -436,7 +436,7 @@ SELECT
   default_value,
   priority,
   is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
 FROM dimension_collectors
 WHERE id = $1
@@ -484,7 +484,7 @@ RETURNING
   default_value,
   priority,
   is_enabled,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
         "#,
     )
@@ -688,8 +688,8 @@ fn admin_billing_rule_from_row(
             .map_err(internal)?
             .unwrap_or_else(|| serde_json::json!({})),
         is_enabled: row.try_get("is_enabled").map_err(internal)?,
-        created_at_unix_secs: row
-            .try_get::<i64, _>("created_at_unix_secs")
+        created_at_unix_ms: row
+            .try_get::<i64, _>("created_at_unix_ms")
             .map_err(internal)?
             .max(0) as u64,
         updated_at_unix_secs: row
@@ -714,8 +714,8 @@ fn admin_billing_collector_from_row(
         default_value: row.try_get("default_value").map_err(internal)?,
         priority: row.try_get("priority").map_err(internal)?,
         is_enabled: row.try_get("is_enabled").map_err(internal)?,
-        created_at_unix_secs: row
-            .try_get::<i64, _>("created_at_unix_secs")
+        created_at_unix_ms: row
+            .try_get::<i64, _>("created_at_unix_ms")
             .map_err(internal)?
             .max(0) as u64,
         updated_at_unix_secs: row

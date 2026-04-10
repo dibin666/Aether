@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 use tracing::warn;
 
 use crate::api::response::attach_control_metadata_headers;
-use crate::clock::current_unix_secs as current_request_candidate_unix_secs;
+use crate::clock::current_unix_ms as current_request_candidate_unix_ms;
 use crate::control::GatewayControlDecision;
 use crate::execution_runtime::submission::{
     resolve_core_error_background_report_kind, submit_local_core_error_or_sync_finalize,
@@ -117,13 +117,13 @@ async fn record_stream_sync_failure(
     report_context: Option<&Value>,
     payload: &GatewaySyncReportRequest,
     failure: &StreamFailureReport,
-    started_at_unix_secs: Option<u64>,
+    started_at_unix_ms: Option<u64>,
 ) {
     state
         .usage_runtime
         .record_sync_terminal(state.data.as_ref(), plan, report_context, payload)
         .await;
-    let terminal_unix_secs = current_request_candidate_unix_secs();
+    let terminal_unix_secs = current_request_candidate_unix_ms();
     record_report_request_candidate_status(
         state,
         report_context,
@@ -136,8 +136,8 @@ async fn record_stream_sync_failure(
                 .telemetry
                 .as_ref()
                 .and_then(|telemetry| telemetry.elapsed_ms),
-            started_at_unix_secs: started_at_unix_secs.or(Some(terminal_unix_secs)),
-            finished_at_unix_secs: Some(terminal_unix_secs),
+            started_at_unix_ms: started_at_unix_ms.or(Some(terminal_unix_secs)),
+            finished_at_unix_ms: Some(terminal_unix_secs),
         },
     )
     .await;
@@ -195,7 +195,7 @@ pub(super) async fn submit_midstream_stream_failure(
     headers: &std::collections::BTreeMap<String, String>,
     telemetry: Option<ExecutionTelemetry>,
     buffered_body: &[u8],
-    started_at_unix_secs: u64,
+    started_at_unix_ms: u64,
     failure: StreamFailureReport,
 ) {
     let Some(report_kind) =
@@ -219,7 +219,7 @@ pub(super) async fn submit_midstream_stream_failure(
         report_context,
         &payload,
         &failure,
-        Some(started_at_unix_secs),
+        Some(started_at_unix_ms),
     )
     .await;
     if let Err(err) = submit_sync_report(state, trace_id, payload).await {

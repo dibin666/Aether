@@ -188,7 +188,7 @@ pub(in super::super) fn build_admin_wallet_refund_payload(
         "requested_by": refund.requested_by.clone(),
         "approved_by": refund.approved_by.clone(),
         "processed_by": refund.processed_by.clone(),
-        "created_at": unix_secs_to_rfc3339(refund.created_at_unix_secs),
+        "created_at": unix_secs_to_rfc3339(refund.created_at_unix_ms),
         "updated_at": unix_secs_to_rfc3339(refund.updated_at_unix_secs),
         "processed_at": refund.processed_at_unix_secs.and_then(unix_secs_to_rfc3339),
         "completed_at": refund.completed_at_unix_secs.and_then(unix_secs_to_rfc3339),

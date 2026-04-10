@@ -2,8 +2,9 @@ pub mod from_openai_chat;
 pub mod to_openai_chat;
 
 pub use from_openai_chat::{
-    build_openai_cli_response, convert_openai_chat_response_to_claude_chat,
-    convert_openai_chat_response_to_gemini_chat, convert_openai_chat_response_to_openai_cli,
+    build_openai_cli_response, build_openai_cli_response_with_reasoning,
+    convert_openai_chat_response_to_claude_chat, convert_openai_chat_response_to_gemini_chat,
+    convert_openai_chat_response_to_openai_cli, OpenAiCliResponseUsage,
 };
 pub use to_openai_chat::{
     convert_claude_chat_response_to_openai_chat, convert_claude_cli_response_to_openai_cli,

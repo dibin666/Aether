@@ -68,7 +68,7 @@ fn sample_usage_row(
     output_tokens: i32,
     total_cost_usd: f64,
     actual_total_cost_usd: f64,
-    created_at_unix_secs: i64,
+    created_at_unix_ms: i64,
 ) -> StoredRequestUsageAudit {
     StoredRequestUsageAudit::new(
         id.to_string(),
@@ -104,9 +104,9 @@ fn sample_usage_row(
         Some(120),
         "completed".to_string(),
         "settled".to_string(),
-        created_at_unix_secs,
-        created_at_unix_secs + 1,
-        Some(created_at_unix_secs + 2),
+        created_at_unix_ms,
+        created_at_unix_ms + 1,
+        Some(created_at_unix_ms + 2),
     )
     .expect("usage row should build")
 }

@@ -36,10 +36,10 @@ impl RequestCandidateStatus {
         }
     }
 
-    pub fn is_attempted(self, started_at_unix_secs: Option<u64>) -> bool {
+    pub fn is_attempted(self, started_at_unix_ms: Option<u64>) -> bool {
         match self {
             Self::Available | Self::Unused | Self::Skipped => false,
-            Self::Pending => started_at_unix_secs.is_some(),
+            Self::Pending => started_at_unix_ms.is_some(),
             Self::Streaming | Self::Success | Self::Failed | Self::Cancelled => true,
         }
     }
@@ -68,9 +68,9 @@ pub struct StoredRequestCandidate {
     pub concurrent_requests: Option<u32>,
     pub extra_data: Option<serde_json::Value>,
     pub required_capabilities: Option<serde_json::Value>,
-    pub created_at_unix_secs: u64,
-    pub started_at_unix_secs: Option<u64>,
-    pub finished_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: u64,
+    pub started_at_unix_ms: Option<u64>,
+    pub finished_at_unix_ms: Option<u64>,
 }
 
 impl StoredRequestCandidate {
@@ -97,9 +97,9 @@ impl StoredRequestCandidate {
         concurrent_requests: Option<i32>,
         extra_data: Option<serde_json::Value>,
         required_capabilities: Option<serde_json::Value>,
-        created_at_unix_secs: i64,
-        started_at_unix_secs: Option<i64>,
-        finished_at_unix_secs: Option<i64>,
+        created_at_unix_ms: i64,
+        started_at_unix_ms: Option<i64>,
+        finished_at_unix_ms: Option<i64>,
     ) -> Result<Self, crate::DataLayerError> {
         let candidate_index = u32::try_from(candidate_index).map_err(|_| {
             crate::DataLayerError::UnexpectedValue(format!(
@@ -138,25 +138,25 @@ impl StoredRequestCandidate {
                 })
             })
             .transpose()?;
-        let created_at_unix_secs = u64::try_from(created_at_unix_secs).map_err(|_| {
+        let created_at_unix_ms = u64::try_from(created_at_unix_ms).map_err(|_| {
             crate::DataLayerError::UnexpectedValue(format!(
-                "invalid request_candidates.created_at_unix_secs: {created_at_unix_secs}"
+                "invalid request_candidates.created_at_unix_ms: {created_at_unix_ms}"
             ))
         })?;
-        let started_at_unix_secs = started_at_unix_secs
+        let started_at_unix_ms = started_at_unix_ms
             .map(|value| {
                 u64::try_from(value).map_err(|_| {
                     crate::DataLayerError::UnexpectedValue(format!(
-                        "invalid request_candidates.started_at_unix_secs: {value}"
+                        "invalid request_candidates.started_at_unix_ms: {value}"
                     ))
                 })
             })
             .transpose()?;
-        let finished_at_unix_secs = finished_at_unix_secs
+        let finished_at_unix_ms = finished_at_unix_ms
             .map(|value| {
                 u64::try_from(value).map_err(|_| {
                     crate::DataLayerError::UnexpectedValue(format!(
-                        "invalid request_candidates.finished_at_unix_secs: {value}"
+                        "invalid request_candidates.finished_at_unix_ms: {value}"
                     ))
                 })
             })
@@ -184,9 +184,9 @@ impl StoredRequestCandidate {
             concurrent_requests,
             extra_data,
             required_capabilities,
-            created_at_unix_secs,
-            started_at_unix_secs,
-            finished_at_unix_secs,
+            created_at_unix_ms,
+            started_at_unix_ms,
+            finished_at_unix_ms,
         })
     }
 }
@@ -223,11 +223,7 @@ impl RequestCandidateTrace {
         let candidates = if attempted_only {
             all_candidates
                 .iter()
-                .filter(|candidate| {
-                    candidate
-                        .status
-                        .is_attempted(candidate.started_at_unix_secs)
-                })
+                .filter(|candidate| candidate.status.is_attempted(candidate.started_at_unix_ms))
                 .cloned()
                 .collect::<Vec<_>>()
         } else {
@@ -307,11 +303,15 @@ pub struct DecisionTraceCandidate {
     pub provider_name: Option<String>,
     pub provider_website: Option<String>,
     pub provider_type: Option<String>,
+    pub provider_priority: Option<i32>,
+    pub provider_keep_priority_on_conversion: Option<bool>,
     pub endpoint_api_format: Option<String>,
     pub endpoint_api_family: Option<String>,
     pub endpoint_kind: Option<String>,
     pub provider_key_name: Option<String>,
     pub provider_key_auth_type: Option<String>,
+    pub provider_key_internal_priority: Option<i32>,
+    pub provider_key_global_priority_by_format: Option<serde_json::Value>,
     pub provider_key_capabilities: Option<serde_json::Value>,
     pub provider_key_is_active: Option<bool>,
 }
@@ -382,6 +382,8 @@ fn enrich_decision_trace_candidate(
         provider_name: provider.map(|item| item.name.clone()),
         provider_website: provider.and_then(|item| item.website.clone()),
         provider_type: provider.map(|item| item.provider_type.clone()),
+        provider_priority: provider.map(|item| item.provider_priority),
+        provider_keep_priority_on_conversion: provider.map(|item| item.keep_priority_on_conversion),
         endpoint_api_format: endpoint.map(|item| item.api_format.clone()),
         endpoint_api_family: endpoint.and_then(|item| item.api_family.clone()),
         endpoint_kind: endpoint.and_then(|item| item.endpoint_kind.clone()),
@@ -389,6 +391,9 @@ fn enrich_decision_trace_candidate(
             .map(|item| item.name.clone())
             .or_else(|| candidate.api_key_name.clone()),
         provider_key_auth_type: provider_key.map(|item| item.auth_type.clone()),
+        provider_key_internal_priority: provider_key.map(|item| item.internal_priority),
+        provider_key_global_priority_by_format: provider_key
+            .and_then(|item| item.global_priority_by_format.clone()),
         provider_key_capabilities: provider_key.and_then(|item| item.capabilities.clone()),
         provider_key_is_active: provider_key.map(|item| item.is_active),
         candidate,
@@ -409,8 +414,8 @@ pub struct PublicHealthTimelineBucket {
     pub total_count: u64,
     pub success_count: u64,
     pub failed_count: u64,
-    pub min_created_at_unix_secs: Option<u64>,
-    pub max_created_at_unix_secs: Option<u64>,
+    pub min_created_at_unix_ms: Option<u64>,
+    pub max_created_at_unix_ms: Option<u64>,
 }
 
 #[async_trait]
@@ -476,9 +481,9 @@ pub struct UpsertRequestCandidateRecord {
     pub concurrent_requests: Option<u32>,
     pub extra_data: Option<serde_json::Value>,
     pub required_capabilities: Option<serde_json::Value>,
-    pub created_at_unix_secs: Option<u64>,
-    pub started_at_unix_secs: Option<u64>,
-    pub finished_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
+    pub started_at_unix_ms: Option<u64>,
+    pub finished_at_unix_ms: Option<u64>,
 }
 
 impl UpsertRequestCandidateRecord {

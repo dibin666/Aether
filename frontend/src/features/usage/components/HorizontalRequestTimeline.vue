@@ -33,6 +33,9 @@
               <h4 class="text-sm font-semibold">
                 请求链路追踪
               </h4>
+              <span class="text-xs text-muted-foreground">
+                按实际调度顺序
+              </span>
               <Badge :variant="getFinalStatusBadgeVariant(computedFinalStatus)">
                 {{ getFinalStatusLabel(computedFinalStatus) }}
               </Badge>
@@ -197,6 +200,22 @@
                     </span>
                   </div>
                   <div
+                    v-if="currentAttemptSchedulerInfo"
+                    class="info-item"
+                  >
+                    <span class="info-label">调度顺位</span>
+                    <span class="info-value info-value-stacked">
+                      <code class="format-code">
+                        全局 {{ currentAttemptSchedulerInfo.globalPriorityLabel }}
+                        / Provider {{ currentAttemptSchedulerInfo.providerPriorityLabel }}
+                        / Key {{ currentAttemptSchedulerInfo.keyPriorityLabel }}
+                      </code>
+                      <span class="text-xs text-muted-foreground">
+                        {{ currentAttemptSchedulerInfo.hint }}
+                      </span>
+                    </span>
+                  </div>
+                  <div
                     v-if="currentAttempt.key_name || currentAttempt.key_id"
                     class="info-item"
                   >
@@ -303,17 +322,31 @@
                     </span>
                   </div>
                   <div
-                    v-if="mergedCapabilities.length > 0"
+                    v-if="activeCapabilities.length > 0"
                     class="info-item"
                   >
-                    <span class="info-label">能力</span>
+                    <span class="info-label">请求能力</span>
                     <span class="info-value">
                       <span class="capability-tags">
                         <span
-                          v-for="cap in mergedCapabilities"
-                          :key="cap"
+                          v-for="cap in activeCapabilities"
+                          :key="`required-${cap}`"
+                          class="capability-tag active"
+                        >{{ formatCapabilityLabel(cap) }}</span>
+                      </span>
+                    </span>
+                  </div>
+                  <div
+                    v-if="keyCapabilities.length > 0"
+                    class="info-item"
+                  >
+                    <span class="info-label">Key 能力</span>
+                    <span class="info-value">
+                      <span class="capability-tags">
+                        <span
+                          v-for="cap in keyCapabilities"
+                          :key="`key-${cap}`"
                           class="capability-tag"
-                          :class="{ active: isCapabilityUsed(cap) }"
                         >{{ formatCapabilityLabel(cap) }}</span>
                       </span>
                     </span>
@@ -415,6 +448,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
+import { isAxiosError } from 'axios'
 import Card from '@/components/ui/card.vue'
 import Badge from '@/components/ui/badge.vue'
 import Skeleton from '@/components/ui/skeleton.vue'
@@ -1072,6 +1106,47 @@ const normalizeFormatSignature = (value: string): string => {
   return value.trim().toLowerCase()
 }
 
+const normalizePriorityNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value)
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) {
+      return Math.trunc(parsed)
+    }
+  }
+  return null
+}
+
+const resolveClientApiFormat = (attempt: CandidateRecord): string => {
+  const extra = (
+    attempt.extra_data && typeof attempt.extra_data === 'object' && !Array.isArray(attempt.extra_data)
+      ? attempt.extra_data
+      : {}
+  ) as Record<string, unknown>
+  const fromExtra = typeof extra.client_api_format === 'string' ? extra.client_api_format.trim() : ''
+  if (fromExtra) return fromExtra
+  if (typeof props.requestApiFormat === 'string' && props.requestApiFormat.trim()) {
+    return props.requestApiFormat.trim()
+  }
+  return ''
+}
+
+const resolveProviderApiFormat = (attempt: CandidateRecord): string => {
+  const extra = (
+    attempt.extra_data && typeof attempt.extra_data === 'object' && !Array.isArray(attempt.extra_data)
+      ? attempt.extra_data
+      : {}
+  ) as Record<string, unknown>
+  const fromExtra = typeof extra.provider_api_format === 'string' ? extra.provider_api_format.trim() : ''
+  if (fromExtra) return fromExtra
+  if (typeof attempt.endpoint_name === 'string' && attempt.endpoint_name.trim()) {
+    return attempt.endpoint_name.trim()
+  }
+  return ''
+}
+
 const currentAttemptFormatDisplay = computed(() => {
   const attempt = currentAttempt.value
   if (!attempt) return ''
@@ -1103,6 +1178,54 @@ const currentAttemptFormatDisplay = computed(() => {
   return providerText || requestText
 })
 
+const currentAttemptSchedulerInfo = computed<{
+  globalPriorityLabel: string
+  providerPriorityLabel: string
+  keyPriorityLabel: string
+  hint: string
+} | null>(() => {
+  const attempt = currentAttempt.value
+  if (!attempt) return null
+
+  const clientApiFormat = resolveClientApiFormat(attempt)
+  const providerApiFormat = resolveProviderApiFormat(attempt)
+  const providerPriority = normalizePriorityNumber(attempt.provider_priority)
+  const keyInternalPriority = normalizePriorityNumber(attempt.key_internal_priority)
+
+  let globalPriority: number | null = null
+  const globalPriorityMap = attempt.key_global_priority_by_format
+  if (globalPriorityMap && typeof globalPriorityMap === 'object' && !Array.isArray(globalPriorityMap) && clientApiFormat) {
+    const match = Object.entries(globalPriorityMap).find(([format]) => (
+      normalizeFormatSignature(format) === normalizeFormatSignature(clientApiFormat)
+    ))
+    globalPriority = match ? normalizePriorityNumber(match[1]) : null
+  }
+
+  const isCrossFormat = Boolean(
+    clientApiFormat &&
+    providerApiFormat &&
+    normalizeFormatSignature(clientApiFormat) !== normalizeFormatSignature(providerApiFormat),
+  )
+  const keepPriorityOnConversion = attempt.provider_keep_priority_on_conversion === true
+
+  let hint = '链路按实际调度顺序展示'
+  if (globalPriority !== null) {
+    hint = `当前格式 ${formatApiFormat(clientApiFormat)} 先看全局 Key 优先级`
+  }
+  if (isCrossFormat) {
+    hint = keepPriorityOnConversion
+      ? '跨格式候选已开启保持优先级'
+      : '跨格式候选默认排在同格式候选之后'
+  }
+
+  return {
+    globalPriorityLabel: globalPriority !== null ? String(globalPriority) : '-',
+    providerPriorityLabel: providerPriority !== null ? String(providerPriority) : '-',
+    keyPriorityLabel: keyInternalPriority !== null ? String(keyInternalPriority) : '-',
+    hint,
+  }
+})
+
 // 计算当前尝试启用的能力标签（请求需要的能力）
 const activeCapabilities = computed(() => {
   if (!currentAttempt.value?.required_capabilities) return []
@@ -1122,20 +1245,6 @@ const keyCapabilities = computed(() => {
     .filter(([_, enabled]) => enabled)
     .map(([key]) => key)
 })
-
-// 合并后的能力列表：Key 支持的能力 + 请求需要的能力（去重）
-const mergedCapabilities = computed(() => {
-  const keyCaps = new Set(keyCapabilities.value)
-  const activeCaps = new Set(activeCapabilities.value)
-  // 合并两个集合
-  const merged = new Set([...keyCaps, ...activeCaps])
-  return Array.from(merged)
-})
-
-// 检查某个能力是否被请求使用
-const isCapabilityUsed = (cap: string): boolean => {
-  return activeCapabilities.value.includes(cap)
-}
 
 // 判断是否为 OAuth 类型（provider_type 为具体值时也算 OAuth）
 const isOAuthType = (authType?: string): boolean => {
@@ -1251,6 +1360,11 @@ const loadTrace = async (silent = false) => {
   try {
     internalTrace.value = await requestTraceApi.getRequestTrace(props.requestId)
   } catch (err: unknown) {
+    if (isAxiosError(err) && err.response?.status === 404) {
+      internalTrace.value = null
+      error.value = null
+      return
+    }
     if (!silent) {
       error.value = parseApiError(err, '加载失败')
     }

@@ -114,8 +114,6 @@
               <span>{{ formatApiFormat(detail.api_format) }}</span>
               <span class="opacity-40">|</span>
               <span>用户: {{ detail.user?.username || 'Unknown' }}</span>
-              <span class="opacity-40">|</span>
-              <span class="font-mono">{{ detail.api_key?.display || 'N/A' }}</span>
             </div>
           </div>
 

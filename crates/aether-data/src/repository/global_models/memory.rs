@@ -314,9 +314,9 @@ impl GlobalModelReadRepository for InMemoryGlobalModelReadRepository {
             .collect::<Vec<_>>();
         filtered.sort_by(|left, right| {
             right
-                .created_at_unix_secs
+                .created_at_unix_ms
                 .unwrap_or_default()
-                .cmp(&left.created_at_unix_secs.unwrap_or_default())
+                .cmp(&left.created_at_unix_ms.unwrap_or_default())
                 .then_with(|| left.id.cmp(&right.id))
         });
         Ok(filtered
@@ -368,7 +368,7 @@ impl GlobalModelReadRepository for InMemoryGlobalModelReadRepository {
         filtered.sort_by(|left, right| {
             left.global_model_name
                 .cmp(&right.global_model_name)
-                .then_with(|| right.created_at_unix_secs.cmp(&left.created_at_unix_secs))
+                .then_with(|| right.created_at_unix_ms.cmp(&left.created_at_unix_ms))
                 .then_with(|| left.id.cmp(&right.id))
         });
         Ok(filtered)
@@ -417,9 +417,9 @@ impl GlobalModelReadRepository for InMemoryGlobalModelReadRepository {
             .collect::<Vec<_>>();
         filtered.sort_by(|left, right| {
             right
-                .created_at_unix_secs
+                .created_at_unix_ms
                 .unwrap_or_default()
-                .cmp(&left.created_at_unix_secs.unwrap_or_default())
+                .cmp(&left.created_at_unix_ms.unwrap_or_default())
                 .then_with(|| left.id.cmp(&right.id))
         });
         Ok(filtered)

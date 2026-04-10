@@ -550,6 +550,8 @@ mod tests {
         let decision = sample_decision(GatewayControlAuthContext {
             user_id: "user-1".to_string(),
             api_key_id: "key-1".to_string(),
+            username: None,
+            api_key_name: None,
             balance_remaining: Some(10.0),
             access_allowed: true,
             user_rate_limit: Some(1),
@@ -586,6 +588,8 @@ mod tests {
         let decision = sample_decision(GatewayControlAuthContext {
             user_id: "user-1".to_string(),
             api_key_id: "key-1".to_string(),
+            username: None,
+            api_key_name: None,
             balance_remaining: Some(10.0),
             access_allowed: true,
             user_rate_limit: None,
@@ -632,6 +636,8 @@ mod tests {
         let decision = sample_decision(GatewayControlAuthContext {
             user_id: "user-1".to_string(),
             api_key_id: "key-1".to_string(),
+            username: None,
+            api_key_name: None,
             balance_remaining: Some(10.0),
             access_allowed: true,
             user_rate_limit: Some(1),

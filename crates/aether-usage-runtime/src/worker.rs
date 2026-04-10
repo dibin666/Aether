@@ -288,7 +288,7 @@ mod tests {
                     record.status,
                     record.billing_status,
                     record
-                        .created_at_unix_secs
+                        .created_at_unix_ms
                         .unwrap_or(record.updated_at_unix_secs) as i64,
                     record.updated_at_unix_secs as i64,
                     record.finalized_at_unix_secs.map(|value| value as i64),

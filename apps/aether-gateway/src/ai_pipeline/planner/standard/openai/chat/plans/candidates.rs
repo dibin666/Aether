@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 
 use super::super::{GatewayError, LocalOpenAiChatDecisionInput};
+use crate::ai_pipeline::conversion::request_candidate_api_formats;
 use crate::ai_pipeline::{GatewayAuthApiKeySnapshot, PlannerAppState};
 use crate::clock::current_unix_secs;
 use crate::AppState;
@@ -17,17 +18,7 @@ pub(crate) async fn list_local_openai_chat_candidates(
     let mut combined = Vec::new();
     let mut seen = BTreeSet::new();
 
-    let api_formats = if require_streaming {
-        vec!["openai:chat", "claude:chat", "gemini:chat", "openai:cli"]
-    } else {
-        vec![
-            "openai:chat",
-            "claude:chat",
-            "gemini:chat",
-            "openai:cli",
-            "openai:compact",
-        ]
-    };
+    let api_formats = request_candidate_api_formats("openai:chat", require_streaming);
 
     for api_format in api_formats {
         let auth_snapshot = if api_format == "openai:chat" {
@@ -40,6 +31,7 @@ pub(crate) async fn list_local_openai_chat_candidates(
                 api_format,
                 &input.requested_model,
                 require_streaming,
+                input.required_capabilities.as_ref(),
                 auth_snapshot,
                 now_unix_secs,
             )

@@ -153,7 +153,7 @@ pub(super) fn wallet_transaction_payload_from_record(
         "link_id": record.link_id.clone(),
         "operator_id": record.operator_id.clone(),
         "description": record.description.clone(),
-        "created_at": record.created_at_unix_secs.and_then(unix_secs_to_rfc3339),
+        "created_at": record.created_at_unix_ms.and_then(unix_secs_to_rfc3339),
     })
 }
 

@@ -85,7 +85,7 @@ impl AppState {
                         .unwrap_or("管理员调账")
                         .to_string(),
                 ),
-                created_at_unix_secs: chrono::Utc::now().timestamp().max(0) as u64,
+                created_at_unix_ms: chrono::Utc::now().timestamp().max(0) as u64,
             };
             return Ok(Some((wallet.clone(), transaction)));
         }
@@ -148,7 +148,7 @@ impl AppState {
                     "operator_id": operator_id,
                     "description": description,
                 })),
-                created_at_unix_secs: created_at,
+                created_at_unix_ms: created_at,
                 paid_at_unix_secs: Some(created_at),
                 credited_at_unix_secs: Some(created_at),
                 expires_at_unix_secs: None,
@@ -193,7 +193,7 @@ fn stored_wallet_transaction_to_gateway(
         link_id: transaction.link_id,
         operator_id: transaction.operator_id,
         description: transaction.description,
-        created_at_unix_secs: transaction.created_at_unix_secs.unwrap_or_default(),
+        created_at_unix_ms: transaction.created_at_unix_ms.unwrap_or_default(),
     }
 }
 
@@ -215,7 +215,7 @@ fn stored_admin_payment_order_to_gateway(
         gateway_order_id: order.gateway_order_id,
         status: order.status,
         gateway_response: order.gateway_response,
-        created_at_unix_secs: order.created_at_unix_secs,
+        created_at_unix_ms: order.created_at_unix_ms,
         paid_at_unix_secs: order.paid_at_unix_secs,
         credited_at_unix_secs: order.credited_at_unix_secs,
         expires_at_unix_secs: order.expires_at_unix_secs,

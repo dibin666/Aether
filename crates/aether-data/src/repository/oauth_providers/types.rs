@@ -15,7 +15,7 @@ pub struct StoredOAuthProviderConfig {
     pub attribute_mapping: Option<serde_json::Value>,
     pub extra_config: Option<serde_json::Value>,
     pub is_enabled: bool,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_secs: Option<u64>,
 }
 
@@ -67,7 +67,7 @@ impl StoredOAuthProviderConfig {
             attribute_mapping: None,
             extra_config: None,
             is_enabled: false,
-            created_at_unix_secs: None,
+            created_at_unix_ms: None,
             updated_at_unix_secs: None,
         })
     }
@@ -97,10 +97,10 @@ impl StoredOAuthProviderConfig {
 
     pub fn with_timestamps(
         mut self,
-        created_at_unix_secs: Option<u64>,
+        created_at_unix_ms: Option<u64>,
         updated_at_unix_secs: Option<u64>,
     ) -> Self {
-        self.created_at_unix_secs = created_at_unix_secs;
+        self.created_at_unix_ms = created_at_unix_ms;
         self.updated_at_unix_secs = updated_at_unix_secs;
         self
     }

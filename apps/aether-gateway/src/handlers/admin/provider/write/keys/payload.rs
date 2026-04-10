@@ -24,9 +24,9 @@ pub(crate) async fn build_admin_provider_keys_payload(
         left.internal_priority
             .cmp(&right.internal_priority)
             .then_with(|| {
-                left.created_at_unix_secs
+                left.created_at_unix_ms
                     .unwrap_or_default()
-                    .cmp(&right.created_at_unix_secs.unwrap_or_default())
+                    .cmp(&right.created_at_unix_ms.unwrap_or_default())
             })
             .then_with(|| left.id.cmp(&right.id))
     });

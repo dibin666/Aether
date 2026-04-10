@@ -34,7 +34,7 @@ SELECT
   request_timeout,
   stream_first_byte_timeout,
   config,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 FROM providers
 WHERE id IN (
@@ -57,7 +57,7 @@ SELECT
   config,
   format_acceptance_config,
   proxy,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 FROM provider_endpoints
 WHERE id IN (
@@ -79,7 +79,7 @@ SELECT
   config,
   format_acceptance_config,
   proxy,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 FROM provider_endpoints
 WHERE id IN (
@@ -102,7 +102,7 @@ SELECT
   config,
   format_acceptance_config,
   proxy,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 FROM provider_endpoints
 WHERE provider_id IN (
@@ -124,7 +124,7 @@ SELECT
   config,
   format_acceptance_config,
   proxy,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 FROM provider_endpoints
 WHERE provider_id IN (
@@ -177,7 +177,7 @@ SELECT
   EXTRACT(EPOCH FROM oauth_invalid_at)::bigint AS oauth_invalid_at_unix_secs,
   oauth_invalid_reason,
   status_snapshot,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs,
   health_by_format,
   circuit_breaker_by_format
@@ -232,7 +232,7 @@ SELECT
   EXTRACT(EPOCH FROM oauth_invalid_at)::bigint AS oauth_invalid_at_unix_secs,
   oauth_invalid_reason,
   status_snapshot,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs,
   health_by_format,
   circuit_breaker_by_format
@@ -311,7 +311,7 @@ SELECT
   request_timeout,
   stream_first_byte_timeout,
   config,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 FROM providers
 WHERE ($1::boolean = false OR is_active = true)
@@ -523,7 +523,7 @@ SELECT
   EXTRACT(EPOCH FROM oauth_invalid_at)::bigint AS oauth_invalid_at_unix_secs,
   oauth_invalid_reason,
   status_snapshot,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs,
   health_by_format,
   circuit_breaker_by_format
@@ -765,7 +765,7 @@ INSERT INTO providers (
         .bind(provider.request_timeout_secs)
         .bind(provider.stream_first_byte_timeout_secs)
         .bind(&provider.config)
-        .bind(provider.created_at_unix_secs.map(|value| value as f64))
+        .bind(provider.created_at_unix_ms.map(|value| value as f64))
         .bind(provider.updated_at_unix_secs.map(|value| value as f64))
         .execute(&mut *tx)
         .await
@@ -1253,7 +1253,7 @@ INSERT INTO provider_api_keys (
         .bind(&key.health_by_format)
         .bind(&key.circuit_breaker_by_format)
         .bind(key.is_active)
-        .bind(key.created_at_unix_secs.map(|value| value as f64))
+        .bind(key.created_at_unix_ms.map(|value| value as f64))
         .bind(key.updated_at_unix_secs.map(|value| value as f64))
         .execute(&self.pool)
         .await
@@ -1348,7 +1348,7 @@ INSERT INTO provider_endpoints (
         .bind(&endpoint.config)
         .bind(&endpoint.format_acceptance_config)
         .bind(&endpoint.proxy)
-        .bind(endpoint.created_at_unix_secs.map(|value| value as f64))
+        .bind(endpoint.created_at_unix_ms.map(|value| value as f64))
         .bind(endpoint.updated_at_unix_secs.map(|value| value as f64))
         .execute(&self.pool)
         .await
@@ -1414,7 +1414,7 @@ INSERT INTO provider_endpoints (
                 .bind(&endpoint.config)
                 .bind(&endpoint.format_acceptance_config)
                 .bind(&endpoint.proxy)
-                .bind(endpoint.created_at_unix_secs.map(|value| value as f64))
+                .bind(endpoint.created_at_unix_ms.map(|value| value as f64))
                 .bind(endpoint.updated_at_unix_secs.map(|value| value as f64))
                 .execute(&self.pool)
                 .await
@@ -1946,11 +1946,11 @@ fn map_provider_row(row: &PgRow) -> Result<StoredProviderCatalogProvider, DataLa
             })
         })
         .transpose()?;
-    let created_at_unix_secs = row_get::<Option<i64>>(row, "created_at_unix_secs")?
+    let created_at_unix_ms = row_get::<Option<i64>>(row, "created_at_unix_ms")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
-                    "invalid providers.created_at_unix_secs: {value}"
+                    "invalid providers.created_at_unix_ms: {value}"
                 ))
             })
         })
@@ -1991,15 +1991,15 @@ fn map_provider_row(row: &PgRow) -> Result<StoredProviderCatalogProvider, DataLa
         row_get(row, "stream_first_byte_timeout")?,
         row_get(row, "config")?,
     )
-    .with_timestamps(created_at_unix_secs, updated_at_unix_secs))
+    .with_timestamps(created_at_unix_ms, updated_at_unix_secs))
 }
 
 fn map_endpoint_row(row: &PgRow) -> Result<StoredProviderCatalogEndpoint, DataLayerError> {
-    let created_at_unix_secs = row_get::<Option<i64>>(row, "created_at_unix_secs")?
+    let created_at_unix_ms = row_get::<Option<i64>>(row, "created_at_unix_ms")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
-                    "invalid provider_endpoints.created_at_unix_secs: {value}"
+                    "invalid provider_endpoints.created_at_unix_ms: {value}"
                 ))
             })
         })
@@ -2021,7 +2021,7 @@ fn map_endpoint_row(row: &PgRow) -> Result<StoredProviderCatalogEndpoint, DataLa
         row_get(row, "endpoint_kind")?,
         row_get(row, "is_active")?,
     )?
-    .with_timestamps(created_at_unix_secs, updated_at_unix_secs)
+    .with_timestamps(created_at_unix_ms, updated_at_unix_secs)
     .with_health_score(
         row.try_get::<Option<f64>, _>("health_score")
             .ok()
@@ -2182,11 +2182,11 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
             })
         })
         .transpose()?;
-    let created_at_unix_secs = row_get::<Option<i64>>(row, "created_at_unix_secs")?
+    let created_at_unix_ms = row_get::<Option<i64>>(row, "created_at_unix_ms")?
         .map(|value| {
             u64::try_from(value).map_err(|_| {
                 DataLayerError::UnexpectedValue(format!(
-                    "invalid provider_api_keys.created_at_unix_secs: {value}"
+                    "invalid provider_api_keys.created_at_unix_ms: {value}"
                 ))
             })
         })
@@ -2260,7 +2260,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
         key.oauth_invalid_at_unix_secs = oauth_invalid_at_unix_secs;
         key.oauth_invalid_reason = row.try_get("oauth_invalid_reason").ok();
         key.status_snapshot = row.try_get("status_snapshot").ok();
-        key.created_at_unix_secs = created_at_unix_secs;
+        key.created_at_unix_ms = created_at_unix_ms;
         key.updated_at_unix_secs = updated_at_unix_secs;
         key
     })

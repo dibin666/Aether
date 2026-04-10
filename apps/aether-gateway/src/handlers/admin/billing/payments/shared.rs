@@ -213,7 +213,7 @@ pub(super) fn build_admin_payment_order_payload(
         "gateway_order_id": record.gateway_order_id,
         "gateway_response": record.gateway_response,
         "status": admin_payment_effective_status(&record.status, record.expires_at_unix_secs),
-        "created_at": unix_secs_to_rfc3339(record.created_at_unix_secs),
+        "created_at": unix_secs_to_rfc3339(record.created_at_unix_ms),
         "paid_at": record.paid_at_unix_secs.and_then(unix_secs_to_rfc3339),
         "credited_at": record.credited_at_unix_secs.and_then(unix_secs_to_rfc3339),
         "expires_at": record.expires_at_unix_secs.and_then(unix_secs_to_rfc3339),
@@ -236,7 +236,7 @@ pub(super) fn build_admin_payment_callback_payload(
         "payload": row.try_get::<Option<serde_json::Value>, _>("payload").map_err(|err| GatewayError::Internal(err.to_string()))?,
         "error_message": row.try_get::<Option<String>, _>("error_message").map_err(|err| GatewayError::Internal(err.to_string()))?,
         "created_at": row
-            .try_get::<Option<i64>, _>("created_at_unix_secs")
+            .try_get::<Option<i64>, _>("created_at_unix_ms")
             .map_err(|err| GatewayError::Internal(err.to_string()))?
             .and_then(|value| u64::try_from(value).ok())
             .and_then(unix_secs_to_rfc3339),
@@ -263,7 +263,7 @@ pub(super) fn build_admin_payment_callback_payload_from_record(
         "status": record.status,
         "payload": record.payload,
         "error_message": record.error_message,
-        "created_at": unix_secs_to_rfc3339(record.created_at_unix_secs),
+        "created_at": unix_secs_to_rfc3339(record.created_at_unix_ms),
         "processed_at": record.processed_at_unix_secs.and_then(unix_secs_to_rfc3339),
     })
 }

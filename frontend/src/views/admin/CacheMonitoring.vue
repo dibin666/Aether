@@ -515,7 +515,7 @@ onBeforeUnmount(() => {
           活跃亲和性
         </div>
         <div class="text-2xl font-bold mt-1">
-          {{ stats?.affinity_stats?.active_affinities || 0 }}
+          {{ stats?.affinity_stats?.active_affinities || stats?.affinity_stats?.total_affinities || 0 }}
         </div>
         <div class="text-xs text-muted-foreground mt-1">
           TTL {{ config?.cache_ttl_seconds || 300 }}s
@@ -653,7 +653,7 @@ onBeforeUnmount(() => {
         <TableBody v-if="!listLoading && affinityList.length">
           <TableRow
             v-for="item in paginatedAffinityList"
-            :key="`${item.affinity_key}-${item.endpoint_id}-${item.key_id}`"
+            :key="`${item.affinity_key}-${item.endpoint_id}-${item.key_id}-${item.global_model_id || item.model_name || 'unknown'}-${item.api_format || 'unknown'}`"
           >
             <TableCell>
               <div class="flex items-center gap-1.5">
@@ -757,7 +757,7 @@ onBeforeUnmount(() => {
       >
         <div
           v-for="item in paginatedAffinityList"
-          :key="`m-${item.affinity_key}-${item.endpoint_id}-${item.key_id}`"
+          :key="`m-${item.affinity_key}-${item.endpoint_id}-${item.key_id}-${item.global_model_id || item.model_name || 'unknown'}-${item.api_format || 'unknown'}`"
           class="p-4 space-y-2"
         >
           <div class="flex items-start justify-between gap-3">

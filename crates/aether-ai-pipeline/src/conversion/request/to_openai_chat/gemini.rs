@@ -152,8 +152,14 @@ pub fn normalize_gemini_request_to_openai_chat_request(
         if let Some(value) = generation_config.get("topP").cloned() {
             output.insert("top_p".to_string(), value);
         }
+        if let Some(value) = generation_config.get("topK").cloned() {
+            output.insert("top_k".to_string(), value);
+        }
         if let Some(value) = generation_config.get("candidateCount").cloned() {
             output.insert("n".to_string(), value);
+        }
+        if let Some(value) = generation_config.get("seed").cloned() {
+            output.insert("seed".to_string(), value);
         }
         if let Some(value) = generation_config.get("stopSequences").cloned() {
             output.insert("stop".to_string(), value);
@@ -196,6 +202,9 @@ pub fn normalize_gemini_request_to_openai_chat_request(
     if let Some(tools) = normalize_gemini_tools_to_openai(request.get("tools"))? {
         output.insert("tools".to_string(), Value::Array(tools));
     }
+    if let Some(web_search_options) = extract_gemini_web_search_options(request.get("tools")) {
+        output.insert("web_search_options".to_string(), web_search_options);
+    }
     if let Some(tool_choice) = normalize_gemini_tool_choice_to_openai(request.get("toolConfig"))? {
         output.insert("tool_choice".to_string(), tool_choice);
     }
@@ -230,8 +239,16 @@ fn normalize_gemini_tools_to_openai(tools: Option<&Value>) -> Option<Option<Vec<
     };
     let tools = tools.as_array()?;
     let mut normalized = Vec::new();
+    let mut has_code_execution = false;
+    let mut has_url_context = false;
     for tool in tools {
         let tool = tool.as_object()?;
+        if tool.get("codeExecution").is_some() || tool.get("code_execution").is_some() {
+            has_code_execution = true;
+        }
+        if tool.get("urlContext").is_some() || tool.get("url_context").is_some() {
+            has_url_context = true;
+        }
         let declarations = tool
             .get("functionDeclarations")
             .or_else(|| tool.get("function_declarations"))
@@ -269,7 +286,17 @@ fn normalize_gemini_tools_to_openai(tools: Option<&Value>) -> Option<Option<Vec<
             }));
         }
     }
-    Some(Some(normalized))
+    if has_code_execution {
+        normalized.push(build_openai_builtin_gemini_tool("codeExecution"));
+    }
+    if has_url_context {
+        normalized.push(build_openai_builtin_gemini_tool("urlContext"));
+    }
+    if normalized.is_empty() {
+        Some(None)
+    } else {
+        Some(Some(normalized))
+    }
 }
 
 fn normalize_gemini_tool_choice_to_openai(tool_config: Option<&Value>) -> Option<Option<Value>> {
@@ -287,27 +314,50 @@ fn normalize_gemini_tool_choice_to_openai(tool_config: Option<&Value>) -> Option
         .unwrap_or_default()
         .trim()
         .to_ascii_uppercase();
+    if let Some(name) = function_config
+        .get("allowedFunctionNames")
+        .or_else(|| function_config.get("allowed_function_names"))
+        .and_then(Value::as_array)
+        .and_then(|values| values.first())
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(Some(json!({
+            "type": "function",
+            "function": { "name": name }
+        })));
+    }
     match mode.as_str() {
         "NONE" => Some(Some(Value::String("none".to_string()))),
         "AUTO" => Some(Some(Value::String("auto".to_string()))),
         "ANY" | "REQUIRED" => Some(Some(Value::String("required".to_string()))),
-        _ => {
-            if let Some(name) = function_config
-                .get("allowedFunctionNames")
-                .or_else(|| function_config.get("allowed_function_names"))
-                .and_then(Value::as_array)
-                .and_then(|values| values.first())
-                .and_then(Value::as_str)
-            {
-                Some(Some(json!({
-                    "type": "function",
-                    "function": { "name": name }
-                })))
-            } else {
-                Some(None)
-            }
+        _ => Some(None),
+    }
+}
+
+fn extract_gemini_web_search_options(tools: Option<&Value>) -> Option<Value> {
+    let tools = tools?.as_array()?;
+    for tool in tools {
+        let tool = tool.as_object()?;
+        if tool.get("googleSearch").is_some() || tool.get("google_search").is_some() {
+            return Some(json!({}));
         }
     }
+    None
+}
+
+fn build_openai_builtin_gemini_tool(name: &str) -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": name,
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    })
 }
 
 fn extract_gemini_model_from_path(path: &str) -> Option<String> {
@@ -320,5 +370,92 @@ fn extract_gemini_model_from_path(path: &str) -> Option<String> {
         None
     } else {
         Some(model.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_gemini_request_to_openai_chat_request;
+    use serde_json::json;
+
+    #[test]
+    fn normalizes_gemini_seed_builtin_tools_and_specific_tool_choice() {
+        let request = json!({
+            "model": "gemini-2.5-pro",
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{ "text": "use tools" }]
+                }
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 256,
+                "topK": 20,
+                "seed": 7
+            },
+            "tools": [
+                { "googleSearch": {} },
+                { "codeExecution": {} },
+                { "urlContext": {} },
+                {
+                    "functionDeclarations": [
+                        {
+                            "name": "lookupWeather",
+                            "parameters": { "type": "object", "properties": { "city": { "type": "string" } } }
+                        }
+                    ]
+                }
+            ],
+            "toolConfig": {
+                "functionCallingConfig": {
+                    "mode": "ANY",
+                    "allowedFunctionNames": ["lookupWeather"]
+                }
+            }
+        });
+
+        let normalized = normalize_gemini_request_to_openai_chat_request(
+            &request,
+            "/v1beta/models/gemini:generateContent",
+        )
+        .expect("request should convert");
+
+        assert_eq!(normalized["max_completion_tokens"], 256);
+        assert_eq!(normalized["top_k"], 20);
+        assert_eq!(normalized["seed"], 7);
+        assert_eq!(normalized["web_search_options"], json!({}));
+        assert_eq!(
+            normalized["tool_choice"],
+            json!({
+                "type": "function",
+                "function": { "name": "lookupWeather" }
+            })
+        );
+        assert_eq!(
+            normalized["tools"],
+            json!([
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "lookupWeather",
+                        "parameters": { "type": "object", "properties": { "city": { "type": "string" } } }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "codeExecution",
+                        "parameters": { "type": "object", "properties": {} }
+                    }
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "urlContext",
+                        "parameters": { "type": "object", "properties": {} }
+                    }
+                }
+            ])
+        );
     }
 }

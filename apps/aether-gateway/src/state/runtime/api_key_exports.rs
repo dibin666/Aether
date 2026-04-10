@@ -1,6 +1,19 @@
 use crate::{AppState, GatewayError};
 
 impl AppState {
+    pub(crate) async fn read_auth_api_key_force_capabilities(
+        &self,
+        user_id: &str,
+        api_key_id: &str,
+    ) -> Result<Option<serde_json::Value>, GatewayError> {
+        Ok(self
+            .list_auth_api_key_export_records_by_ids(&[api_key_id.to_string()])
+            .await?
+            .into_iter()
+            .find(|record| record.api_key_id == api_key_id && record.user_id == user_id)
+            .and_then(|record| record.force_capabilities))
+    }
+
     pub(crate) async fn list_auth_api_key_export_records_by_user_ids(
         &self,
         user_ids: &[String],

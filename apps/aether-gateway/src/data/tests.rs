@@ -28,7 +28,9 @@ use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
 use aether_data_contracts::repository::video_tasks::{
     UpsertVideoTask, VideoTaskLookupKey, VideoTaskStatus, VideoTaskWriteRepository,
 };
-use aether_scheduler_core::{build_minimal_candidate_selection, SchedulerAuthConstraints};
+use aether_scheduler_core::{
+    build_minimal_candidate_selection, SchedulerAuthConstraints, SchedulerPriorityMode,
+};
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -108,7 +110,7 @@ async fn data_state_find_uses_configured_read_repository() {
             next_poll_at_unix_secs: Some(100),
             poll_count: 0,
             max_poll_count: 360,
-            created_at_unix_secs: 100,
+            created_at_unix_ms: 100,
             submitted_at_unix_secs: Some(100),
             completed_at_unix_secs: None,
             updated_at_unix_secs: 100,
@@ -384,9 +386,9 @@ async fn data_state_reads_decision_trace_with_provider_catalog_metadata() {
             Some(1),
             None,
             Some(serde_json::json!({"cache_1h": true})),
-            100,
-            Some(101),
-            Some(102),
+            100_000,
+            Some(101_000),
+            Some(102_000),
         )
         .expect("candidate should build"),
     ]));
@@ -472,9 +474,9 @@ async fn data_state_reads_request_audit_bundle_from_multiple_readers() {
             Some(1),
             None,
             Some(serde_json::json!({"cache_1h": true})),
-            100,
-            Some(101),
-            Some(102),
+            100_000,
+            Some(101_000),
+            Some(102_000),
         )
         .expect("candidate should build"),
     ]));
@@ -668,8 +670,10 @@ async fn data_state_reads_minimal_candidate_selection_with_auth_filters() {
         "gpt-4.1",
         "gpt-4.1",
         false,
+        None,
         Some(&auth_constraints),
         Some(auth_snapshot.api_key_id.as_str()),
+        SchedulerPriorityMode::Provider,
     )
     .expect("selection should read");
 
@@ -722,7 +726,7 @@ async fn maps_openai_video_task_repository_row_into_read_response() {
             next_poll_at_unix_secs: Some(120),
             poll_count: 1,
             max_poll_count: 360,
-            created_at_unix_secs: 100,
+            created_at_unix_ms: 100,
             submitted_at_unix_secs: Some(100),
             completed_at_unix_secs: None,
             updated_at_unix_secs: 120,
@@ -781,7 +785,7 @@ async fn maps_gemini_video_task_repository_row_into_read_response() {
             next_poll_at_unix_secs: None,
             poll_count: 4,
             max_poll_count: 360,
-            created_at_unix_secs: 100,
+            created_at_unix_ms: 100,
             submitted_at_unix_secs: Some(100),
             completed_at_unix_secs: Some(120),
             updated_at_unix_secs: 120,
@@ -843,7 +847,7 @@ async fn data_state_write_uses_configured_shadow_result_writer() {
             match_status: ShadowResultMatchStatus::Pending,
             status_code: Some(200),
             error_message: None,
-            created_at_unix_secs: 100,
+            created_at_unix_ms: 100,
             updated_at_unix_secs: 100,
         })
         .await
@@ -906,7 +910,7 @@ async fn data_state_records_shadow_result_samples_and_merges_match_status() {
         .expect("second stored result should exist");
 
     assert_eq!(second.match_status, ShadowResultMatchStatus::Match);
-    assert_eq!(second.created_at_unix_secs, 100);
+    assert_eq!(second.created_at_unix_ms, 100);
     assert_eq!(second.updated_at_unix_secs, 200);
     assert_eq!(second.request_id.as_deref(), Some("req-1"));
 }
@@ -986,7 +990,7 @@ fn sample_request_candidate(
     request_id: &str,
     candidate_index: i32,
     status: RequestCandidateStatus,
-    started_at_unix_secs: Option<i64>,
+    started_at_unix_ms: Option<i64>,
     latency_ms: Option<i32>,
     status_code: Option<i32>,
 ) -> StoredRequestCandidate {
@@ -1013,8 +1017,8 @@ fn sample_request_candidate(
         None,
         None,
         100 + i64::from(candidate_index),
-        started_at_unix_secs,
-        started_at_unix_secs.map(|value| value + 1),
+        started_at_unix_ms,
+        started_at_unix_ms.map(|value| value + 1),
     )
     .expect("candidate should build")
 }

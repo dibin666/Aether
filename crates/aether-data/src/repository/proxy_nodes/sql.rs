@@ -39,7 +39,7 @@ SELECT
   EXTRACT(EPOCH FROM tunnel_connected_at)::bigint AS tunnel_connected_at_unix_secs,
   remote_config,
   config_version,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 FROM proxy_nodes
 WHERE id = $1
@@ -75,7 +75,7 @@ SELECT
   EXTRACT(EPOCH FROM tunnel_connected_at)::bigint AS tunnel_connected_at_unix_secs,
   remote_config,
   config_version,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 FROM proxy_nodes
 ORDER BY name ASC, id ASC
@@ -87,7 +87,7 @@ SELECT
   node_id,
   CAST(event_type AS TEXT) AS event_type,
   detail,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms
 FROM proxy_node_events
 WHERE node_id = $1
 ORDER BY created_at DESC, id DESC
@@ -183,7 +183,7 @@ impl SqlxProxyNodeRepository {
                     .map_postgres_err()?,
             ),
             row.try_get("remote_config").map_postgres_err()?,
-            Self::optional_unix_secs(row.try_get("created_at_unix_secs").map_postgres_err()?),
+            Self::optional_unix_secs(row.try_get("created_at_unix_ms").map_postgres_err()?),
             Self::optional_unix_secs(row.try_get("updated_at_unix_secs").map_postgres_err()?),
         ))
     }
@@ -194,8 +194,8 @@ impl SqlxProxyNodeRepository {
             node_id: row.try_get("node_id").map_postgres_err()?,
             event_type: row.try_get("event_type").map_postgres_err()?,
             detail: row.try_get("detail").map_postgres_err()?,
-            created_at_unix_secs: Self::optional_unix_secs(
-                row.try_get("created_at_unix_secs").map_postgres_err()?,
+            created_at_unix_ms: Self::optional_unix_secs(
+                row.try_get("created_at_unix_ms").map_postgres_err()?,
             ),
         })
     }

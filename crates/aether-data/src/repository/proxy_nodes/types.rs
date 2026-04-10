@@ -29,7 +29,7 @@ pub struct StoredProxyNode {
     pub tunnel_connected_at_unix_secs: Option<u64>,
     pub remote_config: Option<serde_json::Value>,
     pub config_version: i32,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
     pub updated_at_unix_secs: Option<u64>,
 }
 
@@ -101,7 +101,7 @@ impl StoredProxyNode {
             tunnel_connected_at_unix_secs: None,
             remote_config: None,
             config_version,
-            created_at_unix_secs: None,
+            created_at_unix_ms: None,
             updated_at_unix_secs: None,
         })
     }
@@ -118,7 +118,7 @@ impl StoredProxyNode {
         estimated_max_concurrency: Option<i32>,
         tunnel_connected_at_unix_secs: Option<u64>,
         remote_config: Option<serde_json::Value>,
-        created_at_unix_secs: Option<u64>,
+        created_at_unix_ms: Option<u64>,
         updated_at_unix_secs: Option<u64>,
     ) -> Self {
         self.region = region;
@@ -130,7 +130,7 @@ impl StoredProxyNode {
         self.estimated_max_concurrency = estimated_max_concurrency;
         self.tunnel_connected_at_unix_secs = tunnel_connected_at_unix_secs;
         self.remote_config = remote_config;
-        self.created_at_unix_secs = created_at_unix_secs;
+        self.created_at_unix_ms = created_at_unix_ms;
         self.updated_at_unix_secs = updated_at_unix_secs;
         self
     }
@@ -177,7 +177,7 @@ pub struct StoredProxyNodeEvent {
     pub node_id: String,
     pub event_type: String,
     pub detail: Option<String>,
-    pub created_at_unix_secs: Option<u64>,
+    pub created_at_unix_ms: Option<u64>,
 }
 
 pub fn normalize_proxy_metadata(

@@ -102,8 +102,8 @@ pub(super) fn admin_wallet_payment_order_from_row(
         gateway_response: row
             .try_get("gateway_response")
             .map_err(|err| GatewayError::Internal(err.to_string()))?,
-        created_at_unix_secs: row
-            .try_get::<i64, _>("created_at_unix_secs")
+        created_at_unix_ms: row
+            .try_get::<i64, _>("created_at_unix_ms")
             .map_err(|err| GatewayError::Internal(err.to_string()))?
             .max(0) as u64,
         paid_at_unix_secs: row
@@ -182,8 +182,8 @@ pub(super) fn admin_wallet_refund_from_row(
         processed_by: row
             .try_get("processed_by")
             .map_err(|err| GatewayError::Internal(err.to_string()))?,
-        created_at_unix_secs: row
-            .try_get::<i64, _>("created_at_unix_secs")
+        created_at_unix_ms: row
+            .try_get::<i64, _>("created_at_unix_ms")
             .map_err(|err| GatewayError::Internal(err.to_string()))?
             .max(0) as u64,
         updated_at_unix_secs: row
@@ -234,8 +234,8 @@ pub(super) fn admin_billing_rule_from_row(
         is_enabled: row
             .try_get("is_enabled")
             .map_err(|err| GatewayError::Internal(err.to_string()))?,
-        created_at_unix_secs: row
-            .try_get::<i64, _>("created_at_unix_secs")
+        created_at_unix_ms: row
+            .try_get::<i64, _>("created_at_unix_ms")
             .map_err(|err| GatewayError::Internal(err.to_string()))?
             .max(0) as u64,
         updated_at_unix_secs: row
@@ -282,8 +282,8 @@ pub(super) fn admin_billing_collector_from_row(
         is_enabled: row
             .try_get("is_enabled")
             .map_err(|err| GatewayError::Internal(err.to_string()))?,
-        created_at_unix_secs: row
-            .try_get::<i64, _>("created_at_unix_secs")
+        created_at_unix_ms: row
+            .try_get::<i64, _>("created_at_unix_ms")
             .map_err(|err| GatewayError::Internal(err.to_string()))?
             .max(0) as u64,
         updated_at_unix_secs: row

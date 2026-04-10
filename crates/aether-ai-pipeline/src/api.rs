@@ -69,8 +69,9 @@ pub use crate::conversion::response::{
 };
 pub use crate::conversion::{
     build_core_error_body_for_client_format, is_core_error_finalize_kind,
-    request_conversion_direct_auth, request_conversion_kind,
-    request_conversion_transport_supported, sync_chat_response_conversion_kind,
+    request_candidate_api_formats, request_conversion_direct_auth, request_conversion_kind,
+    request_conversion_requires_enable_flag, request_conversion_transport_supported,
+    request_pair_allowed_for_transport, sync_chat_response_conversion_kind,
     sync_cli_response_conversion_kind, LocalCoreSyncErrorKind, RequestConversionKind,
     SyncChatResponseConversionKind, SyncCliResponseConversionKind,
 };

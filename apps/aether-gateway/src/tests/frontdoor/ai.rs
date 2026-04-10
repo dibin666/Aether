@@ -64,7 +64,7 @@ fn sample_gemini_video_task(
         next_poll_at_unix_secs: (!completed).then_some(124),
         poll_count: 0,
         max_poll_count: 360,
-        created_at_unix_secs: 123,
+        created_at_unix_ms: 123,
         submitted_at_unix_secs: Some(123),
         completed_at_unix_secs: completed.then_some(124),
         updated_at_unix_secs: 124,

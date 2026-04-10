@@ -80,12 +80,12 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
             .values()
             .filter(|item| {
                 if let Some(created_from_unix_secs) = query.created_from_unix_secs {
-                    if item.created_at_unix_secs < created_from_unix_secs {
+                    if item.created_at_unix_ms < created_from_unix_secs {
                         return false;
                     }
                 }
                 if let Some(created_until_unix_secs) = query.created_until_unix_secs {
-                    if item.created_at_unix_secs >= created_until_unix_secs {
+                    if item.created_at_unix_ms >= created_until_unix_secs {
                         return false;
                     }
                 }
@@ -109,8 +109,8 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
             .cloned()
             .collect();
         items.sort_by(|left, right| {
-            left.created_at_unix_secs
-                .cmp(&right.created_at_unix_secs)
+            left.created_at_unix_ms
+                .cmp(&right.created_at_unix_ms)
                 .then_with(|| left.request_id.cmp(&right.request_id))
         });
         Ok(items)
@@ -134,8 +134,8 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
             .collect();
         items.sort_by(|left, right| {
             right
-                .created_at_unix_secs
-                .cmp(&left.created_at_unix_secs)
+                .created_at_unix_ms
+                .cmp(&left.created_at_unix_ms)
                 .then_with(|| left.id.cmp(&right.id))
         });
         items.truncate(limit);
@@ -250,10 +250,10 @@ impl UsageWriteRepository for InMemoryUsageReadRepository {
         usage.validate()?;
         let mut by_request_id = self.by_request_id.write().expect("usage repository lock");
 
-        let created_at_unix_secs = by_request_id
+        let created_at_unix_ms = by_request_id
             .get(&usage.request_id)
-            .map(|existing| existing.created_at_unix_secs)
-            .or(usage.created_at_unix_secs)
+            .map(|existing| existing.created_at_unix_ms)
+            .or(usage.created_at_unix_ms)
             .unwrap_or(usage.updated_at_unix_secs);
 
         let total_tokens = usage
@@ -361,7 +361,7 @@ impl UsageWriteRepository for InMemoryUsageReadRepository {
             request_metadata: usage
                 .request_metadata
                 .or_else(|| existing.and_then(|existing| existing.request_metadata.clone())),
-            created_at_unix_secs,
+            created_at_unix_ms,
             updated_at_unix_secs: usage.updated_at_unix_secs,
             finalized_at_unix_secs: usage.finalized_at_unix_secs,
         };
@@ -380,7 +380,7 @@ mod tests {
     };
     use serde_json::json;
 
-    fn sample_usage(request_id: &str, created_at_unix_secs: i64) -> StoredRequestUsageAudit {
+    fn sample_usage(request_id: &str, created_at_unix_ms: i64) -> StoredRequestUsageAudit {
         StoredRequestUsageAudit::new(
             "usage-1".to_string(),
             request_id.to_string(),
@@ -415,9 +415,9 @@ mod tests {
             Some(120),
             "completed".to_string(),
             "settled".to_string(),
-            created_at_unix_secs,
-            created_at_unix_secs + 1,
-            Some(created_at_unix_secs + 2),
+            created_at_unix_ms,
+            created_at_unix_ms + 1,
+            Some(created_at_unix_ms + 2),
         )
         .expect("usage should build")
     }
@@ -491,7 +491,7 @@ mod tests {
                 client_response_body: None,
                 request_metadata: None,
                 finalized_at_unix_secs: None,
-                created_at_unix_secs: Some(100),
+                created_at_unix_ms: Some(100),
                 updated_at_unix_secs: 101,
             })
             .await

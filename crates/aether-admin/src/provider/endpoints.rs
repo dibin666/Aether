@@ -108,7 +108,7 @@ pub fn build_admin_provider_endpoint_response(
         "format_acceptance_config": endpoint.format_acceptance_config,
         "total_keys": total_keys,
         "active_keys": active_keys,
-        "created_at": endpoint_timestamp_or_now(endpoint.created_at_unix_secs, now_unix_secs),
+        "created_at": endpoint_timestamp_or_now(endpoint.created_at_unix_ms, now_unix_secs),
         "updated_at": endpoint_timestamp_or_now(endpoint.updated_at_unix_secs, now_unix_secs),
     })
 }

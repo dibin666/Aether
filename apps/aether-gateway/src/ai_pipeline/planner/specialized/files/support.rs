@@ -4,7 +4,9 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::ai_pipeline::contracts::ExecutionRuntimeAuthContext;
-use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::planner::candidate_affinity::{
+    rank_local_execution_candidates, remember_scheduler_affinity_for_candidate,
+};
 use crate::ai_pipeline::{
     resolve_local_decision_execution_runtime_auth_context, GatewayControlDecision,
 };
@@ -20,6 +22,7 @@ pub(super) const GEMINI_FILES_REQUIRED_CAPABILITY: &str = "gemini_files";
 pub(super) struct LocalGeminiFilesDecisionInput {
     pub(super) auth_context: ExecutionRuntimeAuthContext,
     pub(super) auth_snapshot: GatewayAuthApiKeySnapshot,
+    pub(super) required_capabilities: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,9 +62,20 @@ pub(super) async fn resolve_local_gemini_files_decision_input(
         }
     };
 
+    let explicit_required_capabilities = json!({ "gemini_files": true });
+    let required_capabilities = planner_state
+        .resolve_request_candidate_required_capabilities(
+            &auth_context.user_id,
+            &auth_context.api_key_id,
+            None,
+            Some(&explicit_required_capabilities),
+        )
+        .await;
+
     Some(LocalGeminiFilesDecisionInput {
         auth_context,
         auth_snapshot,
+        required_capabilities,
     })
 }
 
@@ -80,12 +94,29 @@ pub(super) async fn materialize_local_gemini_files_candidate_attempts(
             current_unix_secs(),
         )
         .await?;
-    let candidates = prefer_local_tunnel_owner_candidates(planner_state, candidates).await;
+    let candidates = rank_local_execution_candidates(
+        planner_state,
+        candidates,
+        GEMINI_FILES_CLIENT_API_FORMAT,
+        input.required_capabilities.as_ref(),
+    )
+    .await;
 
-    let created_at_unix_secs = current_unix_secs();
+    let created_at_unix_ms = current_unix_secs();
     let mut attempts = Vec::with_capacity(candidates.len());
+    let mut affinity_remembered = false;
     for (candidate_index, candidate) in candidates.into_iter().enumerate() {
         let generated_candidate_id = Uuid::new_v4().to_string();
+        if !affinity_remembered {
+            remember_scheduler_affinity_for_candidate(
+                planner_state,
+                Some(&input.auth_snapshot),
+                GEMINI_FILES_CLIENT_API_FORMAT,
+                &candidate.global_model_name,
+                &candidate,
+            );
+            affinity_remembered = true;
+        }
         let extra_data = json!({
             "provider_api_format": GEMINI_FILES_CLIENT_API_FORMAT,
             "client_api_format": GEMINI_FILES_CLIENT_API_FORMAT,
@@ -107,8 +138,9 @@ pub(super) async fn materialize_local_gemini_files_candidate_attempts(
                 &candidate,
                 candidate_index as u32,
                 &generated_candidate_id,
+                input.required_capabilities.as_ref(),
                 Some(extra_data),
-                created_at_unix_secs,
+                created_at_unix_ms,
                 "gateway local gemini files request candidate upsert failed",
             )
             .await;
@@ -140,6 +172,7 @@ pub(super) async fn mark_skipped_local_gemini_files_candidate(
             candidate,
             candidate_index,
             candidate_id,
+            input.required_capabilities.as_ref(),
             skip_reason,
             current_unix_secs(),
             "gateway local gemini files failed to persist skipped candidate",

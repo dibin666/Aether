@@ -88,7 +88,7 @@ pub(crate) async fn build_admin_providers_payload(
                     "api_key": has_any_key_by_provider.contains(&provider_id).then_some("***"),
                     "priority": provider.provider_priority,
                     "is_active": provider.is_active,
-                    "created_at": provider.created_at_unix_secs.and_then(unix_secs_to_rfc3339),
+                    "created_at": provider.created_at_unix_ms.and_then(unix_secs_to_rfc3339),
                     "updated_at": provider.updated_at_unix_secs.and_then(unix_secs_to_rfc3339),
                 })
             })

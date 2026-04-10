@@ -141,8 +141,19 @@ pub fn normalize_claude_request_to_openai_chat_request(body_json: &Value) -> Opt
     if let Some(tools) = normalize_claude_tools_to_openai(request.get("tools"))? {
         output.insert("tools".to_string(), Value::Array(tools));
     }
+    if let Some(web_search_options) = extract_claude_web_search_options(request.get("tools")) {
+        output.insert("web_search_options".to_string(), web_search_options);
+    }
     if let Some(tool_choice) = normalize_claude_tool_choice_to_openai(request.get("tool_choice"))? {
         output.insert("tool_choice".to_string(), tool_choice);
+    }
+    if let Some(parallel_tool_calls) =
+        extract_claude_parallel_tool_calls(request.get("tool_choice"))
+    {
+        output.insert(
+            "parallel_tool_calls".to_string(),
+            Value::Bool(parallel_tool_calls),
+        );
     }
 
     Some(Value::Object(output))
@@ -262,6 +273,13 @@ fn normalize_claude_tools_to_openai(tools: Option<&Value>) -> Option<Option<Vec<
     let mut normalized = Vec::new();
     for tool in tools {
         let tool = tool.as_object()?;
+        if tool
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.starts_with("web_search"))
+        {
+            continue;
+        }
         let name = tool
             .get("name")
             .and_then(Value::as_str)
@@ -288,7 +306,62 @@ fn normalize_claude_tools_to_openai(tools: Option<&Value>) -> Option<Option<Vec<
             "function": Value::Object(function),
         }));
     }
-    Some(Some(normalized))
+    if normalized.is_empty() {
+        Some(None)
+    } else {
+        Some(Some(normalized))
+    }
+}
+
+fn extract_claude_web_search_options(tools: Option<&Value>) -> Option<Value> {
+    let tools = tools?.as_array()?;
+    for tool in tools {
+        let tool = tool.as_object()?;
+        let tool_type = tool
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if !tool_type.starts_with("web_search") {
+            continue;
+        }
+        let mut options = Map::new();
+        if let Some(max_uses) = tool.get("max_uses").and_then(Value::as_u64) {
+            let search_context_size = if max_uses <= 1 {
+                "low"
+            } else if max_uses <= 5 {
+                "medium"
+            } else {
+                "high"
+            };
+            options.insert(
+                "search_context_size".to_string(),
+                Value::String(search_context_size.to_string()),
+            );
+        }
+        if let Some(user_location) = tool.get("user_location").and_then(Value::as_object) {
+            let mut approximate = Map::new();
+            for field in ["city", "country", "region", "timezone"] {
+                if let Some(value) = user_location.get(field).cloned() {
+                    approximate.insert(field.to_string(), value);
+                }
+            }
+            if !approximate.is_empty() {
+                options.insert(
+                    "user_location".to_string(),
+                    json!({
+                        "type": "approximate",
+                        "approximate": approximate,
+                    }),
+                );
+            }
+        }
+        if !options.is_empty() {
+            return Some(Value::Object(options));
+        }
+    }
+    None
 }
 
 fn normalize_claude_tool_choice_to_openai(tool_choice: Option<&Value>) -> Option<Option<Value>> {
@@ -332,6 +405,23 @@ fn normalize_claude_tool_choice_to_openai(tool_choice: Option<&Value>) -> Option
         }
         _ => Some(None),
     }
+}
+
+fn extract_claude_parallel_tool_calls(tool_choice: Option<&Value>) -> Option<bool> {
+    let tool_choice = tool_choice?.as_object()?;
+    let choice_type = tool_choice
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if choice_type == "none" {
+        return None;
+    }
+    tool_choice
+        .get("disable_parallel_tool_use")
+        .and_then(Value::as_bool)
+        .map(|value| !value)
 }
 
 #[cfg(test)]
@@ -398,5 +488,56 @@ mod tests {
             normalized["messages"][0]["tool_calls"][0]["id"],
             "toolu_explicit_1"
         );
+    }
+
+    #[test]
+    fn extracts_claude_web_search_and_parallel_settings() {
+        let request = json!({
+            "model": "claude-sonnet-4-5",
+            "tools": [
+                {
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": 10,
+                    "user_location": {
+                        "type": "approximate",
+                        "city": "Shanghai",
+                        "country": "CN",
+                        "timezone": "Asia/Shanghai"
+                    }
+                }
+            ],
+            "tool_choice": {
+                "type": "auto",
+                "disable_parallel_tool_use": true
+            },
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "find something"
+                }
+            ]
+        });
+
+        let normalized = normalize_claude_request_to_openai_chat_request(&request)
+            .expect("request should convert");
+
+        assert_eq!(
+            normalized["web_search_options"]["search_context_size"],
+            "high"
+        );
+        assert_eq!(
+            normalized["web_search_options"]["user_location"],
+            json!({
+                "type": "approximate",
+                "approximate": {
+                    "city": "Shanghai",
+                    "country": "CN",
+                    "timezone": "Asia/Shanghai"
+                }
+            })
+        );
+        assert_eq!(normalized["parallel_tool_calls"], false);
+        assert!(normalized.get("tools").is_none());
     }
 }

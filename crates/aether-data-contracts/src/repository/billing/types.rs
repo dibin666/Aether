@@ -85,7 +85,7 @@ pub struct AdminBillingRuleRecord {
     pub variables: Value,
     pub dimension_mappings: Value,
     pub is_enabled: bool,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub updated_at_unix_secs: u64,
 }
 
@@ -114,7 +114,7 @@ pub struct AdminBillingCollectorRecord {
     pub default_value: Option<String>,
     pub priority: i32,
     pub is_enabled: bool,
-    pub created_at_unix_secs: u64,
+    pub created_at_unix_ms: u64,
     pub updated_at_unix_secs: u64,
 }
 

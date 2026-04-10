@@ -1074,6 +1074,9 @@ async fn gateway_handles_admin_provider_health_monitor_locally_with_trusted_admi
     assert_eq!(endpoints[0]["failed_count"], 1);
     assert_eq!(endpoints[0]["skipped_count"], 0);
     assert_eq!(endpoints[0]["success_rate"], 0.5);
+    assert!(endpoints[0]["last_event_at"]
+        .as_str()
+        .is_some_and(|value| value.ends_with(".000Z")));
     assert_eq!(
         endpoints[0]["events"]
             .as_array()
@@ -1081,6 +1084,9 @@ async fn gateway_handles_admin_provider_health_monitor_locally_with_trusted_admi
             .len(),
         2
     );
+    assert!(endpoints[0]["events"][0]["timestamp"]
+        .as_str()
+        .is_some_and(|value| value.ends_with(".000Z")));
     assert_eq!(endpoints[1]["endpoint_id"], "endpoint-openai-cli");
     assert_eq!(endpoints[1]["api_format"], "openai:cli");
     assert_eq!(endpoints[1]["total_attempts"], 1);

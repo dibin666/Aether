@@ -104,7 +104,7 @@ impl AppState {
                 link_id: Some(refund.id.clone()),
                 operator_id: operator_id.map(ToOwned::to_owned),
                 description: Some("退款占款".to_string()),
-                created_at_unix_secs: now_unix_secs,
+                created_at_unix_ms: now_unix_secs,
             };
 
             let mut updated_refund = refund.clone();
@@ -318,7 +318,7 @@ impl AppState {
                 link_id: Some(refund.id.clone()),
                 operator_id: operator_id.map(ToOwned::to_owned),
                 description: Some("退款失败回补".to_string()),
-                created_at_unix_secs: now_unix_secs,
+                created_at_unix_ms: now_unix_secs,
             };
 
             if let Some(payment_order_id) = refund.payment_order_id.clone() {
@@ -415,7 +415,7 @@ fn stored_admin_wallet_refund_to_gateway(
         requested_by: refund.requested_by,
         approved_by: refund.approved_by,
         processed_by: refund.processed_by,
-        created_at_unix_secs: refund.created_at_unix_secs,
+        created_at_unix_ms: refund.created_at_unix_ms,
         updated_at_unix_secs: refund.updated_at_unix_secs,
         processed_at_unix_secs: refund.processed_at_unix_secs,
         completed_at_unix_secs: refund.completed_at_unix_secs,
@@ -441,6 +441,6 @@ fn stored_admin_wallet_transaction_to_gateway(
         link_id: transaction.link_id,
         operator_id: transaction.operator_id,
         description: transaction.description,
-        created_at_unix_secs: transaction.created_at_unix_secs.unwrap_or_default(),
+        created_at_unix_ms: transaction.created_at_unix_ms.unwrap_or_default(),
     }
 }

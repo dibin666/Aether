@@ -50,14 +50,14 @@ pub(super) async fn build_admin_usage_cache_affinity_interval_timeline_response(
             }
         }
 
-        let mut previous_created_at_unix_secs = None;
+        let mut previous_created_at_unix_ms = None;
         for item in items {
-            if let Some(previous) = previous_created_at_unix_secs {
+            if let Some(previous) = previous_created_at_unix_ms {
                 let interval_minutes =
-                    item.created_at_unix_secs.saturating_sub(previous) as f64 / 60.0;
+                    item.created_at_unix_ms.saturating_sub(previous) as f64 / 60.0;
                 if interval_minutes <= 120.0 {
                     let mut point = json!({
-                        "x": unix_secs_to_rfc3339(item.created_at_unix_secs),
+                        "x": unix_secs_to_rfc3339(item.created_at_unix_ms),
                         "y": ((interval_minutes * 100.0).round()) / 100.0,
                     });
                     if !item.model.trim().is_empty() {
@@ -78,7 +78,7 @@ pub(super) async fn build_admin_usage_cache_affinity_interval_timeline_response(
                         .push(point);
                 }
             }
-            previous_created_at_unix_secs = Some(item.created_at_unix_secs);
+            previous_created_at_unix_ms = Some(item.created_at_unix_ms);
         }
     }
 

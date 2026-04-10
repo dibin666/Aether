@@ -80,7 +80,7 @@ pub(in super::super) async fn build_admin_wallet_transactions_response(
             "operator_name": operator_name,
             "operator_email": operator_email,
             "description": transaction.description,
-            "created_at": transaction.created_at_unix_secs.and_then(unix_secs_to_rfc3339),
+            "created_at": transaction.created_at_unix_ms.and_then(unix_secs_to_rfc3339),
         }));
     }
 

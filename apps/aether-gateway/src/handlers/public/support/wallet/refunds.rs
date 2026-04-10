@@ -98,7 +98,7 @@ fn wallet_refund_payload_from_row(
     row: &sqlx::postgres::PgRow,
 ) -> Result<serde_json::Value, GatewayError> {
     let created_at = row
-        .try_get::<Option<i64>, _>("created_at_unix_secs")
+        .try_get::<Option<i64>, _>("created_at_unix_ms")
         .map_err(|err| GatewayError::Internal(err.to_string()))?
         .and_then(|value| u64::try_from(value).ok())
         .and_then(unix_secs_to_rfc3339);
@@ -157,7 +157,7 @@ fn wallet_refund_payload_from_record(
         "payout_method": record.payout_method,
         "payout_reference": record.payout_reference,
         "payout_proof": record.payout_proof,
-        "created_at": unix_secs_to_rfc3339(record.created_at_unix_secs),
+        "created_at": unix_secs_to_rfc3339(record.created_at_unix_ms),
         "updated_at": unix_secs_to_rfc3339(record.updated_at_unix_secs),
         "processed_at": record.processed_at_unix_secs.and_then(unix_secs_to_rfc3339),
         "completed_at": record.completed_at_unix_secs.and_then(unix_secs_to_rfc3339),
@@ -247,7 +247,7 @@ pub(super) async fn handle_wallet_refunds_list(
                 "payout_method": record.payout_method,
                 "payout_reference": record.payout_reference,
                 "payout_proof": record.payout_proof,
-                "created_at": unix_secs_to_rfc3339(record.created_at_unix_secs),
+                "created_at": unix_secs_to_rfc3339(record.created_at_unix_ms),
                 "updated_at": unix_secs_to_rfc3339(record.updated_at_unix_secs),
                 "processed_at": record.processed_at_unix_secs.and_then(unix_secs_to_rfc3339),
                 "completed_at": record.completed_at_unix_secs.and_then(unix_secs_to_rfc3339),

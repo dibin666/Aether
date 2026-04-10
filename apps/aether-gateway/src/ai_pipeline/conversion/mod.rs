@@ -5,8 +5,9 @@ pub(crate) use crate::ai_pipeline::{
     core_error_default_client_api_format, is_core_error_finalize_kind, LocalCoreSyncErrorKind,
 };
 pub(crate) use crate::ai_pipeline::{
-    request_conversion_direct_auth, request_conversion_kind,
-    request_conversion_transport_supported, sync_chat_response_conversion_kind,
+    request_candidate_api_formats, request_conversion_direct_auth, request_conversion_kind,
+    request_conversion_requires_enable_flag, request_conversion_transport_supported,
+    request_pair_allowed_for_transport, sync_chat_response_conversion_kind,
     sync_cli_response_conversion_kind, RequestConversionKind, SyncChatResponseConversionKind,
     SyncCliResponseConversionKind,
 };
@@ -14,7 +15,7 @@ pub(crate) use crate::ai_pipeline::{
 #[cfg(test)]
 mod tests {
     use super::{
-        request_conversion_kind, sync_chat_response_conversion_kind,
+        request_candidate_api_formats, request_conversion_kind, sync_chat_response_conversion_kind,
         sync_cli_response_conversion_kind, RequestConversionKind, SyncChatResponseConversionKind,
         SyncCliResponseConversionKind,
     };
@@ -22,7 +23,15 @@ mod tests {
     #[test]
     fn request_conversion_registry_supports_bidirectional_standard_matrix() {
         assert_eq!(
-            request_conversion_kind("claude:chat", "openai:chat"),
+            request_conversion_kind("openai:chat", "openai:cli"),
+            Some(RequestConversionKind::ToOpenAIFamilyCli)
+        );
+        assert_eq!(
+            request_conversion_kind("openai:chat", "claude:cli"),
+            Some(RequestConversionKind::ToClaudeStandard)
+        );
+        assert_eq!(
+            request_conversion_kind("openai:cli", "openai:chat"),
             Some(RequestConversionKind::ToOpenAIChat)
         );
         assert_eq!(
@@ -30,12 +39,16 @@ mod tests {
             Some(RequestConversionKind::ToClaudeStandard)
         );
         assert_eq!(
-            request_conversion_kind("gemini:cli", "openai:compact"),
-            Some(RequestConversionKind::ToOpenAICompact)
+            request_conversion_kind("openai:compact", "gemini:cli"),
+            None
         );
         assert_eq!(
-            request_conversion_kind("openai:compact", "gemini:cli"),
-            Some(RequestConversionKind::ToGeminiStandard)
+            request_conversion_kind("gemini:cli", "openai:compact"),
+            None
+        );
+        assert_eq!(
+            request_conversion_kind("openai:chat", "openai:compact"),
+            None
         );
         assert_eq!(request_conversion_kind("claude:chat", "claude:chat"), None);
     }
@@ -59,12 +72,50 @@ mod tests {
             Some(SyncCliResponseConversionKind::ToGeminiCli)
         );
         assert_eq!(
-            sync_cli_response_conversion_kind("claude:cli", "openai:compact"),
+            sync_cli_response_conversion_kind("claude:chat", "openai:cli"),
             Some(SyncCliResponseConversionKind::ToOpenAIFamilyCli)
+        );
+        assert_eq!(
+            sync_cli_response_conversion_kind("claude:cli", "openai:compact"),
+            None
+        );
+        assert_eq!(
+            sync_cli_response_conversion_kind("openai:compact", "claude:cli"),
+            None
         );
         assert_eq!(
             sync_cli_response_conversion_kind("gemini:cli", "claude:cli"),
             Some(SyncCliResponseConversionKind::ToClaudeCli)
+        );
+    }
+
+    #[test]
+    fn request_candidate_registry_excludes_compact_as_cross_format_target() {
+        assert_eq!(
+            request_candidate_api_formats("openai:chat", false),
+            vec![
+                "openai:chat",
+                "openai:cli",
+                "claude:chat",
+                "claude:cli",
+                "gemini:chat",
+                "gemini:cli",
+            ]
+        );
+        assert_eq!(
+            request_candidate_api_formats("openai:cli", false),
+            vec![
+                "openai:chat",
+                "openai:cli",
+                "claude:chat",
+                "claude:cli",
+                "gemini:chat",
+                "gemini:cli",
+            ]
+        );
+        assert_eq!(
+            request_candidate_api_formats("openai:compact", false),
+            vec!["openai:compact"]
         );
     }
 }

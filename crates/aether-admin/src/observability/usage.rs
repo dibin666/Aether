@@ -266,7 +266,7 @@ pub fn admin_usage_record_json(
         "rate_multiplier": Value::Null,
         "response_time_ms": item.response_time_ms,
         "first_byte_time_ms": item.first_byte_time_ms,
-        "created_at": unix_secs_to_rfc3339(item.created_at_unix_secs),
+        "created_at": unix_secs_to_rfc3339(item.created_at_unix_ms),
         "is_stream": item.is_stream,
         "input_price_per_1m": Value::Null,
         "output_price_per_1m": item.output_price_per_1m,
@@ -537,11 +537,11 @@ pub fn admin_usage_heatmap_json(usage: &[StoredRequestUsageAudit]) -> Value {
         .unwrap_or(today);
     let mut grouped: BTreeMap<chrono::NaiveDate, (u64, u64, f64, f64)> = BTreeMap::new();
     for item in usage {
-        let Ok(created_at_unix_secs) = i64::try_from(item.created_at_unix_secs) else {
+        let Ok(created_at_unix_ms) = i64::try_from(item.created_at_unix_ms) else {
             continue;
         };
         let Some(created_at) =
-            chrono::DateTime::<chrono::Utc>::from_timestamp(created_at_unix_secs, 0)
+            chrono::DateTime::<chrono::Utc>::from_timestamp(created_at_unix_ms, 0)
         else {
             continue;
         };
@@ -631,13 +631,13 @@ pub fn admin_usage_group_completed_by_api_key(
 pub fn admin_usage_collect_request_intervals_minutes(
     items: &[StoredRequestUsageAudit],
 ) -> Vec<f64> {
-    let mut previous_created_at_unix_secs = None;
+    let mut previous_created_at_unix_ms = None;
     let mut intervals = Vec::new();
     for item in items {
-        if let Some(previous) = previous_created_at_unix_secs {
-            intervals.push(item.created_at_unix_secs.saturating_sub(previous) as f64 / 60.0);
+        if let Some(previous) = previous_created_at_unix_ms {
+            intervals.push(item.created_at_unix_ms.saturating_sub(previous) as f64 / 60.0);
         }
-        previous_created_at_unix_secs = Some(item.created_at_unix_secs);
+        previous_created_at_unix_ms = Some(item.created_at_unix_ms);
     }
     intervals
 }

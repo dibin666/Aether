@@ -176,7 +176,7 @@ pub(crate) async fn build_admin_create_provider_key_record(
         normalize_string_list(payload.model_exclude_patterns).map(|value| json!(value));
     key.health_by_format = Some(json!({}));
     key.circuit_breaker_by_format = Some(json!({}));
-    key.created_at_unix_secs = Some(now_unix_secs);
+    key.created_at_unix_ms = Some(now_unix_secs);
     key.updated_at_unix_secs = Some(now_unix_secs);
     Ok(key)
 }

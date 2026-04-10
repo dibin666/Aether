@@ -862,7 +862,7 @@ pub fn build_admin_stats_error_distribution_response(
         else {
             continue;
         };
-        let Some(local_day) = time_range.local_date_string_for_unix_secs(item.created_at_unix_secs)
+        let Some(local_day) = time_range.local_date_string_for_unix_secs(item.created_at_unix_ms)
         else {
             continue;
         };
@@ -927,7 +927,7 @@ pub fn build_admin_stats_performance_percentiles_response(
         if item.status != "completed" {
             continue;
         }
-        let Some(local_day) = time_range.local_date_string_for_unix_secs(item.created_at_unix_secs)
+        let Some(local_day) = time_range.local_date_string_for_unix_secs(item.created_at_unix_ms)
         else {
             continue;
         };
@@ -1078,7 +1078,7 @@ pub fn build_daily_time_series_buckets(
             .collect();
 
     for item in items {
-        let Some(local_day) = time_range.local_date_for_unix_secs(item.created_at_unix_secs) else {
+        let Some(local_day) = time_range.local_date_for_unix_secs(item.created_at_unix_ms) else {
             continue;
         };
         let Some(bucket) = buckets.get_mut(&local_day) else {
@@ -1173,7 +1173,7 @@ fn build_hourly_time_series_payload(
     }
 
     for item in items {
-        let Some(unix_secs) = i64::try_from(item.created_at_unix_secs).ok() else {
+        let Some(unix_secs) = i64::try_from(item.created_at_unix_ms).ok() else {
             continue;
         };
         let Some(timestamp) = chrono::DateTime::<Utc>::from_timestamp(unix_secs, 0) else {

@@ -22,7 +22,7 @@ SELECT
   match_status,
   status_code,
   error_message,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
 FROM gateway_shadow_results
 WHERE trace_id = $1 AND request_fingerprint = $2
@@ -42,7 +42,7 @@ SELECT
   match_status,
   status_code,
   error_message,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
 FROM gateway_shadow_results
 ORDER BY updated_at DESC
@@ -100,7 +100,7 @@ RETURNING
   match_status,
   status_code,
   error_message,
-  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_secs,
+  CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM updated_at) AS BIGINT) AS updated_at_unix_secs
 "#;
 
@@ -192,7 +192,7 @@ impl SqlxShadowResultRepository {
                         .bind(match_status_to_database(result.match_status))
                         .bind(result.status_code.map(i32::from))
                         .bind(&result.error_message)
-                        .bind(result.created_at_unix_secs as f64)
+                        .bind(result.created_at_unix_ms as f64)
                         .bind(result.updated_at_unix_secs as f64)
                         .fetch_one(&mut **tx)
                         .await
@@ -257,7 +257,7 @@ fn map_shadow_result_row(
         match_status,
         row.try_get("status_code").map_postgres_err()?,
         row.try_get("error_message").map_postgres_err()?,
-        row.try_get("created_at_unix_secs").map_postgres_err()?,
+        row.try_get("created_at_unix_ms").map_postgres_err()?,
         row.try_get("updated_at_unix_secs").map_postgres_err()?,
     )
 }

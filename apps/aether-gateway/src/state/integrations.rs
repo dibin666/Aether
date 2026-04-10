@@ -28,7 +28,8 @@ use crate::provider_transport::{
     LocalResolvedOAuthRequestAuth,
 };
 use crate::request_candidate_runtime::{
-    RequestCandidateRuntimeReader, RequestCandidateRuntimeWriter,
+    RequestCandidateRuntimeCapabilityReader, RequestCandidateRuntimeReader,
+    RequestCandidateRuntimeWriter,
 };
 use crate::scheduler::state::SchedulerRuntimeState;
 use crate::{execution_runtime, provider_transport};
@@ -247,6 +248,24 @@ impl RequestCandidateRuntimeReader for AppState {
 }
 
 #[async_trait]
+impl RequestCandidateRuntimeCapabilityReader for AppState {
+    async fn read_request_candidate_user_model_capability_settings(
+        &self,
+        user_id: &str,
+    ) -> Result<Option<Value>, GatewayError> {
+        AppState::read_user_model_capability_settings(self, user_id).await
+    }
+
+    async fn read_request_candidate_api_key_force_capabilities(
+        &self,
+        user_id: &str,
+        api_key_id: &str,
+    ) -> Result<Option<Value>, GatewayError> {
+        AppState::read_auth_api_key_force_capabilities(self, user_id, api_key_id).await
+    }
+}
+
+#[async_trait]
 impl RequestCandidateRuntimeWriter for AppState {
     fn has_request_candidate_data_writer(&self) -> bool {
         AppState::has_request_candidate_data_writer(self)
@@ -310,5 +329,11 @@ impl SchedulerRuntimeState for AppState {
         max_entries: usize,
     ) {
         AppState::remember_scheduler_affinity_target(self, cache_key, target, ttl, max_entries);
+    }
+
+    async fn read_scheduler_ordering_config(
+        &self,
+    ) -> Result<crate::scheduler::config::SchedulerOrderingConfig, GatewayError> {
+        crate::scheduler::config::read_scheduler_ordering_config(self).await
     }
 }

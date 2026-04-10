@@ -53,7 +53,7 @@ pub(super) fn build_admin_billing_collector_payload_from_record(
         "default_value": record.default_value,
         "priority": record.priority,
         "is_enabled": record.is_enabled,
-        "created_at": unix_secs_to_rfc3339(record.created_at_unix_secs),
+        "created_at": unix_secs_to_rfc3339(record.created_at_unix_ms),
         "updated_at": unix_secs_to_rfc3339(record.updated_at_unix_secs),
     })
 }

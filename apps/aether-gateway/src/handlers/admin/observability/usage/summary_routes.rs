@@ -78,8 +78,8 @@ pub(super) async fn maybe_build_local_admin_usage_summary_response(
                 .collect();
             items.sort_by(|left, right| {
                 right
-                    .created_at_unix_secs
-                    .cmp(&left.created_at_unix_secs)
+                    .created_at_unix_ms
+                    .cmp(&left.created_at_unix_ms)
                     .then_with(|| left.id.cmp(&right.id))
             });
             if requested_ids.is_none() && items.len() > 50 {
@@ -147,8 +147,8 @@ pub(super) async fn maybe_build_local_admin_usage_summary_response(
             });
             usage.sort_by(|left, right| {
                 right
-                    .created_at_unix_secs
-                    .cmp(&left.created_at_unix_secs)
+                    .created_at_unix_ms
+                    .cmp(&left.created_at_unix_ms)
                     .then_with(|| left.id.cmp(&right.id))
             });
             let total = usage.len();

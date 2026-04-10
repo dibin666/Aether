@@ -598,7 +598,7 @@ pub(crate) fn build_admin_provider_key_response(
     payload.insert(
         "created_at".to_string(),
         json!(unix_secs_to_rfc3339(
-            key.created_at_unix_secs.unwrap_or(now_unix_secs)
+            key.created_at_unix_ms.unwrap_or(now_unix_secs)
         )),
     );
     payload.insert(

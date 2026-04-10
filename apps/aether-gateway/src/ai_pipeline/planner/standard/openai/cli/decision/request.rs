@@ -5,7 +5,9 @@ use serde_json::Value;
 use tracing::warn;
 
 use crate::ai_pipeline::conversion::{
-    request_conversion_direct_auth, request_conversion_kind, request_conversion_transport_supported,
+    request_conversion_direct_auth, request_conversion_kind,
+    request_conversion_requires_enable_flag, request_conversion_transport_supported,
+    request_pair_allowed_for_transport,
 };
 use crate::ai_pipeline::planner::common::force_upstream_streaming_for_provider;
 use crate::ai_pipeline::planner::standard::{
@@ -115,6 +117,36 @@ pub(crate) async fn resolve_local_openai_cli_candidate_payload_parts(
 
     let same_format = provider_api_format == spec.api_format.trim().to_ascii_lowercase();
     let conversion_kind = request_conversion_kind(spec.api_format, provider_api_format.as_str());
+    if !same_format
+        && !request_pair_allowed_for_transport(
+            &transport,
+            spec.api_format,
+            provider_api_format.as_str(),
+        )
+    {
+        let skip_reason = if conversion_kind.is_some()
+            && request_conversion_requires_enable_flag(
+                spec.api_format,
+                provider_api_format.as_str(),
+            )
+            && !transport.provider.enable_format_conversion
+        {
+            "format_conversion_disabled"
+        } else {
+            "transport_unsupported"
+        };
+        mark_skipped_local_openai_cli_candidate(
+            state,
+            input,
+            trace_id,
+            candidate,
+            candidate_index,
+            candidate_id,
+            skip_reason,
+        )
+        .await;
+        return None;
+    }
     let transport_supported = if same_format {
         supports_local_standard_transport_with_network(&transport, provider_api_format.as_str())
     } else {

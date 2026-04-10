@@ -1,6 +1,6 @@
 use crate::handlers::admin::shared::unix_secs_to_rfc3339;
 use crate::handlers::public::{
-    provider_key_api_formats, request_candidate_event_unix_secs, request_candidate_status_label,
+    provider_key_api_formats, request_candidate_event_unix_ms, request_candidate_status_label,
 };
 use aether_data_contracts::repository::candidates::{
     RequestCandidateStatus, StoredRequestCandidate,
@@ -172,7 +172,7 @@ pub(crate) fn build_admin_provider_summary_value(
         "endpoint_health_details": endpoint_health_details,
         "ops_configured": ops_configured,
         "ops_architecture_id": ops_architecture_id,
-        "created_at": endpoint_timestamp_or_now(provider.created_at_unix_secs, now_unix_secs),
+        "created_at": endpoint_timestamp_or_now(provider.created_at_unix_ms, now_unix_secs),
         "updated_at": endpoint_timestamp_or_now(provider.updated_at_unix_secs, now_unix_secs),
     })
 }

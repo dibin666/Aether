@@ -5,7 +5,13 @@ use serde_json::json;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::conversion::{
+    request_candidate_api_formats, request_conversion_kind,
+    request_conversion_requires_enable_flag, request_pair_allowed_for_transport,
+};
+use crate::ai_pipeline::planner::candidate_affinity::{
+    rank_local_execution_candidates, remember_scheduler_affinity_for_candidate,
+};
 use crate::ai_pipeline::{
     resolve_local_decision_execution_runtime_auth_context, ConversionMode, ExecutionStrategy,
     GatewayControlDecision,
@@ -16,7 +22,7 @@ use crate::{append_execution_contract_fields_to_value, AppState, GatewayError};
 
 use super::{
     LocalStandardCandidateAttempt, LocalStandardDecisionInput, LocalStandardSourceFamily,
-    LocalStandardSourceMode, LocalStandardSpec,
+    LocalStandardSpec,
 };
 
 pub(super) async fn resolve_local_standard_decision_input(
@@ -63,10 +69,20 @@ pub(super) async fn resolve_local_standard_decision_input(
         }
     };
 
+    let required_capabilities = planner_state
+        .resolve_request_candidate_required_capabilities(
+            &auth_context.user_id,
+            &auth_context.api_key_id,
+            Some(requested_model.as_str()),
+            None,
+        )
+        .await;
+
     Some(LocalStandardDecisionInput {
         auth_context,
         requested_model,
         auth_snapshot,
+        required_capabilities,
     })
 }
 
@@ -79,8 +95,10 @@ pub(super) async fn materialize_local_standard_candidate_attempts(
     let planner_state = PlannerAppState::new(state);
     let mut seen_candidates = BTreeSet::new();
     let mut candidates = Vec::new();
-    for candidate_api_format in candidate_api_formats_for_spec(spec) {
-        let auth_snapshot = if *candidate_api_format == spec.api_format {
+    for candidate_api_format in
+        request_candidate_api_formats(spec.api_format, spec.require_streaming)
+    {
+        let auth_snapshot = if candidate_api_format == spec.api_format {
             Some(&input.auth_snapshot)
         } else {
             None
@@ -90,6 +108,7 @@ pub(super) async fn materialize_local_standard_candidate_attempts(
                 candidate_api_format,
                 &input.requested_model,
                 spec.require_streaming,
+                input.required_capabilities.as_ref(),
                 auth_snapshot,
                 current_unix_secs(),
             )
@@ -118,13 +137,71 @@ pub(super) async fn materialize_local_standard_candidate_attempts(
             }
         }
     }
-    let candidates = prefer_local_tunnel_owner_candidates(planner_state, candidates).await;
+    let candidates = rank_local_execution_candidates(
+        planner_state,
+        candidates,
+        spec.api_format,
+        input.required_capabilities.as_ref(),
+    )
+    .await;
 
-    let created_at_unix_secs = current_unix_secs();
+    let created_at_unix_ms = current_unix_secs();
     let mut attempts = Vec::with_capacity(candidates.len());
+    let mut affinity_remembered = false;
     for (candidate_index, candidate) in candidates.into_iter().enumerate() {
         let candidate_id = Uuid::new_v4().to_string();
         let provider_api_format = candidate.endpoint_api_format.trim().to_ascii_lowercase();
+        if provider_api_format != spec.api_format {
+            if let Ok(Some(transport)) = planner_state
+                .read_provider_transport_snapshot(
+                    &candidate.provider_id,
+                    &candidate.endpoint_id,
+                    &candidate.key_id,
+                )
+                .await
+            {
+                if !request_pair_allowed_for_transport(
+                    &transport,
+                    spec.api_format,
+                    provider_api_format.as_str(),
+                ) {
+                    let skip_reason =
+                        if request_conversion_kind(spec.api_format, provider_api_format.as_str())
+                            .is_some()
+                            && request_conversion_requires_enable_flag(
+                                spec.api_format,
+                                provider_api_format.as_str(),
+                            )
+                            && !transport.provider.enable_format_conversion
+                        {
+                            "format_conversion_disabled"
+                        } else {
+                            "transport_unsupported"
+                        };
+                    super::payload::mark_skipped_local_standard_candidate(
+                        state,
+                        input,
+                        trace_id,
+                        &candidate,
+                        candidate_index as u32,
+                        &candidate_id,
+                        skip_reason,
+                    )
+                    .await;
+                    continue;
+                }
+            }
+        }
+        if !affinity_remembered {
+            remember_scheduler_affinity_for_candidate(
+                planner_state,
+                Some(&input.auth_snapshot),
+                spec.api_format,
+                &input.requested_model,
+                &candidate,
+            );
+            affinity_remembered = true;
+        }
         let execution_strategy = if provider_api_format == spec.api_format {
             ExecutionStrategy::LocalSameFormat
         } else {
@@ -166,8 +243,9 @@ pub(super) async fn materialize_local_standard_candidate_attempts(
                 &candidate,
                 candidate_index as u32,
                 &candidate_id,
+                input.required_capabilities.as_ref(),
                 Some(extra_data),
-                created_at_unix_secs,
+                created_at_unix_ms,
                 "gateway local standard decision request candidate upsert failed",
             )
             .await;
@@ -211,20 +289,6 @@ fn auth_snapshot_allows_cross_format_candidate(
     }
 
     true
-}
-
-fn candidate_api_formats_for_spec(spec: LocalStandardSpec) -> &'static [&'static str] {
-    match spec.mode {
-        LocalStandardSourceMode::Chat | LocalStandardSourceMode::Cli => &[
-            "openai:chat",
-            "openai:cli",
-            "openai:compact",
-            "claude:chat",
-            "claude:cli",
-            "gemini:chat",
-            "gemini:cli",
-        ],
-    }
 }
 
 fn extract_gemini_model_from_path(path: &str) -> Option<String> {

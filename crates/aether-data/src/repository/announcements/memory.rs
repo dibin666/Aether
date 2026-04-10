@@ -91,7 +91,7 @@ impl AnnouncementReadRepository for InMemoryAnnouncementReadRepository {
                 .is_pinned
                 .cmp(&left.is_pinned)
                 .then_with(|| right.priority.cmp(&left.priority))
-                .then_with(|| right.created_at_unix_secs.cmp(&left.created_at_unix_secs))
+                .then_with(|| right.created_at_unix_ms.cmp(&left.created_at_unix_ms))
                 .then_with(|| left.id.cmp(&right.id))
         });
 

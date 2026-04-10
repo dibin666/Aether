@@ -253,7 +253,7 @@ async fn persist_cancelled_video_task(
             next_poll_at_unix_secs: None,
             poll_count: task.poll_count,
             max_poll_count: task.max_poll_count,
-            created_at_unix_secs: task.created_at_unix_secs,
+            created_at_unix_ms: task.created_at_unix_ms,
             submitted_at_unix_secs: task.submitted_at_unix_secs,
             completed_at_unix_secs: Some(now_unix_secs),
             updated_at_unix_secs: now_unix_secs,

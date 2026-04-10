@@ -14,6 +14,13 @@ pub struct ExpiringMap<K, V> {
     entries: Mutex<HashMap<K, TimedEntry<V>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ExpiringMapFreshEntry<K, V> {
+    pub key: K,
+    pub value: V,
+    pub age: Duration,
+}
+
 impl<K, V> Default for ExpiringMap<K, V> {
     fn default() -> Self {
         Self {
@@ -97,6 +104,22 @@ where
 
     pub fn contains_fresh(&self, key: &K, ttl: Duration) -> bool {
         self.get_fresh(key, ttl).is_some()
+    }
+
+    pub fn snapshot_fresh(&self, ttl: Duration) -> Vec<ExpiringMapFreshEntry<K, V>> {
+        let Ok(mut entries) = self.entries.lock() else {
+            return Vec::new();
+        };
+
+        prune_expired(&mut entries, ttl);
+        entries
+            .iter()
+            .map(|(key, entry)| ExpiringMapFreshEntry {
+                key: key.clone(),
+                value: entry.value.clone(),
+                age: entry.inserted_at.elapsed(),
+            })
+            .collect()
     }
 }
 

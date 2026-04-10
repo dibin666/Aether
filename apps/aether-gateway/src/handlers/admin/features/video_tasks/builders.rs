@@ -94,7 +94,7 @@ pub(super) fn build_admin_video_task_list_item(
         "error_message": task.error_message,
         "poll_count": task.poll_count,
         "max_poll_count": task.max_poll_count,
-        "created_at": admin_video_task_timestamp(Some(task.created_at_unix_secs)),
+        "created_at": admin_video_task_timestamp(Some(task.created_at_unix_ms)),
         "completed_at": admin_video_task_timestamp(task.completed_at_unix_secs),
         "submitted_at": admin_video_task_timestamp(task.submitted_at_unix_secs),
     })

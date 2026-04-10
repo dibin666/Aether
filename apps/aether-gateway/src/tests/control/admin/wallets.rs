@@ -146,7 +146,7 @@ fn sample_payment_order_record(
         gateway_order_id: None,
         status: "credited".to_string(),
         gateway_response: None,
-        created_at_unix_secs: 1_710_000_000,
+        created_at_unix_ms: 1_710_000_000,
         paid_at_unix_secs: Some(1_710_000_060),
         credited_at_unix_secs: Some(1_710_000_120),
         expires_at_unix_secs: None,
@@ -174,7 +174,7 @@ fn sample_transaction_record(
         link_id: Some("order-123".to_string()),
         operator_id: operator_id.map(ToOwned::to_owned),
         description: Some("Admin manual credit".to_string()),
-        created_at_unix_secs: 1_710_000_200,
+        created_at_unix_ms: 1_710_000_200,
     }
 }
 
@@ -210,7 +210,7 @@ fn sample_refund_record(
         requested_by: user_id.map(ToOwned::to_owned),
         approved_by: approved_by.map(ToOwned::to_owned),
         processed_by: processed_by.map(ToOwned::to_owned),
-        created_at_unix_secs: 1_710_000_000,
+        created_at_unix_ms: 1_710_000_000,
         updated_at_unix_secs: processed_at_unix_secs.unwrap_or(1_710_000_000),
         processed_at_unix_secs,
         completed_at_unix_secs: None,
@@ -432,7 +432,7 @@ async fn gateway_handles_admin_wallets_refund_requests_locally_with_trusted_admi
                         None,
                         None,
                     );
-                    refund.created_at_unix_secs = 1_710_000_300;
+                    refund.created_at_unix_ms = 1_710_000_300;
                     refund
                 },
                 {
@@ -447,7 +447,7 @@ async fn gateway_handles_admin_wallets_refund_requests_locally_with_trusted_admi
                         None,
                         None,
                     );
-                    refund.created_at_unix_secs = 1_710_000_200;
+                    refund.created_at_unix_ms = 1_710_000_200;
                     refund
                 },
                 sample_refund_record(
@@ -612,7 +612,7 @@ async fn gateway_handles_admin_wallets_detail_locally_with_trusted_admin_princip
                         "wallet-user-123",
                         Some("admin-user-operator"),
                     );
-                    transaction.created_at_unix_secs = 1_710_000_300;
+                    transaction.created_at_unix_ms = 1_710_000_300;
                     transaction.description = Some("Most recent credit".to_string());
                     transaction
                 },
@@ -803,7 +803,7 @@ async fn gateway_handles_admin_wallets_transactions_locally_with_trusted_admin_p
                         "wallet-user-123",
                         Some("admin-user-operator"),
                     );
-                    transaction.created_at_unix_secs = 1_710_000_300;
+                    transaction.created_at_unix_ms = 1_710_000_300;
                     transaction.description = Some("Most recent credit".to_string());
                     transaction
                 },
@@ -958,7 +958,7 @@ async fn gateway_handles_admin_wallets_refunds_locally_with_trusted_admin_princi
                         None,
                         None,
                     );
-                    refund.created_at_unix_secs = 1_710_000_300;
+                    refund.created_at_unix_ms = 1_710_000_300;
                     refund
                 },
                 {
@@ -973,7 +973,7 @@ async fn gateway_handles_admin_wallets_refunds_locally_with_trusted_admin_princi
                         Some("admin-user-123"),
                         Some(1_710_000_250),
                     );
-                    refund.created_at_unix_secs = 1_710_000_200;
+                    refund.created_at_unix_ms = 1_710_000_200;
                     refund
                 },
                 sample_refund_record(

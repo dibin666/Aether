@@ -22,7 +22,7 @@ SELECT
   mt.last_used_ip,
   COALESCE(mt.usage_count, 0) AS usage_count,
   mt.is_active,
-  EXTRACT(EPOCH FROM mt.created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM mt.created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM mt.updated_at)::bigint AS updated_at_unix_secs,
   u.id AS user_row_id,
   u.email AS user_email,
@@ -57,7 +57,7 @@ SELECT
   mt.last_used_ip,
   COALESCE(mt.usage_count, 0) AS usage_count,
   mt.is_active,
-  EXTRACT(EPOCH FROM mt.created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM mt.created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM mt.updated_at)::bigint AS updated_at_unix_secs,
   u.id AS user_row_id,
   u.email AS user_email,
@@ -112,7 +112,7 @@ RETURNING
   last_used_ip,
   COALESCE(usage_count, 0) AS usage_count,
   is_active,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 "#;
 
@@ -149,7 +149,7 @@ RETURNING
   last_used_ip,
   COALESCE(usage_count, 0) AS usage_count,
   is_active,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 "#;
 
@@ -170,7 +170,7 @@ RETURNING
   last_used_ip,
   COALESCE(usage_count, 0) AS usage_count,
   is_active,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 "#;
 
@@ -192,7 +192,7 @@ RETURNING
   last_used_ip,
   COALESCE(usage_count, 0) AS usage_count,
   is_active,
-  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_secs,
+  EXTRACT(EPOCH FROM created_at)::bigint AS created_at_unix_ms,
   EXTRACT(EPOCH FROM updated_at)::bigint AS updated_at_unix_secs
 "#;
 
@@ -392,7 +392,7 @@ fn map_token_row(row: &PgRow) -> Result<StoredManagementToken, DataLayerError> {
         row.try_get("is_active").map_postgres_err()?,
     )
     .with_timestamps(
-        optional_unix_secs(row.try_get("created_at_unix_secs").map_postgres_err()?),
+        optional_unix_secs(row.try_get("created_at_unix_ms").map_postgres_err()?),
         optional_unix_secs(row.try_get("updated_at_unix_secs").map_postgres_err()?),
     ))
 }

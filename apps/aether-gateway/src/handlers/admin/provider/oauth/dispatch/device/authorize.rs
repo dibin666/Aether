@@ -165,7 +165,7 @@ pub(super) async fn handle_admin_provider_oauth_device_authorize(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
-        created_at_unix_secs: now_unix_secs,
+        created_at_unix_ms: now_unix_secs,
         key_id: None,
         email: None,
         replaced: false,

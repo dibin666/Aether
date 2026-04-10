@@ -229,6 +229,160 @@ fn build_best_effort_local_core_error_body_converts_claude_cli_error_to_openai_c
 }
 
 #[test]
+fn build_best_effort_local_core_error_body_converts_sync_errors_across_standard_families() {
+    let cases = vec![
+        (
+            "claude chat -> openai chat",
+            core_finalize_payload(
+                "openai_chat_sync_finalize",
+                "openai:chat",
+                "claude:chat",
+                429,
+                json!({
+                    "type": "error",
+                    "error": {
+                        "type": "rate_limit_error",
+                        "message": "slow down"
+                    }
+                }),
+            ),
+            json!({
+                "error": {
+                    "message": "slow down",
+                    "type": "rate_limit_error"
+                }
+            }),
+        ),
+        (
+            "openai chat -> claude chat",
+            core_finalize_payload(
+                "claude_chat_sync_finalize",
+                "claude:chat",
+                "openai:chat",
+                404,
+                json!({
+                    "error": {
+                        "message": "missing model",
+                        "type": "not_found_error",
+                        "code": "model_missing"
+                    }
+                }),
+            ),
+            json!({
+                "type": "error",
+                "error": {
+                    "message": "missing model",
+                    "type": "not_found_error",
+                    "code": "model_missing"
+                }
+            }),
+        ),
+        (
+            "openai chat -> gemini chat",
+            core_finalize_payload(
+                "gemini_chat_sync_finalize",
+                "gemini:chat",
+                "openai:chat",
+                401,
+                json!({
+                    "error": {
+                        "message": "bad auth",
+                        "type": "authentication_error"
+                    }
+                }),
+            ),
+            json!({
+                "error": {
+                    "code": 401,
+                    "message": "bad auth",
+                    "status": "UNAUTHENTICATED"
+                }
+            }),
+        ),
+        (
+            "gemini cli -> openai cli",
+            core_finalize_payload(
+                "openai_cli_sync_finalize",
+                "openai:cli",
+                "gemini:cli",
+                429,
+                json!({
+                    "error": {
+                        "message": "quota hit",
+                        "status": "RESOURCE_EXHAUSTED",
+                        "code": 429
+                    }
+                }),
+            ),
+            json!({
+                "error": {
+                    "message": "quota hit",
+                    "type": "rate_limit_error",
+                    "code": "429"
+                }
+            }),
+        ),
+        (
+            "gemini cli -> claude cli",
+            core_finalize_payload(
+                "claude_cli_sync_finalize",
+                "claude:cli",
+                "gemini:cli",
+                503,
+                json!({
+                    "error": {
+                        "message": "backend busy",
+                        "status": "UNAVAILABLE"
+                    }
+                }),
+            ),
+            json!({
+                "type": "error",
+                "error": {
+                    "message": "backend busy",
+                    "type": "api_error",
+                    "code": "UNAVAILABLE"
+                }
+            }),
+        ),
+        (
+            "claude cli -> gemini cli",
+            core_finalize_payload(
+                "gemini_cli_sync_finalize",
+                "gemini:cli",
+                "claude:cli",
+                404,
+                json!({
+                    "type": "error",
+                    "error": {
+                        "type": "not_found_error",
+                        "message": "resource missing"
+                    }
+                }),
+            ),
+            json!({
+                "error": {
+                    "code": 404,
+                    "message": "resource missing",
+                    "status": "NOT_FOUND"
+                }
+            }),
+        ),
+    ];
+
+    for (label, payload, expected) in cases {
+        let converted = build_best_effort_local_core_error_body(
+            &payload,
+            payload.body_json.as_ref().expect("body_json should exist"),
+        )
+        .expect("conversion should not error")
+        .expect("conversion should produce a client error body");
+
+        assert_eq!(converted, expected, "unexpected conversion for {label}");
+    }
+}
+
+#[test]
 fn resolve_local_core_error_response_body_json_parses_body_base64_json_for_cross_format_cli_error()
 {
     let mut payload = core_finalize_payload(

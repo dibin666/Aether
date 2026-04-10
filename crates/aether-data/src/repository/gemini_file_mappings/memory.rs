@@ -67,8 +67,8 @@ impl GeminiFileMappingReadRepository for InMemoryGeminiFileMappingRepository {
             .collect::<Vec<_>>();
         items.sort_by(|left, right| {
             right
-                .created_at_unix_secs
-                .cmp(&left.created_at_unix_secs)
+                .created_at_unix_ms
+                .cmp(&left.created_at_unix_ms)
                 .then_with(|| left.file_name.cmp(&right.file_name))
         });
         let total = items.len();
@@ -127,9 +127,9 @@ impl GeminiFileMappingWriteRepository for InMemoryGeminiFileMappingRepository {
             .by_file
             .write()
             .expect("gemini mapping repository lock");
-        let created_at_unix_secs = guard
+        let created_at_unix_ms = guard
             .get(&record.file_name)
-            .map(|existing| existing.created_at_unix_secs)
+            .map(|existing| existing.created_at_unix_ms)
             .unwrap_or_else(current_unix_secs);
         let mapping = StoredGeminiFileMapping {
             id: record.id.clone(),
@@ -139,7 +139,7 @@ impl GeminiFileMappingWriteRepository for InMemoryGeminiFileMappingRepository {
             display_name: record.display_name.clone(),
             mime_type: record.mime_type.clone(),
             source_hash: record.source_hash.clone(),
-            created_at_unix_secs,
+            created_at_unix_ms,
             expires_at_unix_secs: record.expires_at_unix_secs,
         };
         guard.insert(record.file_name.clone(), mapping.clone());
@@ -242,7 +242,7 @@ mod tests {
         let first = repo.upsert(sample_record("id-1", "files/same")).await?;
         let replaced = repo.upsert(sample_record("id-2", "files/same")).await?;
 
-        assert_eq!(replaced.created_at_unix_secs, first.created_at_unix_secs);
+        assert_eq!(replaced.created_at_unix_ms, first.created_at_unix_ms);
         assert_eq!(replaced.id, "id-2");
         Ok(())
     }
@@ -303,7 +303,7 @@ mod tests {
         id: &str,
         file_name: &str,
         mime_type: &str,
-        created_at_unix_secs: u64,
+        created_at_unix_ms: u64,
         expires_at_unix_secs: u64,
     ) -> crate::repository::gemini_file_mappings::StoredGeminiFileMapping {
         crate::repository::gemini_file_mappings::StoredGeminiFileMapping {
@@ -314,7 +314,7 @@ mod tests {
             display_name: Some(format!("display-{id}")),
             mime_type: (!mime_type.is_empty()).then(|| mime_type.to_string()),
             source_hash: Some(format!("hash-{id}")),
-            created_at_unix_secs,
+            created_at_unix_ms,
             expires_at_unix_secs,
         }
     }

@@ -3,7 +3,13 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::ai_pipeline::contracts::ExecutionRuntimeAuthContext;
-use crate::ai_pipeline::planner::candidate_affinity::prefer_local_tunnel_owner_candidates;
+use crate::ai_pipeline::conversion::{
+    request_conversion_kind, request_conversion_requires_enable_flag,
+    request_pair_allowed_for_transport,
+};
+use crate::ai_pipeline::planner::candidate_affinity::{
+    rank_local_execution_candidates, remember_scheduler_affinity_for_candidate,
+};
 use crate::ai_pipeline::GatewayAuthApiKeySnapshot;
 use crate::ai_pipeline::{ConversionMode, ExecutionStrategy, PlannerAppState};
 use crate::clock::current_unix_secs;
@@ -14,6 +20,7 @@ pub(crate) struct LocalOpenAiChatDecisionInput {
     pub(crate) auth_context: ExecutionRuntimeAuthContext,
     pub(crate) requested_model: String,
     pub(crate) auth_snapshot: GatewayAuthApiKeySnapshot,
+    pub(crate) required_capabilities: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +55,7 @@ pub(crate) async fn mark_skipped_local_openai_chat_candidate(
             candidate,
             candidate_index,
             candidate_id,
+            input.required_capabilities.as_ref(),
             skip_reason,
             current_unix_secs(),
             "gateway local openai chat decision failed to persist skipped candidate",
@@ -62,13 +70,71 @@ pub(crate) async fn materialize_local_openai_chat_candidate_attempts(
     candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
 ) -> Vec<LocalOpenAiChatCandidateAttempt> {
     let planner_state = PlannerAppState::new(state);
-    let candidates = prefer_local_tunnel_owner_candidates(planner_state, candidates).await;
-    let created_at_unix_secs = current_unix_secs();
+    let candidates = rank_local_execution_candidates(
+        planner_state,
+        candidates,
+        "openai:chat",
+        input.required_capabilities.as_ref(),
+    )
+    .await;
+    let created_at_unix_ms = current_unix_secs();
     let mut attempts = Vec::with_capacity(candidates.len());
+    let mut affinity_remembered = false;
 
     for (candidate_index, candidate) in candidates.into_iter().enumerate() {
         let generated_candidate_id = Uuid::new_v4().to_string();
         let provider_api_format = candidate.endpoint_api_format.trim().to_ascii_lowercase();
+        if provider_api_format != "openai:chat" {
+            if let Ok(Some(transport)) = planner_state
+                .read_provider_transport_snapshot(
+                    &candidate.provider_id,
+                    &candidate.endpoint_id,
+                    &candidate.key_id,
+                )
+                .await
+            {
+                if !request_pair_allowed_for_transport(
+                    &transport,
+                    "openai:chat",
+                    provider_api_format.as_str(),
+                ) {
+                    let skip_reason =
+                        if request_conversion_kind("openai:chat", provider_api_format.as_str())
+                            .is_some()
+                            && request_conversion_requires_enable_flag(
+                                "openai:chat",
+                                provider_api_format.as_str(),
+                            )
+                            && !transport.provider.enable_format_conversion
+                        {
+                            "format_conversion_disabled"
+                        } else {
+                            "transport_unsupported"
+                        };
+                    mark_skipped_local_openai_chat_candidate(
+                        state,
+                        input,
+                        trace_id,
+                        &candidate,
+                        candidate_index as u32,
+                        &generated_candidate_id,
+                        skip_reason,
+                    )
+                    .await;
+                    continue;
+                }
+            }
+        }
+        if !affinity_remembered {
+            remember_scheduler_affinity_for_candidate(
+                planner_state,
+                Some(&input.auth_snapshot),
+                "openai:chat",
+                &input.requested_model,
+                &candidate,
+            );
+            affinity_remembered = true;
+        }
         let (execution_strategy, conversion_mode) = if provider_api_format == "openai:chat" {
             (ExecutionStrategy::LocalSameFormat, ConversionMode::None)
         } else {
@@ -103,8 +169,9 @@ pub(crate) async fn materialize_local_openai_chat_candidate_attempts(
                 &candidate,
                 candidate_index as u32,
                 &generated_candidate_id,
+                input.required_capabilities.as_ref(),
                 Some(extra_data),
-                created_at_unix_secs,
+                created_at_unix_ms,
                 "gateway local openai chat decision request candidate upsert failed",
             )
             .await;

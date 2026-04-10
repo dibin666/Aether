@@ -361,7 +361,7 @@ fn dashboard_usage_local_date(
     item: &StoredRequestUsageAudit,
     tz_offset_minutes: i32,
 ) -> Option<chrono::NaiveDate> {
-    let timestamp = i64::try_from(item.created_at_unix_secs).ok()?;
+    let timestamp = i64::try_from(item.created_at_unix_ms).ok()?;
     let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(timestamp, 0)?;
     Some((datetime + chrono::Duration::minutes(i64::from(tz_offset_minutes))).date_naive())
 }
@@ -1008,7 +1008,7 @@ pub(super) async fn handle_dashboard_recent_requests_get(
                 "user": username,
                 "model": dashboard_non_empty_value(&item.model, "N/A"),
                 "tokens": item.total_tokens,
-                "time": dashboard_format_time_hhmm(item.created_at_unix_secs),
+                "time": dashboard_format_time_hhmm(item.created_at_unix_ms),
                 "is_stream": item.is_stream,
             })
         })

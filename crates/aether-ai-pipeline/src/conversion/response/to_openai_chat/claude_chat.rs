@@ -109,4 +109,81 @@ pub fn convert_claude_chat_response_to_openai_chat(
             "total_tokens": total_tokens,
         }
     }))
+    .map(|mut response| {
+        if let Some(service_tier) = report_context
+            .get("original_request_body")
+            .and_then(Value::as_object)
+            .and_then(|request| request.get("service_tier"))
+            .cloned()
+        {
+            response["service_tier"] = service_tier;
+        }
+        let mut prompt_details = Map::new();
+        if let Some(cached_tokens) = usage
+            .and_then(|value| value.get("cache_read_input_tokens"))
+            .and_then(Value::as_u64)
+        {
+            prompt_details.insert("cached_tokens".to_string(), Value::from(cached_tokens));
+        }
+        if let Some(cached_creation_tokens) = usage
+            .and_then(|value| value.get("cache_creation_input_tokens"))
+            .and_then(Value::as_u64)
+        {
+            prompt_details.insert(
+                "cached_creation_tokens".to_string(),
+                Value::from(cached_creation_tokens),
+            );
+        }
+        if !prompt_details.is_empty() {
+            response["usage"]["prompt_tokens_details"] = Value::Object(prompt_details);
+        }
+        response
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::convert_claude_chat_response_to_openai_chat;
+    use serde_json::json;
+
+    #[test]
+    fn preserves_claude_reasoning_cache_usage_and_service_tier() {
+        let response = json!({
+            "id": "msg_123",
+            "model": "claude-sonnet-4-5",
+            "content": [
+                { "type": "thinking", "thinking": "step by step" },
+                { "type": "text", "text": "hello" }
+            ],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 11,
+                "output_tokens": 7,
+                "cache_read_input_tokens": 3,
+                "cache_creation_input_tokens": 2
+            }
+        });
+        let report_context = json!({
+            "original_request_body": {
+                "service_tier": "default"
+            }
+        });
+
+        let converted = convert_claude_chat_response_to_openai_chat(&response, &report_context)
+            .expect("response should convert");
+
+        assert_eq!(
+            converted["choices"][0]["message"]["reasoning_content"],
+            "step by step"
+        );
+        assert_eq!(
+            converted["usage"]["prompt_tokens_details"]["cached_tokens"],
+            3
+        );
+        assert_eq!(
+            converted["usage"]["prompt_tokens_details"]["cached_creation_tokens"],
+            2
+        );
+        assert_eq!(converted["service_tier"], "default");
+    }
 }

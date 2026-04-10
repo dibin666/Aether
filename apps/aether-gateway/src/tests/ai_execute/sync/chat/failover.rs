@@ -396,8 +396,8 @@ async fn gateway_skips_unsupported_local_openai_chat_sync_candidate_before_tryin
         skipped_candidate.skip_reason.as_deref(),
         Some("transport_unsupported")
     );
-    assert!(skipped_candidate.started_at_unix_secs.is_none());
-    assert!(skipped_candidate.finished_at_unix_secs.is_some());
+    assert!(skipped_candidate.started_at_unix_ms.is_none());
+    assert!(skipped_candidate.finished_at_unix_ms.is_some());
     let successful_candidate = stored_candidates
         .iter()
         .find(|candidate| candidate.candidate_index == 1)

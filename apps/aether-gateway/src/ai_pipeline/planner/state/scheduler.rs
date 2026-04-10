@@ -9,6 +9,7 @@ impl<'a> PlannerAppState<'a> {
         api_format: &str,
         global_model_name: &str,
         require_streaming: bool,
+        required_capabilities: Option<&serde_json::Value>,
         auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
         now_unix_secs: u64,
     ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, GatewayError> {
@@ -18,6 +19,7 @@ impl<'a> PlannerAppState<'a> {
             api_format,
             global_model_name,
             require_streaming,
+            required_capabilities,
             auth_snapshot,
             now_unix_secs,
         )

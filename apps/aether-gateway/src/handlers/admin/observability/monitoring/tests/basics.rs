@@ -259,6 +259,56 @@ async fn admin_monitoring_resilience_status_returns_local_payload() {
 }
 
 #[tokio::test]
+async fn admin_monitoring_cache_stats_count_runtime_scheduler_affinities() {
+    let state = AppState::new().expect("state should build");
+    let affinity_cache_key =
+        aether_scheduler_core::build_scheduler_affinity_cache_key_for_api_key_id(
+            "user-key-1",
+            "openai:chat",
+            "model-alpha",
+        )
+        .expect("scheduler affinity cache key should build");
+    state.scheduler_affinity_cache.insert(
+        affinity_cache_key,
+        crate::cache::SchedulerAffinityTarget {
+            provider_id: "provider-1".to_string(),
+            endpoint_id: "endpoint-1".to_string(),
+            key_id: "provider-key-1".to_string(),
+        },
+        crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL,
+        128,
+    );
+
+    let response = local_monitoring_response(
+        &state,
+        &request_context(http::Method::GET, "/api/admin/monitoring/cache/stats"),
+    )
+    .await
+    .expect("handler should not error")
+    .expect("monitoring route should be handled locally");
+
+    assert_eq!(response.status(), http::StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should read");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("json body should parse");
+    assert_eq!(payload["status"], json!("ok"));
+    assert_eq!(payload["data"]["total_affinities"], json!(1));
+    assert_eq!(
+        payload["data"]["affinity_stats"]["total_affinities"],
+        json!(1)
+    );
+    assert_eq!(
+        payload["data"]["affinity_stats"]["active_affinities"],
+        json!(1)
+    );
+    assert_eq!(
+        payload["data"]["affinity_stats"]["storage_type"],
+        json!("memory")
+    );
+}
+
+#[tokio::test]
 async fn admin_monitoring_cache_stats_returns_local_payload() {
     let now = chrono::Utc::now().timestamp();
     let usage_repository = Arc::new(InMemoryUsageReadRepository::seed(vec![

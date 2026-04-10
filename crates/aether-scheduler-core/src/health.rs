@@ -57,9 +57,10 @@ pub fn is_candidate_in_recent_failure_cooldown(
         }
 
         let observed_at_unix_secs = candidate
-            .finished_at_unix_secs
-            .or(candidate.started_at_unix_secs)
-            .unwrap_or(candidate.created_at_unix_secs);
+            .finished_at_unix_ms
+            .or(candidate.started_at_unix_ms)
+            .map(|ms| ms / 1000)
+            .unwrap_or(candidate.created_at_unix_ms / 1000);
         if now_unix_secs.saturating_sub(observed_at_unix_secs) > FAILURE_COOLDOWN_WINDOW_SECS {
             continue;
         }
@@ -151,8 +152,9 @@ pub fn count_recent_rpm_requests_for_provider_key_since(
             continue;
         }
         let observed_at_unix_secs = candidate
-            .started_at_unix_secs
-            .unwrap_or(candidate.created_at_unix_secs);
+            .started_at_unix_ms
+            .map(|ms| ms / 1000)
+            .unwrap_or(candidate.created_at_unix_ms / 1000);
         if reset_after_unix_secs.is_some_and(|reset_after| observed_at_unix_secs <= reset_after) {
             continue;
         }
@@ -308,7 +310,7 @@ fn provider_key_dynamic_reservation_ratio(
 }
 
 fn is_recently_active(candidate: &StoredRequestCandidate, now_unix_secs: u64) -> bool {
-    if candidate.finished_at_unix_secs.is_some() {
+    if candidate.finished_at_unix_ms.is_some() {
         return false;
     }
 
@@ -320,22 +322,21 @@ fn is_recently_active(candidate: &StoredRequestCandidate, now_unix_secs: u64) ->
     }
 
     let observed_at_unix_secs = candidate
-        .started_at_unix_secs
-        .unwrap_or(candidate.created_at_unix_secs);
+        .started_at_unix_ms
+        .map(|ms| ms / 1000)
+        .unwrap_or(candidate.created_at_unix_ms / 1000);
     now_unix_secs.saturating_sub(observed_at_unix_secs) <= ACTIVE_REQUEST_WINDOW_SECS
 }
 
 fn is_recent_rpm_observation(candidate: &StoredRequestCandidate, now_unix_secs: u64) -> bool {
-    if !candidate
-        .status
-        .is_attempted(candidate.started_at_unix_secs)
-    {
+    if !candidate.status.is_attempted(candidate.started_at_unix_ms) {
         return false;
     }
 
     let observed_at_unix_secs = candidate
-        .started_at_unix_secs
-        .unwrap_or(candidate.created_at_unix_secs);
+        .started_at_unix_ms
+        .map(|ms| ms / 1000)
+        .unwrap_or(candidate.created_at_unix_ms / 1000);
     now_unix_secs.saturating_sub(observed_at_unix_secs) <= PROVIDER_KEY_RPM_WINDOW_SECS
 }
 
@@ -465,6 +466,7 @@ mod tests {
         status: RequestCandidateStatus,
         created_at_unix_secs: i64,
     ) -> StoredRequestCandidate {
+        let created_at_unix_ms = created_at_unix_secs * 1000;
         StoredRequestCandidate::new(
             id.to_string(),
             format!("req-{id}"),
@@ -487,9 +489,9 @@ mod tests {
             None,
             None,
             None,
-            created_at_unix_secs,
-            Some(created_at_unix_secs),
-            Some(created_at_unix_secs),
+            created_at_unix_ms,
+            Some(created_at_unix_ms),
+            Some(created_at_unix_ms),
         )
         .expect("candidate should build")
     }
@@ -710,9 +712,9 @@ mod tests {
                 Some(7),
                 None,
                 None,
-                95,
-                Some(95),
-                Some(96),
+                95_000,
+                Some(95_000),
+                Some(96_000),
             )
             .expect("candidate should build"),
             StoredRequestCandidate::new(
@@ -737,9 +739,9 @@ mod tests {
                 None,
                 None,
                 None,
-                98,
-                Some(98),
-                Some(99),
+                98_000,
+                Some(98_000),
+                Some(99_000),
             )
             .expect("candidate should build"),
         ];
@@ -775,9 +777,9 @@ mod tests {
                 Some(7),
                 None,
                 None,
-                95,
-                Some(95),
-                Some(96),
+                95_000,
+                Some(95_000),
+                Some(96_000),
             )
             .expect("candidate should build"),
             StoredRequestCandidate::new(
@@ -802,9 +804,9 @@ mod tests {
                 Some(2),
                 None,
                 None,
-                99,
-                Some(99),
-                Some(100),
+                99_000,
+                Some(99_000),
+                Some(100_000),
             )
             .expect("candidate should build"),
         ];
@@ -854,9 +856,9 @@ mod tests {
             Some(9),
             None,
             None,
-            95,
-            Some(95),
-            Some(96),
+            95_000,
+            Some(95_000),
+            Some(96_000),
         )
         .expect("candidate should build")];
 

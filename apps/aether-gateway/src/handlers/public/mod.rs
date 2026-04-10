@@ -10,7 +10,7 @@ pub(crate) use self::catalog_helpers::{
     admin_requested_force_stream, api_format_display_name, build_api_format_health_monitor_payload,
     build_public_catalog_models_payload, build_public_catalog_search_models_payload,
     build_public_health_timeline, build_public_providers_payload, normalize_admin_base_url,
-    provider_key_api_formats, request_candidate_event_unix_secs, request_candidate_status_label,
+    provider_key_api_formats, request_candidate_event_unix_ms, request_candidate_status_label,
     ApiFormatHealthMonitorOptions,
 };
 pub(crate) use self::system_modules_helpers::{
