@@ -1,5 +1,6 @@
 import { ref, computed, type Ref } from 'vue'
 import type { UsageRecord, FilterStatusValue } from '../types'
+import { isUsageRecordFailed } from '../utils/status'
 
 export interface UseUsageFiltersOptions {
   /** 所有记录的响应式引用 */
@@ -64,22 +65,18 @@ export function useUsageFilters(options: UseUsageFiltersOptions) {
     if (filterStatus.value !== '__all__') {
       if (filterStatus.value === 'stream') {
         records = records.filter(record =>
-          record.is_stream && !record.error_message && (!record.status_code || record.status_code === 200)
+          record.is_stream && !isUsageRecordFailed(record)
         )
       } else if (filterStatus.value === 'standard') {
         records = records.filter(record =>
-          !record.is_stream && !record.error_message && (!record.status_code || record.status_code === 200)
+          !record.is_stream && !isUsageRecordFailed(record)
         )
       } else if (filterStatus.value === 'active') {
         records = records.filter(record =>
           record.status === 'pending' || record.status === 'streaming'
         )
       } else if (filterStatus.value === 'failed') {
-        records = records.filter(record =>
-          record.status === 'failed' ||
-          (record.status_code && record.status_code >= 400) ||
-          record.error_message
-        )
+        records = records.filter(record => isUsageRecordFailed(record))
       } else if (filterStatus.value === 'cancelled') {
         records = records.filter(record => record.status === 'cancelled')
       }

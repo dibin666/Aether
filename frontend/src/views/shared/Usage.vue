@@ -144,6 +144,7 @@ import {
   getDateRangeFromPeriod
 } from '@/features/usage/composables'
 import { reconcileActiveRequestDiscovery } from '@/features/usage/utils/activeRequestDiscovery'
+import { isUsageRecordFailed } from '@/features/usage/utils/status'
 import type { DateRangeParams, FilterStatusValue } from '@/features/usage/types'
 import type { UserOption } from '@/features/usage/components/UsageRecordsTable.vue'
 import { log } from '@/utils/logger'
@@ -294,25 +295,18 @@ const filteredRecords = computed(() => {
     if (filterStatus.value !== '__all__') {
       if (filterStatus.value === 'stream') {
         records = records.filter(record =>
-          record.is_stream && !record.error_message && (!record.status_code || record.status_code === 200)
+          record.is_stream && !isUsageRecordFailed(record)
         )
       } else if (filterStatus.value === 'standard') {
         records = records.filter(record =>
-          !record.is_stream && !record.error_message && (!record.status_code || record.status_code === 200)
+          !record.is_stream && !isUsageRecordFailed(record)
         )
       } else if (filterStatus.value === 'active') {
         records = records.filter(record =>
           record.status === 'pending' || record.status === 'streaming'
         )
       } else if (filterStatus.value === 'failed') {
-        // 失败请求需要同时考虑新旧两种判断方式：
-        // 1. 新方式：status = "failed"
-        // 2. 旧方式：status_code >= 400 或 error_message 不为空
-        records = records.filter(record =>
-          record.status === 'failed' ||
-          (record.status_code && record.status_code >= 400) ||
-          record.error_message
-        )
+        records = records.filter(record => isUsageRecordFailed(record))
       } else if (filterStatus.value === 'cancelled') {
         records = records.filter(record => record.status === 'cancelled')
       }
@@ -530,10 +524,10 @@ function stopActiveDiscovery() {
   }
 }
 
-// 监听活跃请求状态，自动启动/停止刷新
-// 活跃请求的 1 秒轮询受“自动刷新”开关控制
+// 监听活跃请求状态，已显示的活跃行始终自刷新到终态。
+// “自动刷新”开关只控制全局 3 秒刷新和新活跃请求发现。
 watch(hasActiveRequests, (hasActive) => {
-  if (globalAutoRefresh.value && hasActive && isPageVisible.value) {
+  if (hasActive && isPageVisible.value) {
     startAutoRefresh()
   } else {
     stopAutoRefresh()
@@ -568,7 +562,6 @@ function handleAutoRefreshChange(value: boolean) {
     }
     startGlobalAutoRefresh()
   } else {
-    stopAutoRefresh()
     stopActiveDiscovery()
     stopGlobalAutoRefresh()
   }
@@ -582,11 +575,11 @@ function handleVisibilityChange() {
     stopGlobalAutoRefresh()
     return
   }
+  if (hasActiveRequests.value) {
+    startAutoRefresh()
+  }
   if (globalAutoRefresh.value) {
     startActiveDiscovery()
-    if (hasActiveRequests.value) {
-      startAutoRefresh()
-    }
     refreshData()
     startGlobalAutoRefresh()
   }

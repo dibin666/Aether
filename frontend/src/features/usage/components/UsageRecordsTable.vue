@@ -205,7 +205,7 @@
           <div class="flex items-center gap-1.5">
             <!-- 状态 Badge -->
             <Badge
-              v-if="record.status === 'failed' || (record.status_code && record.status_code >= 400) || record.error_message"
+              v-if="isUsageRecordFailed(record)"
               variant="destructive"
               class="whitespace-nowrap text-[10px] px-1.5 h-4 leading-4 inline-flex items-center"
             >
@@ -521,7 +521,7 @@
               传输中
             </Badge>
             <Badge
-              v-else-if="record.status === 'failed' || (record.status_code && record.status_code >= 400) || record.error_message"
+              v-else-if="isUsageRecordFailed(record)"
               variant="destructive"
               class="whitespace-nowrap"
             >
@@ -678,6 +678,7 @@ import { RefreshCcw, Search } from 'lucide-vue-next'
 import { formatTokens, formatCurrency } from '@/utils/format'
 import { formatDateTime } from '../composables'
 import { getEffectiveInputTokens } from '../token-normalization'
+import { isUsageRecordFailed } from '../utils/status'
 import { useRowClick } from '@/composables/useRowClick'
 import { formatApiFormat } from '@/api/endpoints/types/api-format'
 import type { DateRangeParams, UsageRecord } from '../types'

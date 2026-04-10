@@ -181,6 +181,18 @@ pub fn admin_usage_matches_api_format(
         .is_some_and(|value| value.eq_ignore_ascii_case(api_format))
 }
 
+pub fn admin_usage_is_failed(item: &StoredRequestUsageAudit) -> bool {
+    let status = item.status.trim();
+    if !status.is_empty() {
+        return status.eq_ignore_ascii_case("failed");
+    }
+    item.status_code.is_some_and(|value| value >= 400)
+        || item
+            .error_message
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+}
+
 pub fn admin_usage_matches_status(item: &StoredRequestUsageAudit, status: Option<&str>) -> bool {
     let Some(status) = status.map(str::trim).filter(|value| !value.is_empty()) else {
         return true;
@@ -192,11 +204,7 @@ pub fn admin_usage_matches_status(item: &StoredRequestUsageAudit, status: Option
             item.status_code.is_some_and(|value| value >= 400) || item.error_message.is_some()
         }
         "pending" | "streaming" | "completed" | "cancelled" => item.status == status,
-        "failed" => {
-            item.status == "failed"
-                || item.status_code.is_some_and(|value| value >= 400)
-                || item.error_message.is_some()
-        }
+        "failed" => admin_usage_is_failed(item),
         "active" => matches!(item.status.as_str(), "pending" | "streaming"),
         _ => true,
     }
@@ -225,6 +233,76 @@ pub fn admin_usage_provider_key_name(
         .and_then(|key_id| provider_key_names.get(key_id))
         .cloned()
         .or_else(|| admin_usage_request_metadata_string(item, "key_name"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{admin_usage_is_failed, admin_usage_matches_status};
+    use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
+
+    fn sample_usage(
+        status: &str,
+        status_code: Option<i32>,
+        error_message: Option<&str>,
+    ) -> StoredRequestUsageAudit {
+        StoredRequestUsageAudit::new(
+            "usage-1".to_string(),
+            "req-1".to_string(),
+            Some("user-1".to_string()),
+            Some("api-key-1".to_string()),
+            Some("alice".to_string()),
+            Some("default".to_string()),
+            "OpenAI".to_string(),
+            "gpt-5".to_string(),
+            None,
+            Some("provider-1".to_string()),
+            Some("endpoint-1".to_string()),
+            Some("provider-key-1".to_string()),
+            Some("chat".to_string()),
+            Some("openai:chat".to_string()),
+            Some("openai".to_string()),
+            Some("chat".to_string()),
+            Some("openai:chat".to_string()),
+            Some("openai".to_string()),
+            Some("chat".to_string()),
+            false,
+            false,
+            10,
+            20,
+            30,
+            0.0,
+            0.0,
+            status_code,
+            error_message.map(ToOwned::to_owned),
+            None,
+            Some(120),
+            None,
+            status.to_string(),
+            "settled".to_string(),
+            100,
+            101,
+            Some(102),
+        )
+        .expect("usage should build")
+    }
+
+    #[test]
+    fn explicit_completed_status_wins_over_legacy_failure_fields() {
+        let item = sample_usage("completed", Some(429), Some("rate limited on first attempt"));
+        assert!(!admin_usage_is_failed(&item));
+        assert!(!admin_usage_matches_status(&item, Some("failed")));
+        assert!(admin_usage_matches_status(&item, Some("completed")));
+    }
+
+    #[test]
+    fn legacy_failure_signals_still_work_when_status_is_missing() {
+        let item = StoredRequestUsageAudit {
+            status: String::new(),
+            ..sample_usage("completed", Some(429), Some("rate limited"))
+        };
+        assert!(admin_usage_is_failed(&item));
+        assert!(admin_usage_matches_status(&item, Some("failed")));
+    }
 }
 
 pub fn admin_usage_record_json(

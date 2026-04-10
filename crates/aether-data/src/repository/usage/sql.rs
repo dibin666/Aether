@@ -415,9 +415,18 @@ DO UPDATE SET
   output_price_per_1m = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.output_price_per_1m, "usage".output_price_per_1m) ELSE "usage".output_price_per_1m END,
   total_cost_usd = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.total_cost_usd, "usage".total_cost_usd) ELSE "usage".total_cost_usd END,
   actual_total_cost_usd = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.actual_total_cost_usd, "usage".actual_total_cost_usd) ELSE "usage".actual_total_cost_usd END,
-  status_code = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.status_code, "usage".status_code) ELSE "usage".status_code END,
-  error_message = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.error_message, "usage".error_message) ELSE "usage".error_message END,
-  error_category = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.error_category, "usage".error_category) ELSE "usage".error_category END,
+  status_code = CASE WHEN "usage".billing_status = 'pending' THEN CASE
+    WHEN EXCLUDED.status IN ('pending', 'streaming', 'completed', 'cancelled') AND EXCLUDED.status_code IS NULL THEN NULL
+    ELSE COALESCE(EXCLUDED.status_code, "usage".status_code)
+  END ELSE "usage".status_code END,
+  error_message = CASE WHEN "usage".billing_status = 'pending' THEN CASE
+    WHEN EXCLUDED.status IN ('pending', 'streaming', 'completed', 'cancelled') THEN EXCLUDED.error_message
+    ELSE COALESCE(EXCLUDED.error_message, "usage".error_message)
+  END ELSE "usage".error_message END,
+  error_category = CASE WHEN "usage".billing_status = 'pending' THEN CASE
+    WHEN EXCLUDED.status IN ('pending', 'streaming', 'completed', 'cancelled') THEN EXCLUDED.error_category
+    ELSE COALESCE(EXCLUDED.error_category, "usage".error_category)
+  END ELSE "usage".error_category END,
   response_time_ms = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.response_time_ms, "usage".response_time_ms) ELSE "usage".response_time_ms END,
   first_byte_time_ms = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.first_byte_time_ms, "usage".first_byte_time_ms) ELSE "usage".first_byte_time_ms END,
   status = CASE WHEN "usage".billing_status = 'pending' THEN EXCLUDED.status ELSE "usage".status END,
@@ -1073,5 +1082,18 @@ mod tests {
         assert!(super::UPSERT_SQL.contains("\n  $48::json,\n  $49::json,\n  CASE"));
         assert!(super::UPSERT_SQL.contains("WHEN $50 IS NULL THEN NULL"));
         assert!(super::UPSERT_SQL.contains("TO_TIMESTAMP($51::double precision)"));
+    }
+
+    #[test]
+    fn usage_sql_clears_stale_failure_fields_for_non_failed_status_updates() {
+        assert!(super::UPSERT_SQL.contains(
+            "WHEN EXCLUDED.status IN ('pending', 'streaming', 'completed', 'cancelled') AND EXCLUDED.status_code IS NULL THEN NULL"
+        ));
+        assert!(super::UPSERT_SQL.contains(
+            "WHEN EXCLUDED.status IN ('pending', 'streaming', 'completed', 'cancelled') THEN EXCLUDED.error_message"
+        ));
+        assert!(super::UPSERT_SQL.contains(
+            "WHEN EXCLUDED.status IN ('pending', 'streaming', 'completed', 'cancelled') THEN EXCLUDED.error_category"
+        ));
     }
 }
