@@ -4,8 +4,9 @@ use std::sync::RwLock;
 use async_trait::async_trait;
 
 use super::{
-    StoredProviderUsageSummary, StoredProviderUsageWindow, StoredRequestUsageAudit,
-    UpsertUsageRecord, UsageAuditListQuery, UsageReadRepository, UsageWriteRepository,
+    StoredProviderApiKeyUsageSummary, StoredProviderUsageSummary, StoredProviderUsageWindow,
+    StoredRequestUsageAudit, UpsertUsageRecord, UsageAuditListQuery, UsageReadRepository,
+    UsageWriteRepository,
 };
 use crate::DataLayerError;
 
@@ -163,6 +164,46 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
             *entry = (*entry).saturating_add(item.total_tokens);
         }
         Ok(totals)
+    }
+
+    async fn summarize_usage_by_provider_api_key_ids(
+        &self,
+        provider_api_key_ids: &[String],
+    ) -> Result<BTreeMap<String, StoredProviderApiKeyUsageSummary>, DataLayerError> {
+        let provider_api_key_id_set = provider_api_key_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let mut summaries = BTreeMap::<String, StoredProviderApiKeyUsageSummary>::new();
+        for item in self
+            .by_request_id
+            .read()
+            .expect("usage repository lock")
+            .values()
+        {
+            let Some(provider_api_key_id) = item.provider_api_key_id.as_deref() else {
+                continue;
+            };
+            if !provider_api_key_id_set.contains(&provider_api_key_id) {
+                continue;
+            }
+            let entry = summaries
+                .entry(provider_api_key_id.to_string())
+                .or_insert_with(|| StoredProviderApiKeyUsageSummary {
+                    provider_api_key_id: provider_api_key_id.to_string(),
+                    ..StoredProviderApiKeyUsageSummary::default()
+                });
+            entry.request_count = entry.request_count.saturating_add(1);
+            entry.total_tokens = entry.total_tokens.saturating_add(item.total_tokens);
+            entry.total_cost_usd += item.total_cost_usd;
+            entry.last_used_at_unix_secs = Some(
+                entry
+                    .last_used_at_unix_secs
+                    .unwrap_or_default()
+                    .max(item.created_at_unix_ms),
+            );
+        }
+        Ok(summaries)
     }
 
     async fn summarize_provider_usage_since(
@@ -532,5 +573,26 @@ mod tests {
         assert_eq!(summary.failed_requests, 1);
         assert_eq!(summary.avg_response_time_ms, 180.0);
         assert_eq!(summary.total_cost_usd, 0.75);
+    }
+
+    #[tokio::test]
+    async fn summarizes_usage_by_provider_api_key_ids() {
+        let repository = InMemoryUsageReadRepository::seed(vec![
+            sample_usage("req-1", 1_711_000_000),
+            sample_usage("req-2", 1_711_000_250),
+        ]);
+
+        let usage = repository
+            .summarize_usage_by_provider_api_key_ids(&["provider-key-1".to_string()])
+            .await
+            .expect("summary should succeed");
+        let item = usage
+            .get("provider-key-1")
+            .expect("provider key summary should exist");
+
+        assert_eq!(item.request_count, 2);
+        assert_eq!(item.total_tokens, 300);
+        assert_eq!(item.total_cost_usd, 0.24);
+        assert_eq!(item.last_used_at_unix_secs, Some(1_711_000_250));
     }
 }
