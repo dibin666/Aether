@@ -35,7 +35,6 @@ services:
   app:
     image: ${APP_IMAGE:-ghcr.io/fawney19/aether:pre}
     container_name: aether-app
-    user: "${UID:-1000}:${GID:-1000}"
     env_file:
       - .env
     environment:

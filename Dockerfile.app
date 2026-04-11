@@ -8,7 +8,7 @@
 #   dist/aether-gateway-arm64   (aarch64-unknown-linux-musl 交叉编译产物)
 #   dist/frontend/              (npm run build 产物)
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12
 
 # TARGETARCH 由 buildx 自动注入: amd64 或 arm64
 ARG TARGETARCH
