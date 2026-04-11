@@ -19,10 +19,10 @@ COPY dist/frontend/ /srv/frontend
 WORKDIR /app
 
 ENV RUST_LOG=aether_gateway=info \
-    AETHER_GATEWAY_BIND=0.0.0.0:80 \
+    AETHER_GATEWAY_BIND=0.0.0.0:8084 \
     AETHER_GATEWAY_STATIC_DIR=/srv/frontend
 
-EXPOSE 80
+EXPOSE 8084
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD ["/usr/local/bin/aether-gateway", "--healthcheck"]
