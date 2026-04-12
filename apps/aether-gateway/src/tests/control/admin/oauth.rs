@@ -2199,9 +2199,10 @@ async fn gateway_batch_imports_admin_provider_oauth_kiro_via_execution_runtime_p
     assert_eq!(payload["results"][0]["key_id"], "key-kiro-batch-runtime");
     assert_eq!(payload["results"][0]["replaced"], true);
 
-    let plans = execution_plans.lock().expect("mutex should lock");
-    assert_eq!(plans.len(), 1);
-    drop(plans);
+    {
+        let plans = execution_plans.lock().expect("mutex should lock");
+        assert_eq!(plans.len(), 1);
+    }
 
     let stored_key = provider_catalog_repository
         .list_keys_by_ids(&["key-kiro-batch-runtime".to_string()])
