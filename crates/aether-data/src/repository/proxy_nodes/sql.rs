@@ -5,8 +5,9 @@ use sqlx::{postgres::PgRow, PgPool, Row};
 
 use super::types::{
     normalize_proxy_metadata, reconcile_remote_config_after_heartbeat, ProxyNodeHeartbeatMutation,
-    ProxyNodeReadRepository, ProxyNodeRegistrationMutation, ProxyNodeRemoteConfigMutation,
-    ProxyNodeTunnelStatusMutation, ProxyNodeWriteRepository, StoredProxyNode, StoredProxyNodeEvent,
+    ProxyNodeManualCreateMutation, ProxyNodeManualUpdateMutation, ProxyNodeReadRepository,
+    ProxyNodeRegistrationMutation, ProxyNodeRemoteConfigMutation, ProxyNodeTunnelStatusMutation,
+    ProxyNodeWriteRepository, StoredProxyNode, StoredProxyNodeEvent,
 };
 use crate::{
     error::{postgres_error, SqlxResultExt},
@@ -213,6 +214,76 @@ VALUES (
 )
 "#;
 
+const FIND_DUPLICATE_PROXY_NODE_SQL: &str = r#"
+SELECT
+  id,
+  name,
+  ip,
+  port
+FROM proxy_nodes
+WHERE ip = $1
+  AND port = $2
+LIMIT 1
+FOR UPDATE
+"#;
+
+const FIND_DUPLICATE_PROXY_NODE_EXCLUDING_ID_SQL: &str = r#"
+SELECT
+  id,
+  name,
+  ip,
+  port
+FROM proxy_nodes
+WHERE ip = $1
+  AND port = $2
+  AND id <> $3
+LIMIT 1
+FOR UPDATE
+"#;
+
+const INSERT_MANUAL_PROXY_NODE_SQL: &str = r#"
+INSERT INTO proxy_nodes (
+  id,
+  name,
+  ip,
+  port,
+  region,
+  is_manual,
+  proxy_url,
+  proxy_username,
+  proxy_password,
+  status,
+  registered_by,
+  last_heartbeat_at,
+  heartbeat_interval,
+  active_connections,
+  total_requests,
+  tunnel_mode,
+  tunnel_connected,
+  config_version
+)
+VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  TRUE,
+  $6,
+  $7,
+  $8,
+  'online'::proxynodestatus,
+  $9,
+  NULL,
+  0,
+  0,
+  0,
+  FALSE,
+  FALSE,
+  0
+)
+"#;
+
 const UPDATE_PROXY_NODE_REGISTRATION_SQL: &str = r#"
 UPDATE proxy_nodes
 SET
@@ -234,6 +305,21 @@ SET
 WHERE id = $1
 "#;
 
+const UPDATE_MANUAL_PROXY_NODE_SQL: &str = r#"
+UPDATE proxy_nodes
+SET
+  name = COALESCE($2, name),
+  ip = COALESCE($3, ip),
+  port = COALESCE($4, port),
+  region = COALESCE($5, region),
+  proxy_url = COALESCE($6, proxy_url),
+  proxy_username = COALESCE($7, proxy_username),
+  proxy_password = COALESCE($8, proxy_password),
+  updated_at = NOW()
+WHERE id = $1
+  AND is_manual = TRUE
+"#;
+
 const UNREGISTER_PROXY_NODE_SQL: &str = r#"
 UPDATE proxy_nodes
 SET
@@ -241,6 +327,11 @@ SET
   tunnel_connected = FALSE,
   tunnel_connected_at = NOW(),
   updated_at = NOW()
+WHERE id = $1
+"#;
+
+const DELETE_PROXY_NODE_SQL: &str = r#"
+DELETE FROM proxy_nodes
 WHERE id = $1
 "#;
 
@@ -410,6 +501,43 @@ impl SqlxProxyNodeRepository {
 
         (!config.is_empty()).then_some(serde_json::Value::Object(config))
     }
+
+    fn duplicate_proxy_node_detail(name: &str, ip: &str, port: i32) -> String {
+        format!("已存在相同地址的代理节点: {name} ({ip}:{port})")
+    }
+
+    async fn find_duplicate_proxy_node_locked(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        ip: &str,
+        port: i32,
+        exclude_node_id: Option<&str>,
+    ) -> Result<Option<(String, String, i32)>, DataLayerError> {
+        let row = if let Some(exclude_node_id) = exclude_node_id {
+            sqlx::query(FIND_DUPLICATE_PROXY_NODE_EXCLUDING_ID_SQL)
+                .bind(ip)
+                .bind(port)
+                .bind(exclude_node_id)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_postgres_err()?
+        } else {
+            sqlx::query(FIND_DUPLICATE_PROXY_NODE_SQL)
+                .bind(ip)
+                .bind(port)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_postgres_err()?
+        };
+
+        row.map(|row| {
+            Ok((
+                row.try_get("name").map_postgres_err()?,
+                row.try_get("ip").map_postgres_err()?,
+                row.try_get("port").map_postgres_err()?,
+            ))
+        })
+        .transpose()
+    }
 }
 
 #[async_trait]
@@ -460,6 +588,102 @@ impl ProxyNodeWriteRepository for SqlxProxyNodeRepository {
             .await
             .map_postgres_err()?;
         Ok(result.rows_affected() as usize)
+    }
+
+    async fn create_manual_node(
+        &self,
+        mutation: &ProxyNodeManualCreateMutation,
+    ) -> Result<StoredProxyNode, DataLayerError> {
+        let lock_key = Self::registration_lock_key(&mutation.ip, mutation.port);
+        let mut tx = self.pool.begin().await.map_postgres_err()?;
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(lock_key)
+            .execute(&mut *tx)
+            .await
+            .map_postgres_err()?;
+
+        if let Some((name, ip, port)) =
+            Self::find_duplicate_proxy_node_locked(&mut tx, &mutation.ip, mutation.port, None)
+                .await?
+        {
+            return Err(DataLayerError::InvalidInput(
+                Self::duplicate_proxy_node_detail(&name, &ip, port),
+            ));
+        }
+
+        let node_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(INSERT_MANUAL_PROXY_NODE_SQL)
+            .bind(&node_id)
+            .bind(&mutation.name)
+            .bind(&mutation.ip)
+            .bind(mutation.port)
+            .bind(mutation.region.as_deref())
+            .bind(&mutation.proxy_url)
+            .bind(mutation.proxy_username.as_deref())
+            .bind(mutation.proxy_password.as_deref())
+            .bind(mutation.registered_by.as_deref())
+            .execute(&mut *tx)
+            .await
+            .map_postgres_err()?;
+
+        tx.commit().await.map_err(postgres_error)?;
+        self.find_proxy_node(&node_id).await?.ok_or_else(|| {
+            DataLayerError::UnexpectedValue("created manual proxy node missing".to_string())
+        })
+    }
+
+    async fn update_manual_node(
+        &self,
+        mutation: &ProxyNodeManualUpdateMutation,
+    ) -> Result<Option<StoredProxyNode>, DataLayerError> {
+        let existing = self.find_proxy_node(&mutation.node_id).await?;
+        let Some(existing) = existing else {
+            return Ok(None);
+        };
+        if !existing.is_manual {
+            return Err(DataLayerError::InvalidInput(
+                "只能编辑手动添加的代理节点".to_string(),
+            ));
+        }
+
+        let next_ip = mutation.ip.as_deref().unwrap_or(existing.ip.as_str());
+        let next_port = mutation.port.unwrap_or(existing.port);
+        let lock_key = Self::registration_lock_key(next_ip, next_port);
+        let mut tx = self.pool.begin().await.map_postgres_err()?;
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(lock_key)
+            .execute(&mut *tx)
+            .await
+            .map_postgres_err()?;
+
+        if let Some((name, ip, port)) = Self::find_duplicate_proxy_node_locked(
+            &mut tx,
+            next_ip,
+            next_port,
+            Some(&mutation.node_id),
+        )
+        .await?
+        {
+            return Err(DataLayerError::InvalidInput(
+                Self::duplicate_proxy_node_detail(&name, &ip, port),
+            ));
+        }
+
+        sqlx::query(UPDATE_MANUAL_PROXY_NODE_SQL)
+            .bind(&mutation.node_id)
+            .bind(mutation.name.as_deref())
+            .bind(mutation.ip.as_deref())
+            .bind(mutation.port)
+            .bind(mutation.region.as_deref())
+            .bind(mutation.proxy_url.as_deref())
+            .bind(mutation.proxy_username.as_deref())
+            .bind(mutation.proxy_password.as_deref())
+            .execute(&mut *tx)
+            .await
+            .map_postgres_err()?;
+
+        tx.commit().await.map_err(postgres_error)?;
+        self.find_proxy_node(&mutation.node_id).await
     }
 
     async fn register_node(
@@ -719,6 +943,21 @@ VALUES (
             .map_postgres_err()?;
 
         self.find_proxy_node(&existing.id).await
+    }
+
+    async fn delete_node(&self, node_id: &str) -> Result<Option<StoredProxyNode>, DataLayerError> {
+        let existing = self.find_proxy_node(node_id).await?;
+        let Some(existing) = existing else {
+            return Ok(None);
+        };
+
+        sqlx::query(DELETE_PROXY_NODE_SQL)
+            .bind(node_id)
+            .execute(&self.pool)
+            .await
+            .map_postgres_err()?;
+
+        Ok(Some(existing))
     }
 
     async fn update_remote_config(

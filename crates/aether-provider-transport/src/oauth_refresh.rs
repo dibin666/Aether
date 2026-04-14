@@ -42,6 +42,22 @@ pub struct CachedOAuthEntry {
     pub metadata: Option<Value>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalOAuthHttpRequest {
+    pub request_id: &'static str,
+    pub method: reqwest::Method,
+    pub url: String,
+    pub headers: BTreeMap<String, String>,
+    pub json_body: Option<Value>,
+    pub body_bytes: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalOAuthHttpResponse {
+    pub status_code: u16,
+    pub body_text: String,
+}
+
 #[derive(Debug, Error)]
 pub enum LocalOAuthRefreshError {
     #[error("{provider_type} oauth refresh request failed: {source}")]
@@ -61,6 +77,71 @@ pub enum LocalOAuthRefreshError {
         provider_type: &'static str,
         message: String,
     },
+}
+
+#[async_trait]
+pub trait LocalOAuthHttpExecutor: Send + Sync {
+    async fn execute(
+        &self,
+        provider_type: &'static str,
+        transport: &GatewayProviderTransportSnapshot,
+        request: &LocalOAuthHttpRequest,
+    ) -> Result<LocalOAuthHttpResponse, LocalOAuthRefreshError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct ReqwestLocalOAuthHttpExecutor {
+    client: reqwest::Client,
+}
+
+impl ReqwestLocalOAuthHttpExecutor {
+    pub fn new(client: reqwest::Client) -> Self {
+        Self { client }
+    }
+}
+
+#[async_trait]
+impl LocalOAuthHttpExecutor for ReqwestLocalOAuthHttpExecutor {
+    async fn execute(
+        &self,
+        provider_type: &'static str,
+        _transport: &GatewayProviderTransportSnapshot,
+        request: &LocalOAuthHttpRequest,
+    ) -> Result<LocalOAuthHttpResponse, LocalOAuthRefreshError> {
+        let mut builder = self
+            .client
+            .request(request.method.clone(), request.url.as_str());
+        for (name, value) in &request.headers {
+            builder = builder.header(name, value);
+        }
+        if let Some(json_body) = request.json_body.as_ref() {
+            builder = builder.json(json_body);
+        } else if let Some(body_bytes) = request.body_bytes.as_ref() {
+            builder = builder.body(body_bytes.clone());
+        }
+
+        let response =
+            builder
+                .send()
+                .await
+                .map_err(|source| LocalOAuthRefreshError::Transport {
+                    provider_type,
+                    source,
+                })?;
+        let status_code = response.status().as_u16();
+        let body_text =
+            response
+                .text()
+                .await
+                .map_err(|source| LocalOAuthRefreshError::Transport {
+                    provider_type,
+                    source,
+                })?;
+        Ok(LocalOAuthHttpResponse {
+            status_code,
+            body_text,
+        })
+    }
 }
 
 #[async_trait]
@@ -94,7 +175,7 @@ pub trait LocalOAuthRefreshAdapter: Send + Sync {
 
     async fn refresh(
         &self,
-        client: &reqwest::Client,
+        executor: &dyn LocalOAuthHttpExecutor,
         transport: &GatewayProviderTransportSnapshot,
         entry: Option<&CachedOAuthEntry>,
     ) -> Result<Option<CachedOAuthEntry>, LocalOAuthRefreshError>;
@@ -152,7 +233,7 @@ impl LocalOAuthRefreshCoordinator {
 
     pub async fn resolve_with_result(
         &self,
-        client: &reqwest::Client,
+        executor: &dyn LocalOAuthHttpExecutor,
         transport: &GatewayProviderTransportSnapshot,
         distributed_lock: Option<&RedisLockRunner>,
         distributed_owner: Option<&str>,
@@ -232,7 +313,7 @@ impl LocalOAuthRefreshCoordinator {
         };
 
         let refresh_result = adapter
-            .refresh(client, transport, cached_entry.as_ref())
+            .refresh(executor, transport, cached_entry.as_ref())
             .await;
         if let (Some(lock), Some(lease)) = (distributed_lock, distributed_lease.as_ref()) {
             if let Err(err) = lock.release(lease).await {
@@ -300,8 +381,9 @@ mod tests {
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };
     use super::{
-        CachedOAuthEntry, LocalOAuthRefreshAdapter, LocalOAuthRefreshCoordinator,
-        LocalOAuthRefreshError, LocalOAuthResolution, LocalResolvedOAuthRequestAuth,
+        CachedOAuthEntry, LocalOAuthHttpExecutor, LocalOAuthRefreshAdapter,
+        LocalOAuthRefreshCoordinator, LocalOAuthRefreshError, LocalOAuthResolution,
+        LocalResolvedOAuthRequestAuth, ReqwestLocalOAuthHttpExecutor,
     };
     use async_trait::async_trait;
     use std::sync::Arc;
@@ -351,7 +433,7 @@ mod tests {
 
         async fn refresh(
             &self,
-            _client: &reqwest::Client,
+            _executor: &dyn LocalOAuthHttpExecutor,
             _transport: &GatewayProviderTransportSnapshot,
             _entry: Option<&CachedOAuthEntry>,
         ) -> Result<Option<CachedOAuthEntry>, LocalOAuthRefreshError> {
@@ -427,14 +509,14 @@ mod tests {
                 refresh_hits: Arc::clone(&refresh_hits),
             })]);
         let transport = sample_transport();
-        let client = reqwest::Client::new();
+        let executor = ReqwestLocalOAuthHttpExecutor::new(reqwest::Client::new());
 
         let first = coordinator
-            .resolve_with_result(&client, &transport, None, None)
+            .resolve_with_result(&executor, &transport, None, None)
             .await
             .expect("first resolve should succeed");
         let second = coordinator
-            .resolve_with_result(&client, &transport, None, None)
+            .resolve_with_result(&executor, &transport, None, None)
             .await
             .expect("second resolve should succeed");
 

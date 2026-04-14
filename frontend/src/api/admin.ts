@@ -370,7 +370,7 @@ export interface CreateStandaloneApiKeyRequest {
   allowed_api_formats?: string[] | null
   allowed_models?: string[] | null
   rate_limit?: number | null  // null = 跟随系统默认，0 = 不限制
-  expires_at?: string | null  // ISO 日期字符串，如 "2025-12-31"，null = 永不过期
+  expires_at?: string | null  // RFC3339 时间，null = 永不过期
   initial_balance_usd: number | null  // 初始余额，null = 无限制
   unlimited_balance?: boolean | null  // 编辑时仅切换额度模式，不调整余额数值
   auto_delete_on_expiry?: boolean  // 过期后是否自动删除

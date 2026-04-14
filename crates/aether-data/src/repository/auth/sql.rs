@@ -468,10 +468,12 @@ const UPDATE_STANDALONE_API_KEY_BASIC_SQL: &str = r#"
 UPDATE api_keys
 SET
   name = COALESCE($2, name),
-  rate_limit = COALESCE($3, rate_limit),
-  allowed_providers = CASE WHEN $4 THEN $5::json ELSE allowed_providers END,
-  allowed_api_formats = CASE WHEN $6 THEN $7::json ELSE allowed_api_formats END,
-  allowed_models = CASE WHEN $8 THEN $9::json ELSE allowed_models END,
+  rate_limit = CASE WHEN $3 THEN $4 ELSE rate_limit END,
+  allowed_providers = CASE WHEN $5 THEN $6::json ELSE allowed_providers END,
+  allowed_api_formats = CASE WHEN $7 THEN $8::json ELSE allowed_api_formats END,
+  allowed_models = CASE WHEN $9 THEN $10::json ELSE allowed_models END,
+  expires_at = CASE WHEN $11 THEN $12 ELSE expires_at END,
+  auto_delete_on_expiry = CASE WHEN $13 THEN $14 ELSE auto_delete_on_expiry END,
   updated_at = NOW()
 WHERE id = $1
   AND is_standalone = TRUE
@@ -1085,9 +1087,18 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
             .map(serde_json::to_value)
             .transpose()
             .map_err(|err| DataLayerError::UnexpectedValue(err.to_string()))?;
+        let expires_at = record
+            .expires_at_unix_secs
+            .map(|value| {
+                chrono::DateTime::<chrono::Utc>::from_timestamp(value as i64, 0).ok_or_else(|| {
+                    DataLayerError::UnexpectedValue(format!("invalid api_keys.expires_at: {value}"))
+                })
+            })
+            .transpose()?;
         let row = sqlx::query(UPDATE_STANDALONE_API_KEY_BASIC_SQL)
             .bind(record.api_key_id)
             .bind(record.name)
+            .bind(record.rate_limit_present)
             .bind(record.rate_limit)
             .bind(record.allowed_providers.is_some())
             .bind(allowed_providers)
@@ -1095,6 +1106,10 @@ impl AuthApiKeyWriteRepository for SqlxAuthApiKeySnapshotReadRepository {
             .bind(allowed_api_formats)
             .bind(record.allowed_models.is_some())
             .bind(allowed_models)
+            .bind(record.expires_at_present)
+            .bind(expires_at)
+            .bind(record.auto_delete_on_expiry_present)
+            .bind(record.auto_delete_on_expiry)
             .fetch_optional(&self.pool)
             .await
             .map_postgres_err()?;
@@ -1299,12 +1314,19 @@ mod tests {
     #[test]
     fn update_standalone_api_key_basic_sql_casts_json_case_values() {
         assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL
-            .contains("allowed_providers = CASE WHEN $4 THEN $5::json ELSE allowed_providers END"));
+            .contains("allowed_providers = CASE WHEN $5 THEN $6::json ELSE allowed_providers END"));
         assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL.contains(
-            "allowed_api_formats = CASE WHEN $6 THEN $7::json ELSE allowed_api_formats END"
+            "allowed_api_formats = CASE WHEN $7 THEN $8::json ELSE allowed_api_formats END"
         ));
         assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL
-            .contains("allowed_models = CASE WHEN $8 THEN $9::json ELSE allowed_models END"));
+            .contains("allowed_models = CASE WHEN $9 THEN $10::json ELSE allowed_models END"));
+        assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL
+            .contains("rate_limit = CASE WHEN $3 THEN $4 ELSE rate_limit END"));
+        assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL
+            .contains("expires_at = CASE WHEN $11 THEN $12 ELSE expires_at END"));
+        assert!(UPDATE_STANDALONE_API_KEY_BASIC_SQL.contains(
+            "auto_delete_on_expiry = CASE WHEN $13 THEN $14 ELSE auto_delete_on_expiry END"
+        ));
     }
 
     #[tokio::test]

@@ -430,10 +430,13 @@ async fn gateway_handles_admin_api_keys_create_locally_with_trusted_admin_princi
         admin_request(reqwest::Client::new().post(format!("{gateway_url}/api/admin/api-keys")))
             .json(&json!({
                 "name": "standalone-key",
-                "rate_limit": 180,
+                "rate_limit": null,
                 "allowed_providers": ["openai"],
                 "allowed_api_formats": ["openai:chat"],
                 "allowed_models": ["gpt-4.1"],
+                "initial_balance_usd": 12.5,
+                "expires_at": "2030-01-02",
+                "auto_delete_on_expiry": true,
             }))
             .send()
             .await
@@ -443,11 +446,18 @@ async fn gateway_handles_admin_api_keys_create_locally_with_trusted_admin_princi
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(payload["name"], json!("standalone-key"));
     assert_eq!(payload["is_standalone"], json!(true));
-    assert_eq!(payload["rate_limit"], json!(180));
+    assert_eq!(payload["rate_limit"], serde_json::Value::Null);
     assert_eq!(payload["allowed_providers"], json!(["openai"]));
     assert_eq!(payload["allowed_api_formats"], json!(["openai:chat"]));
     assert_eq!(payload["allowed_models"], json!(["gpt-4.1"]));
-    assert_eq!(payload["wallet"], serde_json::Value::Null);
+    assert_eq!(payload["auto_delete_on_expiry"], json!(true));
+    assert_eq!(payload["wallet"]["balance"], json!(12.5));
+    assert_eq!(payload["wallet"]["limit_mode"], json!("finite"));
+    assert_eq!(payload["wallet"]["unlimited"], json!(false));
+    assert!(payload["expires_at"]
+        .as_str()
+        .expect("expires_at should exist")
+        .starts_with("2030-01-02"));
     let plaintext = payload["key"]
         .as_str()
         .expect("plaintext key should exist")
@@ -489,6 +499,7 @@ async fn gateway_handles_admin_api_keys_update_locally_with_trusted_admin_princi
     let gateway = build_router_with_state(
         AppState::new()
             .expect("gateway should build")
+            .with_auth_wallets_for_tests([sample_standalone_wallet("key-123")])
             .with_data_state_for_tests(
                 crate::data::GatewayDataState::with_auth_api_key_repository_for_tests(Arc::clone(
                     &repository,
@@ -503,10 +514,13 @@ async fn gateway_handles_admin_api_keys_update_locally_with_trusted_admin_princi
     )
     .json(&json!({
         "name": "renamed-key",
-        "rate_limit": 240,
+        "rate_limit": null,
         "allowed_providers": ["gemini"],
         "allowed_api_formats": ["gemini:chat"],
         "allowed_models": ["gemini-2.5-pro"],
+        "expires_at": "2030-03-04",
+        "auto_delete_on_expiry": true,
+        "unlimited_balance": true,
     }))
     .send()
     .await
@@ -516,10 +530,17 @@ async fn gateway_handles_admin_api_keys_update_locally_with_trusted_admin_princi
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(payload["id"], json!("key-123"));
     assert_eq!(payload["name"], json!("renamed-key"));
-    assert_eq!(payload["rate_limit"], json!(240));
+    assert_eq!(payload["rate_limit"], serde_json::Value::Null);
     assert_eq!(payload["allowed_providers"], json!(["gemini"]));
     assert_eq!(payload["allowed_api_formats"], json!(["gemini:chat"]));
     assert_eq!(payload["allowed_models"], json!(["gemini-2.5-pro"]));
+    assert_eq!(payload["auto_delete_on_expiry"], json!(true));
+    assert_eq!(payload["wallet"]["limit_mode"], json!("unlimited"));
+    assert_eq!(payload["wallet"]["unlimited"], json!(true));
+    assert!(payload["expires_at"]
+        .as_str()
+        .expect("expires_at should exist")
+        .starts_with("2030-03-04"));
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();

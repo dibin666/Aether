@@ -9,8 +9,7 @@ use crate::ai_pipeline::planner::report_context::{
 };
 use crate::ai_pipeline::planner::spec_metadata::local_openai_cli_spec_metadata;
 use crate::ai_pipeline::transport::{
-    resolve_transport_execution_timeouts, resolve_transport_proxy_snapshot_with_tunnel_affinity,
-    resolve_transport_tls_profile,
+    resolve_transport_execution_timeouts, resolve_transport_tls_profile,
 };
 use crate::{
     append_execution_contract_fields_to_value, append_local_failover_policy_to_value, AppState,
@@ -57,8 +56,9 @@ pub(crate) async fn maybe_build_local_openai_cli_decision_payload_for_candidate(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
-    let proxy =
-        resolve_transport_proxy_snapshot_with_tunnel_affinity(state, &resolved.transport).await;
+    let proxy = state
+        .resolve_transport_proxy_snapshot_with_tunnel_affinity(&resolved.transport)
+        .await;
     let tls_profile = resolve_transport_tls_profile(&resolved.transport);
     let timeouts = resolve_transport_execution_timeouts(&resolved.transport);
     let mut extra_fields = serde_json::Map::new();

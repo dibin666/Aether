@@ -29,8 +29,9 @@ pub use network::{
     TransportTunnelAttachmentOwner,
 };
 pub use oauth_refresh::{
-    supports_local_oauth_request_auth_resolution, CachedOAuthEntry, LocalOAuthRefreshCoordinator,
-    LocalOAuthRefreshError, LocalResolvedOAuthRequestAuth,
+    supports_local_oauth_request_auth_resolution, CachedOAuthEntry, LocalOAuthHttpExecutor,
+    LocalOAuthHttpRequest, LocalOAuthHttpResponse, LocalOAuthRefreshCoordinator,
+    LocalOAuthRefreshError, LocalResolvedOAuthRequestAuth, ReqwestLocalOAuthHttpExecutor,
 };
 pub use policy::{
     local_gemini_transport_unsupported_reason,

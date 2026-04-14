@@ -8,8 +8,9 @@ use uuid::Uuid;
 
 use super::types::{
     normalize_proxy_metadata, reconcile_remote_config_after_heartbeat, ProxyNodeHeartbeatMutation,
-    ProxyNodeReadRepository, ProxyNodeRegistrationMutation, ProxyNodeRemoteConfigMutation,
-    ProxyNodeTunnelStatusMutation, ProxyNodeWriteRepository, StoredProxyNode, StoredProxyNodeEvent,
+    ProxyNodeManualCreateMutation, ProxyNodeManualUpdateMutation, ProxyNodeReadRepository,
+    ProxyNodeRegistrationMutation, ProxyNodeRemoteConfigMutation, ProxyNodeTunnelStatusMutation,
+    ProxyNodeWriteRepository, StoredProxyNode, StoredProxyNodeEvent,
 };
 use crate::DataLayerError;
 
@@ -106,6 +107,13 @@ impl InMemoryProxyNodeRepository {
 
         (!config.is_empty()).then_some(Value::Object(config))
     }
+
+    fn duplicate_proxy_node_error(node: &StoredProxyNode) -> DataLayerError {
+        DataLayerError::InvalidInput(format!(
+            "已存在相同地址的代理节点: {} ({}:{})",
+            node.name, node.ip, node.port
+        ))
+    }
 }
 
 #[async_trait]
@@ -168,6 +176,109 @@ impl ProxyNodeWriteRepository for InMemoryProxyNodeRepository {
         }
 
         Ok(updated)
+    }
+
+    async fn create_manual_node(
+        &self,
+        mutation: &ProxyNodeManualCreateMutation,
+    ) -> Result<StoredProxyNode, DataLayerError> {
+        let mut nodes = self.nodes.write().expect("proxy node repository lock");
+        if let Some(existing) = nodes
+            .values()
+            .find(|node| node.ip == mutation.ip && node.port == mutation.port)
+        {
+            return Err(Self::duplicate_proxy_node_error(existing));
+        }
+
+        let now = Self::now_unix_secs();
+        let node = StoredProxyNode::new(
+            Uuid::new_v4().to_string(),
+            mutation.name.clone(),
+            mutation.ip.clone(),
+            mutation.port,
+            true,
+            "online".to_string(),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            false,
+            false,
+            0,
+        )?
+        .with_manual_proxy_fields(
+            Some(mutation.proxy_url.clone()),
+            mutation.proxy_username.clone(),
+            mutation.proxy_password.clone(),
+        )
+        .with_runtime_fields(
+            mutation.region.clone(),
+            mutation.registered_by.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            now,
+            now,
+        );
+
+        nodes.insert(node.id.clone(), node.clone());
+        Ok(node)
+    }
+
+    async fn update_manual_node(
+        &self,
+        mutation: &ProxyNodeManualUpdateMutation,
+    ) -> Result<Option<StoredProxyNode>, DataLayerError> {
+        let mut nodes = self.nodes.write().expect("proxy node repository lock");
+        let Some(existing) = nodes.get(&mutation.node_id).cloned() else {
+            return Ok(None);
+        };
+        if !existing.is_manual {
+            return Err(DataLayerError::InvalidInput(
+                "只能编辑手动添加的代理节点".to_string(),
+            ));
+        }
+
+        let next_ip = mutation.ip.as_deref().unwrap_or(existing.ip.as_str());
+        let next_port = mutation.port.unwrap_or(existing.port);
+        if let Some(duplicate) = nodes.values().find(|node| {
+            node.id != mutation.node_id && node.ip == next_ip && node.port == next_port
+        }) {
+            return Err(Self::duplicate_proxy_node_error(duplicate));
+        }
+
+        let node = nodes
+            .get_mut(&mutation.node_id)
+            .expect("manual proxy node should be present");
+        if let Some(name) = mutation.name.as_ref() {
+            node.name = name.clone();
+        }
+        if let Some(ip) = mutation.ip.as_ref() {
+            node.ip = ip.clone();
+        }
+        if let Some(port) = mutation.port {
+            node.port = port;
+        }
+        if let Some(region) = mutation.region.as_ref() {
+            node.region = Some(region.clone());
+        }
+        if let Some(proxy_url) = mutation.proxy_url.as_ref() {
+            node.proxy_url = Some(proxy_url.clone());
+        }
+        if let Some(proxy_username) = mutation.proxy_username.as_ref() {
+            node.proxy_username = Some(proxy_username.clone());
+        }
+        if let Some(proxy_password) = mutation.proxy_password.as_ref() {
+            node.proxy_password = Some(proxy_password.clone());
+        }
+        node.updated_at_unix_secs = Self::now_unix_secs();
+        Ok(Some(node.clone()))
     }
 
     async fn register_node(
@@ -402,6 +513,21 @@ impl ProxyNodeWriteRepository for InMemoryProxyNodeRepository {
         node.tunnel_connected_at_unix_secs = now;
         node.updated_at_unix_secs = now;
         Ok(Some(node.clone()))
+    }
+
+    async fn delete_node(&self, node_id: &str) -> Result<Option<StoredProxyNode>, DataLayerError> {
+        let removed = self
+            .nodes
+            .write()
+            .expect("proxy node repository lock")
+            .remove(node_id);
+        if removed.is_some() {
+            self.events
+                .write()
+                .expect("proxy node repository lock")
+                .retain(|event| event.node_id != node_id);
+        }
+        Ok(removed)
     }
 
     async fn update_remote_config(

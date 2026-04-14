@@ -814,9 +814,16 @@ async function refreshApiKeys() {
       skip: skip.value,
       limit: limit.value
     })
-    apiKeys.value = response.api_keys
+    const standaloneKeys = response.api_keys.filter((key) => key.is_standalone === true)
+    if (standaloneKeys.length !== response.api_keys.length) {
+      log.warn('独立 Key 页面收到了非 standalone 记录，已在前端过滤', {
+        received: response.api_keys.length,
+        kept: standaloneKeys.length
+      })
+    }
+    apiKeys.value = standaloneKeys
     total.value = response.total
-    apiKeyWalletMap.value = buildApiKeyWalletMap(response.api_keys)
+    apiKeyWalletMap.value = buildApiKeyWalletMap(standaloneKeys)
   } catch (err: unknown) {
     log.error('加载独立Keys失败:', err)
     error(parseApiError(err, '加载独立 Keys 失败'))
@@ -864,20 +871,52 @@ async function deleteApiKey(apiKey: AdminApiKey) {
   }
 }
 
+function formatDateForInput(dateString: string): string | undefined {
+  const date = new Date(dateString)
+  if (Number.isNaN(date.getTime())) {
+    return undefined
+  }
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function parseDateInput(dateString: string): Date | null {
+  const [year, month, day] = dateString.split('-').map(part => Number.parseInt(part, 10))
+  if (!year || !month || !day) {
+    return null
+  }
+  const date = new Date(year, month - 1, day)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function serializeExpiryDate(dateString?: string): string | null {
+  if (!dateString) {
+    return null
+  }
+  const date = parseDateInput(dateString)
+  if (!date) {
+    return null
+  }
+  date.setHours(23, 59, 59, 999)
+  return date.toISOString()
+}
+
 function editApiKey(apiKey: AdminApiKey) {
   // 解析过期日期为 YYYY-MM-DD 格式
   // 保留原始日期，不做时间过滤（避免编辑当天过期的 Key 时意外清空）
   let expiresAt: string | undefined = undefined
 
   if (apiKey.expires_at) {
-    const expiresDate = new Date(apiKey.expires_at)
-    expiresAt = expiresDate.toISOString().split('T')[0]
+    expiresAt = formatDateForInput(apiKey.expires_at)
   }
 
   editingKeyData.value = {
     id: apiKey.id,
     name: apiKey.name || '',
     initial_balance_usd: isApiKeyUnlimited(apiKey) ? undefined : (getApiKeyWalletTotalBalance(apiKey) ?? undefined),
+    current_balance_usd: isApiKeyUnlimited(apiKey) ? null : getApiKeyWalletTotalBalance(apiKey),
     unlimited_balance: isApiKeyUnlimited(apiKey),
     expires_at: expiresAt,
     rate_limit: apiKey.rate_limit ?? undefined,
@@ -1049,7 +1088,12 @@ function closeKeyFormDialog() {
 async function handleKeyFormSubmit(data: StandaloneKeyFormData) {
   // 验证过期日期（如果设置了，必须晚于今天）
   if (data.expires_at) {
-    const selectedDate = new Date(data.expires_at)
+    const selectedDate = parseDateInput(data.expires_at)
+    if (!selectedDate) {
+      error('过期日期格式无效')
+      return
+    }
+    selectedDate.setHours(0, 0, 0, 0)
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     if (selectedDate <= today) {
@@ -1066,7 +1110,7 @@ async function handleKeyFormSubmit(data: StandaloneKeyFormData) {
         name: data.name || undefined,
         unlimited_balance: Boolean(data.unlimited_balance),
         rate_limit: data.rate_limit ?? null,  // undefined = 跟随系统默认，显式传 null
-        expires_at: data.expires_at || null,  // undefined/空 = 永不过期
+        expires_at: serializeExpiryDate(data.expires_at),
         auto_delete_on_expiry: data.auto_delete_on_expiry,
         // 空数组表示清除限制（允许全部），后端会将空数组存为 NULL
         allowed_providers: data.allowed_providers,
@@ -1095,7 +1139,7 @@ async function handleKeyFormSubmit(data: StandaloneKeyFormData) {
         name: data.name || undefined,
         initial_balance_usd: isUnlimited ? null : (data.initial_balance_usd as number),
         rate_limit: data.rate_limit ?? null,  // undefined = 跟随系统默认，显式传 null
-        expires_at: data.expires_at || null,  // undefined/空 = 永不过期
+        expires_at: serializeExpiryDate(data.expires_at),
         auto_delete_on_expiry: data.auto_delete_on_expiry,
         // 空数组表示不设置限制（允许全部），后端会将空数组存为 NULL
         allowed_providers: data.allowed_providers,

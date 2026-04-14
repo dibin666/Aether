@@ -390,7 +390,7 @@ pub struct CreateStandaloneApiKeyRecord {
     pub allowed_providers: Option<Vec<String>>,
     pub allowed_api_formats: Option<Vec<String>>,
     pub allowed_models: Option<Vec<String>>,
-    pub rate_limit: i32,
+    pub rate_limit: Option<i32>,
     pub concurrent_limit: i32,
     pub force_capabilities: Option<serde_json::Value>,
     pub is_active: bool,
@@ -404,10 +404,15 @@ pub struct CreateStandaloneApiKeyRecord {
 pub struct UpdateStandaloneApiKeyBasicRecord {
     pub api_key_id: String,
     pub name: Option<String>,
+    pub rate_limit_present: bool,
     pub rate_limit: Option<i32>,
     pub allowed_providers: Option<Option<Vec<String>>>,
     pub allowed_api_formats: Option<Option<Vec<String>>>,
     pub allowed_models: Option<Option<Vec<String>>>,
+    pub expires_at_present: bool,
+    pub expires_at_unix_secs: Option<u64>,
+    pub auto_delete_on_expiry_present: bool,
+    pub auto_delete_on_expiry: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

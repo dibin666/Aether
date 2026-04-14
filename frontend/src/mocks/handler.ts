@@ -2213,7 +2213,7 @@ registerDynamicRoute('GET', '/api/admin/api-keys/:keyId', async (_config, params
 })
 
 // API Key 更新
-registerDynamicRoute('PATCH', '/api/admin/api-keys/:keyId', async (config, params) => {
+registerDynamicRoute('PUT', '/api/admin/api-keys/:keyId', async (config, params) => {
   await delay()
   requireAdmin()
   const key = MOCK_ADMIN_API_KEYS.api_keys.find(k => k.id === params.keyId)

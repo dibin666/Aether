@@ -1,0 +1,217 @@
+use aether_contracts::ProxySnapshot;
+use aether_data::repository::proxy_nodes::proxy_node_accepts_new_tunnels;
+use serde_json::{json, Map, Value};
+
+use super::AppState;
+use crate::provider_transport::{GatewayProviderTransportSnapshot, TransportTunnelAffinityLookup};
+
+const TUNNEL_BASE_URL_EXTRA_KEY: &str = "tunnel_base_url";
+const TUNNEL_OWNER_INSTANCE_ID_EXTRA_KEY: &str = "tunnel_owner_instance_id";
+const TUNNEL_OWNER_OBSERVED_AT_EXTRA_KEY: &str = "tunnel_owner_observed_at_unix_secs";
+
+impl AppState {
+    pub(crate) async fn read_system_proxy_node_id(&self) -> Option<String> {
+        self.read_system_config_json_value("system_proxy_node_id")
+            .await
+            .ok()
+            .flatten()
+            .and_then(|value| value.as_str().map(str::trim).map(ToOwned::to_owned))
+            .filter(|value| !value.is_empty())
+    }
+
+    pub(crate) async fn resolve_proxy_node_snapshot(
+        &self,
+        node_id: Option<&str>,
+    ) -> Option<ProxySnapshot> {
+        let node_id = node_id.map(str::trim).filter(|value| !value.is_empty())?;
+        let node = self.find_proxy_node(node_id).await.ok().flatten()?;
+        if node.status.trim() != "online" {
+            return None;
+        }
+        if !proxy_node_accepts_new_tunnels(&node) {
+            return None;
+        }
+        if node.tunnel_mode && node.tunnel_connected {
+            let mut extra = Map::new();
+            if let Ok(Some(owner)) = self.lookup_tunnel_attachment_owner(node_id).await {
+                extra.insert(
+                    TUNNEL_BASE_URL_EXTRA_KEY.to_string(),
+                    Value::String(owner.relay_base_url),
+                );
+                extra.insert(
+                    TUNNEL_OWNER_INSTANCE_ID_EXTRA_KEY.to_string(),
+                    Value::String(owner.gateway_instance_id),
+                );
+                extra.insert(
+                    TUNNEL_OWNER_OBSERVED_AT_EXTRA_KEY.to_string(),
+                    json!(owner.observed_at_unix_secs),
+                );
+            }
+            return Some(ProxySnapshot {
+                enabled: Some(true),
+                mode: Some("tunnel".to_string()),
+                node_id: Some(node.id),
+                label: Some(node.name),
+                url: None,
+                extra: if extra.is_empty() {
+                    None
+                } else {
+                    Some(Value::Object(extra))
+                },
+            });
+        }
+        if !node.is_manual {
+            return None;
+        }
+        let proxy_url = node
+            .proxy_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        Some(ProxySnapshot {
+            enabled: Some(true),
+            mode: proxy_mode_from_url(Some(proxy_url)),
+            node_id: Some(node.id),
+            label: Some(node.name),
+            url: proxy_url_with_node_auth(
+                proxy_url,
+                node.proxy_username.as_deref(),
+                node.proxy_password.as_deref(),
+            )
+            .or_else(|| Some(proxy_url.to_string())),
+            extra: None,
+        })
+    }
+
+    pub(crate) async fn resolve_system_proxy_snapshot(&self) -> Option<ProxySnapshot> {
+        let node_id = self.read_system_proxy_node_id().await;
+        self.resolve_proxy_node_snapshot(node_id.as_deref()).await
+    }
+
+    pub(crate) async fn resolve_transport_proxy_snapshot_with_tunnel_affinity(
+        &self,
+        transport: &GatewayProviderTransportSnapshot,
+    ) -> Option<ProxySnapshot> {
+        if let Some(snapshot) = self
+            .resolve_proxy_snapshot_from_config(transport.key.proxy.as_ref())
+            .await
+        {
+            return Some(snapshot);
+        }
+        if let Some(snapshot) = self
+            .resolve_proxy_snapshot_from_config(transport.provider.proxy.as_ref())
+            .await
+        {
+            return Some(snapshot);
+        }
+        if let Some(snapshot) = self.resolve_system_proxy_snapshot().await {
+            return Some(snapshot);
+        }
+        self.resolve_proxy_snapshot_from_config(transport.endpoint.proxy.as_ref())
+            .await
+    }
+
+    async fn resolve_proxy_snapshot_from_config(
+        &self,
+        raw: Option<&Value>,
+    ) -> Option<ProxySnapshot> {
+        let object = raw?.as_object()?;
+        if !proxy_enabled(object) {
+            return None;
+        }
+
+        let node_id = json_string_field(object, "node_id");
+        if let Some(snapshot) = self.resolve_proxy_node_snapshot(node_id.as_deref()).await {
+            return Some(snapshot);
+        }
+
+        proxy_snapshot_from_object(object)
+    }
+}
+
+fn proxy_enabled(object: &Map<String, Value>) -> bool {
+    object
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+}
+
+fn proxy_snapshot_from_object(object: &Map<String, Value>) -> Option<ProxySnapshot> {
+    let mode = json_string_field(object, "mode");
+    let node_id = json_string_field(object, "node_id");
+    let label = json_string_field(object, "label");
+    let url = json_string_field(object, "url").or_else(|| json_string_field(object, "proxy_url"));
+
+    if node_id.is_none() && url.is_none() {
+        return None;
+    }
+
+    let mut extra = Map::new();
+    for (key, value) in object {
+        if matches!(
+            key.as_str(),
+            "enabled" | "mode" | "node_id" | "label" | "url" | "proxy_url"
+        ) {
+            continue;
+        }
+        extra.insert(key.clone(), value.clone());
+    }
+
+    Some(ProxySnapshot {
+        enabled: object.get("enabled").and_then(Value::as_bool),
+        mode,
+        node_id,
+        label,
+        url,
+        extra: if extra.is_empty() {
+            None
+        } else {
+            Some(Value::Object(extra))
+        },
+    })
+}
+
+fn json_string_field(object: &Map<String, Value>, key: &str) -> Option<String> {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn proxy_mode_from_url(proxy_url: Option<&str>) -> Option<String> {
+    let proxy_url = proxy_url?.trim();
+    if proxy_url.is_empty() {
+        return None;
+    }
+    let scheme = url::Url::parse(proxy_url)
+        .ok()
+        .map(|value| value.scheme().to_ascii_lowercase())
+        .unwrap_or_default();
+    if scheme.starts_with("socks") {
+        Some("socks".to_string())
+    } else {
+        Some("http".to_string())
+    }
+}
+
+fn proxy_url_with_node_auth(
+    proxy_url: &str,
+    username: Option<&str>,
+    password: Option<&str>,
+) -> Option<String> {
+    let username = username.map(str::trim).filter(|value| !value.is_empty())?;
+    let mut parsed = url::Url::parse(proxy_url).ok()?;
+    if parsed.set_username(username).is_err() {
+        return None;
+    }
+    let password = password
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_default();
+    if parsed.set_password(Some(password)).is_err() {
+        return None;
+    }
+    Some(parsed.to_string())
+}

@@ -601,7 +601,14 @@ impl<'a> AdminAppState<'a> {
             client_api_format: "provider_oauth:exchange".to_string(),
             provider_api_format: "provider_oauth:exchange".to_string(),
             model_name: Some("oauth-exchange".to_string()),
-            proxy: self.resolve_admin_proxy_node_snapshot(proxy_node_id).await,
+            proxy: if proxy_node_id
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+            {
+                self.resolve_admin_proxy_node_snapshot(proxy_node_id).await
+            } else {
+                self.app.resolve_system_proxy_snapshot().await
+            },
             tls_profile: None,
             timeouts: Some(ExecutionTimeouts {
                 connect_ms: Some(ADMIN_PROVIDER_OAUTH_TIMEOUT_MS),

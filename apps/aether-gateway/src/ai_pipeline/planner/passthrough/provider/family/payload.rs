@@ -12,8 +12,7 @@ use crate::ai_pipeline::planner::report_context::{
 };
 use crate::ai_pipeline::planner::spec_metadata::local_same_format_provider_spec_metadata;
 use crate::ai_pipeline::transport::{
-    resolve_transport_execution_timeouts, resolve_transport_proxy_snapshot_with_tunnel_affinity,
-    resolve_transport_tls_profile,
+    resolve_transport_execution_timeouts, resolve_transport_tls_profile,
 };
 use crate::ai_pipeline::{ConversionMode, ExecutionStrategy};
 use crate::{
@@ -56,8 +55,9 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
-    let proxy =
-        resolve_transport_proxy_snapshot_with_tunnel_affinity(state, &resolved.transport).await;
+    let proxy = state
+        .resolve_transport_proxy_snapshot_with_tunnel_affinity(&resolved.transport)
+        .await;
     let tls_profile = resolve_transport_tls_profile(&resolved.transport);
     let mut extra_fields = serde_json::Map::new();
     if resolved.is_kiro {

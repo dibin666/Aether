@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use aether_data::repository::management_tokens::InMemoryManagementTokenRepository;
+use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
 use aether_data::repository::proxy_nodes::{
     InMemoryProxyNodeRepository, ProxyNodeHeartbeatMutation, StoredProxyNodeEvent,
 };
@@ -9,10 +10,11 @@ use axum::routing::any;
 use axum::{extract::Request, Router};
 use http::StatusCode;
 use serde_json::json;
+use tokio::net::TcpListener;
 
 use super::super::{
-    build_router_with_state, hash_management_token, sample_management_token, sample_proxy_node,
-    start_server, AppState,
+    build_router_with_state, hash_management_token, sample_endpoint, sample_key,
+    sample_management_token, sample_provider, sample_proxy_node, start_server, AppState,
 };
 use crate::constants::{
     GATEWAY_HEADER, TRUSTED_ADMIN_SESSION_ID_HEADER, TRUSTED_ADMIN_USER_ID_HEADER,
@@ -713,6 +715,251 @@ async fn gateway_registers_and_unregisters_proxy_nodes_locally_with_management_t
 
     gateway_handle.abort();
     upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_creates_updates_and_tests_manual_proxy_nodes_locally() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let proxy_port = listener
+        .local_addr()
+        .expect("listener addr should resolve")
+        .port();
+    let accept_handle =
+        tokio::spawn(async move { while let Ok((_stream, _addr)) = listener.accept().await {} });
+
+    let proxy_node_repository = Arc::new(InMemoryProxyNodeRepository::default());
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(GatewayDataState::with_proxy_node_repository_for_tests(
+                proxy_node_repository,
+            )),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+    let client = reqwest::Client::new();
+    let proxy_url = format!("http://127.0.0.1:{proxy_port}");
+
+    let create_response = client
+        .post(format!("{gateway_url}/api/admin/proxy-nodes/manual"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "name": "manual-node",
+            "proxy_url": proxy_url,
+            "region": "US-West"
+        }))
+        .send()
+        .await
+        .expect("create request should succeed");
+    let create_status = create_response.status();
+    let create_body = create_response
+        .text()
+        .await
+        .expect("body should read as text");
+    assert_eq!(create_status, StatusCode::OK, "create body: {create_body}");
+    let create_payload: serde_json::Value =
+        serde_json::from_str(&create_body).expect("json body should parse");
+    let node_id = create_payload["node_id"]
+        .as_str()
+        .expect("node id should exist")
+        .to_string();
+    assert_eq!(create_payload["node"]["is_manual"], true);
+    assert_eq!(create_payload["node"]["status"], "online");
+    assert_eq!(create_payload["node"]["proxy_url"], proxy_url);
+
+    let test_url_response = client
+        .post(format!("{gateway_url}/api/admin/proxy-nodes/test-url"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "proxy_url": proxy_url
+        }))
+        .send()
+        .await
+        .expect("test-url request should succeed");
+    assert_eq!(test_url_response.status(), StatusCode::OK);
+    let test_url_payload: serde_json::Value = test_url_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(test_url_payload["success"], true);
+    assert!(test_url_payload["latency_ms"].is_u64());
+
+    let test_node_response = client
+        .post(format!(
+            "{gateway_url}/api/admin/proxy-nodes/{node_id}/test"
+        ))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("test-node request should succeed");
+    assert_eq!(test_node_response.status(), StatusCode::OK);
+    let test_node_payload: serde_json::Value = test_node_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(test_node_payload["success"], true);
+
+    let update_response = client
+        .patch(format!("{gateway_url}/api/admin/proxy-nodes/{node_id}"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "name": "manual-node-updated",
+            "region": "US-East"
+        }))
+        .send()
+        .await
+        .expect("update request should succeed");
+    assert_eq!(update_response.status(), StatusCode::OK);
+    let update_payload: serde_json::Value = update_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(update_payload["node"]["name"], "manual-node-updated");
+    assert_eq!(update_payload["node"]["region"], "US-East");
+    assert_eq!(update_payload["node"]["proxy_url"], proxy_url);
+
+    gateway_handle.abort();
+    accept_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_tests_disconnected_tunnel_proxy_nodes_locally() {
+    let proxy_node_repository =
+        Arc::new(InMemoryProxyNodeRepository::seed(vec![sample_proxy_node(
+            "node-offline",
+        )]));
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(GatewayDataState::with_proxy_node_repository_for_tests(
+                proxy_node_repository,
+            )),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/api/admin/proxy-nodes/node-offline/test"
+        ))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["success"], false);
+    assert_eq!(payload["error"], "tunnel 未连接");
+
+    gateway_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_deletes_proxy_nodes_and_clears_proxy_refs_locally() {
+    let mut manual_node = sample_proxy_node("manual-node-1");
+    manual_node.name = "manual-node-1".to_string();
+    manual_node.status = "online".to_string();
+    manual_node.is_manual = true;
+    manual_node.tunnel_mode = false;
+    manual_node.tunnel_connected = false;
+    manual_node.proxy_url = Some("http://127.0.0.1:8899".to_string());
+    manual_node.last_heartbeat_at_unix_secs = None;
+    manual_node.tunnel_connected_at_unix_secs = None;
+
+    let proxy_node_repository = Arc::new(InMemoryProxyNodeRepository::seed(vec![manual_node]));
+    let mut provider = sample_provider("provider-1", "OpenAI", 10);
+    provider.proxy = Some(json!({ "node_id": "manual-node-1", "enabled": true }));
+    let mut endpoint = sample_endpoint(
+        "endpoint-1",
+        "provider-1",
+        "openai:chat",
+        "https://example.com/v1",
+    );
+    endpoint.proxy = Some(json!({ "node_id": "manual-node-1", "enabled": true }));
+    let mut key = sample_key("key-1", "provider-1", "openai:chat", "sk-test");
+    key.proxy = Some(json!({ "node_id": "manual-node-1", "enabled": true }));
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![endpoint],
+        vec![key],
+    ));
+
+    let data_state =
+        GatewayDataState::with_proxy_node_repository_for_tests(Arc::clone(&proxy_node_repository))
+            .attach_provider_catalog_repository_for_tests(Arc::clone(&provider_catalog_repository))
+            .with_system_config_values_for_tests(vec![(
+                "system_proxy_node_id".to_string(),
+                json!("manual-node-1"),
+            )]);
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(data_state.clone()),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .delete(format!("{gateway_url}/api/admin/proxy-nodes/manual-node-1"))
+        .header(GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["cleared_system_proxy"], true);
+    assert_eq!(payload["cleared_providers"], 1);
+    assert_eq!(payload["cleared_endpoints"], 1);
+    assert_eq!(payload["cleared_keys"], 1);
+
+    assert!(data_state
+        .find_proxy_node("manual-node-1")
+        .await
+        .expect("node lookup should succeed")
+        .is_none());
+    assert_eq!(
+        data_state
+            .find_system_config_value("system_proxy_node_id")
+            .await
+            .expect("system config lookup should succeed"),
+        Some(serde_json::Value::Null)
+    );
+
+    let provider_ids = vec!["provider-1".to_string()];
+    let providers = data_state
+        .list_provider_catalog_providers(false)
+        .await
+        .expect("provider list should succeed");
+    assert!(providers.iter().all(|provider| provider.proxy.is_none()));
+    let endpoints = data_state
+        .list_provider_catalog_endpoints_by_provider_ids(&provider_ids)
+        .await
+        .expect("endpoint list should succeed");
+    assert!(endpoints.iter().all(|endpoint| endpoint.proxy.is_none()));
+    let keys = data_state
+        .list_provider_catalog_keys_by_provider_ids(&provider_ids)
+        .await
+        .expect("key list should succeed");
+    assert!(keys.iter().all(|key| key.proxy.is_none()));
+
+    gateway_handle.abort();
 }
 
 #[tokio::test]

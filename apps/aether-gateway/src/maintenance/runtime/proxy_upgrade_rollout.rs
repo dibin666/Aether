@@ -855,14 +855,10 @@ fn build_rollout_snapshot(
         }
     }
 
-    for tracked in tracked_by_node_id.into_values() {
-        if skipped_node_ids.contains(tracked.node_id.as_str()) {
-            snapshot.skipped.push(tracked.node_id);
+    for _tracked in tracked_by_node_id.into_values() {
+        if skipped_node_ids.contains(_tracked.node_id.as_str()) {
             continue;
         }
-        snapshot.remaining_total = snapshot.remaining_total.saturating_add(1);
-        snapshot.pending.push(tracked.node_id.clone());
-        snapshot.tracked_nodes.push(tracked);
     }
 
     snapshot.skipped.sort();

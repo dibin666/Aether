@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::super::oauth_refresh::{
-    CachedOAuthEntry, LocalOAuthRefreshAdapter, LocalOAuthRefreshError,
-    LocalResolvedOAuthRequestAuth,
+    CachedOAuthEntry, LocalOAuthHttpExecutor, LocalOAuthHttpRequest, LocalOAuthRefreshAdapter,
+    LocalOAuthRefreshError, LocalResolvedOAuthRequestAuth,
 };
 use super::super::snapshot::GatewayProviderTransportSnapshot;
 use super::auth::{
@@ -34,13 +34,16 @@ impl KiroOAuthRefreshAdapter {
 
     pub async fn refresh_auth_config(
         &self,
-        client: &reqwest::Client,
+        executor: &dyn LocalOAuthHttpExecutor,
+        transport: &GatewayProviderTransportSnapshot,
         auth_config: &KiroAuthConfig,
     ) -> Result<KiroAuthConfig, LocalOAuthRefreshError> {
         if auth_config.is_idc_auth() {
-            self.refresh_idc_token(client, auth_config).await
+            self.refresh_idc_token(executor, transport, auth_config)
+                .await
         } else {
-            self.refresh_social_token(client, auth_config).await
+            self.refresh_social_token(executor, transport, auth_config)
+                .await
         }
     }
 
@@ -101,7 +104,8 @@ impl KiroOAuthRefreshAdapter {
 
     async fn refresh_social_token(
         &self,
-        client: &reqwest::Client,
+        executor: &dyn LocalOAuthHttpExecutor,
+        transport: &GatewayProviderTransportSnapshot,
         auth_config: &KiroAuthConfig,
     ) -> Result<KiroAuthConfig, LocalOAuthRefreshError> {
         let url = self.social_refresh_url(auth_config);
@@ -122,36 +126,42 @@ impl KiroOAuthRefreshAdapter {
         })?;
         let kiro_version = auth_config.effective_kiro_version();
         let user_agent = build_kiro_ide_tag(kiro_version, &machine_id);
-        let response = client
-            .post(url)
-            .header("User-Agent", user_agent)
-            .header("Host", host)
-            .header("Accept", "application/json, text/plain, */*")
-            .header("Content-Type", "application/json")
-            .header("Connection", "close")
-            .header("Accept-Encoding", "gzip, compress, deflate, br")
-            .json(&json!({
-                "refreshToken": auth_config
-                    .refresh_token
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default()
-            }))
-            .send()
-            .await
-            .map_err(|source| LocalOAuthRefreshError::Transport {
-                provider_type: PROVIDER_TYPE,
-                source,
-            })?;
+        let response = executor
+            .execute(
+                PROVIDER_TYPE,
+                transport,
+                &LocalOAuthHttpRequest {
+                    request_id: "provider-oauth:kiro-social-refresh",
+                    method: reqwest::Method::POST,
+                    url,
+                    headers: std::collections::BTreeMap::from([
+                        ("user-agent".to_string(), user_agent),
+                        ("host".to_string(), host),
+                        (
+                            "accept".to_string(),
+                            "application/json, text/plain, */*".to_string(),
+                        ),
+                        ("content-type".to_string(), "application/json".to_string()),
+                        ("connection".to_string(), "close".to_string()),
+                        (
+                            "accept-encoding".to_string(),
+                            "gzip, compress, deflate, br".to_string(),
+                        ),
+                    ]),
+                    json_body: Some(json!({
+                        "refreshToken": auth_config
+                            .refresh_token
+                            .as_deref()
+                            .map(str::trim)
+                            .unwrap_or_default()
+                    })),
+                    body_bytes: None,
+                },
+            )
+            .await?;
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|source| LocalOAuthRefreshError::Transport {
-                provider_type: PROVIDER_TYPE,
-                source,
-            })?;
+        let status = reqwest::StatusCode::from_u16(response.status_code).unwrap_or_default();
+        let body = response.body_text;
         if !status.is_success() {
             return Err(LocalOAuthRefreshError::HttpStatus {
                 provider_type: PROVIDER_TYPE,
@@ -208,7 +218,8 @@ impl KiroOAuthRefreshAdapter {
 
     async fn refresh_idc_token(
         &self,
-        client: &reqwest::Client,
+        executor: &dyn LocalOAuthHttpExecutor,
+        transport: &GatewayProviderTransportSnapshot,
         auth_config: &KiroAuthConfig,
     ) -> Result<KiroAuthConfig, LocalOAuthRefreshError> {
         let url = self.idc_refresh_url(auth_config);
@@ -218,46 +229,49 @@ impl KiroOAuthRefreshAdapter {
             .unwrap_or_else(|| {
                 format!("oidc.{}.amazonaws.com", auth_config.effective_auth_region())
             });
-        let response = client
-            .post(url)
-            .header("Content-Type", "application/json")
-            .header("Host", host)
-            .header("x-amz-user-agent", IDC_AMZ_USER_AGENT)
-            .header("User-Agent", "node")
-            .header("Accept", "*/*")
-            .json(&json!({
-                "clientId": auth_config
-                    .client_id
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default(),
-                "clientSecret": auth_config
-                    .client_secret
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default(),
-                "refreshToken": auth_config
-                    .refresh_token
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default(),
-                "grantType": "refresh_token"
-            }))
-            .send()
-            .await
-            .map_err(|source| LocalOAuthRefreshError::Transport {
-                provider_type: PROVIDER_TYPE,
-                source,
-            })?;
+        let response = executor
+            .execute(
+                PROVIDER_TYPE,
+                transport,
+                &LocalOAuthHttpRequest {
+                    request_id: "provider-oauth:kiro-idc-refresh",
+                    method: reqwest::Method::POST,
+                    url,
+                    headers: std::collections::BTreeMap::from([
+                        ("content-type".to_string(), "application/json".to_string()),
+                        ("host".to_string(), host),
+                        (
+                            "x-amz-user-agent".to_string(),
+                            IDC_AMZ_USER_AGENT.to_string(),
+                        ),
+                        ("user-agent".to_string(), "node".to_string()),
+                        ("accept".to_string(), "*/*".to_string()),
+                    ]),
+                    json_body: Some(json!({
+                        "clientId": auth_config
+                            .client_id
+                            .as_deref()
+                            .map(str::trim)
+                            .unwrap_or_default(),
+                        "clientSecret": auth_config
+                            .client_secret
+                            .as_deref()
+                            .map(str::trim)
+                            .unwrap_or_default(),
+                        "refreshToken": auth_config
+                            .refresh_token
+                            .as_deref()
+                            .map(str::trim)
+                            .unwrap_or_default(),
+                        "grantType": "refresh_token"
+                    })),
+                    body_bytes: None,
+                },
+            )
+            .await?;
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|source| LocalOAuthRefreshError::Transport {
-                provider_type: PROVIDER_TYPE,
-                source,
-            })?;
+        let status = reqwest::StatusCode::from_u16(response.status_code).unwrap_or_default();
+        let body = response.body_text;
         if !status.is_success() {
             return Err(LocalOAuthRefreshError::HttpStatus {
                 provider_type: PROVIDER_TYPE,
@@ -353,7 +367,7 @@ impl LocalOAuthRefreshAdapter for KiroOAuthRefreshAdapter {
 
     async fn refresh(
         &self,
-        client: &reqwest::Client,
+        executor: &dyn LocalOAuthHttpExecutor,
         transport: &GatewayProviderTransportSnapshot,
         entry: Option<&CachedOAuthEntry>,
     ) -> Result<Option<CachedOAuthEntry>, LocalOAuthRefreshError> {
@@ -361,9 +375,11 @@ impl LocalOAuthRefreshAdapter for KiroOAuthRefreshAdapter {
             return Ok(None);
         };
         let refreshed = if auth_config.is_idc_auth() {
-            self.refresh_idc_token(client, &auth_config).await?
+            self.refresh_idc_token(executor, transport, &auth_config)
+                .await?
         } else {
-            self.refresh_social_token(client, &auth_config).await?
+            self.refresh_social_token(executor, transport, &auth_config)
+                .await?
         };
         Ok(Self::build_cached_entry(&refreshed))
     }
@@ -410,7 +426,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::super::super::oauth_refresh::{
-        LocalOAuthRefreshAdapter, LocalResolvedOAuthRequestAuth,
+        LocalOAuthRefreshAdapter, LocalResolvedOAuthRequestAuth, ReqwestLocalOAuthHttpExecutor,
     };
     use super::super::super::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
@@ -565,9 +581,10 @@ mod tests {
                 "kiro_version":"1.2.3"
             }"#,
         );
+        let executor = ReqwestLocalOAuthHttpExecutor::new(reqwest::Client::new());
 
         let entry = adapter
-            .refresh(&reqwest::Client::new(), &transport, None)
+            .refresh(&executor, &transport, None)
             .await
             .expect("refresh should succeed")
             .expect("cached entry should exist");
@@ -665,9 +682,10 @@ mod tests {
                 "profile_arn":"arn:aws:bedrock:demo"
             }"#,
         );
+        let executor = ReqwestLocalOAuthHttpExecutor::new(reqwest::Client::new());
 
         let entry = adapter
-            .refresh(&reqwest::Client::new(), &transport, None)
+            .refresh(&executor, &transport, None)
             .await
             .expect("refresh should succeed")
             .expect("cached entry should exist");

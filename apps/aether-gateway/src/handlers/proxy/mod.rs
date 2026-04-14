@@ -308,7 +308,9 @@ async fn maybe_forward_public_request_to_tunnel_owner(
         }
     };
 
-    let Some(proxy) = crate::provider_transport::resolve_transport_proxy_snapshot(&transport)
+    let Some(proxy) = state
+        .resolve_transport_proxy_snapshot_with_tunnel_affinity(&transport)
+        .await
     else {
         return Ok(None);
     };

@@ -508,7 +508,7 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
                 api_key_is_active: record.is_active,
                 api_key_is_locked: false,
                 api_key_is_standalone: true,
-                api_key_rate_limit: Some(record.rate_limit),
+                api_key_rate_limit: record.rate_limit,
                 api_key_concurrent_limit: Some(record.concurrent_limit),
                 api_key_expires_at_unix_secs: record.expires_at_unix_secs,
                 api_key_allowed_providers: record.allowed_providers.clone(),
@@ -536,7 +536,7 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
                 record.is_active,
                 false,
                 true,
-                Some(record.rate_limit),
+                record.rate_limit,
                 Some(record.concurrent_limit),
                 record.expires_at_unix_secs.map(|value| value as i64),
                 record
@@ -572,7 +572,7 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
                 .allowed_models
                 .as_ref()
                 .map(|value| serde_json::json!(value)),
-            Some(record.rate_limit),
+            record.rate_limit,
             Some(record.concurrent_limit),
             record.force_capabilities,
             record.is_active,
@@ -650,12 +650,12 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
                 export.name = Some(name);
             }
         }
-        if let Some(rate_limit) = record.rate_limit {
+        if record.rate_limit_present {
             if let Some(snapshot) = index.by_api_key_id.get_mut(&record.api_key_id) {
-                snapshot.api_key_rate_limit = Some(rate_limit);
+                snapshot.api_key_rate_limit = record.rate_limit;
             }
             if let Some(export) = index.export_by_api_key_id.get_mut(&record.api_key_id) {
-                export.rate_limit = Some(rate_limit);
+                export.rate_limit = record.rate_limit;
             }
         }
         if let Some(allowed_providers) = record.allowed_providers {
@@ -680,6 +680,19 @@ impl AuthApiKeyWriteRepository for InMemoryAuthApiKeySnapshotRepository {
             }
             if let Some(export) = index.export_by_api_key_id.get_mut(&record.api_key_id) {
                 export.allowed_models = allowed_models;
+            }
+        }
+        if record.expires_at_present {
+            if let Some(snapshot) = index.by_api_key_id.get_mut(&record.api_key_id) {
+                snapshot.api_key_expires_at_unix_secs = record.expires_at_unix_secs;
+            }
+            if let Some(export) = index.export_by_api_key_id.get_mut(&record.api_key_id) {
+                export.expires_at_unix_secs = record.expires_at_unix_secs;
+            }
+        }
+        if record.auto_delete_on_expiry_present {
+            if let Some(export) = index.export_by_api_key_id.get_mut(&record.api_key_id) {
+                export.auto_delete_on_expiry = record.auto_delete_on_expiry;
             }
         }
         Ok(index.export_by_api_key_id.get(&record.api_key_id).cloned())

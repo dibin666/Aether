@@ -1933,6 +1933,118 @@ async fn gateway_imports_admin_provider_oauth_refresh_token_via_execution_runtim
 }
 
 #[tokio::test]
+async fn gateway_imports_admin_provider_oauth_refresh_token_via_execution_runtime_system_proxy() {
+    let execution_plans = Arc::new(Mutex::new(Vec::<ExecutionPlan>::new()));
+    let execution_plans_clone = Arc::clone(&execution_plans);
+    let execution_runtime = Router::new().route(
+        "/v1/execute/sync",
+        any(move |Json(plan): Json<ExecutionPlan>| {
+            let execution_plans_inner = Arc::clone(&execution_plans_clone);
+            async move {
+                execution_plans_inner
+                    .lock()
+                    .expect("mutex should lock")
+                    .push(plan.clone());
+                let proxy = plan.proxy.as_ref().expect("proxy snapshot should exist");
+                assert_eq!(proxy.node_id.as_deref(), Some("proxy-node-codex-system"));
+                Json(json!({
+                    "request_id": plan.request_id,
+                    "status_code": 200,
+                    "headers": {
+                        "content-type": "application/json"
+                    },
+                    "body": {
+                        "json_body": {
+                            "access_token": "imported-codex-access-token",
+                            "refresh_token": "imported-codex-refresh-token",
+                            "token_type": "Bearer",
+                            "expires_in": 1800,
+                            "scope": "openid email profile offline_access",
+                            "email": "alice@example.com",
+                            "account_id": "acct-codex-123",
+                            "plan_type": "plus"
+                        }
+                    }
+                }))
+            }
+        }),
+    );
+
+    let mut provider = sample_provider("provider-codex", "codex", 10);
+    provider.provider_type = "codex".to_string();
+    let endpoint = sample_endpoint(
+        "endpoint-codex-chat",
+        "provider-codex",
+        "openai:chat",
+        "https://chatgpt.com/backend-api/codex",
+    );
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![endpoint],
+        vec![],
+    ));
+    let mut manual_node = sample_proxy_node("proxy-node-codex-system");
+    manual_node.status = "online".to_string();
+    manual_node.is_manual = true;
+    manual_node.tunnel_mode = false;
+    manual_node.tunnel_connected = false;
+    manual_node.proxy_url = Some("http://proxy.example:8080".to_string());
+    let proxy_node_repository = Arc::new(InMemoryProxyNodeRepository::seed(vec![manual_node]));
+
+    let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
+    let gateway = build_router_with_state(
+        build_state_with_execution_runtime_override(execution_runtime_url)
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(
+                    provider_catalog_repository.clone(),
+                )
+                .attach_proxy_node_repository_for_tests(proxy_node_repository)
+                .with_system_config_values_for_tests(vec![(
+                    "system_proxy_node_id".to_string(),
+                    json!("proxy-node-codex-system"),
+                )])
+                .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+            )
+            .with_provider_oauth_token_url_for_tests("codex", "https://oauth.example/oauth/token"),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/api/admin/provider-oauth/providers/provider-codex/import-refresh-token"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "refresh_token": "provider-import-refresh-token",
+            "name": "codex-import"
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(status, StatusCode::OK, "payload={payload}");
+    assert_eq!(payload["provider_type"], "codex");
+
+    let plans = execution_plans.lock().expect("mutex should lock");
+    assert_eq!(plans.len(), 1);
+    assert_eq!(
+        plans[0]
+            .proxy
+            .as_ref()
+            .and_then(|proxy| proxy.node_id.as_deref()),
+        Some("proxy-node-codex-system")
+    );
+
+    gateway_handle.abort();
+    execution_runtime_handle.abort();
+}
+
+#[tokio::test]
 async fn gateway_batch_imports_admin_provider_oauth_kiro_locally_with_trusted_admin_principal() {
     let upstream_hits = Arc::new(Mutex::new(0usize));
     let upstream_hits_clone = Arc::clone(&upstream_hits);
@@ -2539,6 +2651,168 @@ async fn gateway_refreshes_admin_provider_oauth_key_locally_with_trusted_admin_p
     gateway_handle.abort();
     token_handle.abort();
     upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_refreshes_admin_provider_oauth_key_locally_via_execution_runtime_key_proxy_before_system_proxy(
+) {
+    let execution_plans = Arc::new(Mutex::new(Vec::<ExecutionPlan>::new()));
+    let execution_plans_clone = Arc::clone(&execution_plans);
+    let execution_runtime = Router::new().route(
+        "/v1/execute/sync",
+        any(move |Json(plan): Json<ExecutionPlan>| {
+            let execution_plans_inner = Arc::clone(&execution_plans_clone);
+            async move {
+                execution_plans_inner
+                    .lock()
+                    .expect("mutex should lock")
+                    .push(plan.clone());
+                if plan.request_id == "provider-oauth:local-refresh-token" {
+                    Json(json!({
+                        "request_id": plan.request_id,
+                        "status_code": 200,
+                        "headers": {
+                            "content-type": "application/json"
+                        },
+                        "body": {
+                            "json_body": {
+                                "access_token": "refreshed-codex-access-token",
+                                "refresh_token": "refreshed-codex-refresh-token",
+                                "token_type": "Bearer",
+                                "expires_in": 1800,
+                                "scope": "openid email profile offline_access",
+                                "email": "alice@example.com",
+                                "account_id": "acct-codex-123",
+                                "plan_type": "plus"
+                            }
+                        }
+                    }))
+                } else {
+                    Json(json!({
+                        "request_id": plan.request_id,
+                        "status_code": 200,
+                        "headers": {
+                            "content-type": "application/json"
+                        },
+                        "body": {
+                            "json_body": {}
+                        }
+                    }))
+                }
+            }
+        }),
+    );
+
+    let mut provider = sample_provider("provider-codex", "codex", 10);
+    provider.provider_type = "codex".to_string();
+    provider.proxy = Some(json!({"node_id":"proxy-node-provider","enabled":true}));
+    let endpoint = sample_endpoint(
+        "endpoint-codex-cli",
+        "provider-codex",
+        "openai:cli",
+        "https://chatgpt.com/backend-api/codex",
+    );
+
+    let mut key = sample_key(
+        "key-codex-oauth-refresh",
+        "provider-codex",
+        "openai:cli",
+        "stale-codex-access-token",
+    );
+    key.auth_type = "oauth".to_string();
+    key.proxy = Some(json!({"node_id":"proxy-node-key","enabled":true}));
+    key.encrypted_auth_config = Some(
+        encrypt_python_fernet_plaintext(
+            DEVELOPMENT_ENCRYPTION_KEY,
+            r#"{"provider_type":"codex","refresh_token":"old-codex-refresh-token","email":"alice@example.com","account_id":"acct-codex-123","plan_type":"plus","expires_at":1}"#,
+        )
+        .expect("auth config ciphertext should build"),
+    );
+
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![endpoint],
+        vec![key],
+    ));
+    let mut key_node = sample_proxy_node("proxy-node-key");
+    key_node.status = "online".to_string();
+    key_node.is_manual = true;
+    key_node.tunnel_mode = false;
+    key_node.tunnel_connected = false;
+    key_node.proxy_url = Some("http://proxy-key.example:8080".to_string());
+    let mut provider_node = sample_proxy_node("proxy-node-provider");
+    provider_node.status = "online".to_string();
+    provider_node.is_manual = true;
+    provider_node.tunnel_mode = false;
+    provider_node.tunnel_connected = false;
+    provider_node.proxy_url = Some("http://proxy-provider.example:8080".to_string());
+    let mut system_node = sample_proxy_node("proxy-node-system");
+    system_node.status = "online".to_string();
+    system_node.is_manual = true;
+    system_node.tunnel_mode = false;
+    system_node.tunnel_connected = false;
+    system_node.proxy_url = Some("http://proxy-system.example:8080".to_string());
+    let proxy_node_repository = Arc::new(InMemoryProxyNodeRepository::seed(vec![
+        key_node,
+        provider_node,
+        system_node,
+    ]));
+
+    let oauth_refresh =
+        crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(vec![
+            Arc::new(
+                crate::provider_transport::oauth_refresh::GenericOAuthRefreshAdapter::default()
+                    .with_token_url_for_tests("codex", "https://oauth.example/oauth/token"),
+            ),
+        ]);
+
+    let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
+    let gateway = build_router_with_state(
+        build_state_with_execution_runtime_override(execution_runtime_url)
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(
+                    provider_catalog_repository.clone(),
+                )
+                .attach_proxy_node_repository_for_tests(proxy_node_repository)
+                .with_system_config_values_for_tests(vec![(
+                    "system_proxy_node_id".to_string(),
+                    json!("proxy-node-system"),
+                )])
+                .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+            )
+            .with_oauth_refresh_coordinator_for_tests(oauth_refresh),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/api/admin/provider-oauth/keys/key-codex-oauth-refresh/refresh"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let plans = execution_plans.lock().expect("mutex should lock");
+    let refresh_plan = plans
+        .iter()
+        .find(|plan| plan.request_id == "provider-oauth:local-refresh-token")
+        .expect("local refresh plan should exist");
+    assert_eq!(
+        refresh_plan
+            .proxy
+            .as_ref()
+            .and_then(|proxy| proxy.node_id.as_deref()),
+        Some("proxy-node-key")
+    );
+
+    gateway_handle.abort();
+    execution_runtime_handle.abort();
 }
 
 #[tokio::test]

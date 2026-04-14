@@ -222,7 +222,7 @@
                 <span
                   v-else
                   class="flex h-10 w-full items-center rounded-lg border bg-background px-3 text-sm text-muted-foreground opacity-60"
-                >{{ form.unlimited_balance ? '无限制' : '按钱包余额限制' }}</span>
+                >{{ balanceDisplayText }}</span>
               </div>
               <Switch
                 :model-value="form.unlimited_balance ?? false"
@@ -230,6 +230,12 @@
                 @update:model-value="(v) => form.unlimited_balance = v"
               />
             </div>
+            <p
+              v-if="isEditMode"
+              class="text-xs text-muted-foreground"
+            >
+              {{ form.unlimited_balance ? '该 Key 当前使用独立无限额度。' : '该 Key 当前按独立钱包余额限制；增减金额请在列表页使用“资金”操作。' }}
+            </p>
           </div>
         </div>
       </div>
@@ -278,6 +284,7 @@ export interface StandaloneKeyFormData {
   id?: string
   name: string
   initial_balance_usd?: number
+  current_balance_usd?: number | null
   unlimited_balance?: boolean
   expires_at?: string  // ISO 日期字符串，如 "2025-12-31"，undefined = 永不过期
   rate_limit?: number | null
@@ -291,6 +298,7 @@ interface StandaloneKeyFormState {
   id?: string
   name: string
   initial_balance_usd?: number
+  current_balance_usd?: number | null
   unlimited_balance?: boolean
   expires_at?: string
   rate_limit_inherited: boolean
@@ -345,6 +353,7 @@ const modelOptions = computed(() =>
 const form = ref<StandaloneKeyFormState>({
   name: '',
   initial_balance_usd: 10,
+  current_balance_usd: undefined,
   unlimited_balance: false,
   expires_at: undefined,
   rate_limit_inherited: true,
@@ -358,17 +367,37 @@ const form = ref<StandaloneKeyFormState>({
   allowed_models: [],
 })
 
+function formatDateInputValue(date: Date): string {
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 // 计算最小可选日期（明天）
 const minExpiryDate = computed(() => {
   const tomorrow = new Date()
+  tomorrow.setHours(0, 0, 0, 0)
   tomorrow.setDate(tomorrow.getDate() + 1)
-  return tomorrow.toISOString().split('T')[0]
+  return formatDateInputValue(tomorrow)
+})
+
+const balanceDisplayText = computed(() => {
+  if (form.value.unlimited_balance) {
+    return '独立无限额度'
+  }
+  if (isEditMode.value) {
+    const currentBalance = form.value.current_balance_usd ?? form.value.initial_balance_usd ?? 0
+    return `当前独立钱包余额 $${currentBalance.toFixed(2)}`
+  }
+  return '按独立钱包余额限制'
 })
 
 function resetForm() {
   form.value = {
     name: '',
     initial_balance_usd: 10,
+    current_balance_usd: undefined,
     unlimited_balance: false,
     expires_at: undefined,
     rate_limit_inherited: true,
@@ -389,6 +418,7 @@ function loadKeyData() {
     id: props.apiKey.id,
     name: props.apiKey.name || '',
     initial_balance_usd: props.apiKey.initial_balance_usd,
+    current_balance_usd: props.apiKey.current_balance_usd ?? props.apiKey.initial_balance_usd ?? null,
     unlimited_balance: props.apiKey.initial_balance_usd == null,
     expires_at: props.apiKey.expires_at,
     rate_limit_inherited: props.apiKey.rate_limit == null,

@@ -14,6 +14,7 @@ use crate::handlers::admin::users::{
     normalize_admin_user_string_list,
 };
 use crate::GatewayError;
+use aether_admin::system::serialize_admin_system_users_export_wallet;
 use axum::{
     body::Body,
     http,
@@ -22,12 +23,48 @@ use axum::{
 };
 use serde_json::json;
 
+fn parse_standalone_api_key_expires_at(value: Option<&str>) -> Result<Option<u64>, String> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        let Some(expires_at) = date.and_hms_opt(23, 59, 59) else {
+            return Err("expires_at 超出有效时间范围".to_string());
+        };
+        return u64::try_from(expires_at.and_utc().timestamp())
+            .map(Some)
+            .map_err(|_| "expires_at 超出有效时间范围".to_string());
+    }
+    let parsed = chrono::DateTime::parse_from_rfc3339(value)
+        .map_err(|_| "expires_at 必须是 YYYY-MM-DD 或 RFC3339 时间".to_string())?;
+    u64::try_from(parsed.timestamp())
+        .map(Some)
+        .map_err(|_| "expires_at 超出有效时间范围".to_string())
+}
+
+fn normalize_standalone_initial_balance(
+    initial_balance_usd: Option<f64>,
+    unlimited_balance: Option<bool>,
+) -> Result<(f64, bool), String> {
+    let unlimited = unlimited_balance.unwrap_or(initial_balance_usd.is_none());
+    if unlimited {
+        return Ok((0.0, true));
+    }
+    let Some(initial_balance_usd) = initial_balance_usd else {
+        return Err("initial_balance_usd 必须大于 0".to_string());
+    };
+    if !initial_balance_usd.is_finite() || initial_balance_usd <= 0.0 {
+        return Err("initial_balance_usd 必须大于 0".to_string());
+    }
+    Ok((initial_balance_usd, false))
+}
+
 pub(super) async fn build_admin_create_api_key_response(
     state: &AdminAppState<'_>,
     request_context: &AdminRequestContext<'_>,
     request_body: Option<&axum::body::Bytes>,
 ) -> Result<Response<Body>, GatewayError> {
-    if !state.has_auth_api_key_writer() {
+    if !state.has_auth_api_key_writer() || !state.has_auth_wallet_write_capability() {
         return Ok(build_admin_api_keys_data_unavailable_response());
     }
 
@@ -47,14 +84,9 @@ pub(super) async fn build_admin_create_api_key_response(
             ));
         }
     };
-    if payload.initial_balance_usd.is_some()
-        || payload.unlimited_balance.is_some()
-        || payload.expire_days.is_some()
-        || payload.expires_at.is_some()
-        || payload.auto_delete_on_expiry.is_some()
-    {
+    if payload.expire_days.is_some() {
         return Ok(build_admin_api_keys_bad_request_response(
-            "当前仅支持 name、rate_limit、allowed_providers、allowed_api_formats、allowed_models 字段",
+            "expire_days 暂不支持，请改用 expires_at",
         ));
     }
 
@@ -77,10 +109,27 @@ pub(super) async fn build_admin_create_api_key_response(
             Ok(value) => value,
             Err(detail) => return Ok(build_admin_api_keys_bad_request_response(detail)),
         };
-    let rate_limit = payload.rate_limit.unwrap_or(0);
-    if rate_limit < 0 {
+    if payload.rate_limit.is_some_and(|value| value < 0) {
         return Ok(build_admin_api_keys_bad_request_response(
             "rate_limit 必须大于等于 0",
+        ));
+    }
+    let (initial_balance_usd, unlimited_balance) = match normalize_standalone_initial_balance(
+        payload.initial_balance_usd,
+        payload.unlimited_balance,
+    ) {
+        Ok(value) => value,
+        Err(detail) => return Ok(build_admin_api_keys_bad_request_response(detail)),
+    };
+    let expires_at_unix_secs =
+        match parse_standalone_api_key_expires_at(payload.expires_at.as_deref()) {
+            Ok(value) => value,
+            Err(detail) => return Ok(build_admin_api_keys_bad_request_response(detail)),
+        };
+    let auto_delete_on_expiry = payload.auto_delete_on_expiry.unwrap_or(false);
+    if auto_delete_on_expiry && expires_at_unix_secs.is_none() {
+        return Ok(build_admin_api_keys_bad_request_response(
+            "设置 auto_delete_on_expiry 前必须提供 expires_at",
         ));
     }
 
@@ -104,12 +153,12 @@ pub(super) async fn build_admin_create_api_key_response(
                 allowed_providers,
                 allowed_api_formats,
                 allowed_models,
-                rate_limit,
+                rate_limit: payload.rate_limit,
                 concurrent_limit: 5,
                 force_capabilities: None,
                 is_active: true,
-                expires_at_unix_secs: None,
-                auto_delete_on_expiry: false,
+                expires_at_unix_secs,
+                auto_delete_on_expiry,
                 total_requests: 0,
                 total_cost_usd: 0.0,
             },
@@ -117,6 +166,13 @@ pub(super) async fn build_admin_create_api_key_response(
         .await?
     else {
         return Ok(build_admin_api_keys_data_unavailable_response());
+    };
+    let wallet = match state
+        .initialize_auth_api_key_wallet(&created.api_key_id, initial_balance_usd, unlimited_balance)
+        .await?
+    {
+        Some(wallet) => wallet,
+        None => return Ok(build_admin_api_keys_data_unavailable_response()),
     };
 
     Ok(attach_admin_audit_response(
@@ -132,7 +188,8 @@ pub(super) async fn build_admin_create_api_key_response(
             "allowed_api_formats": created.allowed_api_formats,
             "allowed_models": created.allowed_models,
             "expires_at": format_optional_unix_secs_iso8601(created.expires_at_unix_secs),
-            "wallet": serde_json::Value::Null,
+            "auto_delete_on_expiry": created.auto_delete_on_expiry,
+            "wallet": serialize_admin_system_users_export_wallet(Some(&wallet)),
             "message": "独立余额Key创建成功，请妥善保存完整密钥，后续将无法查看",
         }))
         .into_response(),
@@ -176,17 +233,33 @@ pub(super) async fn build_admin_update_api_key_response(
             ));
         }
     };
+    let null_unlimited_balance =
+        patch.contains("unlimited_balance") && patch.is_null("unlimited_balance");
+    let null_auto_delete_on_expiry =
+        patch.contains("auto_delete_on_expiry") && patch.is_null("auto_delete_on_expiry");
     let (field_presence, payload) = patch.into_parts();
-    if payload.initial_balance_usd.is_some()
-        || payload.unlimited_balance.is_some()
-        || payload.expire_days.is_some()
-        || payload.expires_at.is_some()
-        || payload.auto_delete_on_expiry.is_some()
-    {
+    if null_unlimited_balance {
         return Ok(build_admin_api_keys_bad_request_response(
-            "当前仅支持 name、rate_limit、allowed_providers、allowed_api_formats、allowed_models 字段",
+            "unlimited_balance 必须是布尔值",
         ));
     }
+    if null_auto_delete_on_expiry {
+        return Ok(build_admin_api_keys_bad_request_response(
+            "auto_delete_on_expiry 必须是布尔值",
+        ));
+    }
+    if payload.expire_days.is_some() {
+        return Ok(build_admin_api_keys_bad_request_response(
+            "expire_days 暂不支持，请改用 expires_at",
+        ));
+    }
+
+    let Some(existing) = state
+        .find_auth_api_key_export_standalone_record_by_id(&api_key_id)
+        .await?
+    else {
+        return Ok(build_admin_api_keys_not_found_response());
+    };
 
     let name = match normalize_admin_optional_api_key_name(payload.name) {
         Ok(value) => value,
@@ -221,28 +294,93 @@ pub(super) async fn build_admin_update_api_key_response(
     } else {
         None
     };
+    let effective_expires_at_unix_secs = if field_presence.contains("expires_at") {
+        match parse_standalone_api_key_expires_at(payload.expires_at.as_deref()) {
+            Ok(value) => value,
+            Err(detail) => return Ok(build_admin_api_keys_bad_request_response(detail)),
+        }
+    } else {
+        existing.expires_at_unix_secs
+    };
+    let effective_auto_delete_on_expiry = if field_presence.contains("auto_delete_on_expiry") {
+        payload.auto_delete_on_expiry.unwrap_or(false)
+    } else {
+        existing.auto_delete_on_expiry
+    };
+    if effective_auto_delete_on_expiry && effective_expires_at_unix_secs.is_none() {
+        return Ok(build_admin_api_keys_bad_request_response(
+            "设置 auto_delete_on_expiry 前必须提供 expires_at",
+        ));
+    }
+
+    let mut wallet = state
+        .find_wallet(aether_data::repository::wallet::WalletLookupKey::ApiKeyId(
+            &api_key_id,
+        ))
+        .await?;
+    if field_presence.contains("unlimited_balance") {
+        if !state.has_auth_wallet_write_capability() {
+            return Ok(build_admin_api_keys_data_unavailable_response());
+        }
+        let desired_unlimited = payload.unlimited_balance.unwrap_or(false);
+        let desired_limit_mode = if desired_unlimited {
+            "unlimited"
+        } else {
+            "finite"
+        };
+        wallet = match wallet {
+            Some(existing_wallet)
+                if existing_wallet
+                    .limit_mode
+                    .eq_ignore_ascii_case(desired_limit_mode) =>
+            {
+                Some(existing_wallet)
+            }
+            Some(_) => {
+                state
+                    .update_auth_api_key_wallet_limit_mode(&api_key_id, desired_limit_mode)
+                    .await?
+            }
+            None => {
+                state
+                    .initialize_auth_api_key_wallet(&api_key_id, 0.0, desired_unlimited)
+                    .await?
+            }
+        };
+    }
 
     let Some(updated) = state
         .update_standalone_api_key_basic(
             aether_data::repository::auth::UpdateStandaloneApiKeyBasicRecord {
                 api_key_id: api_key_id.clone(),
                 name,
+                rate_limit_present: field_presence.contains("rate_limit"),
                 rate_limit: payload.rate_limit,
                 allowed_providers,
                 allowed_api_formats,
                 allowed_models,
+                expires_at_present: field_presence.contains("expires_at"),
+                expires_at_unix_secs: if field_presence.contains("expires_at") {
+                    effective_expires_at_unix_secs
+                } else {
+                    None
+                },
+                auto_delete_on_expiry_present: field_presence.contains("auto_delete_on_expiry"),
+                auto_delete_on_expiry: effective_auto_delete_on_expiry,
             },
         )
         .await?
     else {
-        return Ok(build_admin_api_keys_not_found_response());
+        return Ok(build_admin_api_keys_data_unavailable_response());
     };
 
-    let wallet = state
-        .list_wallet_snapshots_by_api_key_ids(std::slice::from_ref(&api_key_id))
-        .await?
-        .into_iter()
-        .find(|wallet| wallet.api_key_id.as_deref() == Some(api_key_id.as_str()));
+    if wallet.is_none() {
+        wallet = state
+            .find_wallet(aether_data::repository::wallet::WalletLookupKey::ApiKeyId(
+                &api_key_id,
+            ))
+            .await?;
+    }
     let total_tokens_by_api_key_id =
         admin_api_key_total_tokens_by_ids(state, std::slice::from_ref(&api_key_id)).await?;
     let total_tokens = total_tokens_by_api_key_id

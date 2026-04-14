@@ -3,10 +3,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use url::form_urlencoded;
 
 use super::oauth_refresh::{
-    CachedOAuthEntry, LocalOAuthRefreshAdapter, LocalOAuthRefreshError,
-    LocalResolvedOAuthRequestAuth,
+    CachedOAuthEntry, LocalOAuthHttpExecutor, LocalOAuthHttpRequest, LocalOAuthRefreshAdapter,
+    LocalOAuthRefreshError, LocalResolvedOAuthRequestAuth,
 };
 use super::snapshot::GatewayProviderTransportSnapshot;
 
@@ -247,7 +248,7 @@ impl LocalOAuthRefreshAdapter for GenericOAuthRefreshAdapter {
 
     async fn refresh(
         &self,
-        client: &reqwest::Client,
+        executor: &dyn LocalOAuthHttpExecutor,
         transport: &GatewayProviderTransportSnapshot,
         entry: Option<&CachedOAuthEntry>,
     ) -> Result<Option<CachedOAuthEntry>, LocalOAuthRefreshError> {
@@ -265,7 +266,6 @@ impl LocalOAuthRefreshAdapter for GenericOAuthRefreshAdapter {
 
         let token_url = self.token_url_for_template(template);
         let scope = (!template.scopes.is_empty()).then(|| template.scopes.join(" "));
-        let request = client.post(token_url);
         let response = if template.uses_json_payload {
             let mut body = serde_json::Map::from_iter([
                 (
@@ -284,44 +284,60 @@ impl LocalOAuthRefreshAdapter for GenericOAuthRefreshAdapter {
             if let Some(scope) = scope.as_ref() {
                 body.insert("scope".to_string(), Value::String(scope.clone()));
             }
-            request
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .json(&Value::Object(body))
-                .send()
-                .await
+            executor
+                .execute(
+                    template.provider_type,
+                    transport,
+                    &LocalOAuthHttpRequest {
+                        request_id: "provider-oauth:local-refresh-token",
+                        method: reqwest::Method::POST,
+                        url: token_url,
+                        headers: BTreeMap::from([
+                            ("content-type".to_string(), "application/json".to_string()),
+                            ("accept".to_string(), "application/json".to_string()),
+                        ]),
+                        json_body: Some(Value::Object(body)),
+                        body_bytes: None,
+                    },
+                )
+                .await?
         } else {
-            let mut form = vec![
-                ("grant_type", "refresh_token".to_string()),
-                ("client_id", template.client_id.to_string()),
-                ("refresh_token", refresh_token.clone()),
-            ];
-            if let Some(scope) = scope.as_ref() {
-                form.push(("scope", scope.clone()));
-            }
-            if !template.client_secret.trim().is_empty() {
-                form.push(("client_secret", template.client_secret.to_string()));
-            }
-            request
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .header("Accept", "application/json")
-                .form(&form)
-                .send()
-                .await
-        }
-        .map_err(|source| LocalOAuthRefreshError::Transport {
-            provider_type: template.provider_type,
-            source,
-        })?;
-
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|source| LocalOAuthRefreshError::Transport {
-                provider_type: template.provider_type,
-                source,
-            })?;
+            let form_body = {
+                let mut form = form_urlencoded::Serializer::new(String::new());
+                form.append_pair("grant_type", "refresh_token");
+                form.append_pair("client_id", template.client_id);
+                form.append_pair("refresh_token", refresh_token.as_str());
+                if let Some(scope) = scope.as_ref() {
+                    form.append_pair("scope", scope);
+                }
+                if !template.client_secret.trim().is_empty() {
+                    form.append_pair("client_secret", template.client_secret);
+                }
+                form.finish().into_bytes()
+            };
+            executor
+                .execute(
+                    template.provider_type,
+                    transport,
+                    &LocalOAuthHttpRequest {
+                        request_id: "provider-oauth:local-refresh-token",
+                        method: reqwest::Method::POST,
+                        url: token_url,
+                        headers: BTreeMap::from([
+                            (
+                                "content-type".to_string(),
+                                "application/x-www-form-urlencoded".to_string(),
+                            ),
+                            ("accept".to_string(), "application/json".to_string()),
+                        ]),
+                        json_body: None,
+                        body_bytes: Some(form_body),
+                    },
+                )
+                .await?
+        };
+        let status = reqwest::StatusCode::from_u16(response.status_code).unwrap_or_default();
+        let body = response.body_text;
         if !status.is_success() {
             return Err(LocalOAuthRefreshError::HttpStatus {
                 provider_type: template.provider_type,

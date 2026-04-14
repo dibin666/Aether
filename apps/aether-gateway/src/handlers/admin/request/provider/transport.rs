@@ -1,13 +1,7 @@
 use super::*;
 use aether_contracts::ProxySnapshot;
-use aether_data::repository::proxy_nodes::{proxy_node_accepts_new_tunnels, StoredProxyNode};
-use aether_provider_transport::TransportTunnelAffinityLookup;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use url::Url;
-
-const TUNNEL_BASE_URL_EXTRA_KEY: &str = "tunnel_base_url";
-const TUNNEL_OWNER_INSTANCE_ID_EXTRA_KEY: &str = "tunnel_owner_instance_id";
-const TUNNEL_OWNER_OBSERVED_AT_EXTRA_KEY: &str = "tunnel_owner_observed_at_unix_secs";
 
 impl<'a> AdminAppState<'a> {
     pub(crate) async fn read_provider_transport_snapshot(
@@ -83,10 +77,9 @@ impl<'a> AdminAppState<'a> {
         &self,
         transport: &AdminGatewayProviderTransportSnapshot,
     ) -> Option<aether_contracts::ProxySnapshot> {
-        crate::provider_transport::resolve_transport_proxy_snapshot_with_tunnel_affinity(
-            self.app, transport,
-        )
-        .await
+        self.app
+            .resolve_transport_proxy_snapshot_with_tunnel_affinity(transport)
+            .await
     }
 
     pub(crate) fn fixed_provider_template(
@@ -123,17 +116,7 @@ impl<'a> AdminAppState<'a> {
         }
 
         if explicit_node_id.is_none() {
-            let system_node_id = self
-                .read_system_config_json_value("system_proxy_node_id")
-                .await
-                .ok()
-                .flatten()
-                .and_then(|value| value.as_str().map(str::trim).map(ToOwned::to_owned))
-                .filter(|value| !value.is_empty());
-            if let Some(snapshot) = self
-                .resolve_admin_proxy_node_snapshot(system_node_id.as_deref())
-                .await
-            {
+            if let Some(snapshot) = self.app.resolve_system_proxy_snapshot().await {
                 return Some(snapshot);
             }
         }
@@ -147,60 +130,7 @@ impl<'a> AdminAppState<'a> {
         &self,
         node_id: Option<&str>,
     ) -> Option<ProxySnapshot> {
-        let node_id = node_id.map(str::trim).filter(|value| !value.is_empty())?;
-        let node = self.find_proxy_node(node_id).await.ok().flatten()?;
-        if node.status.trim() != "online" {
-            return None;
-        }
-        if !proxy_node_accepts_new_tunnels(&node) {
-            return None;
-        }
-        if node.tunnel_mode && node.tunnel_connected {
-            let mut extra = Map::new();
-            if let Ok(Some(owner)) = self.app().lookup_tunnel_attachment_owner(node_id).await {
-                extra.insert(
-                    TUNNEL_BASE_URL_EXTRA_KEY.to_string(),
-                    Value::String(owner.relay_base_url),
-                );
-                extra.insert(
-                    TUNNEL_OWNER_INSTANCE_ID_EXTRA_KEY.to_string(),
-                    Value::String(owner.gateway_instance_id),
-                );
-                extra.insert(
-                    TUNNEL_OWNER_OBSERVED_AT_EXTRA_KEY.to_string(),
-                    json!(owner.observed_at_unix_secs),
-                );
-            }
-            return Some(ProxySnapshot {
-                enabled: Some(true),
-                mode: Some("tunnel".to_string()),
-                node_id: Some(node_id.to_string()),
-                label: Some(node.name),
-                url: None,
-                extra: if extra.is_empty() {
-                    None
-                } else {
-                    Some(Value::Object(extra))
-                },
-            });
-        }
-        if !node.is_manual {
-            return None;
-        }
-        let proxy_url = node
-            .proxy_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())?;
-        Some(ProxySnapshot {
-            enabled: Some(true),
-            mode: admin_provider_transport_proxy_mode(Some(proxy_url)),
-            node_id: Some(node.id.clone()),
-            label: Some(node.name.clone()),
-            url: admin_provider_transport_proxy_url_with_node_auth(&node)
-                .or_else(|| Some(proxy_url.to_string())),
-            extra: None,
-        })
+        self.app.resolve_proxy_node_snapshot(node_id).await
     }
 
     pub(crate) fn supports_local_gemini_transport_with_network(
@@ -385,25 +315,6 @@ fn admin_provider_transport_legacy_proxy_snapshot(value: &Value) -> Option<Proxy
         }
         _ => None,
     }
-}
-
-fn admin_provider_transport_proxy_url_with_node_auth(node: &StoredProxyNode) -> Option<String> {
-    let proxy_url = node
-        .proxy_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    let username = node
-        .proxy_username
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let password = node
-        .proxy_password
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    admin_provider_transport_inject_proxy_auth(proxy_url, username, password)
 }
 
 fn admin_provider_transport_inject_proxy_auth(

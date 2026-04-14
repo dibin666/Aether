@@ -10,6 +10,7 @@ mod core;
 mod cors;
 mod integrations;
 mod oauth;
+mod proxy;
 mod runtime;
 #[cfg(test)]
 mod testing;

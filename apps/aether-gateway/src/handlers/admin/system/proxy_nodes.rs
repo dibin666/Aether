@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::handlers::admin::shared::query_param_value;
 use crate::maintenance::{
@@ -19,6 +21,7 @@ use axum::{
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tokio::{net::TcpStream, time::timeout};
 
 #[derive(Debug, Deserialize)]
 struct ProxyNodeRegisterRequest {
@@ -74,6 +77,41 @@ struct ProxyNodeHeartbeatRequest {
 #[derive(Debug, Deserialize)]
 struct ProxyNodeUnregisterRequest {
     node_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManualProxyNodeCreateRequest {
+    name: String,
+    proxy_url: String,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    region: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManualProxyNodeUpdateRequest {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    proxy_url: Option<String>,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    region: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProxyNodeTestUrlRequest {
+    proxy_url: String,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -231,6 +269,128 @@ pub(crate) async fn maybe_build_local_admin_proxy_nodes_response(
                 "message": "unregistered",
                 "node_id": node.id,
             }))
+            .into_response(),
+        ));
+    }
+
+    if decision.route_kind.as_deref() == Some("create_manual_node")
+        && request_context.method() == http::Method::POST
+    {
+        if !state.has_proxy_node_writer() {
+            return Ok(Some(build_admin_proxy_nodes_data_unavailable_response()));
+        }
+        let input = match parse_json_body::<ManualProxyNodeCreateRequest>(request_body) {
+            Ok(input) => input,
+            Err(response) => return Ok(Some(response)),
+        };
+        let mutation = match validate_manual_create_request(input, request_context) {
+            Ok(mutation) => mutation,
+            Err(response) => return Ok(Some(response)),
+        };
+        let Some(node) = state.create_manual_proxy_node(&mutation).await? else {
+            return Ok(Some(build_admin_proxy_nodes_data_unavailable_response()));
+        };
+        return Ok(Some(
+            Json(json!({
+                "node_id": node.id,
+                "node": build_admin_proxy_node_payload(&node),
+            }))
+            .into_response(),
+        ));
+    }
+
+    if decision.route_kind.as_deref() == Some("update_manual_node")
+        && request_context.method() == http::Method::PATCH
+    {
+        if !state.has_proxy_node_writer() {
+            return Ok(Some(build_admin_proxy_nodes_data_unavailable_response()));
+        }
+        let Some(node_id) = admin_proxy_node_node_id_from_path(request_context.path()) else {
+            return Ok(Some(build_admin_proxy_nodes_not_found_response()));
+        };
+        let input = match parse_json_body::<ManualProxyNodeUpdateRequest>(request_body) {
+            Ok(input) => input,
+            Err(response) => return Ok(Some(response)),
+        };
+        let mutation = match validate_manual_update_request(node_id, input) {
+            Ok(mutation) => mutation,
+            Err(response) => return Ok(Some(response)),
+        };
+        let Some(node) = state.update_manual_proxy_node(&mutation).await? else {
+            return Ok(Some(build_admin_proxy_nodes_not_found_response()));
+        };
+        return Ok(Some(
+            Json(json!({
+                "node_id": node.id,
+                "node": build_admin_proxy_node_payload(&node),
+            }))
+            .into_response(),
+        ));
+    }
+
+    if decision.route_kind.as_deref() == Some("delete_node")
+        && request_context.method() == http::Method::DELETE
+    {
+        if !state.has_proxy_node_writer() {
+            return Ok(Some(build_admin_proxy_nodes_data_unavailable_response()));
+        }
+        let Some(node_id) = admin_proxy_node_node_id_from_path(request_context.path()) else {
+            return Ok(Some(build_admin_proxy_nodes_not_found_response()));
+        };
+        let Some(_deleted_node) = state.delete_proxy_node(&node_id).await? else {
+            return Ok(Some(build_admin_proxy_nodes_not_found_response()));
+        };
+        let cleanup = clear_deleted_proxy_node_references(state, &node_id).await?;
+        return Ok(Some(
+            Json(json!({
+                "message": build_delete_proxy_node_message(&cleanup),
+                "node_id": node_id,
+                "cleared_system_proxy": cleanup.cleared_system_proxy,
+                "cleared_providers": cleanup.cleared_providers,
+                "cleared_endpoints": cleanup.cleared_endpoints,
+                "cleared_keys": cleanup.cleared_keys,
+            }))
+            .into_response(),
+        ));
+    }
+
+    if decision.route_kind.as_deref() == Some("test_node")
+        && request_context.method() == http::Method::POST
+    {
+        if !state.has_proxy_node_reader() {
+            return Ok(Some(build_admin_proxy_nodes_data_unavailable_response()));
+        }
+        let Some(node_id) = admin_proxy_node_test_node_id_from_path(request_context.path()) else {
+            return Ok(Some(build_admin_proxy_nodes_not_found_response()));
+        };
+        let Some(node) = state.find_proxy_node(&node_id).await? else {
+            return Ok(Some(build_admin_proxy_nodes_not_found_response()));
+        };
+        return Ok(Some(
+            Json(test_proxy_node_connectivity(&node).await).into_response(),
+        ));
+    }
+
+    if decision.route_kind.as_deref() == Some("test_proxy_url")
+        && request_context.method() == http::Method::POST
+    {
+        let input = match parse_json_body::<ProxyNodeTestUrlRequest>(request_body) {
+            Ok(input) => input,
+            Err(response) => return Ok(Some(response)),
+        };
+        let normalized = match validate_proxy_test_url_request(input) {
+            Ok(normalized) => normalized,
+            Err(response) => return Ok(Some(response)),
+        };
+        return Ok(Some(
+            Json(
+                test_manual_proxy_connectivity(
+                    &normalized.proxy_url,
+                    normalized.host.as_str(),
+                    normalized.port,
+                )
+                .await,
+            )
             .into_response(),
         ));
     }
@@ -548,6 +708,213 @@ pub(crate) async fn maybe_build_local_admin_proxy_nodes_response(
     Ok(Some(build_admin_proxy_nodes_data_unavailable_response()))
 }
 
+#[derive(Debug, Default)]
+struct DeletedProxyNodeCleanup {
+    cleared_system_proxy: bool,
+    cleared_providers: usize,
+    cleared_endpoints: usize,
+    cleared_keys: usize,
+}
+
+#[derive(Debug, Clone)]
+struct NormalizedManualProxyEndpoint {
+    proxy_url: String,
+    host: String,
+    port: u16,
+    node_ip: String,
+    node_port: i32,
+}
+
+async fn clear_deleted_proxy_node_references(
+    state: &AdminAppState<'_>,
+    node_id: &str,
+) -> Result<DeletedProxyNodeCleanup, GatewayError> {
+    let mut cleanup = DeletedProxyNodeCleanup::default();
+
+    if state.app().data.has_system_config_store() {
+        let is_system_proxy = state
+            .read_system_config_json_value("system_proxy_node_id")
+            .await?
+            .and_then(|value| value.as_str().map(str::trim).map(ToOwned::to_owned))
+            .is_some_and(|value| value == node_id);
+        if is_system_proxy {
+            state
+                .upsert_system_config_json_value(
+                    "system_proxy_node_id",
+                    &serde_json::Value::Null,
+                    None,
+                )
+                .await?;
+            cleanup.cleared_system_proxy = true;
+        }
+    }
+
+    if state.app().has_provider_catalog_data_reader()
+        && state.app().has_provider_catalog_data_writer()
+    {
+        let providers = state.list_provider_catalog_providers(false).await?;
+        let provider_ids = providers
+            .iter()
+            .map(|provider| provider.id.clone())
+            .collect::<Vec<_>>();
+
+        for mut provider in providers {
+            if !proxy_reference_matches_node_id(provider.proxy.as_ref(), node_id) {
+                continue;
+            }
+            provider.proxy = None;
+            if state
+                .update_provider_catalog_provider(&provider)
+                .await?
+                .is_some()
+            {
+                cleanup.cleared_providers = cleanup.cleared_providers.saturating_add(1);
+            }
+        }
+
+        if !provider_ids.is_empty() {
+            let endpoints = state
+                .list_provider_catalog_endpoints_by_provider_ids(&provider_ids)
+                .await?;
+            for mut endpoint in endpoints {
+                if !proxy_reference_matches_node_id(endpoint.proxy.as_ref(), node_id) {
+                    continue;
+                }
+                endpoint.proxy = None;
+                if state
+                    .update_provider_catalog_endpoint(&endpoint)
+                    .await?
+                    .is_some()
+                {
+                    cleanup.cleared_endpoints = cleanup.cleared_endpoints.saturating_add(1);
+                }
+            }
+
+            let keys = state
+                .list_provider_catalog_keys_by_provider_ids(&provider_ids)
+                .await?;
+            for mut key in keys {
+                if !proxy_reference_matches_node_id(key.proxy.as_ref(), node_id) {
+                    continue;
+                }
+                key.proxy = None;
+                if state.update_provider_catalog_key(&key).await?.is_some() {
+                    cleanup.cleared_keys = cleanup.cleared_keys.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    Ok(cleanup)
+}
+
+fn build_delete_proxy_node_message(cleanup: &DeletedProxyNodeCleanup) -> String {
+    let mut parts = vec!["deleted".to_string()];
+    if cleanup.cleared_system_proxy {
+        parts.push("system default proxy cleared".to_string());
+    }
+    if cleanup.cleared_providers > 0 || cleanup.cleared_endpoints > 0 || cleanup.cleared_keys > 0 {
+        parts.push(format!(
+            "cleared proxy refs from {} provider(s), {} endpoint(s), {} key(s)",
+            cleanup.cleared_providers, cleanup.cleared_endpoints, cleanup.cleared_keys
+        ));
+    }
+    parts.join(", ")
+}
+
+fn proxy_reference_matches_node_id(value: Option<&Value>, node_id: &str) -> bool {
+    value
+        .and_then(Value::as_object)
+        .and_then(|object| object.get("node_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| value == node_id)
+}
+
+async fn test_proxy_node_connectivity(
+    node: &aether_data::repository::proxy_nodes::StoredProxyNode,
+) -> Value {
+    if node.is_manual {
+        let Some(proxy_url) = node.proxy_url.as_deref() else {
+            return json!({
+                "success": false,
+                "latency_ms": null,
+                "exit_ip": null,
+                "error": "手动节点缺少 proxy_url",
+            });
+        };
+        let endpoint = match parse_manual_proxy_endpoint(proxy_url, "proxy_url") {
+            Ok(endpoint) => endpoint,
+            Err(detail) => {
+                return json!({
+                    "success": false,
+                    "latency_ms": null,
+                    "exit_ip": null,
+                    "error": detail,
+                });
+            }
+        };
+        return test_manual_proxy_connectivity(
+            &endpoint.proxy_url,
+            endpoint.host.as_str(),
+            endpoint.port,
+        )
+        .await;
+    }
+
+    if !node.tunnel_mode {
+        return json!({
+            "success": false,
+            "latency_ms": null,
+            "exit_ip": null,
+            "error": "non-tunnel mode is no longer supported, please upgrade aether-proxy to use tunnel mode",
+        });
+    }
+
+    if !node.status.eq_ignore_ascii_case("online") || !node.tunnel_connected {
+        return json!({
+            "success": false,
+            "latency_ms": null,
+            "exit_ip": null,
+            "error": "tunnel 未连接",
+        });
+    }
+
+    json!({
+        "success": true,
+        "latency_ms": node.avg_latency_ms.map(|value| value.max(0.0).round() as u64),
+        "exit_ip": null,
+        "error": null,
+    })
+}
+
+async fn test_manual_proxy_connectivity(_proxy_url: &str, host: &str, port: u16) -> Value {
+    let started_at = Instant::now();
+    match timeout(Duration::from_secs(5), TcpStream::connect((host, port))).await {
+        Ok(Ok(stream)) => {
+            drop(stream);
+            json!({
+                "success": true,
+                "latency_ms": started_at.elapsed().as_millis() as u64,
+                "exit_ip": null,
+                "error": null,
+            })
+        }
+        Ok(Err(error)) => json!({
+            "success": false,
+            "latency_ms": null,
+            "exit_ip": null,
+            "error": sanitize_proxy_error(&error.to_string()),
+        }),
+        Err(_) => json!({
+            "success": false,
+            "latency_ms": null,
+            "exit_ip": null,
+            "error": "连接超时",
+        }),
+    }
+}
+
 fn validate_register_request(
     input: ProxyNodeRegisterRequest,
     request_context: &AdminRequestContext<'_>,
@@ -610,10 +977,99 @@ fn validate_register_request(
     )
 }
 
+fn validate_manual_create_request(
+    input: ManualProxyNodeCreateRequest,
+    request_context: &AdminRequestContext<'_>,
+) -> Result<aether_data::repository::proxy_nodes::ProxyNodeManualCreateMutation, Response<Body>> {
+    let endpoint = normalize_manual_proxy_endpoint(&input.proxy_url)?;
+    let registered_by = request_context
+        .decision()
+        .and_then(|decision| decision.admin_principal.as_ref())
+        .map(|principal| principal.user_id.clone());
+
+    Ok(
+        aether_data::repository::proxy_nodes::ProxyNodeManualCreateMutation {
+            name: normalize_required_string(&input.name, "name", 100)?,
+            ip: endpoint.node_ip,
+            port: endpoint.node_port,
+            region: normalize_optional_string(input.region.as_deref(), "region", 100)?,
+            proxy_url: endpoint.proxy_url,
+            proxy_username: normalize_optional_string(input.username.as_deref(), "username", 255)?,
+            proxy_password: normalize_optional_string(input.password.as_deref(), "password", 500)?,
+            registered_by,
+        },
+    )
+}
+
+fn validate_manual_update_request(
+    node_id: String,
+    input: ManualProxyNodeUpdateRequest,
+) -> Result<aether_data::repository::proxy_nodes::ProxyNodeManualUpdateMutation, Response<Body>> {
+    let endpoint = match input.proxy_url.as_deref() {
+        Some(proxy_url) => Some(normalize_manual_proxy_endpoint(proxy_url)?),
+        None => None,
+    };
+    let name = normalize_optional_string(input.name.as_deref(), "name", 100)?;
+    let region = normalize_optional_string(input.region.as_deref(), "region", 100)?;
+    let proxy_username = normalize_optional_string(input.username.as_deref(), "username", 255)?;
+    let proxy_password = normalize_optional_string(input.password.as_deref(), "password", 500)?;
+
+    if name.is_none()
+        && region.is_none()
+        && proxy_username.is_none()
+        && proxy_password.is_none()
+        && endpoint.is_none()
+    {
+        return Err(bad_request_response("至少提供一个可更新字段"));
+    }
+
+    Ok(
+        aether_data::repository::proxy_nodes::ProxyNodeManualUpdateMutation {
+            node_id,
+            name,
+            ip: endpoint.as_ref().map(|value| value.node_ip.clone()),
+            port: endpoint.as_ref().map(|value| value.node_port),
+            region,
+            proxy_url: endpoint.map(|value| value.proxy_url),
+            proxy_username,
+            proxy_password,
+        },
+    )
+}
+
+fn validate_proxy_test_url_request(
+    input: ProxyNodeTestUrlRequest,
+) -> Result<NormalizedManualProxyEndpoint, Response<Body>> {
+    let _ = normalize_optional_string(input.username.as_deref(), "username", 255)?;
+    let _ = normalize_optional_string(input.password.as_deref(), "password", 500)?;
+    normalize_manual_proxy_endpoint(&input.proxy_url)
+}
+
 fn admin_proxy_node_upgrade_action_node_id_from_path(path: &str, suffix: &str) -> Option<String> {
     let normalized = path.trim_end_matches('/');
     let node_id = normalized.strip_prefix("/api/admin/proxy-nodes/")?;
     let node_id = node_id.strip_suffix(suffix)?;
+    if node_id.is_empty() || node_id.contains('/') {
+        None
+    } else {
+        Some(node_id.to_string())
+    }
+}
+
+fn admin_proxy_node_node_id_from_path(path: &str) -> Option<String> {
+    let normalized = path.trim_end_matches('/');
+    let node_id = normalized.strip_prefix("/api/admin/proxy-nodes/")?;
+    if node_id.is_empty() || node_id.contains('/') {
+        None
+    } else {
+        Some(node_id.to_string())
+    }
+}
+
+fn admin_proxy_node_test_node_id_from_path(path: &str) -> Option<String> {
+    let normalized = path.trim_end_matches('/');
+    let node_id = normalized.strip_prefix("/api/admin/proxy-nodes/")?;
+    let node_id = node_id.strip_suffix("/test")?;
     if node_id.is_empty() || node_id.contains('/') {
         None
     } else {
@@ -850,6 +1306,62 @@ fn parse_json_object_body(
         .ok_or_else(|| bad_request_response(JSON_OBJECT_REQUIRED_DETAIL))
 }
 
+fn normalize_manual_proxy_endpoint(
+    proxy_url: &str,
+) -> Result<NormalizedManualProxyEndpoint, Response<Body>> {
+    parse_manual_proxy_endpoint(proxy_url, "proxy_url").map_err(bad_request_response)
+}
+
+fn parse_manual_proxy_endpoint(
+    proxy_url: &str,
+    field: &str,
+) -> Result<NormalizedManualProxyEndpoint, String> {
+    let proxy_url = proxy_url.trim();
+    if proxy_url.is_empty() {
+        return Err(format!("{field} 不能为空"));
+    }
+    if proxy_url.chars().count() > 500 {
+        return Err(format!("{field} 长度不能超过 500"));
+    }
+
+    let parsed =
+        reqwest::Url::parse(proxy_url).map_err(|_| format!("{field} 必须是合法的代理 URL"))?;
+    let scheme = parsed.scheme().trim().to_ascii_lowercase();
+    if !matches!(scheme.as_str(), "http" | "https" | "socks5" | "socks5h") {
+        return Err(format!("{field} 仅支持 http/https/socks5/socks5h 协议"));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(format!("{field} 不应包含用户名或密码，请使用独立字段"));
+    }
+    let host = parsed
+        .host_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{field} 缺少主机地址"))?
+        .to_string();
+    let port = parsed.port().unwrap_or(match scheme.as_str() {
+        "https" => 443,
+        "socks5" | "socks5h" => 1080,
+        _ => 80,
+    });
+    let node_ip = if scheme == "http" {
+        host.clone()
+    } else {
+        format!("{scheme}://{host}")
+    };
+    if node_ip.chars().count() > 255 {
+        return Err("代理主机标识长度不能超过 255".to_string());
+    }
+
+    Ok(NormalizedManualProxyEndpoint {
+        proxy_url: proxy_url.to_string(),
+        host,
+        port,
+        node_ip,
+        node_port: i32::from(port),
+    })
+}
+
 fn validate_node_id(value: &str) -> Result<String, Response<Body>> {
     normalize_required_string(value, "node_id", 36)
 }
@@ -901,6 +1413,16 @@ fn normalize_ip_address(value: &str) -> Result<String, Response<Body>> {
         .parse::<std::net::IpAddr>()
         .map(|ip| ip.to_string())
         .map_err(|_| bad_request_response("ip 必须是合法的 IPv4/IPv6 地址"))
+}
+
+fn sanitize_proxy_error(detail: &str) -> String {
+    match detail.split_once("://") {
+        Some((scheme, rest)) => match rest.split_once('@') {
+            Some((_, tail)) => format!("{scheme}://***@{tail}"),
+            None => detail.to_string(),
+        },
+        None => detail.to_string(),
+    }
 }
 
 fn validate_optional_counter(value: Option<i64>, field: &str) -> Result<(), Response<Body>> {

@@ -3,11 +3,40 @@ use super::{
     GatewayError, ProviderTransportSnapshotCacheKey, PROVIDER_TRANSPORT_SNAPSHOT_CACHE_MAX_ENTRIES,
     PROVIDER_TRANSPORT_SNAPSHOT_CACHE_TTL,
 };
+use crate::provider_transport::LocalOAuthHttpExecutor;
 
 use super::super::provider_transport;
+use aether_contracts::{ExecutionPlan, ExecutionTimeouts, RequestBody};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use flate2::read::{DeflateDecoder, GzDecoder};
+use std::collections::BTreeMap;
+use std::io::Read;
 use std::time::Duration;
 
 use aether_crypto::encrypt_python_fernet_plaintext;
+
+const LOCAL_OAUTH_HTTP_TIMEOUT_MS: u64 = 30_000;
+
+struct GatewayLocalOAuthHttpExecutor<'a> {
+    state: &'a AppState,
+}
+
+#[async_trait::async_trait]
+impl<'a> provider_transport::LocalOAuthHttpExecutor for GatewayLocalOAuthHttpExecutor<'a> {
+    async fn execute(
+        &self,
+        provider_type: &'static str,
+        transport: &provider_transport::GatewayProviderTransportSnapshot,
+        request: &provider_transport::LocalOAuthHttpRequest,
+    ) -> Result<
+        provider_transport::LocalOAuthHttpResponse,
+        provider_transport::LocalOAuthRefreshError,
+    > {
+        self.state
+            .execute_local_oauth_http_request(provider_type, transport, request)
+            .await
+    }
+}
 
 impl AppState {
     pub(crate) fn clear_provider_transport_snapshot_cache(&self) {
@@ -368,12 +397,13 @@ impl AppState {
         let distributed_lock = self.data.oauth_refresh_lock_runner();
         let lock_owner = format!("aether-gateway-{}", std::process::id());
         let mut current_transport = transport.clone();
+        let executor = GatewayLocalOAuthHttpExecutor { state: self };
 
         for _ in 0..2 {
             let resolution = self
                 .oauth_refresh
                 .resolve_with_result(
-                    &self.client,
+                    &executor,
                     &current_transport,
                     distributed_lock.as_ref(),
                     Some(lock_owner.as_str()),
@@ -429,12 +459,13 @@ impl AppState {
         let lock_owner = format!("aether-gateway-admin-{}", std::process::id());
         let mut current_transport = transport.clone();
         current_transport.key.decrypted_api_key = "__placeholder__".to_string();
+        let executor = GatewayLocalOAuthHttpExecutor { state: self };
 
         for _ in 0..2 {
             let resolution = self
                 .oauth_refresh
                 .resolve_with_result(
-                    &self.client,
+                    &executor,
                     &current_transport,
                     distributed_lock.as_ref(),
                     Some(lock_owner.as_str()),
@@ -534,6 +565,88 @@ impl AppState {
         Ok(())
     }
 
+    async fn execute_local_oauth_http_request(
+        &self,
+        provider_type: &'static str,
+        transport: &provider_transport::GatewayProviderTransportSnapshot,
+        request: &provider_transport::LocalOAuthHttpRequest,
+    ) -> Result<
+        provider_transport::LocalOAuthHttpResponse,
+        provider_transport::LocalOAuthRefreshError,
+    > {
+        if local_oauth_request_uses_direct_client(request.url.as_str()) {
+            let executor =
+                provider_transport::ReqwestLocalOAuthHttpExecutor::new(self.client.clone());
+            return executor.execute(provider_type, transport, request).await;
+        }
+
+        let body = if let Some(json_body) = request.json_body.clone() {
+            RequestBody::from_json(json_body)
+        } else {
+            RequestBody {
+                json_body: None,
+                body_bytes_b64: request
+                    .body_bytes
+                    .as_ref()
+                    .map(|bytes| STANDARD.encode(bytes)),
+                body_ref: None,
+            }
+        };
+        let plan = ExecutionPlan {
+            request_id: request.request_id.to_string(),
+            candidate_id: None,
+            provider_name: Some(transport.provider.name.clone()),
+            provider_id: transport.provider.id.clone(),
+            endpoint_id: transport.endpoint.id.clone(),
+            key_id: transport.key.id.clone(),
+            method: request.method.as_str().to_string(),
+            url: request.url.clone(),
+            headers: request.headers.clone(),
+            content_type: request
+                .headers
+                .get("content-type")
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned),
+            content_encoding: None,
+            body,
+            stream: false,
+            client_api_format: "provider_oauth:local_refresh".to_string(),
+            provider_api_format: "provider_oauth:local_refresh".to_string(),
+            model_name: Some(provider_type.to_string()),
+            proxy: self
+                .resolve_transport_proxy_snapshot_with_tunnel_affinity(transport)
+                .await,
+            tls_profile: None,
+            timeouts: Some(ExecutionTimeouts {
+                connect_ms: Some(LOCAL_OAUTH_HTTP_TIMEOUT_MS),
+                read_ms: Some(LOCAL_OAUTH_HTTP_TIMEOUT_MS),
+                write_ms: Some(LOCAL_OAUTH_HTTP_TIMEOUT_MS),
+                pool_ms: Some(LOCAL_OAUTH_HTTP_TIMEOUT_MS),
+                total_ms: Some(LOCAL_OAUTH_HTTP_TIMEOUT_MS),
+                ..ExecutionTimeouts::default()
+            }),
+        };
+        let result =
+            crate::execution_runtime::execute_execution_runtime_sync_plan(self, None, &plan)
+                .await
+                .map_err(
+                    |err| provider_transport::LocalOAuthRefreshError::InvalidResponse {
+                        provider_type,
+                        message: match err {
+                            GatewayError::UpstreamUnavailable { message, .. }
+                            | GatewayError::ControlUnavailable { message, .. }
+                            | GatewayError::Internal(message) => message,
+                        },
+                    },
+                )?;
+        Ok(provider_transport::LocalOAuthHttpResponse {
+            status_code: result.status_code,
+            body_text: local_oauth_execution_body_text(&result),
+        })
+    }
+
     async fn wait_for_remote_oauth_refresh(
         &self,
         transport: &provider_transport::GatewayProviderTransportSnapshot,
@@ -563,4 +676,64 @@ impl AppState {
 
         Ok(None)
     }
+}
+
+fn local_oauth_execution_body_text(result: &aether_contracts::ExecutionResult) -> String {
+    result
+        .body
+        .as_ref()
+        .and_then(|body| local_oauth_execution_body_bytes(&result.headers, body))
+        .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+        .or_else(|| {
+            result
+                .body
+                .as_ref()
+                .and_then(|body| body.json_body.as_ref())
+                .and_then(|value| serde_json::to_string(value).ok())
+        })
+        .unwrap_or_default()
+}
+
+fn local_oauth_execution_body_bytes(
+    headers: &BTreeMap<String, String>,
+    body: &aether_contracts::ResponseBody,
+) -> Option<Vec<u8>> {
+    let bytes = body
+        .body_bytes_b64
+        .as_deref()
+        .and_then(|value| STANDARD.decode(value).ok())?;
+    let encoding = headers
+        .get("content-encoding")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    match encoding.as_deref() {
+        Some("gzip") => {
+            let mut decoder = GzDecoder::new(bytes.as_slice());
+            let mut out = Vec::new();
+            decoder.read_to_end(&mut out).ok()?;
+            Some(out)
+        }
+        Some("deflate") => {
+            let mut decoder = DeflateDecoder::new(bytes.as_slice());
+            let mut out = Vec::new();
+            decoder.read_to_end(&mut out).ok()?;
+            Some(out)
+        }
+        _ => Some(bytes),
+    }
+}
+
+fn local_oauth_request_uses_direct_client(url: &str) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_owned))
+        .is_some_and(|host| {
+            host.eq_ignore_ascii_case("localhost")
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .map(|addr| addr.is_loopback())
+                    .unwrap_or(false)
+        })
 }

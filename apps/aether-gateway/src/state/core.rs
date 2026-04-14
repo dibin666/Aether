@@ -4,8 +4,8 @@ use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
 use aether_data::repository::proxy_nodes::{
-    ProxyNodeHeartbeatMutation, ProxyNodeTunnelStatusMutation, StoredProxyNode,
-    StoredProxyNodeEvent,
+    ProxyNodeHeartbeatMutation, ProxyNodeManualCreateMutation, ProxyNodeManualUpdateMutation,
+    ProxyNodeTunnelStatusMutation, StoredProxyNode, StoredProxyNodeEvent,
 };
 use aether_http::{build_http_client, HttpClientConfig};
 use aether_runtime::{
@@ -468,6 +468,26 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn create_manual_proxy_node(
+        &self,
+        mutation: &ProxyNodeManualCreateMutation,
+    ) -> Result<Option<StoredProxyNode>, GatewayError> {
+        self.data
+            .create_manual_proxy_node(mutation)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn update_manual_proxy_node(
+        &self,
+        mutation: &ProxyNodeManualUpdateMutation,
+    ) -> Result<Option<StoredProxyNode>, GatewayError> {
+        self.data
+            .update_manual_proxy_node(mutation)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
     pub async fn reset_stale_proxy_node_tunnel_statuses(&self) -> std::io::Result<usize> {
         self.data
             .reset_stale_proxy_node_tunnel_statuses()
@@ -491,6 +511,16 @@ impl AppState {
     ) -> Result<Option<StoredProxyNode>, GatewayError> {
         self.data
             .unregister_proxy_node(node_id)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn delete_proxy_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Option<StoredProxyNode>, GatewayError> {
+        self.data
+            .delete_proxy_node(node_id)
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }

@@ -6,6 +6,7 @@ use super::headers::{
 use super::snapshot::GatewayProviderTransportSnapshot;
 
 const DEFAULT_ANTHROPIC_VERSION: &str = "2023-06-01";
+const PLACEHOLDER_API_KEY: &str = "__placeholder__";
 
 fn collect_passthrough_headers(
     headers: &http::HeaderMap,
@@ -233,10 +234,7 @@ pub fn resolve_local_openai_chat_auth(
     if !matches!(auth_type.as_str(), "api_key" | "bearer") {
         return None;
     }
-    let secret = transport.key.decrypted_api_key.trim();
-    if secret.is_empty() {
-        return None;
-    }
+    let secret = resolved_local_secret(transport)?;
 
     Some(("authorization".to_string(), format!("Bearer {secret}")))
 }
@@ -245,10 +243,7 @@ pub fn resolve_local_standard_auth(
     transport: &GatewayProviderTransportSnapshot,
 ) -> Option<(String, String)> {
     let auth_type = transport.key.auth_type.trim().to_ascii_lowercase();
-    let secret = transport.key.decrypted_api_key.trim();
-    if secret.is_empty() {
-        return None;
-    }
+    let secret = resolved_local_secret(transport)?;
 
     match auth_type.as_str() {
         "api_key" => Some(("x-api-key".to_string(), secret.to_string())),
@@ -261,10 +256,7 @@ pub fn resolve_local_gemini_auth(
     transport: &GatewayProviderTransportSnapshot,
 ) -> Option<(String, String)> {
     let auth_type = transport.key.auth_type.trim().to_ascii_lowercase();
-    let secret = transport.key.decrypted_api_key.trim();
-    if secret.is_empty() {
-        return None;
-    }
+    let secret = resolved_local_secret(transport)?;
 
     match auth_type.as_str() {
         "api_key" => Some(("x-goog-api-key".to_string(), secret.to_string())),
@@ -273,10 +265,75 @@ pub fn resolve_local_gemini_auth(
     }
 }
 
+fn resolved_local_secret(transport: &GatewayProviderTransportSnapshot) -> Option<&str> {
+    let secret = transport.key.decrypted_api_key.trim();
+    (!secret.is_empty() && secret != PLACEHOLDER_API_KEY).then_some(secret)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{build_claude_passthrough_headers, build_complete_passthrough_headers_with_auth};
+    use super::{
+        build_claude_passthrough_headers, build_complete_passthrough_headers_with_auth,
+        resolve_local_standard_auth,
+    };
+    use crate::snapshot::{
+        GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
+        GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
+    };
     use std::collections::BTreeMap;
+
+    fn sample_transport() -> GatewayProviderTransportSnapshot {
+        GatewayProviderTransportSnapshot {
+            provider: GatewayProviderTransportProvider {
+                id: "provider-1".to_string(),
+                name: "provider".to_string(),
+                provider_type: "custom".to_string(),
+                website: None,
+                is_active: true,
+                keep_priority_on_conversion: false,
+                enable_format_conversion: false,
+                concurrent_limit: None,
+                max_retries: None,
+                proxy: None,
+                request_timeout_secs: None,
+                stream_first_byte_timeout_secs: None,
+                config: None,
+            },
+            endpoint: GatewayProviderTransportEndpoint {
+                id: "endpoint-1".to_string(),
+                provider_id: "provider-1".to_string(),
+                api_format: "claude:chat".to_string(),
+                api_family: Some("claude".to_string()),
+                endpoint_kind: Some("chat".to_string()),
+                is_active: true,
+                base_url: "https://example.test".to_string(),
+                header_rules: None,
+                body_rules: None,
+                max_retries: None,
+                custom_path: None,
+                config: None,
+                format_acceptance_config: None,
+                proxy: None,
+            },
+            key: GatewayProviderTransportKey {
+                id: "key-1".to_string(),
+                provider_id: "provider-1".to_string(),
+                name: "key".to_string(),
+                auth_type: "bearer".to_string(),
+                is_active: true,
+                api_formats: None,
+                allowed_models: None,
+                capabilities: None,
+                rate_multipliers: None,
+                global_priority_by_format: None,
+                expires_at_unix_secs: None,
+                proxy: None,
+                fingerprint: None,
+                decrypted_api_key: "__placeholder__".to_string(),
+                decrypted_auth_config: None,
+            },
+        }
+    }
 
     #[test]
     fn claude_passthrough_headers_restore_stripped_anthropic_headers() {
@@ -379,5 +436,10 @@ mod tests {
             built.get("x-api-key").map(String::as_str),
             Some("sk-upstream")
         );
+    }
+
+    #[test]
+    fn local_standard_auth_rejects_placeholder_secret() {
+        assert!(resolve_local_standard_auth(&sample_transport()).is_none());
     }
 }

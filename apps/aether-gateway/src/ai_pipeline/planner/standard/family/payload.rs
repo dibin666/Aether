@@ -10,8 +10,7 @@ use crate::ai_pipeline::planner::report_context::{
 };
 use crate::ai_pipeline::planner::spec_metadata::local_standard_spec_metadata;
 use crate::ai_pipeline::transport::{
-    resolve_transport_execution_timeouts, resolve_transport_proxy_snapshot_with_tunnel_affinity,
-    resolve_transport_tls_profile,
+    resolve_transport_execution_timeouts, resolve_transport_tls_profile,
 };
 use crate::ai_pipeline::{ConversionMode, ExecutionStrategy};
 use crate::{
@@ -69,11 +68,9 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
             provider_request_body: Some(resolved.provider_request_body.clone()),
             provider_request_body_base64: None,
             content_type: Some("application/json".to_string()),
-            proxy: resolve_transport_proxy_snapshot_with_tunnel_affinity(
-                state,
-                &resolved.transport,
-            )
-            .await,
+            proxy: state
+                .resolve_transport_proxy_snapshot_with_tunnel_affinity(&resolved.transport)
+                .await,
             tls_profile: resolve_transport_tls_profile(&resolved.transport),
             timeouts: resolve_transport_execution_timeouts(&resolved.transport),
             upstream_is_stream: resolved.upstream_is_stream,

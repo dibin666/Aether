@@ -1,11 +1,12 @@
 use super::{
     AuthApiKeyLookupKey, CreateManagementTokenRecord, DataLayerError, GatewayAuthApiKeySnapshot,
     GatewayDataState, ManagementTokenListQuery, ProxyNodeHeartbeatMutation,
-    ProxyNodeRegistrationMutation, ProxyNodeRemoteConfigMutation, ProxyNodeTunnelStatusMutation,
-    RegenerateManagementTokenSecret, StoredAuthApiKeyExportRecord, StoredAuthApiKeySnapshot,
-    StoredLdapModuleConfig, StoredManagementToken, StoredManagementTokenListPage,
-    StoredManagementTokenWithUser, StoredOAuthProviderConfig, StoredOAuthProviderModuleConfig,
-    StoredProxyNode, StoredProxyNodeEvent, StoredUserAuthRecord, StoredUserPreferenceRecord,
+    ProxyNodeManualCreateMutation, ProxyNodeManualUpdateMutation, ProxyNodeRegistrationMutation,
+    ProxyNodeRemoteConfigMutation, ProxyNodeTunnelStatusMutation, RegenerateManagementTokenSecret,
+    StoredAuthApiKeyExportRecord, StoredAuthApiKeySnapshot, StoredLdapModuleConfig,
+    StoredManagementToken, StoredManagementTokenListPage, StoredManagementTokenWithUser,
+    StoredOAuthProviderConfig, StoredOAuthProviderModuleConfig, StoredProxyNode,
+    StoredProxyNodeEvent, StoredUserAuthRecord, StoredUserPreferenceRecord,
     StoredUserSessionRecord, StoredWalletSnapshot, UpdateManagementTokenRecord,
     UpsertOAuthProviderConfigRecord,
 };
@@ -2270,6 +2271,26 @@ impl GatewayDataState {
         }
     }
 
+    pub(crate) async fn create_manual_proxy_node(
+        &self,
+        mutation: &ProxyNodeManualCreateMutation,
+    ) -> Result<Option<StoredProxyNode>, DataLayerError> {
+        match &self.proxy_node_writer {
+            Some(repository) => repository.create_manual_node(mutation).await.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) async fn update_manual_proxy_node(
+        &self,
+        mutation: &ProxyNodeManualUpdateMutation,
+    ) -> Result<Option<StoredProxyNode>, DataLayerError> {
+        match &self.proxy_node_writer {
+            Some(repository) => repository.update_manual_node(mutation).await,
+            None => Ok(None),
+        }
+    }
+
     pub(crate) async fn reset_stale_proxy_node_tunnel_statuses(
         &self,
     ) -> Result<usize, DataLayerError> {
@@ -2305,6 +2326,16 @@ impl GatewayDataState {
     ) -> Result<Option<StoredProxyNode>, DataLayerError> {
         match &self.proxy_node_writer {
             Some(repository) => repository.unregister_node(node_id).await,
+            None => Ok(None),
+        }
+    }
+
+    pub(crate) async fn delete_proxy_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Option<StoredProxyNode>, DataLayerError> {
+        match &self.proxy_node_writer {
+            Some(repository) => repository.delete_node(node_id).await,
             None => Ok(None),
         }
     }

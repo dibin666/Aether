@@ -181,6 +181,30 @@ pub struct ProxyNodeRegistrationMutation {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ProxyNodeManualCreateMutation {
+    pub name: String,
+    pub ip: String,
+    pub port: i32,
+    pub region: Option<String>,
+    pub proxy_url: String,
+    pub proxy_username: Option<String>,
+    pub proxy_password: Option<String>,
+    pub registered_by: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ProxyNodeManualUpdateMutation {
+    pub node_id: String,
+    pub name: Option<String>,
+    pub ip: Option<String>,
+    pub port: Option<i32>,
+    pub region: Option<String>,
+    pub proxy_url: Option<String>,
+    pub proxy_username: Option<String>,
+    pub proxy_password: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ProxyNodeTunnelStatusMutation {
     pub node_id: String,
     pub connected: bool,
@@ -348,6 +372,16 @@ pub trait ProxyNodeReadRepository: Send + Sync {
 pub trait ProxyNodeWriteRepository: Send + Sync {
     async fn reset_stale_tunnel_statuses(&self) -> Result<usize, crate::DataLayerError>;
 
+    async fn create_manual_node(
+        &self,
+        mutation: &ProxyNodeManualCreateMutation,
+    ) -> Result<StoredProxyNode, crate::DataLayerError>;
+
+    async fn update_manual_node(
+        &self,
+        mutation: &ProxyNodeManualUpdateMutation,
+    ) -> Result<Option<StoredProxyNode>, crate::DataLayerError>;
+
     async fn register_node(
         &self,
         mutation: &ProxyNodeRegistrationMutation,
@@ -364,6 +398,11 @@ pub trait ProxyNodeWriteRepository: Send + Sync {
     ) -> Result<Option<StoredProxyNode>, crate::DataLayerError>;
 
     async fn unregister_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Option<StoredProxyNode>, crate::DataLayerError>;
+
+    async fn delete_node(
         &self,
         node_id: &str,
     ) -> Result<Option<StoredProxyNode>, crate::DataLayerError>;

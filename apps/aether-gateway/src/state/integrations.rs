@@ -23,10 +23,7 @@ use tracing::debug;
 
 use super::{AppState, GatewayError};
 use crate::model_fetch::ModelFetchRuntimeState;
-use crate::provider_transport::{
-    resolve_transport_proxy_snapshot_with_tunnel_affinity, GatewayProviderTransportSnapshot,
-    LocalResolvedOAuthRequestAuth,
-};
+use crate::provider_transport::{GatewayProviderTransportSnapshot, LocalResolvedOAuthRequestAuth};
 use crate::request_candidate_runtime::{
     RequestCandidateRuntimeCapabilityReader, RequestCandidateRuntimeReader,
     RequestCandidateRuntimeWriter,
@@ -90,7 +87,8 @@ impl ModelFetchTransportRuntime for AppState {
         &self,
         transport: &GatewayProviderTransportSnapshot,
     ) -> Option<ProxySnapshot> {
-        resolve_transport_proxy_snapshot_with_tunnel_affinity(self, transport).await
+        self.resolve_transport_proxy_snapshot_with_tunnel_affinity(transport)
+            .await
     }
 
     async fn execute_model_fetch_execution_plan(

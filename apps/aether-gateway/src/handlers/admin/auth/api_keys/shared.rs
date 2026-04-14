@@ -180,6 +180,7 @@ pub(super) fn build_admin_api_key_detail_payload(
         "expires_at": format_optional_unix_secs_iso8601(record.expires_at_unix_secs),
         "created_at": serde_json::Value::Null,
         "updated_at": serde_json::Value::Null,
+        "auto_delete_on_expiry": record.auto_delete_on_expiry,
         "wallet": serialize_admin_system_users_export_wallet(wallet),
     })
 }

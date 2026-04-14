@@ -6,8 +6,7 @@ use crate::ai_pipeline::planner::report_context::{
 };
 use crate::ai_pipeline::planner::spec_metadata::local_video_create_spec_metadata;
 use crate::ai_pipeline::transport::{
-    resolve_transport_execution_timeouts, resolve_transport_proxy_snapshot_with_tunnel_affinity,
-    resolve_transport_tls_profile,
+    resolve_transport_execution_timeouts, resolve_transport_tls_profile,
 };
 use crate::ai_pipeline::{ConversionMode, ExecutionStrategy, PlannerAppState};
 use crate::{AppState, GatewayControlSyncDecisionResponse};
@@ -38,9 +37,10 @@ pub(super) async fn maybe_build_local_video_create_decision_payload_for_candidat
     } = attempt;
     let candidate = eligible.candidate;
     let transport = resolved.transport;
-    let proxy =
-        resolve_transport_proxy_snapshot_with_tunnel_affinity(planner_state.app(), &transport)
-            .await;
+    let proxy = planner_state
+        .app()
+        .resolve_transport_proxy_snapshot_with_tunnel_affinity(&transport)
+        .await;
     let tls_profile = resolve_transport_tls_profile(&transport);
 
     Some(build_local_execution_decision_response(
