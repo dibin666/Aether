@@ -136,6 +136,9 @@ async fn run_proxy_reader(
                 warn!(conn_id = conn.id, error = %e, "proxy WebSocket error");
                 break;
             }
+            Some(Ok(Message::Ping(payload))) => {
+                conn.send(Message::Pong(payload));
+            }
             _ => {}
         }
     }

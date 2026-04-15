@@ -472,11 +472,21 @@ impl HubRouter {
     fn get_proxy_conn(&self, node_id: &str) -> Option<Arc<ProxyConn>> {
         let map = self.proxy_conns.read();
         let conns = map.get(node_id)?;
-        conns
+        let result = conns
             .iter()
             .filter(|c| c.is_available())
             .min_by_key(|c| c.stream_count.load(Ordering::Relaxed))
-            .cloned()
+            .cloned();
+        if result.is_none() && !conns.is_empty() {
+            warn!(
+                node_id = %node_id,
+                total_conns = conns.len(),
+                closing = conns.iter().filter(|c| c.outbound.is_closing()).count(),
+                draining = conns.iter().filter(|c| c.is_draining()).count(),
+                "no available proxy connection despite registered connections"
+            );
+        }
+        result
     }
 
     pub fn has_local_proxy(&self, node_id: &str) -> bool {
@@ -531,7 +541,17 @@ impl HubRouter {
         self.proxy_to_local
             .insert((proxy_conn.id, proxy_stream_id), local_stream_id);
 
-        match proxy_conn.send(Message::Binary(header_frame.into())) {
+        let send_status = proxy_conn.send(Message::Binary(header_frame.into()));
+        debug!(
+            node_id = %node_id,
+            conn_id = proxy_conn.id,
+            proxy_stream_id = proxy_stream_id,
+            local_stream_id = local_stream_id,
+            stream_count = proxy_conn.stream_count.load(Ordering::Relaxed),
+            send_status = ?send_status,
+            "open_local_stream dispatched"
+        );
+        match send_status {
             SendStatus::Queued => Ok(local_stream),
             SendStatus::Closed | SendStatus::Congested => {
                 self.cleanup_local_stream(local_stream_id);
@@ -1081,5 +1101,89 @@ mod tests {
         hub.handle_proxy_frame(300, &mut frame).await;
 
         assert!(proxy_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn second_stream_works_after_first_completes_via_stream_end() {
+        let hub = HubRouter::new(ControlPlaneClient::disabled());
+
+        let (proxy_tx, mut proxy_rx) = bounded_queue(8);
+        let (proxy_close_tx, _) = watch::channel(false);
+        let proxy = Arc::new(ProxyConn::new(
+            400,
+            "node-reuse".to_string(),
+            "Node Reuse".to_string(),
+            proxy_tx,
+            proxy_close_tx,
+            16,
+        ));
+        hub.register_proxy(Arc::clone(&proxy));
+
+        // First request: open stream, send body, simulate proxy response + STREAM_END
+        let stream1 = hub
+            .open_local_stream("node-reuse", &build_meta())
+            .expect("open first stream");
+        let _ = proxy_rx.try_recv().expect("first headers frame");
+        hub.push_local_request_body(stream1.id, Bytes::new(), true)
+            .expect("first body");
+        let _ = proxy_rx.try_recv().expect("first body frame");
+
+        // Simulate proxy sending RESPONSE_HEADERS
+        let resp_meta = serde_json::to_vec(&serde_json::json!({
+            "status": 200,
+            "headers": []
+        }))
+        .unwrap();
+        let mut resp_headers_frame = protocol::encode_frame(
+            // Extract the proxy_stream_id from the request headers frame
+            2, // first stream_id allocated
+            protocol::RESPONSE_HEADERS,
+            0,
+            &resp_meta,
+        );
+        hub.handle_proxy_frame(400, &mut resp_headers_frame).await;
+
+        // Simulate proxy sending STREAM_END
+        let mut end_frame = protocol::encode_frame(2, protocol::STREAM_END, 0, &[]);
+        hub.handle_proxy_frame(400, &mut end_frame).await;
+
+        // Verify stream_count went back to 0
+        assert_eq!(
+            proxy.stream_count.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "stream_count should be 0 after STREAM_END"
+        );
+
+        // Second request: should work
+        let stream2 = hub
+            .open_local_stream("node-reuse", &build_meta())
+            .expect("open second stream should succeed");
+        let second_headers = proxy_rx.try_recv().expect("second headers frame");
+        let second_data = match second_headers {
+            Message::Binary(data) => data.to_vec(),
+            other => panic!("unexpected message: {other:?}"),
+        };
+        let header =
+            protocol::FrameHeader::parse(&second_data).expect("second request header frame");
+        assert_eq!(header.msg_type, protocol::REQUEST_HEADERS);
+        assert_ne!(
+            header.stream_id, 2,
+            "second stream should have different stream_id"
+        );
+
+        // Simulate proxy response for second stream
+        let mut resp2_headers = protocol::encode_frame(
+            header.stream_id,
+            protocol::RESPONSE_HEADERS,
+            0,
+            &resp_meta,
+        );
+        hub.handle_proxy_frame(400, &mut resp2_headers).await;
+
+        let response = stream2
+            .wait_headers(std::time::Duration::from_secs(1))
+            .await
+            .expect("second stream should receive headers");
+        assert_eq!(response.status, 200);
     }
 }
