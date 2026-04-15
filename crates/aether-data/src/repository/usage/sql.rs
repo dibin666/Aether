@@ -1195,9 +1195,21 @@ impl SqlxUsageReadRepository {
         }
         if let Some(model) = query.model.as_deref() {
             builder.push(if has_where { " AND " } else { " WHERE " });
+            has_where = true;
             builder
                 .push("\"usage\".model = ")
                 .push_bind(model.to_string());
+        }
+        if let Some(statuses) = query.statuses.as_deref() {
+            if !statuses.is_empty() {
+                builder.push(if has_where { " AND " } else { " WHERE " });
+                builder.push("\"usage\".status IN (");
+                let mut separated = builder.separated(", ");
+                for status in statuses {
+                    separated.push_bind(status.to_string());
+                }
+                separated.push_unseparated(")");
+            }
         }
 
         builder.push(" ORDER BY \"usage\".created_at ASC, \"usage\".request_id ASC");

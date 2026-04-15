@@ -480,6 +480,7 @@ pub struct UsageAuditListQuery {
     pub user_id: Option<String>,
     pub provider_name: Option<String>,
     pub model: Option<String>,
+    pub statuses: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]

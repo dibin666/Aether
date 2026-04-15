@@ -67,14 +67,23 @@ pub(super) async fn maybe_build_local_admin_usage_summary_response(
 
             let query = request_context.request_query_string.as_deref();
             let requested_ids = admin_usage_parse_ids(query);
-            let usage = state
-                .list_usage_audits(&UsageAuditListQuery::default())
-                .await?;
+            let list_query = if requested_ids.is_some() {
+                UsageAuditListQuery::default()
+            } else {
+                UsageAuditListQuery {
+                    statuses: Some(vec![
+                        "pending".to_string(),
+                        "streaming".to_string(),
+                    ]),
+                    ..Default::default()
+                }
+            };
+            let usage = state.list_usage_audits(&list_query).await?;
             let mut items: Vec<_> = usage
                 .into_iter()
                 .filter(|item| match requested_ids.as_ref() {
                     Some(ids) => ids.contains(&item.id),
-                    None => matches!(item.status.as_str(), "pending" | "streaming"),
+                    None => true,
                 })
                 .collect();
             items.sort_by(|left, right| {
