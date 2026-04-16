@@ -41,7 +41,7 @@ struct Args {
 
     #[arg(
         long,
-        default_value_t = 128,
+        default_value_t = 512,
         env = "AETHER_TUNNEL_STANDALONE_OUTBOUND_QUEUE_CAPACITY"
     )]
     outbound_queue_capacity: usize,
