@@ -157,8 +157,7 @@ pub(super) async fn build_admin_monitoring_resilience_snapshot(
             limit: None,
         })
         .await?;
-    recent_usage_errors
-        .sort_by(|left, right| right.created_at_unix_ms.cmp(&left.created_at_unix_ms));
+    recent_usage_errors.sort_by_key(|item| std::cmp::Reverse(item.created_at_unix_ms));
 
     let total_errors = recent_usage_errors.len();
     let mut error_breakdown = BTreeMap::<String, usize>::new();

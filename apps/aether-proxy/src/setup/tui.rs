@@ -514,9 +514,7 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.selected = self.selected.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j')
-                if self.selected + 1 < self.total_field_count() =>
-            {
+            KeyCode::Down | KeyCode::Char('j') if self.selected + 1 < self.total_field_count() => {
                 self.selected += 1;
             }
             KeyCode::Home => self.selected = 0,
@@ -624,11 +622,9 @@ impl App {
                 let byte = self.char_byte_pos(self.edit_cursor);
                 self.edit_buffer.remove(byte);
             }
-            KeyCode::Delete => {
-                if self.edit_cursor < self.edit_buffer.chars().count() {
-                    let byte = self.char_byte_pos(self.edit_cursor);
-                    self.edit_buffer.remove(byte);
-                }
+            KeyCode::Delete if self.edit_cursor < self.edit_buffer.chars().count() => {
+                let byte = self.char_byte_pos(self.edit_cursor);
+                self.edit_buffer.remove(byte);
             }
             KeyCode::Left => {
                 self.edit_cursor = self.edit_cursor.saturating_sub(1);
