@@ -243,3 +243,27 @@ class BatchDeleteTaskResponse(BaseModel):
     total: int = 0
     deleted: int = 0
     message: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Quota preheat
+# ---------------------------------------------------------------------------
+
+
+class QuotaPreheatKeyResult(BaseModel):
+    """Result of preheating a single key."""
+
+    key_id: str
+    key_name: str = ""
+    status: str = "success"  # success / warning / error / skipped
+    message: str = ""
+
+
+class QuotaPreheatResponse(BaseModel):
+    """Aggregated result of quota preheat operation."""
+
+    total: int = 0
+    success: int = 0
+    failed: int = 0
+    skipped: int = 0
+    details: list[QuotaPreheatKeyResult] = Field(default_factory=list)
