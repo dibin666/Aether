@@ -613,6 +613,8 @@ function createInitialOAuthState(): OAuthState {
 }
 
 const oauth = ref<OAuthState>(createInitialOAuthState())
+let oauthInitRequestId = 0
+let oauthCompleteRequestId = 0
 
 // 设备授权状态
 type DeviceAuthType = 'builder_id' | 'identity_center'
@@ -787,6 +789,8 @@ function resetDevice() {
 }
 
 function resetForm() {
+  oauthInitRequestId += 1
+  oauthCompleteRequestId += 1
   oauth.value = createInitialOAuthState()
   stopImportPolling()
   stopDevicePolling()
@@ -830,40 +834,51 @@ function openAuthorizationUrl() {
 async function initOAuth() {
   if (!props.providerId) return
   if (isKiroProvider.value) return
+  if (oauth.value.starting) return
 
-
+  const requestId = ++oauthInitRequestId
   oauth.value.starting = true
   try {
     const resp = await startProviderLevelOAuth(props.providerId)
+    if (requestId !== oauthInitRequestId) return
     oauth.value.authorization_url = resp.authorization_url
     oauth.value.redirect_uri = resp.redirect_uri
     oauth.value.instructions = resp.instructions
     oauth.value.provider_type = resp.provider_type
   } catch (err: unknown) {
+    if (requestId !== oauthInitRequestId) return
     const errorMessage = parseApiError(err, '初始化授权失败')
     showError(errorMessage, '错误')
     mode.value = 'import'
   } finally {
-    oauth.value.starting = false
+    if (requestId === oauthInitRequestId) {
+      oauth.value.starting = false
+    }
   }
 }
 
 async function handleCompleteOAuth() {
+  if (oauth.value.completing) return
   if (!canCompleteOAuth.value || !props.providerId) return
+  const requestId = ++oauthCompleteRequestId
   oauth.value.completing = true
   try {
     await completeProviderLevelOAuth(props.providerId, {
       callback_url: oauth.value.callback_url.trim(),
       proxy_node_id: selectedProxyNodeId.value || undefined,
     })
+    if (requestId !== oauthCompleteRequestId) return
     success('授权成功，账号已添加')
     emit('saved')
     handleClose()
   } catch (err: unknown) {
+    if (requestId !== oauthCompleteRequestId) return
     const errorMessage = parseApiError(err, '完成授权失败')
     showError(errorMessage, '错误')
   } finally {
-    oauth.value.completing = false
+    if (requestId === oauthCompleteRequestId) {
+      oauth.value.completing = false
+    }
   }
 }
 
