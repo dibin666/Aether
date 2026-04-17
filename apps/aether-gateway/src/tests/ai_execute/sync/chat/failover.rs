@@ -675,7 +675,7 @@ async fn gateway_surfaces_local_execution_runtime_miss_reason_when_all_openai_ch
 }
 
 #[tokio::test]
-async fn gateway_retries_next_local_openai_chat_sync_candidate_with_local_failover_only() {
+async fn gateway_retries_next_local_openai_chat_sync_candidate_after_auth_failure() {
     #[derive(Debug, Clone)]
     struct SeenExecutionRuntimeSyncRequest {
         trace_id: String,
@@ -951,14 +951,14 @@ async fn gateway_retries_next_local_openai_chat_sync_candidate_with_local_failov
                 if attempt == 1 {
                     return Json(json!({
                         "request_id": "trace-openai-chat-local-failover-123",
-                        "status_code": 502,
+                        "status_code": 401,
                         "headers": {
                             "content-type": "application/json"
                         },
                         "body": {
                             "json_body": {
                                 "error": {
-                                    "message": "primary unavailable"
+                                    "message": "invalid auth token"
                                 }
                             }
                         },
@@ -1135,10 +1135,10 @@ async fn gateway_retries_next_local_openai_chat_sync_candidate_with_local_failov
     assert_eq!(stored_candidates.len(), 2);
     assert_eq!(stored_candidates[0].candidate_index, 0);
     assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Failed);
-    assert_eq!(stored_candidates[0].status_code, Some(502));
+    assert_eq!(stored_candidates[0].status_code, Some(401));
     assert_eq!(
         stored_candidates[0].error_message.as_deref(),
-        Some("primary unavailable")
+        Some("invalid auth token")
     );
     assert_eq!(stored_candidates[1].candidate_index, 1);
     assert_eq!(stored_candidates[1].status, RequestCandidateStatus::Success);

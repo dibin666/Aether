@@ -1,6 +1,7 @@
 use tracing::warn;
 
 use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
+use std::collections::BTreeSet;
 
 use crate::ai_pipeline::{GatewayProviderTransportSnapshot, PlannerAppState};
 
@@ -92,6 +93,7 @@ where
 {
     let mut selectable = Vec::with_capacity(candidates.len());
     let mut skipped = Vec::new();
+    let normalized_client_api_format = client_api_format.trim().to_ascii_lowercase();
 
     for candidate in candidates {
         let Some(transport) = read_candidate_transport_snapshot(state, &candidate).await else {
@@ -117,6 +119,28 @@ where
             }),
         }
     }
+
+    let exact_selectable_keys = selectable
+        .iter()
+        .filter(|candidate| {
+            candidate
+                .provider_api_format
+                .eq_ignore_ascii_case(normalized_client_api_format.as_str())
+        })
+        .map(|candidate| {
+            (
+                candidate.candidate.provider_id.clone(),
+                candidate.candidate.key_id.clone(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    skipped.retain(|candidate| {
+        candidate.skip_reason != "format_conversion_disabled"
+            || !exact_selectable_keys.contains(&(
+                candidate.candidate.provider_id.clone(),
+                candidate.candidate.key_id.clone(),
+            ))
+    });
 
     let ranked = rank_eligible_local_execution_candidates(
         state,

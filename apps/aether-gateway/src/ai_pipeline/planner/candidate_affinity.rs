@@ -1197,6 +1197,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn realtime_gate_hides_cross_format_disablement_when_same_key_has_exact_endpoint() {
+        let provider_catalog = InMemoryProviderCatalogReadRepository::seed(
+            vec![sample_provider_with_options("provider-shared", false, 0)],
+            vec![
+                sample_endpoint_for_provider("provider-shared", "endpoint-exact", "openai:chat"),
+                sample_endpoint_for_provider("provider-shared", "endpoint-cross", "claude:chat"),
+            ],
+            vec![sample_key_for_provider_with_options(
+                "provider-shared",
+                "key-shared",
+                "",
+                true,
+                Some(json!(["openai:chat", "claude:chat"])),
+                None,
+            )],
+        );
+        let data_state = GatewayDataState::with_provider_transport_reader_for_tests(
+            std::sync::Arc::new(provider_catalog),
+            "development-key",
+        );
+        let state = AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data_state);
+
+        let (ranked, skipped) = filter_and_rank_local_execution_candidates(
+            PlannerAppState::new(&state),
+            vec![
+                sample_priority_candidate(
+                    "provider-shared",
+                    "endpoint-exact",
+                    "key-shared",
+                    "openai:chat",
+                    Some(0),
+                    0,
+                ),
+                sample_priority_candidate(
+                    "provider-shared",
+                    "endpoint-cross",
+                    "key-shared",
+                    "claude:chat",
+                    Some(0),
+                    0,
+                ),
+            ],
+            "openai:chat",
+            "gpt-4.1",
+            None,
+        )
+        .await;
+
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].candidate.endpoint_id, "endpoint-exact");
+        assert!(skipped.is_empty());
+    }
+
+    #[tokio::test]
     async fn realtime_gate_allows_cross_format_candidates_when_endpoint_acceptance_is_enabled() {
         let mut endpoint_cross =
             sample_endpoint_for_provider("provider-cross", "endpoint-cross", "claude:chat");
