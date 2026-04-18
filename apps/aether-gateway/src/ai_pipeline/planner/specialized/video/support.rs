@@ -182,6 +182,7 @@ async fn materialize_local_video_create_candidate_attempts(
         Some(&input.requested_model),
         &candidates,
     );
+    let available_candidate_count = candidates.len() as u32;
     let attempts = persist_available_local_execution_candidates_with_context(
         state,
         trace_id,
@@ -204,7 +205,7 @@ async fn materialize_local_video_create_candidate_attempts(
         state.app(),
         trace_id,
         persistence_policy.skipped,
-        attempts.len() as u32,
+        available_candidate_count,
         skipped_candidates
             .into_iter()
             .map(|mut skipped_candidate| {

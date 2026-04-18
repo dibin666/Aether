@@ -35,7 +35,9 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
     let LocalStandardCandidateAttempt {
         eligible,
         candidate_index,
+        candidate_group_id,
         candidate_id,
+        ..
     } = &attempt;
     let candidate = &eligible.candidate;
     let resolved = resolve_local_standard_candidate_payload_parts(
@@ -89,8 +91,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
                         auth_context: &input.auth_context,
                         request_id: trace_id,
                         candidate_id,
-                        candidate_index: *candidate_index,
-                        retry_index: 0,
+                        attempt_identity: attempt.attempt_identity(),
                         model: &input.requested_model,
                         provider_name: &candidate.provider_name,
                         provider_id: &candidate.provider_id,
@@ -100,6 +101,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
                         provider_api_format: &resolved.provider_api_format,
                         client_api_format: spec_metadata.api_format,
                         mapped_model: Some(&resolved.mapped_model),
+                        candidate_group_id: candidate_group_id.as_deref(),
                         upstream_url: Some(&resolved.upstream_url),
                         provider_request_method: Some(serde_json::Value::Null),
                         provider_request_headers: Some(&resolved.provider_request_headers),

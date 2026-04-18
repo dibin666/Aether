@@ -53,14 +53,18 @@ use crate::execution_runtime::transport::{
     DirectUpstreamStreamExecution, ExecutionRuntimeTransportError,
 };
 use crate::execution_runtime::{
-    local_failover_response_text, record_pool_error_feedback, record_stream_pool_success_feedback,
-    resolve_core_stream_direct_finalize_report_kind,
+    local_failover_response_text, resolve_core_stream_direct_finalize_report_kind,
     resolve_core_stream_error_finalize_report_kind,
-    resolve_local_candidate_failover_decision_stream, should_fallback_to_control_stream,
+    resolve_local_candidate_failover_analysis_stream, should_fallback_to_control_stream,
     should_retry_next_local_candidate_stream, LocalFailoverDecision,
 };
 use crate::execution_runtime::{MAX_STREAM_PREFETCH_BYTES, MAX_STREAM_PREFETCH_FRAMES};
 use crate::log_ids::short_request_id;
+use crate::orchestration::{
+    apply_local_execution_effect, LocalAdaptiveRateLimitEffect, LocalAttemptFailureEffect,
+    LocalExecutionEffect, LocalExecutionEffectContext, LocalHealthFailureEffect,
+    LocalHealthSuccessEffect, LocalOAuthInvalidationEffect, LocalPoolErrorEffect,
+};
 use crate::request_candidate_runtime::{
     ensure_execution_request_candidate_slot, record_local_request_candidate_status,
 };
@@ -566,16 +570,7 @@ async fn execute_stream_from_frame_stream(
         let (body_json, body_base64) = decode_stream_error_body(&headers, &error_body);
         let error_response_text =
             local_failover_response_text(body_json.as_ref(), &error_body, None);
-        record_pool_error_feedback(
-            state,
-            &plan,
-            report_context.as_ref(),
-            status_code,
-            &headers,
-            error_response_text.as_deref(),
-        )
-        .await;
-        let failover_decision = resolve_local_candidate_failover_decision_stream(
+        let failover_analysis = resolve_local_candidate_failover_analysis_stream(
             state,
             &plan,
             report_context.as_ref(),
@@ -583,6 +578,70 @@ async fn execute_stream_from_frame_stream(
             error_response_text.as_deref(),
         )
         .await;
+        apply_local_execution_effect(
+            state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::AttemptFailure(LocalAttemptFailureEffect {
+                status_code,
+                classification: failover_analysis.classification,
+            }),
+        )
+        .await;
+        apply_local_execution_effect(
+            state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::AdaptiveRateLimit(LocalAdaptiveRateLimitEffect {
+                status_code,
+                classification: failover_analysis.classification,
+                headers: Some(&headers),
+            }),
+        )
+        .await;
+        apply_local_execution_effect(
+            state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::HealthFailure(LocalHealthFailureEffect {
+                status_code,
+                classification: failover_analysis.classification,
+            }),
+        )
+        .await;
+        apply_local_execution_effect(
+            state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::OauthInvalidation(LocalOAuthInvalidationEffect {
+                status_code,
+                response_text: error_response_text.as_deref(),
+            }),
+        )
+        .await;
+        apply_local_execution_effect(
+            state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::PoolError(LocalPoolErrorEffect {
+                status_code,
+                classification: failover_analysis.classification,
+                headers: &headers,
+                error_body: error_response_text.as_deref(),
+            }),
+        )
+        .await;
+        let failover_decision = failover_analysis.decision;
         debug!(
             event_name = "execution_runtime_stream_failover_decided",
             log_type = "debug",
@@ -1502,11 +1561,24 @@ async fn execute_stream_from_frame_stream(
             }),
             telemetry: telemetry.clone(),
         };
-        record_stream_pool_success_feedback(
+        apply_local_execution_effect(
             &state_for_report,
-            &plan_for_report,
-            report_context_owned.as_ref(),
-            &usage_payload,
+            LocalExecutionEffectContext {
+                plan: &plan_for_report,
+                report_context: report_context_owned.as_ref(),
+            },
+            LocalExecutionEffect::HealthSuccess(LocalHealthSuccessEffect),
+        )
+        .await;
+        apply_local_execution_effect(
+            &state_for_report,
+            LocalExecutionEffectContext {
+                plan: &plan_for_report,
+                report_context: report_context_owned.as_ref(),
+            },
+            LocalExecutionEffect::PoolSuccessStream {
+                payload: &usage_payload,
+            },
         )
         .await;
         record_stream_terminal_usage(

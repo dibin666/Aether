@@ -9,13 +9,24 @@ use crate::ai_pipeline::planner::candidate_eligibility::{
 use crate::ai_pipeline::planner::runtime_miss::record_local_runtime_candidate_skip_reason;
 use crate::ai_pipeline::{GatewayAuthApiKeySnapshot, PlannerAppState};
 use crate::clock::current_unix_ms;
+use crate::orchestration::{build_local_attempt_identities, ExecutionAttemptIdentity};
 use crate::AppState;
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalExecutionCandidateAttempt {
     pub(crate) eligible: EligibleLocalExecutionCandidate,
     pub(crate) candidate_index: u32,
+    pub(crate) retry_index: u32,
+    pub(crate) pool_key_index: Option<u32>,
+    pub(crate) candidate_group_id: Option<String>,
     pub(crate) candidate_id: String,
+}
+
+impl LocalExecutionCandidateAttempt {
+    pub(crate) fn attempt_identity(&self) -> ExecutionAttemptIdentity {
+        ExecutionAttemptIdentity::new(self.candidate_index, self.retry_index)
+            .with_pool_key_index(self.pool_key_index)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -73,30 +84,43 @@ where
     F: Fn(&EligibleLocalExecutionCandidate) -> Option<Value>,
 {
     let created_at_unix_ms = current_unix_ms();
-    let mut materialized = Vec::with_capacity(candidates.len());
+    let mut materialized = Vec::new();
 
     for (candidate_index, eligible) in candidates.into_iter().enumerate() {
-        let generated_candidate_id = Uuid::new_v4().to_string();
-        let candidate_id = state
-            .persist_available_local_candidate(
-                trace_id,
-                user_id,
-                api_key_id,
-                &eligible.candidate,
-                candidate_index as u32,
-                &generated_candidate_id,
-                required_capabilities,
-                build_extra_data(&eligible),
-                created_at_unix_ms,
-                error_context,
-            )
-            .await;
+        let candidate_index = candidate_index as u32;
+        let attempt_identities =
+            build_local_attempt_identities(candidate_index, &eligible.transport)
+                .into_iter()
+                .map(|identity| identity.with_pool_key_index(eligible.orchestration.pool_key_index))
+                .collect::<Vec<_>>();
 
-        materialized.push(LocalExecutionCandidateAttempt {
-            eligible,
-            candidate_index: candidate_index as u32,
-            candidate_id,
-        });
+        for attempt_identity in attempt_identities {
+            let generated_candidate_id = Uuid::new_v4().to_string();
+            let candidate_id = state
+                .persist_available_local_candidate(
+                    trace_id,
+                    user_id,
+                    api_key_id,
+                    &eligible.candidate,
+                    attempt_identity.candidate_index,
+                    attempt_identity.retry_index,
+                    &generated_candidate_id,
+                    required_capabilities,
+                    build_extra_data(&eligible),
+                    created_at_unix_ms,
+                    error_context,
+                )
+                .await;
+
+            materialized.push(LocalExecutionCandidateAttempt {
+                eligible: eligible.clone(),
+                candidate_index: attempt_identity.candidate_index,
+                retry_index: attempt_identity.retry_index,
+                pool_key_index: attempt_identity.pool_key_index,
+                candidate_group_id: eligible.orchestration.candidate_group_id.clone(),
+                candidate_id,
+            });
+        }
     }
 
     materialized
@@ -151,6 +175,7 @@ pub(crate) async fn persist_skipped_local_execution_candidate(
             api_key_id,
             candidate,
             candidate_index,
+            0,
             candidate_id,
             required_capabilities,
             skip_reason,

@@ -20,6 +20,7 @@ use crate::handlers::shared::{
     parse_catalog_auth_config_json, provider_key_health_summary,
     provider_key_status_snapshot_payload,
 };
+use crate::orchestration::LocalExecutionCandidateMetadata;
 use crate::provider_key_auth::provider_key_auth_semantics;
 
 const POOL_ACCOUNT_BLOCKED_SKIP_REASON: &str = "pool_account_blocked";
@@ -337,17 +338,27 @@ fn apply_local_execution_pool_scheduler_with_runtime_map(
         let Some(group) = groups.remove(&group_key) else {
             continue;
         };
+        let candidate_group_id = local_execution_candidate_group_id(&group_key);
         let Some(pool_config) =
             pool_config_for_candidate(group.first().expect("group should exist"))
         else {
-            reordered.extend(group);
+            reordered.extend(annotate_local_execution_group_candidates(
+                group,
+                candidate_group_id.as_str(),
+                false,
+            ));
             continue;
         };
         let runtime = runtime_by_provider
             .get(&group_key.provider_id)
             .unwrap_or(&default_runtime);
-        let (group_candidates, group_skipped) =
-            schedule_pool_group(group, pool_config, runtime, key_context_by_id);
+        let (group_candidates, group_skipped) = schedule_pool_group(
+            group,
+            pool_config,
+            runtime,
+            key_context_by_id,
+            candidate_group_id.as_str(),
+        );
         reordered.extend(group_candidates);
         skipped.extend(group_skipped);
     }
@@ -366,6 +377,18 @@ fn pool_group_key(candidate: &EligibleLocalExecutionCandidate, pool_enabled: boo
     }
 }
 
+fn local_execution_candidate_group_id(group_key: &PoolGroupKey) -> String {
+    format!(
+        "provider={}|endpoint={}|model={}|selected_model={}|api_format={}|singleton_key={}",
+        group_key.provider_id,
+        group_key.endpoint_id,
+        group_key.model_id,
+        group_key.selected_provider_model_name,
+        group_key.provider_api_format,
+        group_key.singleton_key_id.as_deref().unwrap_or("*"),
+    )
+}
+
 fn pool_config_for_candidate(
     candidate: &EligibleLocalExecutionCandidate,
 ) -> Option<AdminProviderPoolConfig> {
@@ -377,6 +400,7 @@ fn schedule_pool_group(
     pool_config: AdminProviderPoolConfig,
     runtime: &AdminProviderPoolRuntimeState,
     key_context_by_id: &BTreeMap<String, PoolCatalogKeyContext>,
+    candidate_group_id: &str,
 ) -> (
     Vec<EligibleLocalExecutionCandidate>,
     Vec<SkippedLocalExecutionCandidate>,
@@ -403,6 +427,7 @@ fn schedule_pool_group(
             candidate,
             transport,
             provider_api_format,
+            orchestration,
         } = eligible;
         let key_id = candidate.key_id.clone();
         let mut key_context = key_context_by_id.get(&key_id).cloned().unwrap_or_default();
@@ -460,6 +485,7 @@ fn schedule_pool_group(
                 candidate,
                 transport,
                 provider_api_format,
+                orchestration,
             },
             key_context,
             original_index,
@@ -516,7 +542,28 @@ fn schedule_pool_group(
     }
     ordered.extend(available.into_iter().map(|item| item.eligible));
 
-    (ordered, skipped)
+    (
+        annotate_local_execution_group_candidates(ordered, candidate_group_id, true),
+        skipped,
+    )
+}
+
+fn annotate_local_execution_group_candidates(
+    candidates: Vec<EligibleLocalExecutionCandidate>,
+    candidate_group_id: &str,
+    pool_enabled: bool,
+) -> Vec<EligibleLocalExecutionCandidate> {
+    candidates
+        .into_iter()
+        .enumerate()
+        .map(|(index, mut candidate)| {
+            candidate.orchestration = LocalExecutionCandidateMetadata {
+                candidate_group_id: Some(candidate_group_id.to_string()),
+                pool_key_index: pool_enabled.then_some(index as u32),
+            };
+            candidate
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -980,6 +1027,7 @@ mod tests {
     use crate::handlers::shared::provider_pool::{
         AdminProviderPoolRuntimeState, AdminProviderPoolSchedulingPreset,
     };
+    use crate::orchestration::LocalExecutionCandidateMetadata;
     use crate::AppState;
     use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
     use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
@@ -1036,6 +1084,72 @@ mod tests {
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
             vec!["key-pool-b", "key-pool-a", "key-other"]
+        );
+    }
+
+    #[test]
+    fn pool_scheduler_attaches_group_and_pool_metadata_to_ranked_candidates() {
+        let pool_first = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-pool-a",
+            10,
+            Some(json!({ "pool_advanced": { "lru_enabled": true } })),
+        );
+        let other =
+            sample_eligible_candidate("provider-other", "endpoint-2", "key-other", 10, None);
+        let pool_second = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-pool-b",
+            10,
+            Some(json!({ "pool_advanced": { "lru_enabled": true } })),
+        );
+
+        let mut runtime_by_provider = BTreeMap::new();
+        runtime_by_provider.insert(
+            "provider-pool".to_string(),
+            AdminProviderPoolRuntimeState {
+                lru_score_by_key: BTreeMap::from([
+                    ("key-pool-a".to_string(), 20.0),
+                    ("key-pool-b".to_string(), 10.0),
+                ]),
+                ..AdminProviderPoolRuntimeState::default()
+            },
+        );
+
+        let (reordered, skipped) = apply_local_execution_pool_scheduler_with_runtime_map(
+            vec![pool_first, other, pool_second],
+            &runtime_by_provider,
+            &BTreeMap::new(),
+        );
+
+        assert!(skipped.is_empty());
+        assert_eq!(reordered.len(), 3);
+        assert_eq!(
+            reordered[0].orchestration,
+            LocalExecutionCandidateMetadata {
+                candidate_group_id: Some(
+                    "provider=provider-pool|endpoint=endpoint-1|model=model-1|selected_model=gpt-5|api_format=openai:chat|singleton_key=*"
+                        .to_string(),
+                ),
+                pool_key_index: Some(0),
+            }
+        );
+        assert_eq!(reordered[1].orchestration.pool_key_index, Some(1));
+        assert_eq!(
+            reordered[1].orchestration.candidate_group_id,
+            reordered[0].orchestration.candidate_group_id
+        );
+        assert_eq!(
+            reordered[2].orchestration,
+            LocalExecutionCandidateMetadata {
+                candidate_group_id: Some(
+                    "provider=provider-other|endpoint=endpoint-2|model=model-1|selected_model=gpt-5|api_format=openai:chat|singleton_key=key-other"
+                        .to_string(),
+                ),
+                pool_key_index: None,
+            }
         );
     }
 
@@ -1394,6 +1508,7 @@ mod tests {
                 mapping_matched_model: None,
             },
             provider_api_format: "openai:chat".to_string(),
+            orchestration: LocalExecutionCandidateMetadata::default(),
             transport: crate::ai_pipeline::GatewayProviderTransportSnapshot {
                 provider: GatewayProviderTransportProvider {
                     id: provider_id.to_string(),

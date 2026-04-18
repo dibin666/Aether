@@ -688,6 +688,39 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn update_provider_catalog_key_format_health(
+        &self,
+        key_id: &str,
+        api_format: &str,
+        health_by_format: &serde_json::Value,
+    ) -> Result<bool, GatewayError> {
+        let api_format = api_format.trim();
+        if api_format.is_empty() {
+            return Ok(false);
+        }
+
+        let Some(current_key) = self
+            .read_provider_catalog_keys_by_ids(&[key_id.to_string()])
+            .await?
+            .into_iter()
+            .next()
+        else {
+            return Ok(false);
+        };
+
+        if current_key.health_by_format.as_ref() == Some(health_by_format) {
+            return Ok(false);
+        }
+
+        self.update_provider_catalog_key_health_state(
+            key_id,
+            current_key.is_active,
+            Some(health_by_format),
+            current_key.circuit_breaker_by_format.as_ref(),
+        )
+        .await
+    }
+
     pub(crate) async fn update_provider_catalog_key_health_state(
         &self,
         key_id: &str,

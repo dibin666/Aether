@@ -234,6 +234,7 @@ pub(super) async fn materialize_local_standard_candidate_attempts(
         Some(&input.requested_model),
         &candidates,
     );
+    let available_candidate_count = candidates.len() as u32;
     let attempts = persist_available_local_execution_candidates_with_context(
         planner_state,
         trace_id,
@@ -273,7 +274,7 @@ pub(super) async fn materialize_local_standard_candidate_attempts(
         state,
         trace_id,
         persistence_policy.skipped,
-        attempts.len() as u32,
+        available_candidate_count,
         skipped_candidates,
     )
     .await;

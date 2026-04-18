@@ -2768,6 +2768,49 @@ async fn gateway_refreshes_admin_provider_oauth_key_locally_with_trusted_admin_p
         }),
     );
 
+    #[derive(Debug, Clone)]
+    struct SeenExecutionRuntimeRequest {
+        url: String,
+        authorization: String,
+    }
+
+    let seen_execution_runtime = Arc::new(Mutex::new(None::<SeenExecutionRuntimeRequest>));
+    let seen_execution_runtime_clone = Arc::clone(&seen_execution_runtime);
+    let execution_runtime = Router::new().route(
+        "/v1/execute/sync",
+        any(move |request: Request| {
+            let seen_execution_runtime_inner = Arc::clone(&seen_execution_runtime_clone);
+            async move {
+                let plan: aether_contracts::ExecutionPlan = serde_json::from_slice(
+                    &to_bytes(request.into_body(), usize::MAX)
+                        .await
+                        .expect("body should read"),
+                )
+                .expect("plan should parse");
+                *seen_execution_runtime_inner
+                    .lock()
+                    .expect("mutex should lock") = Some(SeenExecutionRuntimeRequest {
+                    url: plan.url.clone(),
+                    authorization: plan
+                        .headers
+                        .get("authorization")
+                        .cloned()
+                        .unwrap_or_default(),
+                });
+                let result = aether_contracts::ExecutionResult {
+                    request_id: plan.request_id,
+                    candidate_id: None,
+                    status_code: 401,
+                    headers: std::collections::BTreeMap::new(),
+                    body: None,
+                    telemetry: None,
+                    error: None,
+                };
+                (StatusCode::OK, Json(result))
+            }
+        }),
+    );
+
     let mut provider = sample_provider("provider-codex", "codex", 10);
     provider.provider_type = "codex".to_string();
     let endpoint = sample_endpoint(
@@ -2832,6 +2875,7 @@ async fn gateway_refreshes_admin_provider_oauth_key_locally_with_trusted_admin_p
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
     let (token_url, token_handle) = start_server(token_server).await;
+    let (execution_runtime_url, execution_runtime_handle) = start_server(execution_runtime).await;
     let oauth_refresh =
         crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(vec![
             Arc::new(
@@ -2840,8 +2884,7 @@ async fn gateway_refreshes_admin_provider_oauth_key_locally_with_trusted_admin_p
             ),
         ]);
     let gateway = build_router_with_state(
-        AppState::new()
-            .expect("gateway should build")
+        build_state_with_execution_runtime_override(execution_runtime_url)
             .with_data_state_for_tests(
                 GatewayDataState::with_provider_catalog_repository_for_tests(
                     provider_catalog_repository.clone(),
@@ -2889,6 +2932,19 @@ async fn gateway_refreshes_admin_provider_oauth_key_locally_with_trusted_admin_p
     }
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
     assert_eq!(*token_hits.lock().expect("mutex should lock"), 1);
+    let seen_execution_runtime_request = seen_execution_runtime
+        .lock()
+        .expect("mutex should lock")
+        .clone()
+        .expect("execution runtime request should be captured");
+    assert_eq!(
+        seen_execution_runtime_request.url,
+        "https://chatgpt.com/backend-api/wham/usage"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.authorization,
+        "Bearer refreshed-codex-access-token"
+    );
 
     let stored_key = provider_catalog_repository
         .list_keys_by_ids(&["key-codex-oauth-refresh".to_string()])
@@ -2974,6 +3030,7 @@ async fn gateway_refreshes_admin_provider_oauth_key_locally_with_trusted_admin_p
     );
 
     gateway_handle.abort();
+    execution_runtime_handle.abort();
     token_handle.abort();
     upstream_handle.abort();
 }

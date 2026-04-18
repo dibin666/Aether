@@ -177,13 +177,11 @@ fn usage_runtime_paths_depend_on_shared_crates_not_app_runtime_shims() {
         "is_local_ai_sync_report_kind",
         "is_local_ai_stream_report_kind",
         "sync_report_represents_failure",
-        "extract_gemini_file_mapping_entries",
-        "gemini_file_mapping_cache_key",
-        "normalize_gemini_file_name",
         "report_request_id",
         "should_handle_local_sync_report",
         "should_handle_local_stream_report",
-        "GEMINI_FILE_MAPPING_TTL_SECONDS",
+        "apply_local_report_effect",
+        "LocalReportEffect",
     ] {
         assert!(
             usage_reporting_mod.contains(pattern),
@@ -206,10 +204,37 @@ fn usage_runtime_paths_depend_on_shared_crates_not_app_runtime_shims() {
         "fn should_handle_local_sync_report(",
         "fn should_handle_local_stream_report(",
         "\"openai_video_delete_sync_success\" && payload.status_code == 404",
+        "sync_codex_quota_from_response_headers(",
+        "apply_local_gemini_file_mapping_report_effect(",
+        "pub(crate) async fn store_local_gemini_file_mapping(",
     ] {
         assert!(
             !usage_reporting_mod.contains(pattern),
             "usage/reporting/mod.rs should not own local report classification logic {pattern}"
+        );
+    }
+
+    let report_effects =
+        read_workspace_file("apps/aether-gateway/src/orchestration/report_effects.rs");
+    assert!(
+        report_effects.contains("aether_usage_runtime"),
+        "orchestration/report_effects.rs should depend on aether_usage_runtime"
+    );
+    for pattern in [
+        "extract_gemini_file_mapping_entries",
+        "gemini_file_mapping_cache_key",
+        "normalize_gemini_file_name",
+        "report_request_id",
+        "GEMINI_FILE_MAPPING_TTL_SECONDS",
+        "sync_codex_quota_from_response_headers",
+        "store_local_gemini_file_mapping",
+        "delete_local_gemini_file_mapping",
+        "GatewaySyncReportRequest",
+        "GatewayStreamReportRequest",
+    ] {
+        assert!(
+            report_effects.contains(pattern),
+            "orchestration/report_effects.rs should own local report effect detail {pattern}"
         );
     }
 }

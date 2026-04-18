@@ -16,8 +16,13 @@ use crate::control::GatewayControlDecision;
 use crate::execution_runtime::submission::{
     resolve_core_error_background_report_kind, submit_local_core_error_or_sync_finalize,
 };
-use crate::execution_runtime::{record_pool_error_feedback, record_pool_stream_timeout_feedback};
 use crate::log_ids::short_request_id;
+use crate::orchestration::{
+    apply_local_execution_effect, resolve_local_failover_analysis_for_attempt,
+    LocalAdaptiveRateLimitEffect, LocalAttemptFailureEffect, LocalExecutionEffect,
+    LocalExecutionEffectContext, LocalHealthFailureEffect, LocalOAuthInvalidationEffect,
+    LocalPoolErrorEffect,
+};
 use crate::request_candidate_runtime::record_report_request_candidate_status;
 use crate::usage::submit_sync_report;
 use crate::{usage::GatewaySyncReportRequest, AppState, GatewayError};
@@ -123,20 +128,90 @@ async fn record_stream_sync_failure(
     failure: &StreamFailureReport,
     started_at_unix_ms: Option<u64>,
 ) {
-    if matches!(
-        failure.error_type.as_str(),
-        "first_byte_timeout" | "read_timeout"
-    ) {
-        record_pool_stream_timeout_feedback(state, plan, report_context).await;
-    }
     let error_body = serde_json::to_string(&failure.body_json).ok();
-    record_pool_error_feedback(
+    let failure_analysis = resolve_local_failover_analysis_for_attempt(
         state,
         plan,
         report_context,
         failure.status_code,
-        &payload.headers,
         error_body.as_deref(),
+    )
+    .await;
+    if matches!(
+        failure.error_type.as_str(),
+        "first_byte_timeout" | "read_timeout"
+    ) {
+        apply_local_execution_effect(
+            state,
+            LocalExecutionEffectContext {
+                plan,
+                report_context,
+            },
+            LocalExecutionEffect::PoolStreamTimeout,
+        )
+        .await;
+    }
+    apply_local_execution_effect(
+        state,
+        LocalExecutionEffectContext {
+            plan,
+            report_context,
+        },
+        LocalExecutionEffect::AttemptFailure(LocalAttemptFailureEffect {
+            status_code: failure.status_code,
+            classification: failure_analysis.classification,
+        }),
+    )
+    .await;
+    apply_local_execution_effect(
+        state,
+        LocalExecutionEffectContext {
+            plan,
+            report_context,
+        },
+        LocalExecutionEffect::AdaptiveRateLimit(LocalAdaptiveRateLimitEffect {
+            status_code: failure.status_code,
+            classification: failure_analysis.classification,
+            headers: Some(&payload.headers),
+        }),
+    )
+    .await;
+    apply_local_execution_effect(
+        state,
+        LocalExecutionEffectContext {
+            plan,
+            report_context,
+        },
+        LocalExecutionEffect::HealthFailure(LocalHealthFailureEffect {
+            status_code: failure.status_code,
+            classification: failure_analysis.classification,
+        }),
+    )
+    .await;
+    apply_local_execution_effect(
+        state,
+        LocalExecutionEffectContext {
+            plan,
+            report_context,
+        },
+        LocalExecutionEffect::OauthInvalidation(LocalOAuthInvalidationEffect {
+            status_code: failure.status_code,
+            response_text: error_body.as_deref(),
+        }),
+    )
+    .await;
+    apply_local_execution_effect(
+        state,
+        LocalExecutionEffectContext {
+            plan,
+            report_context,
+        },
+        LocalExecutionEffect::PoolError(LocalPoolErrorEffect {
+            status_code: failure.status_code,
+            classification: failure_analysis.classification,
+            headers: &payload.headers,
+            error_body: error_body.as_deref(),
+        }),
     )
     .await;
     let context_seed = build_terminal_usage_context_seed(plan, report_context);

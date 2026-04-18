@@ -3,13 +3,13 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 
 use crate::ai_pipeline::contracts::ExecutionRuntimeAuthContext;
+use crate::orchestration::ExecutionAttemptIdentity;
 
 pub(crate) struct LocalExecutionReportContextParts<'a> {
     pub(crate) auth_context: &'a ExecutionRuntimeAuthContext,
     pub(crate) request_id: &'a str,
     pub(crate) candidate_id: &'a str,
-    pub(crate) candidate_index: u32,
-    pub(crate) retry_index: u32,
+    pub(crate) attempt_identity: ExecutionAttemptIdentity,
     pub(crate) model: &'a str,
     pub(crate) provider_name: &'a str,
     pub(crate) provider_id: &'a str,
@@ -19,6 +19,7 @@ pub(crate) struct LocalExecutionReportContextParts<'a> {
     pub(crate) provider_api_format: &'a str,
     pub(crate) client_api_format: &'a str,
     pub(crate) mapped_model: Option<&'a str>,
+    pub(crate) candidate_group_id: Option<&'a str>,
     pub(crate) upstream_url: Option<&'a str>,
     pub(crate) provider_request_method: Option<Value>,
     pub(crate) provider_request_headers: Option<&'a BTreeMap<String, String>>,
@@ -69,11 +70,11 @@ pub(crate) fn build_local_execution_report_context(
     );
     object.insert(
         "candidate_index".to_string(),
-        Value::Number(parts.candidate_index.into()),
+        Value::Number(parts.attempt_identity.candidate_index.into()),
     );
     object.insert(
         "retry_index".to_string(),
-        Value::Number(parts.retry_index.into()),
+        Value::Number(parts.attempt_identity.retry_index.into()),
     );
     object.insert("model".to_string(), Value::String(parts.model.to_string()));
     object.insert(
@@ -127,6 +128,12 @@ pub(crate) fn build_local_execution_report_context(
             Value::String(mapped_model.to_string()),
         );
     }
+    if let Some(candidate_group_id) = parts.candidate_group_id {
+        object.insert(
+            "candidate_group_id".to_string(),
+            Value::String(candidate_group_id.to_string()),
+        );
+    }
     if let Some(upstream_url) = parts.upstream_url {
         object.insert(
             "upstream_url".to_string(),
@@ -144,6 +151,12 @@ pub(crate) fn build_local_execution_report_context(
             "provider_request_headers".to_string(),
             serde_json::to_value(provider_request_headers)
                 .expect("provider request headers should serialize"),
+        );
+    }
+    if let Some(pool_key_index) = parts.attempt_identity.pool_key_index {
+        object.insert(
+            "pool_key_index".to_string(),
+            Value::Number(pool_key_index.into()),
         );
     }
 

@@ -128,7 +128,7 @@ impl<'a> AdminAppState<'a> {
         display_name: Option<&str>,
         mime_type: Option<&str>,
     ) -> Result<(), GatewayError> {
-        crate::usage::reporting::store_local_gemini_file_mapping(
+        crate::orchestration::store_local_gemini_file_mapping(
             self.app,
             file_name,
             key_id,

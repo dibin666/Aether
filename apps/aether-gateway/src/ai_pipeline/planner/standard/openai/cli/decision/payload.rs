@@ -31,10 +31,13 @@ pub(crate) async fn maybe_build_local_openai_cli_decision_payload_for_candidate(
     spec: LocalOpenAiCliSpec,
 ) -> Option<GatewayControlSyncDecisionResponse> {
     let spec_metadata = local_openai_cli_spec_metadata(spec);
+    let attempt_identity = attempt.attempt_identity();
     let LocalOpenAiCliCandidateAttempt {
         eligible,
         candidate_index,
+        candidate_group_id,
         candidate_id,
+        ..
     } = attempt;
     let resolved = resolve_local_openai_cli_candidate_payload_parts(
         state,
@@ -133,8 +136,7 @@ pub(crate) async fn maybe_build_local_openai_cli_decision_payload_for_candidate(
                         auth_context: &input.auth_context,
                         request_id: trace_id,
                         candidate_id: &candidate_id,
-                        candidate_index,
-                        retry_index: 0,
+                        attempt_identity,
                         model: &input.requested_model,
                         provider_name: &resolved.transport.provider.name,
                         provider_id: &candidate.provider_id,
@@ -144,6 +146,7 @@ pub(crate) async fn maybe_build_local_openai_cli_decision_payload_for_candidate(
                         provider_api_format: &resolved.provider_api_format,
                         client_api_format: spec_metadata.api_format,
                         mapped_model: Some(&resolved.mapped_model),
+                        candidate_group_id: candidate_group_id.as_deref(),
                         upstream_url: Some(&resolved.upstream_url),
                         provider_request_method: Some(serde_json::Value::Null),
                         provider_request_headers: Some(&resolved.provider_request_headers),

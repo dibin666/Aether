@@ -27,14 +27,16 @@ pub(super) async fn maybe_build_local_video_create_decision_payload_for_candidat
 ) -> Option<GatewayControlSyncDecisionResponse> {
     let spec_metadata = local_video_create_spec_metadata(spec);
     let planner_state = PlannerAppState::new(state);
+    let attempt_identity = attempt.attempt_identity();
     let resolved = resolve_local_video_create_candidate_payload_parts(
         state, parts, body_json, trace_id, input, &attempt, spec,
     )
     .await?;
     let LocalVideoCreateCandidateAttempt {
         eligible,
-        candidate_index,
+        candidate_group_id,
         candidate_id,
+        ..
     } = attempt;
     let candidate = eligible.candidate;
     let transport = resolved.transport;
@@ -90,8 +92,7 @@ pub(super) async fn maybe_build_local_video_create_decision_payload_for_candidat
                     auth_context: &input.auth_context,
                     request_id: trace_id,
                     candidate_id: &candidate_id,
-                    candidate_index,
-                    retry_index: 0,
+                    attempt_identity,
                     model: &input.requested_model,
                     provider_name: &transport.provider.name,
                     provider_id: &candidate.provider_id,
@@ -101,6 +102,7 @@ pub(super) async fn maybe_build_local_video_create_decision_payload_for_candidat
                     provider_api_format: spec_metadata.api_format,
                     client_api_format: spec_metadata.api_format,
                     mapped_model: Some(&resolved.mapped_model),
+                    candidate_group_id: candidate_group_id.as_deref(),
                     upstream_url: None,
                     provider_request_method: None,
                     provider_request_headers: None,

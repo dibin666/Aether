@@ -34,6 +34,7 @@ pub(super) async fn maybe_build_local_gemini_files_decision_payload_for_candidat
 ) -> Option<GatewayControlSyncDecisionResponse> {
     let spec_metadata = local_gemini_files_spec_metadata(spec);
     let planner_state = PlannerAppState::new(state);
+    let attempt_identity = attempt.attempt_identity();
     let resolved = resolve_local_gemini_files_candidate_payload_parts(
         state,
         parts,
@@ -48,8 +49,9 @@ pub(super) async fn maybe_build_local_gemini_files_decision_payload_for_candidat
     .await?;
     let LocalGeminiFilesCandidateAttempt {
         eligible,
-        candidate_index,
+        candidate_group_id,
         candidate_id,
+        ..
     } = attempt;
     let candidate = eligible.candidate;
     let transport = resolved.transport;
@@ -107,8 +109,7 @@ pub(super) async fn maybe_build_local_gemini_files_decision_payload_for_candidat
                     auth_context: &input.auth_context,
                     request_id: trace_id,
                     candidate_id: &candidate_id,
-                    candidate_index,
-                    retry_index: 0,
+                    attempt_identity,
                     model: "gemini-files",
                     provider_name: &transport.provider.name,
                     provider_id: &candidate.provider_id,
@@ -118,6 +119,7 @@ pub(super) async fn maybe_build_local_gemini_files_decision_payload_for_candidat
                     provider_api_format: GEMINI_FILES_CLIENT_API_FORMAT,
                     client_api_format: GEMINI_FILES_CLIENT_API_FORMAT,
                     mapped_model: None,
+                    candidate_group_id: candidate_group_id.as_deref(),
                     upstream_url: None,
                     provider_request_method: None,
                     provider_request_headers: None,

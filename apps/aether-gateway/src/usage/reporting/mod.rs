@@ -4,22 +4,20 @@ use aether_contracts::ExecutionError;
 use aether_data_contracts::repository::candidates::RequestCandidateStatus;
 use aether_scheduler_core::{execution_error_details, SchedulerRequestCandidateStatusUpdate};
 use tracing::{debug, warn};
-use uuid::Uuid;
 
-use crate::clock::{current_unix_ms, current_unix_secs};
+use crate::clock::current_unix_ms;
 use crate::log_ids::short_request_id;
+use crate::orchestration::{apply_local_report_effect, LocalReportEffect};
 use crate::request_candidate_runtime::record_report_request_candidate_status;
 use crate::{AppState, GatewayError};
 
-mod codex_realtime_quota;
 mod context;
 use context::{report_context_is_locally_actionable, resolve_locally_actionable_report_context};
 
 use aether_usage_runtime::{
-    extract_gemini_file_mapping_entries, gemini_file_mapping_cache_key,
-    is_local_ai_stream_report_kind, is_local_ai_sync_report_kind, normalize_gemini_file_name,
-    report_request_id, should_handle_local_stream_report, should_handle_local_sync_report,
-    sync_report_represents_failure, GEMINI_FILE_MAPPING_TTL_SECONDS,
+    is_local_ai_stream_report_kind, is_local_ai_sync_report_kind, report_request_id,
+    should_handle_local_stream_report, should_handle_local_sync_report,
+    sync_report_represents_failure,
 };
 pub(crate) use aether_usage_runtime::{GatewayStreamReportRequest, GatewaySyncReportRequest};
 
@@ -188,7 +186,6 @@ pub(crate) async fn submit_stream_report(
 }
 
 async fn handle_local_sync_report(state: &AppState, payload: &GatewaySyncReportRequest) {
-    apply_local_gemini_file_mapping_side_effect(state, payload).await;
     let terminal_unix_ms = current_unix_ms();
     let (error_type, error_message) =
         execution_error_details(None::<&ExecutionError>, payload.body_json.as_ref());
@@ -215,22 +212,7 @@ async fn handle_local_sync_report(state: &AppState, payload: &GatewaySyncReportR
         },
     )
     .await;
-    if let Err(err) = codex_realtime_quota::sync_codex_quota_from_response_headers(
-        state,
-        payload.report_context.as_ref(),
-        &payload.headers,
-    )
-    .await
-    {
-        warn!(
-            event_name = "codex_realtime_quota_sync_failed",
-            log_type = "ops",
-            report_kind = %payload.report_kind,
-            report_request_id = %short_request_id(report_request_id(payload.report_context.as_ref())),
-            error = ?err,
-            "gateway failed to persist codex realtime quota from sync response headers"
-        );
-    }
+    apply_local_report_effect(state, LocalReportEffect::Sync { payload }).await;
 }
 
 async fn handle_local_stream_report(state: &AppState, payload: &GatewayStreamReportRequest) {
@@ -253,154 +235,7 @@ async fn handle_local_stream_report(state: &AppState, payload: &GatewayStreamRep
         },
     )
     .await;
-    if let Err(err) = codex_realtime_quota::sync_codex_quota_from_response_headers(
-        state,
-        payload.report_context.as_ref(),
-        &payload.headers,
-    )
-    .await
-    {
-        warn!(
-            event_name = "codex_realtime_quota_sync_failed",
-            log_type = "ops",
-            report_kind = %payload.report_kind,
-            report_request_id = %short_request_id(report_request_id(payload.report_context.as_ref())),
-            error = ?err,
-            "gateway failed to persist codex realtime quota from stream response headers"
-        );
-    }
-}
-
-async fn apply_local_gemini_file_mapping_side_effect(
-    state: &AppState,
-    payload: &GatewaySyncReportRequest,
-) {
-    match payload.report_kind.as_str() {
-        "gemini_files_store_mapping" => {
-            if payload.status_code >= 300 {
-                return;
-            }
-
-            let key_id = payload
-                .report_context
-                .as_ref()
-                .and_then(|context| context.get("file_key_id"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            let user_id = payload
-                .report_context
-                .as_ref()
-                .and_then(|context| context.get("user_id"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            let Some(key_id) = key_id else {
-                return;
-            };
-
-            for entry in extract_gemini_file_mapping_entries(payload) {
-                if let Err(err) = store_local_gemini_file_mapping(
-                    state,
-                    entry.file_name.as_str(),
-                    key_id,
-                    user_id,
-                    entry.display_name.as_deref(),
-                    entry.mime_type.as_deref(),
-                )
-                .await
-                {
-                    warn!(
-                        event_name = "gemini_file_mapping_store_failed",
-                        log_type = "ops",
-                        report_kind = %payload.report_kind,
-                        report_request_id = %short_request_id(report_request_id(payload.report_context.as_ref())),
-                        file_name = %entry.file_name,
-                        error = ?err,
-                        "gateway failed to persist gemini file mapping locally"
-                    );
-                }
-            }
-        }
-        "gemini_files_delete_mapping" if payload.status_code < 300 => {
-            let file_name = payload
-                .report_context
-                .as_ref()
-                .and_then(|context| context.get("file_name"))
-                .and_then(serde_json::Value::as_str)
-                .and_then(normalize_gemini_file_name);
-            let Some(file_name) = file_name else {
-                return;
-            };
-
-            if let Err(err) = delete_local_gemini_file_mapping(state, file_name.as_str()).await {
-                warn!(
-                    event_name = "gemini_file_mapping_delete_failed",
-                    log_type = "ops",
-                    report_kind = %payload.report_kind,
-                    report_request_id = %short_request_id(report_request_id(payload.report_context.as_ref())),
-                    file_name = %file_name,
-                    error = ?err,
-                    "gateway failed to delete gemini file mapping locally"
-                );
-            }
-        }
-        _ => {}
-    }
-}
-
-pub(crate) async fn store_local_gemini_file_mapping(
-    state: &AppState,
-    file_name: &str,
-    key_id: &str,
-    user_id: Option<&str>,
-    display_name: Option<&str>,
-    mime_type: Option<&str>,
-) -> Result<(), GatewayError> {
-    let Some(file_name) = normalize_gemini_file_name(file_name) else {
-        return Ok(());
-    };
-    let expires_at_unix_secs = current_unix_secs().saturating_add(GEMINI_FILE_MAPPING_TTL_SECONDS);
-
-    let _stored = state
-        .upsert_gemini_file_mapping(
-            aether_data::repository::gemini_file_mappings::UpsertGeminiFileMappingRecord {
-                id: Uuid::new_v4().to_string(),
-                file_name: file_name.clone(),
-                key_id: key_id.to_string(),
-                user_id: user_id.map(ToOwned::to_owned),
-                display_name: display_name.map(ToOwned::to_owned),
-                mime_type: mime_type.map(ToOwned::to_owned),
-                source_hash: None,
-                expires_at_unix_secs,
-            },
-        )
-        .await?;
-    state
-        .cache_set_string_with_ttl(
-            gemini_file_mapping_cache_key(file_name.as_str()).as_str(),
-            key_id,
-            GEMINI_FILE_MAPPING_TTL_SECONDS,
-        )
-        .await?;
-    Ok(())
-}
-
-async fn delete_local_gemini_file_mapping(
-    state: &AppState,
-    file_name: &str,
-) -> Result<(), GatewayError> {
-    let Some(file_name) = normalize_gemini_file_name(file_name) else {
-        return Ok(());
-    };
-
-    let _deleted = state
-        .delete_gemini_file_mapping_by_file_name(file_name.as_str())
-        .await?;
-    state
-        .cache_delete_key(gemini_file_mapping_cache_key(file_name.as_str()).as_str())
-        .await?;
-    Ok(())
+    apply_local_report_effect(state, LocalReportEffect::Stream { payload }).await;
 }
 
 #[cfg(test)]
@@ -824,7 +659,7 @@ mod tests {
 
     #[tokio::test]
     async fn submit_sync_report_updates_codex_quota_from_response_headers() {
-        super::codex_realtime_quota::clear_codex_quota_fingerprint_cache();
+        crate::orchestration::clear_local_report_effect_caches_for_tests();
 
         let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
             vec![sample_provider_catalog_provider(
@@ -888,7 +723,7 @@ mod tests {
 
     #[tokio::test]
     async fn submit_stream_report_updates_codex_quota_from_response_headers() {
-        super::codex_realtime_quota::clear_codex_quota_fingerprint_cache();
+        crate::orchestration::clear_local_report_effect_caches_for_tests();
 
         let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
             vec![sample_provider_catalog_provider(

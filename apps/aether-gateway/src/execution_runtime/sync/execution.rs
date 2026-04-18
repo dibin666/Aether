@@ -30,12 +30,16 @@ use crate::execution_runtime::remote_compat::post_sync_plan_to_remote_execution_
 use crate::execution_runtime::submission::submit_local_core_error_or_sync_finalize;
 use crate::execution_runtime::transport::DirectSyncExecutionRuntime;
 use crate::execution_runtime::{
-    local_failover_response_text, record_pool_error_feedback, record_sync_pool_success_feedback,
+    analyze_local_candidate_failover_sync, local_failover_response_text,
     resolve_core_sync_error_finalize_report_kind, should_fallback_to_control_sync,
-    should_finalize_sync_response, should_retry_next_local_candidate_sync,
-    should_stop_local_candidate_failover_sync,
+    should_finalize_sync_response, LocalFailoverDecision,
 };
 use crate::log_ids::short_request_id;
+use crate::orchestration::{
+    apply_local_execution_effect, LocalAdaptiveRateLimitEffect, LocalAttemptFailureEffect,
+    LocalExecutionEffect, LocalExecutionEffectContext, LocalHealthFailureEffect,
+    LocalHealthSuccessEffect, LocalOAuthInvalidationEffect, LocalPoolErrorEffect,
+};
 use crate::request_candidate_runtime::{
     ensure_execution_request_candidate_slot, record_local_request_candidate_status,
 };
@@ -247,7 +251,7 @@ pub(crate) async fn execute_execution_runtime_sync(
         &body_bytes,
         result.error.as_ref().map(|error| error.message.as_str()),
     );
-    let stop_local_failover = should_stop_local_candidate_failover_sync(
+    let local_failover_analysis = analyze_local_candidate_failover_sync(
         state,
         &plan,
         plan_kind,
@@ -257,27 +261,74 @@ pub(crate) async fn execute_execution_runtime_sync(
     )
     .await;
     if result.status_code >= 400 {
-        record_pool_error_feedback(
+        apply_local_execution_effect(
             state,
-            &plan,
-            report_context.as_ref(),
-            result.status_code,
-            &headers,
-            local_failover_response_text.as_deref(),
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::AttemptFailure(LocalAttemptFailureEffect {
+                status_code: result.status_code,
+                classification: local_failover_analysis.classification,
+            }),
+        )
+        .await;
+        apply_local_execution_effect(
+            state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::AdaptiveRateLimit(LocalAdaptiveRateLimitEffect {
+                status_code: result.status_code,
+                classification: local_failover_analysis.classification,
+                headers: Some(&headers),
+            }),
+        )
+        .await;
+        apply_local_execution_effect(
+            state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::HealthFailure(LocalHealthFailureEffect {
+                status_code: result.status_code,
+                classification: local_failover_analysis.classification,
+            }),
+        )
+        .await;
+        apply_local_execution_effect(
+            state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::OauthInvalidation(LocalOAuthInvalidationEffect {
+                status_code: result.status_code,
+                response_text: local_failover_response_text.as_deref(),
+            }),
+        )
+        .await;
+        apply_local_execution_effect(
+            state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::PoolError(LocalPoolErrorEffect {
+                status_code: result.status_code,
+                classification: local_failover_analysis.classification,
+                headers: &headers,
+                error_body: local_failover_response_text.as_deref(),
+            }),
         )
         .await;
     }
-    if should_retry_next_local_candidate_sync(
-        state,
-        &plan,
-        plan_kind,
-        report_context.as_ref(),
-        &result,
-        local_failover_response_text.as_deref(),
-    )
-    .await
-        && !stop_local_failover
-    {
+    if matches!(
+        local_failover_analysis.decision,
+        LocalFailoverDecision::RetryNextCandidate
+    ) {
         let terminal_unix_secs = current_request_candidate_unix_ms();
         record_local_request_candidate_status(
             state,
@@ -341,16 +392,17 @@ pub(crate) async fn execute_execution_runtime_sync(
         mapped_error_finalize_kind.clone()
     };
 
-    if !stop_local_failover
-        && should_fallback_to_control_sync(
-            plan_kind,
-            &result,
-            body_json.as_ref(),
-            has_body_bytes,
-            explicit_finalize || implicit_finalize.is_some(),
-            mapped_error_finalize_kind.is_some(),
-        )
-    {
+    if !matches!(
+        local_failover_analysis.decision,
+        LocalFailoverDecision::StopLocalFailover
+    ) && should_fallback_to_control_sync(
+        plan_kind,
+        &result,
+        body_json.as_ref(),
+        has_body_bytes,
+        explicit_finalize || implicit_finalize.is_some(),
+        mapped_error_finalize_kind.is_some(),
+    ) {
         let terminal_unix_secs = current_request_candidate_unix_ms();
         record_local_request_candidate_status(
             state,
@@ -406,11 +458,24 @@ pub(crate) async fn execute_execution_runtime_sync(
         telemetry: result.telemetry.clone(),
     };
     if result.status_code < 400 {
-        record_sync_pool_success_feedback(
+        apply_local_execution_effect(
             state,
-            &plan,
-            report_context.as_ref(),
-            &base_usage_payload,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::HealthSuccess(LocalHealthSuccessEffect),
+        )
+        .await;
+        apply_local_execution_effect(
+            state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: report_context.as_ref(),
+            },
+            LocalExecutionEffect::PoolSuccessSync {
+                payload: &base_usage_payload,
+            },
         )
         .await;
     }

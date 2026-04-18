@@ -473,6 +473,24 @@ pub fn codex_structured_invalid_reason(status_code: u16, upstream_message: Optio
     message.to_string()
 }
 
+pub fn codex_runtime_invalid_reason(
+    status_code: u16,
+    upstream_message: Option<&str>,
+) -> Option<String> {
+    match status_code {
+        401 => Some(codex_structured_invalid_reason(401, upstream_message)),
+        402 if codex_looks_like_workspace_deactivated(upstream_message) => {
+            Some(codex_structured_invalid_reason(402, upstream_message))
+        }
+        403 if codex_looks_like_token_invalidated(upstream_message)
+            || codex_looks_like_account_deactivated(upstream_message) =>
+        {
+            Some(codex_structured_invalid_reason(403, upstream_message))
+        }
+        _ => None,
+    }
+}
+
 pub fn codex_soft_request_failure_reason(
     status_code: u16,
     upstream_message: Option<&str>,
@@ -633,4 +651,32 @@ pub fn parse_kiro_usage_response(
     }
 
     Some(serde_json::Value::Object(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{codex_runtime_invalid_reason, OAUTH_ACCOUNT_BLOCK_PREFIX, OAUTH_EXPIRED_PREFIX};
+
+    #[test]
+    fn codex_runtime_invalid_reason_marks_401_as_expired() {
+        assert_eq!(
+            codex_runtime_invalid_reason(401, Some("session expired")),
+            Some(format!("{OAUTH_EXPIRED_PREFIX}session expired"))
+        );
+    }
+
+    #[test]
+    fn codex_runtime_invalid_reason_marks_account_deactivated_403() {
+        assert_eq!(
+            codex_runtime_invalid_reason(403, Some("account has been deactivated")),
+            Some(format!(
+                "{OAUTH_ACCOUNT_BLOCK_PREFIX}account has been deactivated"
+            ))
+        );
+    }
+
+    #[test]
+    fn codex_runtime_invalid_reason_ignores_generic_403() {
+        assert_eq!(codex_runtime_invalid_reason(403, Some("forbidden")), None);
+    }
 }

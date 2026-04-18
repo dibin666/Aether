@@ -4,6 +4,7 @@ use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 use std::collections::BTreeSet;
 
 use crate::ai_pipeline::{GatewayProviderTransportSnapshot, PlannerAppState};
+use crate::orchestration::LocalExecutionCandidateMetadata;
 
 use super::candidate_affinity::rank_eligible_local_execution_candidates;
 use super::pool_scheduler::apply_local_execution_pool_scheduler;
@@ -13,6 +14,7 @@ pub(crate) struct EligibleLocalExecutionCandidate {
     pub(crate) candidate: SchedulerMinimalCandidateSelectionCandidate,
     pub(crate) transport: GatewayProviderTransportSnapshot,
     pub(crate) provider_api_format: String,
+    pub(crate) orchestration: LocalExecutionCandidateMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,6 +124,7 @@ where
                 provider_api_format: transport.endpoint.api_format.trim().to_ascii_lowercase(),
                 candidate,
                 transport,
+                orchestration: LocalExecutionCandidateMetadata::default(),
             }),
         }
     }

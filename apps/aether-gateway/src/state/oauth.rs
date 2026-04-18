@@ -7,6 +7,8 @@ use crate::handlers::shared::default_provider_key_status_snapshot;
 use crate::provider_transport::LocalOAuthHttpExecutor;
 
 use super::super::provider_transport;
+use crate::provider_key_auth::provider_key_is_oauth_managed;
+use aether_admin::provider::quota as admin_provider_quota_pure;
 use aether_contracts::{ExecutionPlan, ExecutionTimeouts, RequestBody};
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -676,6 +678,65 @@ impl AppState {
         self.oauth_refresh.invalidate_cached_entry(key_id).await
     }
 
+    pub(crate) async fn mark_provider_catalog_key_oauth_invalid(
+        &self,
+        key_id: &str,
+        provider_type: &str,
+        invalid_reason: &str,
+    ) -> Result<bool, GatewayError> {
+        let invalid_reason = invalid_reason.trim();
+        if invalid_reason.is_empty() {
+            return Ok(false);
+        }
+
+        let Some(mut latest_key) = self
+            .data
+            .list_provider_catalog_keys_by_ids(&[key_id.to_string()])
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))?
+            .into_iter()
+            .next()
+        else {
+            return Ok(false);
+        };
+
+        if !provider_key_is_oauth_managed(&latest_key, provider_type) {
+            return Ok(false);
+        }
+
+        let now_unix_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        let (oauth_invalid_at_unix_secs, oauth_invalid_reason) = merge_runtime_oauth_invalid_state(
+            provider_type,
+            &latest_key,
+            invalid_reason,
+            now_unix_secs,
+        );
+        if oauth_invalid_at_unix_secs == latest_key.oauth_invalid_at_unix_secs
+            && oauth_invalid_reason == latest_key.oauth_invalid_reason
+        {
+            return Ok(false);
+        }
+
+        latest_key.oauth_invalid_at_unix_secs = oauth_invalid_at_unix_secs;
+        latest_key.oauth_invalid_reason = oauth_invalid_reason;
+        latest_key.updated_at_unix_secs = Some(now_unix_secs);
+        let current_status_snapshot = latest_key.status_snapshot.take();
+        latest_key.status_snapshot =
+            sync_provider_key_oauth_status_snapshot(current_status_snapshot, &latest_key);
+        let updated = self
+            .update_provider_catalog_key(&latest_key)
+            .await?
+            .is_some();
+        if updated {
+            let _ = self.invalidate_local_oauth_refresh_entry(key_id).await;
+        }
+        Ok(updated)
+    }
+
     async fn persist_local_oauth_refresh_entry(
         &self,
         transport: &provider_transport::GatewayProviderTransportSnapshot,
@@ -856,6 +917,43 @@ impl AppState {
 
         Ok(None)
     }
+}
+
+fn merge_runtime_oauth_invalid_state(
+    provider_type: &str,
+    key: &StoredProviderCatalogKey,
+    invalid_reason: &str,
+    now_unix_secs: u64,
+) -> (Option<u64>, Option<String>) {
+    let candidate_reason = invalid_reason.trim();
+    if candidate_reason.is_empty() {
+        return (
+            key.oauth_invalid_at_unix_secs,
+            key.oauth_invalid_reason.clone(),
+        );
+    }
+
+    if provider_type.trim().eq_ignore_ascii_case("codex") {
+        return admin_provider_quota_pure::codex_build_invalid_state(
+            key,
+            candidate_reason.to_string(),
+            now_unix_secs,
+        );
+    }
+
+    let current_reason = key
+        .oauth_invalid_reason
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
+    if current_reason == candidate_reason {
+        return (
+            key.oauth_invalid_at_unix_secs,
+            (!current_reason.is_empty()).then_some(current_reason.to_string()),
+        );
+    }
+
+    (Some(now_unix_secs), Some(candidate_reason.to_string()))
 }
 
 fn local_oauth_execution_body_text(result: &aether_contracts::ExecutionResult) -> String {
