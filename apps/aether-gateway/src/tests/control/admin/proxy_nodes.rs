@@ -915,6 +915,10 @@ async fn gateway_creates_updates_and_tests_manual_proxy_nodes_locally() {
 
 #[tokio::test]
 async fn gateway_tests_disconnected_tunnel_proxy_nodes_locally() {
+    let _probe_url_guard = crate::handlers::admin::override_proxy_connectivity_probe_url_for_tests(
+        "https://www.cloudflare.com/cdn-cgi/trace",
+    );
+
     let proxy_node_repository =
         Arc::new(InMemoryProxyNodeRepository::seed(vec![sample_proxy_node(
             "node-offline",
