@@ -7,6 +7,7 @@ use std::io;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use aether_runtime::hold_admission_permit_until;
@@ -15,7 +16,7 @@ use futures_util::stream;
 use futures_util::StreamExt;
 use http_body_util::BodyExt;
 use hyper::body::Frame as BodyFrame;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 use tracing::{debug, info, warn};
 
 use crate::state::{AppState, ServerContext};
@@ -80,16 +81,49 @@ const REDIRECT_SENSITIVE_HEADERS: &[&str] = &[
     "www-authenticate",
 ];
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 enum ReplayableRequestBody {
     None,
-    Replayable(Bytes),
+    Pending(Arc<RequestBodyReplayState>),
     NonReplayable,
 }
 
 struct PreparedRequestBody {
     first_request_body: Option<upstream_client::UpstreamRequestBody>,
     replay_body: ReplayableRequestBody,
+}
+
+#[derive(Debug)]
+struct RequestBodyReplayState {
+    budget_bytes: usize,
+    state: Mutex<RequestBodyReplayStatus>,
+    ready: Notify,
+}
+
+#[derive(Debug)]
+enum RequestBodyReplayStatus {
+    Collecting {
+        chunks: Vec<Bytes>,
+        buffered_len: usize,
+    },
+    Ready(Bytes),
+    Empty,
+    NonReplayable,
+    Error(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReplayBodyResolution {
+    Empty,
+    Replayable(Bytes),
+    NonReplayable,
+}
+
+#[derive(Debug)]
+enum SpoolBodyEvent {
+    Data(Bytes),
+    Error(String),
+    End,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,41 +255,163 @@ fn log_stream_failure(ctx: StreamLogContext<'_>, error: &str, duration: Duration
 }
 
 impl PreparedRequestBody {
-    fn streaming(
-        body_rx: mpsc::Receiver<TunnelFrame>,
-        body_size: Arc<AtomicUsize>,
-    ) -> PreparedRequestBody {
-        PreparedRequestBody {
-            first_request_body: Some(build_streaming_request_body(body_rx, body_size)),
-            replay_body: ReplayableRequestBody::NonReplayable,
-        }
-    }
-
     fn take_first_request_body(&mut self) -> upstream_client::UpstreamRequestBody {
         self.first_request_body
             .take()
             .unwrap_or_else(empty_request_body)
     }
+}
 
-    fn build_redirect_request_body(
-        &self,
-        body_mode: RedirectBodyMode,
-    ) -> Option<upstream_client::UpstreamRequestBody> {
-        match body_mode {
-            RedirectBodyMode::Empty => Some(empty_request_body()),
-            RedirectBodyMode::Replay => match &self.replay_body {
-                ReplayableRequestBody::None => Some(empty_request_body()),
-                ReplayableRequestBody::Replayable(body) => {
-                    Some(buffered_request_body(body.clone()))
+async fn prepare_redirect_request_body(
+    replay_body: ReplayableRequestBody,
+    body_mode: RedirectBodyMode,
+    deadline: Instant,
+) -> Result<Option<upstream_client::UpstreamRequestBody>, String> {
+    match body_mode {
+        RedirectBodyMode::Empty => Ok(Some(empty_request_body())),
+        RedirectBodyMode::Replay => match replay_body {
+            ReplayableRequestBody::None => Ok(Some(empty_request_body())),
+            ReplayableRequestBody::Pending(state) => {
+                match state.wait_for_resolution(deadline).await? {
+                    ReplayBodyResolution::Empty => Ok(Some(empty_request_body())),
+                    ReplayBodyResolution::Replayable(body) => Ok(Some(buffered_request_body(body))),
+                    ReplayBodyResolution::NonReplayable => Ok(None),
                 }
-                ReplayableRequestBody::NonReplayable => None,
-            },
+            }
+            ReplayableRequestBody::NonReplayable => Ok(None),
+        },
+    }
+}
+
+impl RequestBodyReplayState {
+    fn new(budget_bytes: usize) -> Self {
+        Self {
+            budget_bytes,
+            state: Mutex::new(RequestBodyReplayStatus::Collecting {
+                chunks: Vec::new(),
+                buffered_len: 0,
+            }),
+            ready: Notify::new(),
+        }
+    }
+
+    fn push_chunk(&self, payload: Bytes) {
+        let mut notify = false;
+        {
+            let mut state = self.state.lock().expect("request body replay state lock");
+            if let RequestBodyReplayStatus::Collecting {
+                chunks,
+                buffered_len,
+            } = &mut *state
+            {
+                let next_len = buffered_len.saturating_add(payload.len());
+                if next_len > self.budget_bytes {
+                    chunks.clear();
+                    *state = RequestBodyReplayStatus::NonReplayable;
+                    notify = true;
+                } else {
+                    *buffered_len = next_len;
+                    chunks.push(payload);
+                }
+            }
+        }
+        if notify {
+            self.ready.notify_waiters();
+        }
+    }
+
+    fn finish(&self) {
+        let notify;
+        {
+            let mut state = self.state.lock().expect("request body replay state lock");
+            let next_state = match std::mem::replace(&mut *state, RequestBodyReplayStatus::Empty) {
+                RequestBodyReplayStatus::Collecting {
+                    chunks,
+                    buffered_len,
+                } => {
+                    if buffered_len == 0 {
+                        RequestBodyReplayStatus::Empty
+                    } else {
+                        let mut buffered = BytesMut::with_capacity(buffered_len);
+                        for chunk in chunks {
+                            buffered.extend_from_slice(&chunk);
+                        }
+                        RequestBodyReplayStatus::Ready(buffered.freeze())
+                    }
+                }
+                terminal => terminal,
+            };
+            notify = !matches!(next_state, RequestBodyReplayStatus::Collecting { .. });
+            *state = next_state;
+        }
+        if notify {
+            self.ready.notify_waiters();
+        }
+    }
+
+    fn fail(&self, message: String) {
+        {
+            let mut state = self.state.lock().expect("request body replay state lock");
+            *state = RequestBodyReplayStatus::Error(message);
+        }
+        self.ready.notify_waiters();
+    }
+
+    async fn wait_for_resolution(&self, deadline: Instant) -> Result<ReplayBodyResolution, String> {
+        loop {
+            let resolution = {
+                let state = self.state.lock().expect("request body replay state lock");
+                match &*state {
+                    RequestBodyReplayStatus::Collecting { .. } => None,
+                    RequestBodyReplayStatus::Ready(body) => {
+                        Some(Ok(ReplayBodyResolution::Replayable(body.clone())))
+                    }
+                    RequestBodyReplayStatus::Empty => Some(Ok(ReplayBodyResolution::Empty)),
+                    RequestBodyReplayStatus::NonReplayable => {
+                        Some(Ok(ReplayBodyResolution::NonReplayable))
+                    }
+                    RequestBodyReplayStatus::Error(message) => Some(Err(message.clone())),
+                }
+            };
+            if let Some(resolution) = resolution {
+                return resolution;
+            }
+
+            let Some(remaining) = remaining_timeout(deadline) else {
+                return Err("upstream timeout".to_string());
+            };
+            tokio::time::timeout(remaining, self.ready.notified())
+                .await
+                .map_err(|_| "upstream timeout".to_string())?;
         }
     }
 }
 
 fn follow_redirects_enabled(meta: &RequestMeta) -> bool {
     meta.follow_redirects == Some(true)
+}
+
+fn request_likely_has_body(
+    method: &hyper::Method,
+    headers: &std::collections::HashMap<String, String>,
+) -> bool {
+    if matches!(
+        *method,
+        hyper::Method::GET | hyper::Method::HEAD | hyper::Method::OPTIONS | hyper::Method::TRACE
+    ) {
+        return headers.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("content-length")
+                && value
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+                    .is_some_and(|value| value > 0)
+        }) || headers
+            .keys()
+            .any(|name| name.eq_ignore_ascii_case("transfer-encoding"));
+    }
+
+    true
 }
 
 fn sanitize_upstream_headers(
@@ -296,84 +452,38 @@ fn buffered_request_body(body: Bytes) -> upstream_client::UpstreamRequestBody {
     upstream_client::stream_request_body(stream::once(async move { Ok(BodyFrame::data(body)) }))
 }
 
-async fn prepare_redirect_request_body(
-    mut body_rx: mpsc::Receiver<TunnelFrame>,
+// Drain tunnel body frames on a detached task so the shared dispatcher is no
+// longer coupled to upstream body polling. Redirect replay still reuses a full
+// in-memory copy when the request body completes within budget.
+fn prepare_request_body(
+    body_rx: mpsc::Receiver<TunnelFrame>,
     body_size: Arc<AtomicUsize>,
     deadline: Instant,
     replay_budget_bytes: usize,
-) -> Result<PreparedRequestBody, String> {
-    let mut prefix_chunks = Vec::new();
-    let mut buffered_len = 0usize;
-    let mut finished = false;
+) -> PreparedRequestBody {
+    let (spool_tx, spool_rx) = mpsc::unbounded_channel();
+    let replay_state = if replay_budget_bytes == 0 {
+        None
+    } else {
+        Some(Arc::new(RequestBodyReplayState::new(replay_budget_bytes)))
+    };
+    let replay_body = match replay_state.as_ref() {
+        Some(state) => ReplayableRequestBody::Pending(Arc::clone(state)),
+        None => ReplayableRequestBody::NonReplayable,
+    };
 
-    loop {
-        let Some(frame) = recv_body_frame_with_deadline(&mut body_rx, deadline).await? else {
-            finished = true;
-            break;
-        };
+    tokio::spawn(spool_request_body(
+        body_rx,
+        spool_tx,
+        replay_state,
+        body_size,
+        deadline,
+    ));
 
-        match frame.msg_type {
-            MsgType::RequestBody => {
-                let end_stream = frame.is_end_stream();
-                let payload = decompress_if_gzip(&frame)
-                    .map_err(|error| format!("gzip decompress failed: {error}"))?;
-
-                if !payload.is_empty() {
-                    body_size.fetch_add(payload.len(), Ordering::Relaxed);
-                    buffered_len = buffered_len.saturating_add(payload.len());
-                    prefix_chunks.push(payload);
-                }
-
-                if end_stream {
-                    finished = true;
-                    break;
-                }
-
-                if buffered_len > replay_budget_bytes {
-                    break;
-                }
-            }
-            MsgType::StreamError => {
-                let message = String::from_utf8(frame.payload.to_vec())
-                    .unwrap_or_else(|_| "client cancelled request body".to_string());
-                return Err(message);
-            }
-            MsgType::StreamEnd => {
-                finished = true;
-                break;
-            }
-            _ => continue,
-        }
+    PreparedRequestBody {
+        first_request_body: Some(build_spooled_request_body(spool_rx)),
+        replay_body,
     }
-
-    if buffered_len <= replay_budget_bytes && finished {
-        let total_len: usize = prefix_chunks.iter().map(Bytes::len).sum();
-        if total_len == 0 {
-            return Ok(PreparedRequestBody {
-                first_request_body: Some(empty_request_body()),
-                replay_body: ReplayableRequestBody::None,
-            });
-        }
-
-        let mut buffered = BytesMut::with_capacity(total_len);
-        for chunk in prefix_chunks {
-            buffered.extend_from_slice(&chunk);
-        }
-        let body = buffered.freeze();
-        return Ok(PreparedRequestBody {
-            first_request_body: Some(buffered_request_body(body.clone())),
-            replay_body: ReplayableRequestBody::Replayable(body),
-        });
-    }
-
-    Ok(PreparedRequestBody {
-        first_request_body: Some(build_prefixed_request_body(
-            prefix_chunks,
-            body_rx,
-            body_size,
-        )),
-        replay_body: ReplayableRequestBody::NonReplayable,
-    })
 }
 
 async fn recv_body_frame_with_deadline(
@@ -390,6 +500,97 @@ async fn recv_body_frame_with_deadline(
 
 fn remaining_timeout(deadline: Instant) -> Option<Duration> {
     deadline.checked_duration_since(Instant::now())
+}
+
+async fn spool_request_body(
+    mut body_rx: mpsc::Receiver<TunnelFrame>,
+    spool_tx: mpsc::UnboundedSender<SpoolBodyEvent>,
+    replay_state: Option<Arc<RequestBodyReplayState>>,
+    body_size: Arc<AtomicUsize>,
+    deadline: Instant,
+) {
+    let mut spool_tx = Some(spool_tx);
+    loop {
+        let frame = match recv_body_frame_with_deadline(&mut body_rx, deadline).await {
+            Ok(frame) => frame,
+            Err(message) => {
+                if let Some(state) = &replay_state {
+                    state.fail(message.clone());
+                }
+                send_spool_event(&mut spool_tx, SpoolBodyEvent::Error(message));
+                return;
+            }
+        };
+
+        let Some(frame) = frame else {
+            if let Some(state) = &replay_state {
+                state.finish();
+            }
+            send_spool_event(&mut spool_tx, SpoolBodyEvent::End);
+            return;
+        };
+
+        match frame.msg_type {
+            MsgType::RequestBody => {
+                let end_stream = frame.is_end_stream();
+                let payload = match decompress_if_gzip(&frame) {
+                    Ok(payload) => payload,
+                    Err(error) => {
+                        let message = format!("gzip decompress failed: {error}");
+                        if let Some(state) = &replay_state {
+                            state.fail(message.clone());
+                        }
+                        send_spool_event(&mut spool_tx, SpoolBodyEvent::Error(message));
+                        return;
+                    }
+                };
+
+                if !payload.is_empty() {
+                    body_size.fetch_add(payload.len(), Ordering::Relaxed);
+                    if let Some(state) = &replay_state {
+                        state.push_chunk(payload.clone());
+                    }
+                    send_spool_event(&mut spool_tx, SpoolBodyEvent::Data(payload));
+                }
+
+                if end_stream {
+                    if let Some(state) = &replay_state {
+                        state.finish();
+                    }
+                    send_spool_event(&mut spool_tx, SpoolBodyEvent::End);
+                    return;
+                }
+            }
+            MsgType::StreamError => {
+                let message = String::from_utf8(frame.payload.to_vec())
+                    .unwrap_or_else(|_| "client cancelled request body".to_string());
+                if let Some(state) = &replay_state {
+                    state.fail(message.clone());
+                }
+                send_spool_event(&mut spool_tx, SpoolBodyEvent::Error(message));
+                return;
+            }
+            MsgType::StreamEnd => {
+                if let Some(state) = &replay_state {
+                    state.finish();
+                }
+                send_spool_event(&mut spool_tx, SpoolBodyEvent::End);
+                return;
+            }
+            _ => continue,
+        }
+    }
+}
+
+fn send_spool_event(
+    spool_tx: &mut Option<mpsc::UnboundedSender<SpoolBodyEvent>>,
+    event: SpoolBodyEvent,
+) {
+    if let Some(sender) = spool_tx.as_ref() {
+        if sender.send(event).is_err() {
+            *spool_tx = None;
+        }
+    }
 }
 
 fn remove_headers_case_insensitive(headers: &mut Vec<(String, String)>, blocked: &[&str]) {
@@ -433,8 +634,9 @@ fn resolve_redirect<B>(
         }
         StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => match replay_body {
             ReplayableRequestBody::NonReplayable => return RedirectDecision::Stop,
-            ReplayableRequestBody::None => RedirectBodyMode::Empty,
-            ReplayableRequestBody::Replayable(_) => RedirectBodyMode::Replay,
+            ReplayableRequestBody::None | ReplayableRequestBody::Pending(_) => {
+                RedirectBodyMode::Replay
+            }
         },
         _ => return RedirectDecision::Stop,
     };
@@ -891,41 +1093,37 @@ async fn handle_stream_inner(
     let mut current_headers = sanitize_upstream_headers(&meta.headers);
     let timeout = Duration::from_secs(meta.timeout.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS));
     let request_body_size = Arc::new(AtomicUsize::new(0));
-    let mut prepared_body = if follow_redirects {
-        match prepare_redirect_request_body(
+    let request_has_body = request_likely_has_body(&current_method, &meta.headers);
+    let mut prepared_body = if request_has_body {
+        let replay_budget_bytes = if follow_redirects {
+            state.config.redirect_replay_budget_bytes
+        } else {
+            0
+        };
+        prepare_request_body(
             body_rx,
             Arc::clone(&request_body_size),
             deadline,
-            state.config.redirect_replay_budget_bytes,
+            replay_budget_bytes,
         )
-        .await
-        {
-            Ok(body) => body,
-            Err(message) => {
-                log_stream_failure(
-                    stream_log_context(
-                        server,
-                        stream_id,
-                        &current_method,
-                        Some(&current_url),
-                        0,
-                        request_body_size.load(Ordering::Relaxed),
-                    ),
-                    &message,
-                    Duration::ZERO,
-                );
-                send_error(frame_tx, stream_id, &message).await;
-                return None;
-            }
-        }
     } else {
-        PreparedRequestBody::streaming(body_rx, Arc::clone(&request_body_size))
+        PreparedRequestBody {
+            first_request_body: Some(build_streaming_request_body(
+                body_rx,
+                Arc::clone(&request_body_size),
+            )),
+            replay_body: if follow_redirects {
+                ReplayableRequestBody::None
+            } else {
+                ReplayableRequestBody::NonReplayable
+            },
+        }
     };
 
     let overall_start = Instant::now();
     let mut total_dns_ms = 0u64;
     let mut redirects_followed = 0usize;
-    let mut next_body_mode = None::<RedirectBodyMode>;
+    let mut next_request_body = None::<upstream_client::UpstreamRequestBody>;
 
     loop {
         let Some(remaining) = remaining_timeout(deadline) else {
@@ -944,29 +1142,9 @@ async fn handle_stream_inner(
             send_error(frame_tx, stream_id, "upstream timeout").await;
             return None;
         };
-        let request_body = match next_body_mode.take() {
-            Some(mode) => match prepared_body.build_redirect_request_body(mode) {
-                Some(body) => body,
-                None => {
-                    let error_message = "upstream redirect error: body not replayable";
-                    log_stream_failure(
-                        stream_log_context(
-                            server,
-                            stream_id,
-                            &current_method,
-                            Some(&current_url),
-                            redirects_followed,
-                            request_body_size.load(Ordering::Relaxed),
-                        ),
-                        error_message,
-                        overall_start.elapsed(),
-                    );
-                    send_error(frame_tx, stream_id, error_message).await;
-                    return None;
-                }
-            },
-            None => prepared_body.take_first_request_body(),
-        };
+        let request_body = next_request_body
+            .take()
+            .unwrap_or_else(|| prepared_body.take_first_request_body());
 
         let response_ctx = match execute_upstream_request(
             state,
@@ -1030,14 +1208,54 @@ async fn handle_stream_inner(
                     url,
                     headers,
                     body_mode,
-                } => {
-                    redirects_followed += 1;
-                    current_method = method;
-                    current_url = url;
-                    current_headers = headers;
-                    next_body_mode = Some(body_mode);
-                    continue;
-                }
+                } => match prepare_redirect_request_body(
+                    prepared_body.replay_body.clone(),
+                    body_mode,
+                    deadline,
+                )
+                .await
+                {
+                    Ok(Some(body)) => {
+                        redirects_followed += 1;
+                        current_method = method;
+                        current_url = url;
+                        current_headers = headers;
+                        next_request_body = Some(body);
+                        continue;
+                    }
+                    Ok(None) => {
+                        return relay_upstream_response(
+                            server,
+                            stream_id,
+                            &current_method,
+                            &current_url,
+                            frame_tx,
+                            response_ctx.response,
+                            total_dns_ms,
+                            overall_start.elapsed(),
+                            response_ctx.request_timing,
+                            request_body_size.as_ref(),
+                            redirects_followed,
+                        )
+                        .await;
+                    }
+                    Err(message) => {
+                        log_stream_failure(
+                            stream_log_context(
+                                server,
+                                stream_id,
+                                &current_method,
+                                Some(&current_url),
+                                redirects_followed,
+                                request_body_size.load(Ordering::Relaxed),
+                            ),
+                            &message,
+                            overall_start.elapsed(),
+                        );
+                        send_error(frame_tx, stream_id, &message).await;
+                        return None;
+                    }
+                },
                 RedirectDecision::Error(message) => {
                     let error_message = format!("upstream redirect error: {message}");
                     log_stream_failure(
@@ -1094,6 +1312,28 @@ fn build_streaming_request_body(
     body_size: Arc<AtomicUsize>,
 ) -> upstream_client::UpstreamRequestBody {
     build_prefixed_request_body(Vec::new(), body_rx, body_size)
+}
+
+fn build_spooled_request_body(
+    spool_rx: mpsc::UnboundedReceiver<SpoolBodyEvent>,
+) -> upstream_client::UpstreamRequestBody {
+    let body_stream = stream::unfold((spool_rx, false), |(mut spool_rx, finished)| async move {
+        if finished {
+            return None;
+        }
+
+        match spool_rx.recv().await {
+            Some(SpoolBodyEvent::Data(payload)) => {
+                Some((Ok(BodyFrame::data(payload)), (spool_rx, false)))
+            }
+            Some(SpoolBodyEvent::Error(message)) => {
+                Some((Err(io::Error::other(message)), (spool_rx, true)))
+            }
+            Some(SpoolBodyEvent::End) | None => None,
+        }
+    });
+
+    upstream_client::stream_request_body(body_stream)
 }
 
 fn build_prefixed_request_body(
@@ -1187,6 +1427,15 @@ mod tests {
     use crate::target_filter::DnsCache;
     use crate::tunnel::client::build_tls_config;
 
+    fn completed_replay_body(body: Bytes) -> ReplayableRequestBody {
+        let state = Arc::new(RequestBodyReplayState::new(body.len().max(1)));
+        if !body.is_empty() {
+            state.push_chunk(body);
+        }
+        state.finish();
+        ReplayableRequestBody::Pending(state)
+    }
+
     #[tokio::test]
     async fn streaming_request_body_yields_chunks_and_tracks_size() {
         let (tx, rx) = mpsc::channel(4);
@@ -1258,6 +1507,79 @@ mod tests {
         assert_eq!(body_size.load(Ordering::Relaxed), 0);
     }
 
+    #[tokio::test]
+    async fn prepare_request_body_streams_immediately_and_replays_after_completion() {
+        let (tx, rx) = mpsc::channel(4);
+        let body_size = Arc::new(AtomicUsize::new(0));
+        let prepared = prepare_request_body(
+            rx,
+            Arc::clone(&body_size),
+            Instant::now() + Duration::from_secs(1),
+            1024,
+        );
+        let mut body = prepared
+            .first_request_body
+            .expect("first request body should be present");
+
+        tx.send(TunnelFrame::new(
+            1,
+            MsgType::RequestBody,
+            0,
+            Bytes::from_static(b"hello "),
+        ))
+        .await
+        .expect("send first chunk");
+
+        let first = body
+            .frame()
+            .await
+            .expect("first frame should exist")
+            .expect("first frame should be ok")
+            .into_data()
+            .expect("first data frame");
+        assert_eq!(first, Bytes::from_static(b"hello "));
+
+        tx.send(TunnelFrame::new(
+            1,
+            MsgType::RequestBody,
+            flags::END_STREAM,
+            Bytes::from_static(b"world"),
+        ))
+        .await
+        .expect("send final chunk");
+        drop(tx);
+
+        let second = body
+            .frame()
+            .await
+            .expect("second frame should exist")
+            .expect("second frame should be ok")
+            .into_data()
+            .expect("second data frame");
+        assert_eq!(second, Bytes::from_static(b"world"));
+        assert!(body.frame().await.is_none());
+
+        let mut replay = prepare_redirect_request_body(
+            prepared.replay_body.clone(),
+            RedirectBodyMode::Replay,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .await
+        .expect("redirect replay should resolve")
+        .expect("body should be replayable");
+        let frame = replay
+            .frame()
+            .await
+            .expect("replayed frame should exist")
+            .expect("replayed frame should be ok");
+        assert_eq!(
+            frame.into_data().expect("data frame"),
+            Bytes::from_static(b"hello world")
+        );
+        assert!(replay.frame().await.is_none());
+        assert_eq!(body_size.load(Ordering::Relaxed), 11);
+    }
+
     #[test]
     fn selects_http1_only_client_when_request_metadata_requires_it() {
         let state = sample_state(None, None);
@@ -1289,7 +1611,7 @@ mod tests {
             &current_url,
             &hyper::Method::POST,
             &[("content-type".into(), "application/json".into())],
-            &ReplayableRequestBody::Replayable(Bytes::from_static(br#"{"ok":true}"#)),
+            &completed_replay_body(Bytes::from_static(br#"{"ok":true}"#)),
             0,
         );
 

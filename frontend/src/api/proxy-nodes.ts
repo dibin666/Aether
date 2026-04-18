@@ -120,6 +120,8 @@ export interface ProxyNodeTestResult {
   latency_ms: number | null
   exit_ip: string | null
   error: string | null
+  probe_url: string
+  timeout_secs: number
 }
 
 export interface ProxyNodeBatchUpgradeResult {

@@ -545,9 +545,10 @@
               <TableCell class="py-4 text-center">
                 <Badge
                   :variant="statusVariant(node.status)"
+                  :title="statusTitle(node)"
                   class="font-medium px-2.5 py-0.5 text-xs"
                 >
-                  {{ statusLabel(node.status) }}
+                  {{ statusLabel(node) }}
                 </Badge>
               </TableCell>
               <TableCell class="py-4 text-center">
@@ -732,9 +733,10 @@
             </div>
             <Badge
               :variant="statusVariant(node.status)"
+              :title="statusTitle(node)"
               class="text-xs"
             >
-              {{ statusLabel(node.status) }}
+              {{ statusLabel(node) }}
             </Badge>
           </div>
           <div class="grid grid-cols-4 gap-2 text-xs text-muted-foreground mb-3">
@@ -1430,9 +1432,22 @@ async function refresh() {
 }
 
 function formatConnectivityTestParts(result: ProxyNodeTestResult): string[] {
-  const parts = [`延迟: ${result.latency_ms != null ? `${result.latency_ms}ms` : '暂无样本'}`]
+  const parts = [
+    `探测: ${formatConnectivityProbe(result.probe_url)}`,
+    `超时: ${result.timeout_secs}s`,
+    `延迟: ${result.latency_ms != null ? `${result.latency_ms}ms` : '暂无样本'}`,
+  ]
   if (result.exit_ip) parts.push(`出口IP: ${result.exit_ip}`)
   return parts
+}
+
+function formatConnectivityProbe(probeUrl: string) {
+  try {
+    const url = new URL(probeUrl)
+    return `${url.host}${url.pathname === '/' ? '' : url.pathname}`
+  } catch {
+    return probeUrl
+  }
 }
 
 async function handleTestUrl() {
@@ -1447,7 +1462,7 @@ async function handleTestUrl() {
     if (result.success) {
       success(`连通性测试通过，${formatConnectivityTestParts(result).join('，')}`)
     } else {
-      toastError(`连通性测试失败: ${result.error || '未知错误'}`)
+      toastError(`连通性测试失败（${formatConnectivityTestParts(result).join('，')}）: ${result.error || '未知错误'}`)
     }
   } catch (err: unknown) {
     toastError(parseApiError(err, '测试请求失败'))
@@ -1769,7 +1784,7 @@ async function handleTest(node: ProxyNode) {
     if (result.success) {
       success(`连通性测试通过，${formatConnectivityTestParts(result).join('，')}`)
     } else {
-      toastError(`连通性测试失败: ${result.error || '未知错误'}`)
+      toastError(`连通性测试失败（${formatConnectivityTestParts(result).join('，')}）: ${result.error || '未知错误'}`)
     }
   } catch (err: unknown) {
     toastError(parseApiError(err, '测试请求失败'))
@@ -1818,11 +1833,34 @@ function statusVariant(status: string) {
   }
 }
 
-function statusLabel(status: string) {
-  switch (status) {
+function statusLabel(node: ProxyNode) {
+  if (node.tunnel_mode && !node.is_manual) {
+    switch (node.status) {
+      case 'online': return '隧道在线'
+      case 'offline': return '隧道离线'
+      default: return node.status
+    }
+  }
+
+  switch (node.status) {
     case 'online': return '在线'
     case 'offline': return '离线'
-    default: return status
+    default: return node.status
+  }
+}
+
+function statusTitle(node: ProxyNode) {
+  if (node.tunnel_mode && !node.is_manual) {
+    if (node.status === 'online') {
+      return '表示 gateway 仍能看到 tunnel/heartbeat，不代表默认探测站点一定可达'
+    }
+    return 'gateway 当前未检测到可用 tunnel 连接'
+  }
+
+  switch (node.status) {
+    case 'online': return '节点当前被标记为在线'
+    case 'offline': return '节点当前被标记为离线'
+    default: return node.status
   }
 }
 

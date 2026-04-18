@@ -943,6 +943,11 @@ async fn gateway_tests_disconnected_tunnel_proxy_nodes_locally() {
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(payload["success"], false);
     assert_eq!(payload["error"], "tunnel 未连接");
+    assert_eq!(
+        payload["probe_url"],
+        "https://www.cloudflare.com/cdn-cgi/trace"
+    );
+    assert_eq!(payload["timeout_secs"], 10);
 
     gateway_handle.abort();
 }
@@ -1072,6 +1077,8 @@ async fn gateway_tests_connected_tunnel_proxy_nodes_with_active_probe() {
     assert_eq!(payload["success"], true);
     assert!(payload["latency_ms"].is_u64());
     assert_eq!(payload["exit_ip"], "203.0.113.10");
+    assert_eq!(payload["probe_url"], "https://probe.example/cdn-cgi/trace");
+    assert_eq!(payload["timeout_secs"], 10);
 
     gateway_handle.abort();
 }
