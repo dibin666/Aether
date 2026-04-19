@@ -1,11 +1,13 @@
+use super::super::kiro::{
+    admin_provider_oauth_kiro_refresh_base_url_override, fetch_admin_provider_oauth_kiro_email,
+    refresh_admin_provider_oauth_kiro_auth_config,
+};
 use super::session::{
     attach_admin_provider_oauth_device_poll_terminal_response, AdminProviderOAuthDevicePollPayload,
 };
-use crate::handlers::admin::provider::oauth::duplicates::find_duplicate_provider_oauth_key;
 use crate::handlers::admin::provider::oauth::errors::build_internal_control_error_response;
 use crate::handlers::admin::provider::oauth::provisioning::{
-    create_provider_oauth_catalog_key, provider_oauth_active_api_formats,
-    update_existing_provider_oauth_catalog_key,
+    provider_oauth_active_api_formats, provider_oauth_key_proxy_value,
 };
 use crate::handlers::admin::provider::oauth::runtime::{
     provider_oauth_runtime_endpoint_for_provider,
@@ -16,7 +18,7 @@ use crate::handlers::admin::provider::oauth::state::{
     current_unix_secs, decode_jwt_claims, json_non_empty_string, json_u64_value,
 };
 use crate::handlers::admin::provider::shared::paths::admin_provider_oauth_device_poll_provider_id;
-use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
+use crate::handlers::admin::request::{AdminAppState, AdminKiroAuthConfig, AdminRequestContext};
 use crate::GatewayError;
 use axum::{
     body::{Body, Bytes},
@@ -231,26 +233,85 @@ pub(super) async fn handle_admin_provider_oauth_device_poll(
         }))
         .into_response());
     };
-    let expires_at = json_u64_value(token_result.get("expiresIn"))
+    let initial_expires_at = json_u64_value(token_result.get("expiresIn"))
         .map(|expires_in| current_unix_secs().saturating_add(expires_in))
         .unwrap_or_else(|| current_unix_secs().saturating_add(3600));
-    let email = decode_jwt_claims(&access_token)
+    let social_refresh_base_url =
+        admin_provider_oauth_kiro_refresh_base_url_override(state, "kiro_social_refresh");
+    let idc_refresh_base_url =
+        admin_provider_oauth_kiro_refresh_base_url_override(state, "kiro_idc_refresh");
+    let mut refreshed_auth_config = match refresh_admin_provider_oauth_kiro_auth_config(
+        state,
+        &AdminKiroAuthConfig {
+            auth_method: Some("idc".to_string()),
+            refresh_token: Some(refresh_token.clone()),
+            expires_at: Some(initial_expires_at),
+            profile_arn: None,
+            region: Some(session.region.clone()),
+            auth_region: Some(session.region.clone()),
+            api_region: None,
+            client_id: Some(session.client_id.clone()),
+            client_secret: Some(session.client_secret.clone()),
+            machine_id: None,
+            kiro_version: None,
+            system_version: None,
+            node_version: None,
+            access_token: Some(access_token.clone()),
+        },
+        request_proxy.clone(),
+        social_refresh_base_url.as_deref(),
+        idc_refresh_base_url.as_deref(),
+    )
+    .await
+    {
+        Ok(config) => config,
+        Err(detail) => {
+            return Ok(Json(json!({
+                "status": "error",
+                "error": format!("token 验证失败: {detail}"),
+                "replaced": false,
+            }))
+            .into_response());
+        }
+    };
+    if refreshed_auth_config.auth_method.is_none() {
+        refreshed_auth_config.auth_method = Some("idc".to_string());
+    }
+    let Some(access_token) = refreshed_auth_config
+        .access_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+    else {
+        return Ok(Json(json!({
+            "status": "error",
+            "error": "token 验证失败: accessToken 为空",
+            "replaced": false,
+        }))
+        .into_response());
+    };
+    let expires_at = refreshed_auth_config
+        .expires_at
+        .unwrap_or_else(|| current_unix_secs().saturating_add(3600));
+    let mut email = decode_jwt_claims(&access_token)
         .and_then(|claims| claims.get("email").cloned())
         .and_then(|value| value.as_str().map(ToOwned::to_owned));
+    if email.is_none() {
+        email = fetch_admin_provider_oauth_kiro_email(
+            state,
+            &refreshed_auth_config,
+            request_proxy.clone(),
+        )
+        .await;
+    }
 
-    let mut auth_config = serde_json::Map::new();
+    let mut auth_config = refreshed_auth_config
+        .to_json_value()
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
     auth_config.insert("provider_type".to_string(), json!("kiro"));
-    auth_config.insert("auth_method".to_string(), json!("idc"));
-    auth_config.insert("refresh_token".to_string(), json!(refresh_token.clone()));
-    auth_config.insert("client_id".to_string(), json!(session.client_id.clone()));
-    auth_config.insert(
-        "client_secret".to_string(),
-        json!(session.client_secret.clone()),
-    );
-    auth_config.insert("region".to_string(), json!(session.region.clone()));
-    auth_config.insert("auth_region".to_string(), json!(session.region.clone()));
-    auth_config.insert("access_token".to_string(), json!(access_token.clone()));
-    auth_config.insert("expires_at".to_string(), json!(expires_at));
     if let Some(email) = email.as_ref() {
         auth_config.insert("email".to_string(), json!(email));
     }
@@ -271,6 +332,7 @@ pub(super) async fn handle_admin_provider_oauth_device_poll(
     };
 
     let api_formats = provider_oauth_active_api_formats(&endpoints);
+    let key_proxy = provider_oauth_key_proxy_value(session.proxy_node_id.as_deref());
     let mut replaced = false;
     let persisted_key = if let Some(existing_key) = duplicate {
         replaced = true;
@@ -279,7 +341,7 @@ pub(super) async fn handle_admin_provider_oauth_device_poll(
                 &existing_key,
                 &access_token,
                 &auth_config,
-                None,
+                key_proxy.clone(),
                 Some(expires_at),
             )
             .await?
@@ -293,7 +355,10 @@ pub(super) async fn handle_admin_provider_oauth_device_poll(
             }
         }
     } else {
-        let key_name = build_kiro_device_key_name(email.as_deref(), Some(&refresh_token));
+        let key_name = build_kiro_device_key_name(
+            email.as_deref(),
+            refreshed_auth_config.refresh_token.as_deref(),
+        );
         match state
             .create_provider_oauth_catalog_key(
                 &provider_id,
@@ -301,7 +366,7 @@ pub(super) async fn handle_admin_provider_oauth_device_poll(
                 &access_token,
                 &auth_config,
                 &api_formats,
-                None,
+                key_proxy,
                 Some(expires_at),
             )
             .await?

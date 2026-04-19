@@ -23,6 +23,7 @@ mod complete;
 mod device;
 mod helpers;
 mod import;
+mod kiro;
 mod refresh;
 mod start;
 mod tasks;

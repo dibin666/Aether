@@ -100,6 +100,20 @@ fn sample_kiro_device_access_token(email: &str) -> String {
     format!("{header}.{payload}.sig")
 }
 
+fn sample_kiro_device_access_token_without_email() -> String {
+    use base64::Engine as _;
+
+    let header =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"none","typ":"JWT"}"#);
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+        json!({
+            "sub": "kiro-user-123",
+        })
+        .to_string(),
+    );
+    format!("{header}.{payload}.sig")
+}
+
 #[tokio::test]
 async fn gateway_handles_admin_provider_oauth_supported_types_locally_with_trusted_admin_principal()
 {
@@ -348,7 +362,8 @@ async fn gateway_handles_admin_provider_oauth_device_poll_locally_with_trusted_a
                 "error_msg": null,
             }),
         )
-        .with_provider_oauth_token_url_for_tests("kiro_device_poll", format!("{token_url}/token"));
+        .with_provider_oauth_token_url_for_tests("kiro_device_poll", format!("{token_url}/token"))
+        .with_provider_oauth_token_url_for_tests("kiro_idc_refresh", token_url.to_string());
     let gateway = build_router_with_state(state.clone());
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
@@ -374,7 +389,7 @@ async fn gateway_handles_admin_provider_oauth_device_poll_locally_with_trusted_a
     assert_eq!(payload["email"], "kiro@example.com");
     assert_eq!(payload["replaced"], false);
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
-    assert_eq!(*token_hits.lock().expect("mutex should lock"), 1);
+    assert_eq!(*token_hits.lock().expect("mutex should lock"), 2);
 
     let stored = state
         .load_provider_oauth_device_session_for_tests("device_auth_session:session-123")
@@ -398,7 +413,10 @@ async fn gateway_handles_admin_provider_oauth_device_poll_locally_with_trusted_a
         .next()
         .expect("persisted key should exist");
     assert_eq!(persisted.auth_type, "oauth");
-    assert_eq!(persisted.proxy, None);
+    assert_eq!(
+        persisted.proxy,
+        Some(json!({"node_id": "proxy-node-kiro", "enabled": true}))
+    );
     let decrypted_api_key =
         decrypt_python_fernet_ciphertext(DEVELOPMENT_ENCRYPTION_KEY, &persisted.encrypted_api_key)
             .expect("api key should decrypt");
@@ -422,6 +440,238 @@ async fn gateway_handles_admin_provider_oauth_device_poll_locally_with_trusted_a
     assert_eq!(auth_config["region"], "us-east-1");
 
     gateway_handle.abort();
+    token_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_revalidates_kiro_device_poll_via_idc_refresh_and_backfills_email() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().fallback(any(move |_request: Request| {
+        let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+        async move {
+            *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+            (StatusCode::OK, Body::from("unexpected upstream hit"))
+        }
+    }));
+
+    let token_requests = Arc::new(Mutex::new(Vec::<String>::new()));
+    let token_requests_clone = Arc::clone(&token_requests);
+    let initial_access_token = sample_kiro_device_access_token_without_email();
+    let refreshed_access_token = sample_kiro_device_access_token_without_email();
+    let expected_refreshed_access_token = refreshed_access_token.clone();
+    let token_server = Router::new().route(
+        "/token",
+        post(move |request: Request| {
+            let token_requests_inner = Arc::clone(&token_requests_clone);
+            let initial_access_token_inner = initial_access_token.clone();
+            let refreshed_access_token_inner = refreshed_access_token.clone();
+            async move {
+                let raw_body = String::from_utf8(
+                    to_bytes(request.into_body(), usize::MAX)
+                        .await
+                        .expect("body should read")
+                        .to_vec(),
+                )
+                .expect("body should be utf8");
+                token_requests_inner
+                    .lock()
+                    .expect("mutex should lock")
+                    .push(raw_body.clone());
+                if raw_body.contains("urn:ietf:params:oauth:grant-type:device_code") {
+                    return Json(json!({
+                        "accessToken": initial_access_token_inner,
+                        "refreshToken": "kiro-device-refresh-token-initial",
+                        "expiresIn": 1800,
+                    }))
+                    .into_response();
+                }
+                if raw_body.contains("\"grantType\":\"refresh_token\"") {
+                    return Json(json!({
+                        "accessToken": refreshed_access_token_inner,
+                        "refreshToken": "kiro-device-refresh-token-rotated",
+                        "expiresIn": 2400,
+                    }))
+                    .into_response();
+                }
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": "unexpected_request",
+                        "body": raw_body,
+                    })),
+                )
+                    .into_response()
+            }
+        }),
+    );
+
+    let usage_hits = Arc::new(Mutex::new(0usize));
+    let usage_hits_clone = Arc::clone(&usage_hits);
+    let usage_server = Router::new().route(
+        "/getUsageLimits",
+        get(move |_request: Request| {
+            let usage_hits_inner = Arc::clone(&usage_hits_clone);
+            async move {
+                *usage_hits_inner.lock().expect("mutex should lock") += 1;
+                Json(json!({
+                    "subscriptionInfo": {
+                        "subscriptionTitle": "KIRO PRO+"
+                    },
+                    "usageBreakdownList": [{
+                        "currentUsageWithPrecision": 5.0,
+                        "usageLimitWithPrecision": 20.0,
+                        "nextDateReset": 1_900_000_000u64
+                    }],
+                    "desktopUserInfo": {
+                        "email": "kiro-usage@example.com"
+                    }
+                }))
+            }
+        }),
+    );
+
+    let mut provider = sample_provider("provider-kiro", "kiro", 10);
+    provider.provider_type = "kiro".to_string();
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![],
+        vec![],
+    ));
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let (token_url, token_handle) = start_server(token_server).await;
+    let (usage_url, usage_handle) = start_server(usage_server).await;
+    let state = AppState::new()
+        .expect("gateway should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_provider_catalog_repository_for_tests(
+                provider_catalog_repository.clone(),
+            )
+            .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+        )
+        .with_provider_oauth_device_session_entry_for_tests(
+            "session-refresh-email",
+            json!({
+                "provider_id": "provider-kiro",
+                "region": "us-east-1",
+                "client_id": "kiro-device-client",
+                "client_secret": "kiro-device-secret",
+                "device_code": "device-code-123",
+                "interval": 5,
+                "expires_at_unix_secs": 4_102_444_800u64,
+                "status": "pending",
+                "proxy_node_id": "proxy-node-kiro",
+                "created_at_unix_ms": 1_711_000_000u64,
+                "key_id": null,
+                "email": null,
+                "replaced": false,
+                "error_msg": null,
+            }),
+        )
+        .with_provider_oauth_token_url_for_tests("kiro_device_poll", format!("{token_url}/token"))
+        .with_provider_oauth_token_url_for_tests("kiro_idc_refresh", token_url.to_string())
+        .with_provider_oauth_token_url_for_tests(
+            "kiro_device_email",
+            format!("{usage_url}/getUsageLimits"),
+        );
+    let gateway = build_router_with_state(state.clone());
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/api/admin/provider-oauth/providers/provider-kiro/device-poll"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "session_id": "session-refresh-email"
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(status, StatusCode::OK, "payload={payload}");
+    assert_eq!(payload["status"], "authorized");
+    assert_eq!(payload["email"], "kiro-usage@example.com");
+    assert_eq!(payload["replaced"], false);
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+    assert_eq!(*usage_hits.lock().expect("mutex should lock"), 1);
+    {
+        let requests = token_requests.lock().expect("mutex should lock");
+        assert_eq!(requests.len(), 2);
+        assert!(
+            requests
+                .iter()
+                .any(|body| body.contains("urn:ietf:params:oauth:grant-type:device_code")),
+            "requests={requests:?}"
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|body| body.contains("\"grantType\":\"refresh_token\"")),
+            "requests={requests:?}"
+        );
+    }
+
+    let stored = state
+        .load_provider_oauth_device_session_for_tests("device_auth_session:session-refresh-email")
+        .expect("device session should persist");
+    let stored: serde_json::Value =
+        serde_json::from_str(&stored).expect("device session json should parse");
+    assert_eq!(stored["status"], "authorized");
+    assert_eq!(stored["email"], "kiro-usage@example.com");
+    assert_eq!(stored["replaced"], false);
+    let key_id = stored["key_id"]
+        .as_str()
+        .expect("key_id should be stored")
+        .to_string();
+    assert_eq!(payload["key_id"], key_id);
+
+    let persisted = provider_catalog_repository
+        .list_keys_by_ids(std::slice::from_ref(&key_id))
+        .await
+        .expect("keys should load")
+        .into_iter()
+        .next()
+        .expect("persisted key should exist");
+    assert_eq!(persisted.auth_type, "oauth");
+    assert_eq!(
+        persisted.proxy,
+        Some(json!({"node_id": "proxy-node-kiro", "enabled": true}))
+    );
+    let decrypted_api_key =
+        decrypt_python_fernet_ciphertext(DEVELOPMENT_ENCRYPTION_KEY, &persisted.encrypted_api_key)
+            .expect("api key should decrypt");
+    assert_eq!(decrypted_api_key, expected_refreshed_access_token);
+    let decrypted_auth_config = decrypt_python_fernet_ciphertext(
+        DEVELOPMENT_ENCRYPTION_KEY,
+        persisted
+            .encrypted_auth_config
+            .as_deref()
+            .expect("auth config should exist"),
+    )
+    .expect("auth config should decrypt");
+    let auth_config: serde_json::Value =
+        serde_json::from_str(&decrypted_auth_config).expect("auth config should parse");
+    assert_eq!(auth_config["provider_type"], "kiro");
+    assert_eq!(auth_config["auth_method"], "idc");
+    assert_eq!(
+        auth_config["refresh_token"],
+        "kiro-device-refresh-token-rotated"
+    );
+    assert_eq!(auth_config["email"], "kiro-usage@example.com");
+    assert_eq!(auth_config["client_id"], "kiro-device-client");
+    assert_eq!(auth_config["client_secret"], "kiro-device-secret");
+    assert_eq!(auth_config["region"], "us-east-1");
+
+    gateway_handle.abort();
+    usage_handle.abort();
     token_handle.abort();
     upstream_handle.abort();
 }
@@ -480,7 +730,8 @@ async fn local_admin_provider_oauth_device_poll_attaches_audit_only_when_transit
                 "error_msg": null,
             }),
         )
-        .with_provider_oauth_token_url_for_tests("kiro_device_poll", format!("{token_url}/token"));
+        .with_provider_oauth_token_url_for_tests("kiro_device_poll", format!("{token_url}/token"))
+        .with_provider_oauth_token_url_for_tests("kiro_idc_refresh", token_url.to_string());
 
     let terminal_response = local_admin_provider_oauth_response(
         &terminal_state,
