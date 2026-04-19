@@ -299,33 +299,3 @@ export async function cleanupBannedPoolKeys(
   )
   return response.data
 }
-
-// ---------------------------------------------------------------------------
-// Quota preheat
-// ---------------------------------------------------------------------------
-
-export interface QuotaPreheatKeyResult {
-  key_id: string
-  key_name: string
-  status: 'success' | 'warning' | 'error' | 'skipped'
-  message: string
-}
-
-export interface QuotaPreheatResponse {
-  total: number
-  success: number
-  failed: number
-  skipped: number
-  details: QuotaPreheatKeyResult[]
-}
-
-export async function preheatPoolQuota(
-  providerId: string,
-): Promise<QuotaPreheatResponse> {
-  const response = await client.post<QuotaPreheatResponse>(
-    `/api/admin/pool/${providerId}/keys/quota-preheat`,
-    undefined,
-    { timeout: POOL_BATCH_ACTION_TIMEOUT_MS },
-  )
-  return response.data
-}

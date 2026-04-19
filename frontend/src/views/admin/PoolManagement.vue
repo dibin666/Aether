@@ -73,20 +73,6 @@
                 <Users class="w-3.5 h-3.5" />
               </Button>
               <Button
-                v-if="selectedProviderId && isPreheatableProvider"
-                variant="ghost"
-                size="icon"
-                class="h-8 w-8"
-                :disabled="preheatLoading"
-                title="配额预热"
-                @click="handlePreheat"
-              >
-                <Flame
-                  class="w-3.5 h-3.5"
-                  :class="preheatLoading ? 'animate-pulse text-orange-500' : ''"
-                />
-              </Button>
-              <Button
                 v-if="selectedProviderId"
                 variant="ghost"
                 size="icon"
@@ -294,20 +280,6 @@
               @click="showAccountBatchDialog = true"
             >
               <Users class="w-3.5 h-3.5" />
-            </Button>
-            <Button
-              v-if="selectedProviderId && isPreheatableProvider"
-              variant="ghost"
-              size="icon"
-              class="h-8 w-8"
-              :disabled="preheatLoading"
-              title="配额预热：对满配额账号发送最短对话启动冷却计时"
-              @click="handlePreheat"
-            >
-              <Flame
-                class="w-3.5 h-3.5"
-                :class="preheatLoading ? 'animate-pulse text-orange-500' : ''"
-              />
             </Button>
             <Button
               v-if="selectedProviderId"
@@ -1185,7 +1157,6 @@ import {
   Trash2,
   Users,
   Settings2,
-  Flame,
 } from 'lucide-vue-next'
 
 import {
@@ -1221,7 +1192,6 @@ import {
   getPoolSchedulingPresets,
   listPoolKeys,
   clearPoolCooldown,
-  preheatPoolQuota,
 } from '@/api/endpoints/pool'
 import {
   revealEndpointKey,
@@ -1446,9 +1416,6 @@ const selectedProviderType = computed(() => {
   const fromOverview = selectedProviderOverview.value?.provider_type
   return String(fromOverview || '').trim().toLowerCase()
 })
-
-const PREHEATABLE_TYPES = new Set(['codex', 'claude_code', 'kiro', 'antigravity'])
-const isPreheatableProvider = computed(() => PREHEATABLE_TYPES.has(selectedProviderType.value))
 
 const selectedProviderStatusText = computed(() => {
   if (!selectedProviderId.value) return ''
@@ -2190,7 +2157,6 @@ const providerProxyMobilePopoverOpen = ref(false)
 const providerProxyDesktopPopoverOpen = ref(false)
 const savingProviderProxy = ref(false)
 const togglingProviderStatus = ref(false)
-const preheatLoading = ref(false)
 
 function openSchedulingDialog() {
   showSchedulingDialog.value = true
@@ -2314,46 +2280,6 @@ async function toggleSelectedProviderStatus(): Promise<void> {
 
 async function handleAccountBatchChanged(): Promise<void> {
   await Promise.all([loadKeys(), loadOverview()])
-}
-
-async function handlePreheat(): Promise<void> {
-  if (preheatLoading.value) return
-  const providerId = selectedProviderId.value
-  if (!providerId) return
-
-  const confirmed = await confirm({
-    title: '配额预热',
-    message: '对所有满配额账号发送一次最短对话请求，使其配额窗口计时开始。这将消耗极少量 token (每账号约1 token)。是否继续？',
-    confirmText: '开始预热',
-  })
-  if (!confirmed) return
-
-  preheatLoading.value = true
-  try {
-    const result = await preheatPoolQuota(providerId)
-    if (result.total === 0 && result.skipped === 0) {
-      showWarning('没有需要预热的满配额账号')
-    } else if (result.total === 0 && result.skipped > 0) {
-      showWarning(`没有满配额账号可预热，已跳过 ${result.skipped} 个账号`)
-    } else {
-      const parts: string[] = []
-      if (result.success > 0) parts.push(`成功 ${result.success}`)
-      if (result.failed > 0) parts.push(`失败 ${result.failed}`)
-      if (result.skipped > 0) parts.push(`跳过 ${result.skipped}`)
-      const summary = parts.join('，')
-      if (result.failed > 0) {
-        showWarning(`预热完成：${summary}`)
-      } else {
-        success(`预热完成：${summary}`)
-      }
-    }
-    // 预热后刷新列表以显示最新状态
-    await Promise.all([loadKeys(), loadOverview()])
-  } catch (err) {
-    showError(parseApiError(err, '配额预热失败'))
-  } finally {
-    preheatLoading.value = false
-  }
 }
 
 async function handleAccountDialogSaved() {

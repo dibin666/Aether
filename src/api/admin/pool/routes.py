@@ -78,7 +78,6 @@ from .schemas import (
     PoolSchedulingReason,
     PresetDimensionMetaResponse,
     PresetModeMetaResponse,
-    QuotaPreheatResponse,
 )
 
 router = APIRouter(prefix="/api/admin/pool", tags=["pool-management"])
@@ -530,17 +529,6 @@ async def cleanup_banned_keys(
 ) -> BatchActionResponse:
     """Delete known hard-blocked abnormal accounts for the provider."""
     adapter = AdminCleanupBannedKeysAdapter(provider_id=provider_id)
-    return await pipeline.run(adapter=adapter, http_request=request, db=db, mode=adapter.mode)
-
-
-@router.post("/{provider_id}/keys/quota-preheat", response_model=QuotaPreheatResponse)
-async def quota_preheat_keys(
-    provider_id: str,
-    request: Request,
-    db: Session = Depends(get_db),
-) -> QuotaPreheatResponse:
-    """Preheat full-quota keys by sending minimal chat requests."""
-    adapter = AdminQuotaPreheatAdapter(provider_id=provider_id)
     return await pipeline.run(adapter=adapter, http_request=request, db=db, mode=adapter.mode)
 
 
@@ -1747,41 +1735,4 @@ class AdminCleanupBannedKeysAdapter(AdminApiAdapter):
         return BatchActionResponse(
             affected=len(banned_key_ids),
             message=f"已清理 {len(banned_key_ids)} 个异常账号",
-        )
-
-
-@dataclass
-class AdminQuotaPreheatAdapter(AdminApiAdapter):
-    provider_id: str = ""
-
-    async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
-        from src.services.provider_keys.quota_preheat import preheat_full_quota_keys
-
-        db = context.db
-        result = await preheat_full_quota_keys(db, self.provider_id)
-
-        admin_name = context.user.username if context.user else "admin"
-        logger.info(
-            "Pool quota preheat by {}: provider={}, total={}, success={}, failed={}, skipped={}",
-            admin_name,
-            self.provider_id[:8],
-            result.get("total", 0),
-            result.get("success", 0),
-            result.get("failed", 0),
-            result.get("skipped", 0),
-        )
-
-        from .schemas import QuotaPreheatKeyResult
-
-        details = [
-            QuotaPreheatKeyResult(**item)
-            for item in result.get("details", [])
-        ]
-
-        return QuotaPreheatResponse(
-            total=result.get("total", 0),
-            success=result.get("success", 0),
-            failed=result.get("failed", 0),
-            skipped=result.get("skipped", 0),
-            details=details,
         )
