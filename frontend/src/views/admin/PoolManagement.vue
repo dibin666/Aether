@@ -303,11 +303,14 @@
       </div>
 
       <div
-        v-if="selectedProviderId && showAccountQuotaColumn"
+        v-if="selectedProviderId"
         class="border-b border-border/50 px-4 py-4 sm:px-6"
       >
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:max-w-xl">
-          <div class="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:max-w-4xl xl:grid-cols-3">
+          <div
+            v-if="showAccountQuotaColumn"
+            class="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-3"
+          >
             <div class="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">
               有配额账号
             </div>
@@ -315,7 +318,10 @@
               {{ formatStatInteger(selectedProviderQuotaAvailableCount) }}
             </div>
           </div>
-          <div class="rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-3">
+          <div
+            v-if="showAccountQuotaColumn"
+            class="rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-3"
+          >
             <div class="text-[11px] text-amber-700/80 dark:text-amber-300/80">
               无配额账号
             </div>
@@ -323,9 +329,17 @@
               {{ formatStatInteger(selectedProviderQuotaExhaustedCount) }}
             </div>
           </div>
+          <div class="rounded-xl border border-sky-500/20 bg-sky-500/[0.05] p-3">
+            <div class="text-[11px] text-sky-700/80 dark:text-sky-300/80">
+              今日消耗账号
+            </div>
+            <div class="mt-1 text-2xl font-semibold tracking-tight text-foreground">
+              {{ selectedProviderTodayConsumedAccountsLabel }}
+            </div>
+          </div>
         </div>
         <p
-          v-if="selectedProviderQuotaUnknownCount > 0"
+          v-if="showAccountQuotaColumn && selectedProviderQuotaUnknownCount > 0"
           class="mt-2 text-[11px] text-muted-foreground"
         >
           另有 {{ formatStatInteger(selectedProviderQuotaUnknownCount) }} 个账号暂未识别配额状态
@@ -1185,6 +1199,8 @@ import { useToast } from '@/composables/useToast'
 import { useClipboard } from '@/composables/useClipboard'
 import { useCountdownTimer, getCodexResetCountdown } from '@/composables/useCountdownTimer'
 import { useConfirm } from '@/composables/useConfirm'
+import { analyticsApi } from '@/api/analytics'
+import { buildTodayTimeRangeParams } from '@/composables/useAnalyticsFilters'
 import { useRouteQuery } from '@/composables/useRouteQuery'
 import { parseApiError } from '@/utils/errorParser'
 import {
@@ -1453,6 +1469,14 @@ const selectedProviderQuotaUnknownCount = computed(() => (
   selectedProviderOverview.value?.quota_unknown_keys ?? 0
 ))
 
+const selectedProviderTodayConsumedAccounts = ref<number | null>(null)
+const selectedProviderTodayConsumedAccountsLabel = computed(() => (
+  selectedProviderTodayConsumedAccounts.value === null
+    ? '--'
+    : formatStatInteger(selectedProviderTodayConsumedAccounts.value)
+))
+let selectedProviderTodayConsumedRequestId = 0
+
 const desktopColumnWidths = computed(() => {
   if (showAccountQuotaColumn.value) {
     return {
@@ -1473,6 +1497,29 @@ const desktopColumnWidths = computed(() => {
     actions: '20%',
   }
 })
+
+async function loadSelectedProviderTodayConsumedAccounts(providerName: string | null): Promise<void> {
+  const requestId = ++selectedProviderTodayConsumedRequestId
+  if (!providerName) {
+    selectedProviderTodayConsumedAccounts.value = null
+    return
+  }
+
+  try {
+    const response = await analyticsApi.getOverview({
+      scope: { kind: 'global' },
+      time_range: buildTodayTimeRangeParams(),
+      filters: {
+        provider_names: [providerName],
+      },
+    })
+    if (requestId !== selectedProviderTodayConsumedRequestId) return
+    selectedProviderTodayConsumedAccounts.value = response.summary.provider_accounts_used_count ?? 0
+  } catch {
+    if (requestId !== selectedProviderTodayConsumedRequestId) return
+    selectedProviderTodayConsumedAccounts.value = null
+  }
+}
 
 async function selectProvider(id: string, options: { preserveSearch?: boolean } = {}) {
   const requestId = ++selectProviderRequestId
@@ -1575,6 +1622,14 @@ watch(
 watch(selectedProviderId, (value) => {
   patchQuery({ providerId: value || undefined })
 })
+
+watch(
+  () => selectedProviderOverview.value?.provider_name ?? null,
+  (providerName) => {
+    void loadSelectedProviderTodayConsumedAccounts(providerName)
+  },
+  { immediate: true },
+)
 
 interface QuotaProgressItem {
   label: string

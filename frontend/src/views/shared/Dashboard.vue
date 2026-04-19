@@ -1091,6 +1091,22 @@ watch(
   { deep: true },
 )
 
+watch(
+  isAdmin,
+  (next, prev) => {
+    if (next === prev) return
+    if (!next) {
+      userFilter.value = []
+      userOptions.value = []
+    }
+    void (async () => {
+      await filterOptionsLoader.execute()
+      await loader.execute()
+      await heatmapLoader.execute()
+    })()
+  },
+)
+
 onMounted(() => {
   checkScreenSize()
   window.addEventListener('resize', handleWindowResize)
