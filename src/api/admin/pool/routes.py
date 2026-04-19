@@ -36,6 +36,7 @@ from src.services.provider.fingerprint import generate_fingerprint
 from src.services.provider.pool import redis_ops as pool_redis
 from src.services.provider.pool.account_state import (
     resolve_pool_account_state,
+    resolve_quota_status_snapshot,
 )
 from src.services.provider.pool.config import parse_pool_config
 from src.services.provider.pool.dimensions import get_preset_dimension_metas
@@ -627,6 +628,7 @@ class AdminPoolOverviewAdapter(AdminApiAdapter):
             pool_provider_ids.append(str(p.id))
 
         key_stats_by_provider: dict[str, dict[str, int]] = {}
+        quota_counts_by_provider: dict[str, dict[str, int]] = {}
         if pool_provider_ids:
             key_rows = (
                 db.query(
@@ -648,6 +650,23 @@ class AdminPoolOverviewAdapter(AdminApiAdapter):
                     "active": int(active or 0),
                 }
 
+            provider_type_by_id = {
+                str(p.id): str(getattr(p, "provider_type", "custom") or "custom")
+                for p in enabled_providers
+            }
+            quota_rows = (
+                db.query(
+                    ProviderAPIKey.provider_id,
+                    ProviderAPIKey.upstream_metadata,
+                )
+                .filter(ProviderAPIKey.provider_id.in_(pool_provider_ids))
+                .all()
+            )
+            quota_counts_by_provider = _build_quota_counts_by_provider(
+                quota_rows,
+                provider_type_by_id,
+            )
+
         # Redis 冷却状态按 Provider 统计，避免先拉取全量 key_id 再逐个检查。
         cooldown_count_by_provider: dict[str, int] = {}
         cooldown_targets = [
@@ -664,6 +683,10 @@ class AdminPoolOverviewAdapter(AdminApiAdapter):
         for p in enabled_providers:
             pid = str(p.id)
             key_stats = key_stats_by_provider.get(pid, {"total": 0, "active": 0})
+            quota_counts = quota_counts_by_provider.get(
+                pid,
+                {"available": 0, "exhausted": 0, "unknown": 0},
+            )
 
             items.append(
                 PoolOverviewItem(
@@ -673,6 +696,9 @@ class AdminPoolOverviewAdapter(AdminApiAdapter):
                     total_keys=key_stats["total"],
                     active_keys=key_stats["active"],
                     cooldown_count=cooldown_count_by_provider.get(pid, 0),
+                    quota_available_keys=quota_counts["available"],
+                    quota_exhausted_keys=quota_counts["exhausted"],
+                    quota_unknown_keys=quota_counts["unknown"],
                     pool_enabled=True,
                 )
             )
@@ -716,6 +742,38 @@ _PROVIDER_OVERVIEW_LOAD_ONLY_ATTRS: tuple[Any, ...] = (
     cast(Any, Provider.provider_priority),
     cast(Any, Provider.config),
 )
+
+
+def _build_quota_counts_by_provider(
+    key_rows: list[tuple[Any, Any]],
+    provider_type_by_id: dict[str, str],
+) -> dict[str, dict[str, int]]:
+    counts_by_provider: dict[str, dict[str, int]] = {}
+
+    for provider_id, upstream_metadata in key_rows:
+        pid = str(provider_id or "")
+        if not pid:
+            continue
+        snapshot = resolve_quota_status_snapshot(
+            provider_type=provider_type_by_id.get(pid, ""),
+            upstream_metadata=upstream_metadata,
+        )
+        counts = counts_by_provider.setdefault(
+            pid,
+            {
+                "available": 0,
+                "exhausted": 0,
+                "unknown": 0,
+            },
+        )
+        if snapshot.exhausted:
+            counts["exhausted"] += 1
+        elif snapshot.code == "ok":
+            counts["available"] += 1
+        else:
+            counts["unknown"] += 1
+
+    return counts_by_provider
 
 _POOL_KEY_LOAD_ONLY_ATTRS: tuple[Any, ...] = (
     cast(Any, ProviderAPIKey.id),

@@ -71,6 +71,9 @@ export interface PoolOverviewItem {
   total_keys: number
   active_keys: number
   cooldown_count: number
+  quota_available_keys: number
+  quota_exhausted_keys: number
+  quota_unknown_keys: number
   pool_enabled: boolean
 }
 

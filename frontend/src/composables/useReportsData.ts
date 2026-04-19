@@ -9,7 +9,12 @@ import {
 } from '@/api/analytics'
 import type { DateRangeParams, PeriodValue } from '@/features/usage/types'
 import { getDateRangeFromPeriod } from '@/features/usage/composables'
-import { createLoader, createRequestGuard, buildTimeRangeParams } from '@/composables/useAnalyticsFilters'
+import {
+  createLoader,
+  createRequestGuard,
+  buildTimeRangeParams,
+  buildTodayTimeRangeParams,
+} from '@/composables/useAnalyticsFilters'
 import { fillMissingTimeseriesBuckets } from '@/utils/analyticsTimeseries'
 import { getAnalyticsRangeDaysInclusive, resolveAnalyticsAutoGranularity, type ResolvedAnalyticsGranularity } from '@/utils/analyticsGranularity'
 import { type DailyUsageBreakdown } from '@/utils/usageBreakdown'
@@ -127,6 +132,7 @@ export function useReportsData(options: UseReportsDataOptions = {}) {
   const apiKeyOptions = ref<AnalyticsFilterOption[]>([])
 
   const summary = ref<AnalyticsSummary | null>(null)
+  const todayProviderAccountsUsed = ref<number | null>(null)
   const bucketStats = ref<ReportBucketStat[]>([])
   const bucketBreakdowns = ref<Record<string, DailyUsageBreakdown>>({})
   const modelSummary = ref<ModelSummary[]>([])
@@ -170,7 +176,7 @@ export function useReportsData(options: UseReportsDataOptions = {}) {
         },
       }
 
-      const [overviewData, timeseriesData, modelBreakdownData] = await Promise.all([
+      const [overviewData, timeseriesData, modelBreakdownData, todayOverviewData] = await Promise.all([
         analyticsApi.getOverview(basePayload),
         analyticsApi.getTimeseries({
           ...basePayload,
@@ -181,6 +187,10 @@ export function useReportsData(options: UseReportsDataOptions = {}) {
           dimension: 'model',
           limit: 50,
         }),
+        analyticsApi.getOverview({
+          ...basePayload,
+          time_range: buildTodayTimeRangeParams(timeRange.value),
+        }).catch(() => null),
       ])
 
       if (guard.isStale(requestId)) return
@@ -188,6 +198,7 @@ export function useReportsData(options: UseReportsDataOptions = {}) {
       const filledBuckets = fillMissingTimeseriesBuckets(timeseriesData.buckets, timeseriesParams)
 
       summary.value = overviewData.summary
+      todayProviderAccountsUsed.value = todayOverviewData?.summary.provider_accounts_used_count ?? null
       bucketStats.value = filledBuckets.map(mapBucketToReportStat)
       bucketBreakdowns.value = Object.fromEntries(
         filledBuckets.map(bucket => {
@@ -200,6 +211,7 @@ export function useReportsData(options: UseReportsDataOptions = {}) {
     } catch {
       if (guard.isStale(requestId)) return
       loadError.value = true
+      todayProviderAccountsUsed.value = null
     } finally {
       if (guard.isCurrent(requestId)) {
         loading.value = false
@@ -276,6 +288,7 @@ export function useReportsData(options: UseReportsDataOptions = {}) {
     apiKeyFilter,
     apiKeyOptions,
     summary,
+    todayProviderAccountsUsed,
     bucketStats,
     bucketBreakdowns,
     modelSummary,

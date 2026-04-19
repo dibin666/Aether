@@ -49,6 +49,7 @@ export interface AnalyticsSummary {
   requests_success: number
   requests_error: number
   requests_stream: number
+  provider_accounts_used_count: number
   success_rate: number
   input_tokens: number
   output_tokens: number

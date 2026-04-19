@@ -641,6 +641,7 @@ class AnalyticsQueryService:
             func.coalesce(func.sum(success_case), 0).label("requests_success"),
             func.coalesce(func.sum(error_case), 0).label("requests_error"),
             func.coalesce(func.sum(stream_case), 0).label("requests_stream"),
+            func.count(func.distinct(Usage.provider_api_key_id)).label("provider_accounts_used_count"),
             func.coalesce(func.sum(Usage.input_tokens), 0).label("input_tokens"),
             func.coalesce(func.sum(Usage.output_tokens), 0).label("output_tokens"),
             func.coalesce(func.sum(Usage.input_output_total_tokens), 0).label("input_output_total_tokens"),
@@ -1746,6 +1747,9 @@ class AnalyticsQueryService:
             "requests_success": _to_int(getattr(row, "requests_success", 0)),
             "requests_error": _to_int(getattr(row, "requests_error", 0)),
             "requests_stream": _to_int(getattr(row, "requests_stream", 0)),
+            "provider_accounts_used_count": _to_int(
+                getattr(row, "provider_accounts_used_count", 0)
+            ),
             "input_tokens": _to_int(getattr(row, "input_tokens", 0)),
             "output_tokens": _to_int(getattr(row, "output_tokens", 0)),
             "input_output_total_tokens": _to_int(getattr(row, "input_output_total_tokens", 0)),

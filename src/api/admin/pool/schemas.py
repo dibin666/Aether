@@ -22,6 +22,9 @@ class PoolOverviewItem(BaseModel):
     total_keys: int = 0
     active_keys: int = 0
     cooldown_count: int = 0
+    quota_available_keys: int = 0
+    quota_exhausted_keys: int = 0
+    quota_unknown_keys: int = 0
     pool_enabled: bool = False
 
     model_config = ConfigDict(from_attributes=True)

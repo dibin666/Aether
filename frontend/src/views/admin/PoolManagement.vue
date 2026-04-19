@@ -330,6 +330,36 @@
         </div>
       </div>
 
+      <div
+        v-if="selectedProviderId && showAccountQuotaColumn"
+        class="border-b border-border/50 px-4 py-4 sm:px-6"
+      >
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:max-w-xl">
+          <div class="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-3">
+            <div class="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">
+              有配额账号
+            </div>
+            <div class="mt-1 text-2xl font-semibold tracking-tight text-foreground">
+              {{ formatStatInteger(selectedProviderQuotaAvailableCount) }}
+            </div>
+          </div>
+          <div class="rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-3">
+            <div class="text-[11px] text-amber-700/80 dark:text-amber-300/80">
+              无配额账号
+            </div>
+            <div class="mt-1 text-2xl font-semibold tracking-tight text-foreground">
+              {{ formatStatInteger(selectedProviderQuotaExhaustedCount) }}
+            </div>
+          </div>
+        </div>
+        <p
+          v-if="selectedProviderQuotaUnknownCount > 0"
+          class="mt-2 text-[11px] text-muted-foreground"
+        >
+          另有 {{ formatStatInteger(selectedProviderQuotaUnknownCount) }} 个账号暂未识别配额状态
+        </p>
+      </div>
+
       <!-- Loading (initial) -->
       <div
         v-if="overviewLoading"
@@ -1443,6 +1473,18 @@ const showAccountQuotaColumn = computed(() => {
     || selectedProviderType.value === 'kiro'
     || selectedProviderType.value === 'antigravity'
 })
+
+const selectedProviderQuotaAvailableCount = computed(() => (
+  selectedProviderOverview.value?.quota_available_keys ?? 0
+))
+
+const selectedProviderQuotaExhaustedCount = computed(() => (
+  selectedProviderOverview.value?.quota_exhausted_keys ?? 0
+))
+
+const selectedProviderQuotaUnknownCount = computed(() => (
+  selectedProviderOverview.value?.quota_unknown_keys ?? 0
+))
 
 const desktopColumnWidths = computed(() => {
   if (showAccountQuotaColumn.value) {

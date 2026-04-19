@@ -61,8 +61,11 @@
     </div>
 
     <section class="flex flex-col gap-4 lg:flex-row lg:items-start">
-      <div ref="activityPanelRef" class="min-w-0 space-y-3 lg:flex-1">
-        <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+      <div
+        ref="activityPanelRef"
+        class="min-w-0 space-y-3 lg:flex-1"
+      >
+        <div :class="isAdmin ? 'grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7' : 'grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6'">
           <Card class="p-3">
             <div class="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
               总请求
@@ -109,6 +112,17 @@
             </div>
             <div class="mt-1.5 text-xl font-semibold">
               {{ analyticsUnavailable ? '不可用' : overview && overview.avg_first_byte_time_ms > 0 ? formatResponseTimeMs(overview.avg_first_byte_time_ms) : '--' }}
+            </div>
+          </Card>
+          <Card
+            v-if="isAdmin"
+            class="p-3"
+          >
+            <div class="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              今日消耗账号
+            </div>
+            <div class="mt-1.5 text-xl font-semibold">
+              {{ analyticsUnavailable ? '不可用' : todayProviderAccountsUsedLabel }}
             </div>
           </Card>
         </div>
@@ -414,7 +428,12 @@ import { analyticsApi, type AnalyticsBreakdownMetric, type AnalyticsBreakdownRow
 import { announcementApi, type Announcement } from '@/api/announcements'
 import { getDateRangeFromPeriod } from '@/features/usage/composables'
 import type { DateRangeParams } from '@/features/usage/types'
-import { buildTimeRangeParams, createLoader, createRequestGuard } from '@/composables/useAnalyticsFilters'
+import {
+  buildTimeRangeParams,
+  buildTodayTimeRangeParams,
+  createLoader,
+  createRequestGuard,
+} from '@/composables/useAnalyticsFilters'
 import { Badge, Card, Tabs, TabsList, TabsTrigger, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui'
 import { TimeRangePicker } from '@/components/common'
 import LineChart from '@/components/charts/LineChart.vue'
@@ -443,6 +462,7 @@ const userOptions = ref<AnalyticsFilterOption[]>([])
 const apiKeyOptions = ref<AnalyticsFilterOption[]>([])
 
 const overviewData = ref<AnalyticsOverviewResponse | null>(null)
+const todayProviderAccountsUsed = ref<number | null>(null)
 const trendBuckets = ref<AnalyticsTimeseriesBucket[]>([])
 const primaryBreakdownRows = ref<AnalyticsBreakdownRow[]>([])
 const secondaryBreakdownRows = ref<AnalyticsBreakdownRow[]>([])
@@ -534,6 +554,11 @@ const CHART_COLORS = [
 ]
 
 const overview = computed(() => overviewData.value?.summary ?? null)
+const todayProviderAccountsUsedLabel = computed(() => (
+  todayProviderAccountsUsed.value === null
+    ? '--'
+    : todayProviderAccountsUsed.value.toLocaleString()
+))
 const analyticsUnavailable = computed(() => analyticsError.value && !hasLoadedAnalytics.value)
 const analyticsEmptyStateText = computed(() => (
   analyticsUnavailable.value
@@ -923,8 +948,14 @@ async function loadAnalytics() {
           limit: 8,
         })
       : Promise.resolve(null)
+    const todayOverviewPromise = isAdmin.value
+      ? analyticsApi.getOverview({
+          ...basePayload,
+          time_range: buildTodayTimeRangeParams(timeRange.value),
+        }).catch(() => null)
+      : Promise.resolve(null)
 
-    const [overviewResponse, timeseriesResponse, primaryBreakdownResponse, secondaryBreakdownResponse, tertiaryBreakdownResponse] = await Promise.all([
+    const [overviewResponse, timeseriesResponse, primaryBreakdownResponse, secondaryBreakdownResponse, tertiaryBreakdownResponse, todayOverviewResponse] = await Promise.all([
       analyticsApi.getOverview(basePayload),
       analyticsApi.getTimeseries({
         ...basePayload,
@@ -933,6 +964,7 @@ async function loadAnalytics() {
       primaryBreakdownPromise,
       secondaryBreakdownPromise,
       tertiaryBreakdownPromise,
+      todayOverviewPromise,
     ])
 
     if (guard.isStale(requestId)) return
@@ -941,6 +973,7 @@ async function loadAnalytics() {
       trendPayload,
     )
     overviewData.value = overviewResponse
+    todayProviderAccountsUsed.value = todayOverviewResponse?.summary.provider_accounts_used_count ?? null
     trendBuckets.value = filledTrendBuckets
     primaryBreakdownRows.value = primaryBreakdownResponse.rows
     secondaryBreakdownRows.value = secondaryBreakdownResponse.rows
@@ -949,6 +982,7 @@ async function loadAnalytics() {
   } catch {
     if (guard.isStale(requestId)) return
     analyticsError.value = true
+    todayProviderAccountsUsed.value = null
   } finally {
     if (guard.isCurrent(requestId)) {
       loading.value = false

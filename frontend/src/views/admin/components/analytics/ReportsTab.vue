@@ -283,7 +283,7 @@
         v-if="bucketStats.length > 0"
         class="border-t border-border bg-muted/30 px-4 py-3 text-xs backdrop-blur-sm"
       >
-        <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
+        <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-7">
           <div class="text-center">
             <div class="text-[10px] text-muted-foreground">
               总请求
@@ -330,6 +330,14 @@
             </div>
             <div class="font-semibold text-foreground">
               {{ averageBucketTtfb }}
+            </div>
+          </div>
+          <div class="text-center">
+            <div class="text-[10px] text-muted-foreground">
+              今日消耗账号
+            </div>
+            <div class="font-semibold text-foreground">
+              {{ todayProviderAccountsUsedLabel }}
             </div>
           </div>
         </div>
@@ -592,7 +600,7 @@
         v-if="modelSummary.length > 0"
         class="border-t border-border bg-muted/30 px-4 py-3 text-xs backdrop-blur-sm"
       >
-        <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-7">
+        <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-8">
           <div class="text-center">
             <div class="text-[10px] text-muted-foreground">
               模型数
@@ -649,6 +657,14 @@
               {{ averageBucketTtfb }}
             </div>
           </div>
+          <div class="text-center">
+            <div class="text-[10px] text-muted-foreground">
+              今日消耗账号
+            </div>
+            <div class="font-semibold text-foreground">
+              {{ todayProviderAccountsUsedLabel }}
+            </div>
+          </div>
         </div>
       </div>
       <Pagination
@@ -701,6 +717,7 @@ const filters = useInjectedAnalyticsFilters()
 const {
   timeRange,
   summary,
+  todayProviderAccountsUsed,
   bucketStats,
   bucketBreakdowns,
   modelSummary,
@@ -754,6 +771,12 @@ const totalStats = computed(() => {
     cost: bucketStats.value.reduce((sum, item) => sum + item.cost, 0),
   }
 })
+
+const todayProviderAccountsUsedLabel = computed(() => (
+  todayProviderAccountsUsed.value === null
+    ? '-'
+    : todayProviderAccountsUsed.value.toLocaleString()
+))
 
 const averageBucketResponseTime = computed(() => {
   const averageMs = summary.value?.avg_response_time_ms ?? 0

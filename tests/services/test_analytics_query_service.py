@@ -209,6 +209,46 @@ def test_resolve_current_api_key_options_prefers_current_key_names() -> None:
     assert db.calls == 1
 
 
+def test_serialize_summary_row_includes_provider_accounts_used_count() -> None:
+    row = SimpleNamespace(
+        requests_total=6,
+        requests_success=5,
+        requests_error=1,
+        requests_stream=2,
+        provider_accounts_used_count=3,
+        input_tokens=120,
+        output_tokens=80,
+        input_output_total_tokens=200,
+        cache_creation_input_tokens=10,
+        cache_creation_input_tokens_5m=5,
+        cache_creation_input_tokens_1h=0,
+        cache_read_input_tokens=20,
+        input_context_tokens=100,
+        total_tokens=230,
+        input_cost_usd=1.2,
+        output_cost_usd=0.8,
+        cache_creation_cost_usd=0.1,
+        cache_creation_cost_usd_5m=0.05,
+        cache_creation_cost_usd_1h=0.0,
+        cache_read_cost_usd=0.02,
+        cache_cost_usd=0.12,
+        request_cost_usd=0.01,
+        total_cost_usd=2.13,
+        actual_total_cost_usd=1.95,
+        actual_cache_cost_usd=0.1,
+        avg_response_time_ms=234.56,
+        avg_first_byte_time_ms=123.45,
+        format_conversion_count=1,
+        models_used_count=2,
+    )
+
+    result = AnalyticsQueryService._serialize_summary_row(row)
+
+    assert result["provider_accounts_used_count"] == 3
+    assert result["requests_total"] == 6
+    assert result["success_rate"] == 83.33
+
+
 def test_breakdown_formats_model_dimension_labels(monkeypatch) -> None:
     rows = [
         SimpleNamespace(
@@ -621,6 +661,7 @@ def test_records_prefers_current_user_and_key_names_over_usage_snapshots(monkeyp
             [("69e5702f-5b12-4f3c-83f4-4f3e97deec76", "admin")],
             [("d49f7f3b-d379-44f8-9a5d-6425c251960e", "DEBUG-KEY")],
             [("provider-key-1", "Pool-Key-A")],
+            [],
         ]
     )
 

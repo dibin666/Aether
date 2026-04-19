@@ -19,6 +19,18 @@ export function buildTimeRangeParams(timeRange: DateRangeParams) {
   }
 }
 
+export function buildTodayTimeRangeParams(
+  reference?: Pick<DateRangeParams, 'timezone' | 'tz_offset_minutes'> | null,
+) {
+  const todayRange = getDateRangeFromPeriod('today')
+  return buildTimeRangeParams({
+    ...todayRange,
+    granularity: 'day',
+    timezone: reference?.timezone ?? todayRange.timezone,
+    tz_offset_minutes: reference?.tz_offset_minutes ?? todayRange.tz_offset_minutes,
+  })
+}
+
 /**
  * 通用防抖加载器工厂
  * 封装 120ms debounce + in-flight promise 去重 + requestId 过期检查
