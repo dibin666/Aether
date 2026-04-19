@@ -9,6 +9,7 @@
 .plans
 .trellis
 .github
+.agents/
 
 ### Python ###
 *.db

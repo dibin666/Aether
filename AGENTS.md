@@ -1,4 +1,22 @@
-# 每个小任务和分任务结束后都要必须要使用 **ask_user tool** 来询问用户接下来要做什么
-# 尽可能多使用和调用mcp
-# 每次输出长文档（实现文档和计划文档等）和大量代码输出，必须进行截断然后进行分段输出和写入文件，单次输出禁止超过100行
-# 除了探索代码和网络搜索之外禁止使用 Opus 4.6 即用户设置的model之外的模型
+<!-- TRELLIS:START -->
+# Trellis Instructions
+
+These instructions are for AI assistants working in this project.
+
+Use the `/trellis:start` command when starting a new session to:
+- Initialize your developer identity
+- Understand current project context
+- Read relevant guidelines
+
+Use `@/.trellis/` to learn:
+- Development workflow (`workflow.md`)
+- Project structure guidelines (`spec/`)
+- Developer workspace (`workspace/`)
+
+If you're using Codex, project-scoped helpers may also live in:
+- `.agents/skills/` for reusable Trellis skills
+- `.codex/agents/` for optional custom subagents
+
+Keep this managed block so 'trellis update' can refresh the instructions.
+
+<!-- TRELLIS:END -->
