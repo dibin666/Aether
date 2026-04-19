@@ -308,7 +308,7 @@
       >
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:max-w-4xl xl:grid-cols-3">
           <div
-            v-if="showAccountQuotaColumn"
+            v-if="showSelectedProviderQuotaSummary"
             class="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.05] p-3"
           >
             <div class="text-[11px] text-emerald-700/80 dark:text-emerald-300/80">
@@ -319,7 +319,7 @@
             </div>
           </div>
           <div
-            v-if="showAccountQuotaColumn"
+            v-if="showSelectedProviderQuotaSummary"
             class="rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-3"
           >
             <div class="text-[11px] text-amber-700/80 dark:text-amber-300/80">
@@ -339,7 +339,7 @@
           </div>
         </div>
         <p
-          v-if="showAccountQuotaColumn && selectedProviderQuotaUnknownCount > 0"
+          v-if="showSelectedProviderQuotaSummary && selectedProviderQuotaUnknownCount > 0"
           class="mt-2 text-[11px] text-muted-foreground"
         >
           另有 {{ formatStatInteger(selectedProviderQuotaUnknownCount) }} 个账号暂未识别配额状态
@@ -1455,6 +1455,11 @@ const showAccountQuotaColumn = computed(() => {
     || selectedProviderType.value === 'gemini_cli'
     || selectedProviderType.value === 'kiro'
     || selectedProviderType.value === 'antigravity'
+})
+
+const showSelectedProviderQuotaSummary = computed(() => {
+  if (showAccountQuotaColumn.value) return true
+  return Boolean(selectedProviderId.value && selectedProviderOverview.value && !selectedProviderType.value)
 })
 
 const selectedProviderQuotaAvailableCount = computed(() => (
