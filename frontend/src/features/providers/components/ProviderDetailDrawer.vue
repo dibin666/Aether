@@ -308,7 +308,7 @@
                             <Badge
                               v-if="getOAuthOrgBadge(key)"
                               variant="secondary"
-                              class="text-[10px] px-1.5 py-0 shrink-0"
+                              class="text-[9px] px-1 py-0 h-4 shrink-0"
                               :title="getOAuthOrgBadge(key)?.title"
                             >
                               {{ getOAuthOrgBadge(key)?.label }}
@@ -1164,6 +1164,10 @@ import type {
 } from '@/api/endpoints/types'
 import { formatApiFormat } from '@/api/endpoints/types/api-format'
 import { isOAuthAccountProviderType, isKeyManagedProviderType } from '../utils/providerTypeUtils'
+import {
+  isProviderQuotaAutoRefreshCoolingDown,
+  markProviderQuotaAutoRefreshAttempt,
+} from '../utils/quotaAutoRefreshCooldown'
 import { getOAuthOrgBadge } from '@/utils/oauthIdentity'
 import { getOAuthRefreshFeedback } from '@/utils/oauthRefreshFeedback'
 import {
@@ -1724,7 +1728,7 @@ async function handleRefreshOAuth(key: EndpointAPIKey) {
     }
     // Antigravity：token 刷新后可能完成了账号激活，触发配额获取
     // （不 emit('refresh')，避免触发全局 provider 余额刷新）
-    void autoRefreshQuotaInBackground()
+    void autoRefreshQuotaInBackground({ ignoreCooldown: true })
   } catch (err: unknown) {
     showError(parseApiError(err, 'Token 刷新失败'), '错误')
   } finally {
@@ -2246,8 +2250,9 @@ function applyQuotaResults(
 }
 
 // 通用的自动刷新配额函数（支持 Codex、Antigravity 和 Kiro）
-async function autoRefreshQuotaInBackground() {
-  if (!props.providerId) return
+async function autoRefreshQuotaInBackground(options: { ignoreCooldown?: boolean } = {}) {
+  const providerId = props.providerId
+  if (!providerId) return
   if (refreshingQuota.value) return
 
   const providerType = provider.value?.provider_type
@@ -2263,6 +2268,7 @@ async function autoRefreshQuotaInBackground() {
     shouldRefresh = shouldAutoRefreshKiroQuota()
   }
   if (!shouldRefresh) return
+  if (!options.ignoreCooldown && isProviderQuotaAutoRefreshCoolingDown(providerId)) return
 
   let hadCachedQuota = false
   if (providerType === 'codex') {
@@ -2274,8 +2280,9 @@ async function autoRefreshQuotaInBackground() {
   }
 
   refreshingQuota.value = true
+  markProviderQuotaAutoRefreshAttempt(providerId)
   try {
-    const result = await refreshProviderQuota(props.providerId)
+    const result = await refreshProviderQuota(providerId)
     const applied = applyQuotaResults(result.results)
     if (result.success <= 0 && applied === 0 && !hadCachedQuota && providerType === 'antigravity') {
       showError('没有获取到配额信息（请检查账号是否已授权、project_id 是否存在）', '提示')
@@ -2317,7 +2324,7 @@ async function handleKeyChanged() {
   await Promise.all([loadEndpoints(), loadMappingPreview()])
   emit('refresh')
   // 添加/修改 key 后自动获取 Antigravity 配额（新 key 的 upstream_metadata 为空）
-  void autoRefreshQuotaInBackground()
+  void autoRefreshQuotaInBackground({ ignoreCooldown: true })
 }
 
 // 切换密钥启用状态

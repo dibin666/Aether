@@ -15,7 +15,7 @@ describe('getOAuthOrgBadge', () => {
 
     expect(badge).toEqual({
       id: 'org-personal-1234',
-      label: 'org:org-pe...1234',
+      label: 'org:person...1234',
       title: 'name: Workspace Alpha | account_id: acct-demo-001 | account_user_id: user-1__acct-demo-001 | org_id: org-personal-1234 | org_title: Personal',
     })
   })

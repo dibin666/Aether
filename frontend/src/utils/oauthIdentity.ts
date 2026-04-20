@@ -22,6 +22,19 @@ function readStr(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim() : ''
 }
 
+function stripOAuthOrganizationPrefix(orgId: string): string {
+  return orgId.replace(/^org[-_:]+/i, '').trim()
+}
+
+function formatOAuthOrganizationBadge(orgId: string): string {
+  const compactOrgId = stripOAuthOrganizationPrefix(orgId)
+  const normalized = compactOrgId || orgId
+  if (normalized.length <= 10) {
+    return `org:${normalized}`
+  }
+  return `org:${normalized.slice(0, 6)}...${normalized.slice(-4)}`
+}
+
 function formatOAuthAccountBadge(accountId: string): string {
   return accountId.slice(0, 8)
 }
@@ -67,7 +80,7 @@ export function getOAuthOrgBadge(
 
   const badgeId = org?.id || accountId || accountUserId || ''
   const label = org?.id
-    ? `org:${formatOAuthIdentityShort(org.id, 6, 4)}`
+    ? formatOAuthOrganizationBadge(org.id)
     : accountId
       ? formatOAuthAccountBadge(accountId)
       : accountUserId
