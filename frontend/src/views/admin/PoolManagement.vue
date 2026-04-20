@@ -1154,7 +1154,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import {
   Search,
   Upload,
@@ -1285,7 +1285,15 @@ async function loadOverview() {
     )
 
     if (!selectedStillExists) {
-      if (enabledProviders.length > 0) {
+      // Prefer URL providerId if it exists in the enabled list.
+      const urlProviderId = getQueryValue('providerId')
+      const urlProviderExists = Boolean(
+        urlProviderId && enabledProviders.some(item => item.provider_id === urlProviderId),
+      )
+
+      if (urlProviderExists) {
+        void selectProvider(urlProviderId!)
+      } else if (enabledProviders.length > 0) {
         // Do not block overview loading on key list fetch; keys area has its own loader.
         void selectProvider(enabledProviders[0].provider_id)
       } else {
@@ -1295,6 +1303,10 @@ async function loadOverview() {
         closeProviderProxyPopovers()
         resetKeyPage()
       }
+    } else if (!keysLoading.value && keyPage.value.keys.length === 0 && keyPage.value.total === 0) {
+      // Safety net: provider is selected but keys were not loaded
+      // (e.g., previous loadKeys was discarded due to race condition).
+      void loadKeys()
     }
   } catch (err) {
     if (requestId !== overviewRequestId) return
@@ -1374,9 +1386,10 @@ async function loadSchedulingPresetMetas(): Promise<void> {
 }
 
 const selectedProviderOverview = computed<PoolOverviewItem | null>(() => {
+  const providers = poolProviders.value
   const selectedId = selectedProviderId.value
   if (!selectedId) return null
-  return poolProviders.value.find(item => item.provider_id === selectedId) || null
+  return providers.find(item => item.provider_id === selectedId) || null
 })
 
 const poolSchedulingLabel = computed(() => {
@@ -1544,11 +1557,15 @@ async function selectProvider(id: string, options: { preserveSearch?: boolean } 
     searchQuery.value = ''
   }
   statusFilter.value = 'all'
-  suppressFiltersWatch = false
   if (keysSearchDebounceTimer !== null) {
     clearTimeout(keysSearchDebounceTimer)
     keysSearchDebounceTimer = null
   }
+  // Defer unsuppressing until Vue flushes queued watcher callbacks,
+  // so the searchQuery / statusFilter watchers see the flag as true.
+  void nextTick(() => {
+    suppressFiltersWatch = false
+  })
   resetKeyPage(1, pageSize.value)
   const keysTask = loadKeys()
   // Provider summary is non-blocking for key list rendering.
