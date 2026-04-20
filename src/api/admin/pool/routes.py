@@ -18,9 +18,9 @@ from decimal import Decimal
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import case
+from sqlalchemy import and_, case
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, load_only
 
 from src.api.base.admin_adapter import AdminApiAdapter
@@ -30,6 +30,7 @@ from src.core.crypto import crypto_service
 from src.core.exceptions import NotFoundException
 from src.core.logger import logger
 from src.core.provider_oauth_utils import normalize_oauth_organizations
+from src.core.provider_types import ProviderType, normalize_provider_type
 from src.database import get_db
 from src.models.database import Provider, ProviderAPIKey, Usage
 from src.services.billing.precision import to_money_decimal
@@ -276,6 +277,81 @@ def _serialize_money(value: Any) -> str:
     return format(to_money_decimal(value), "f")
 
 
+def _normalize_unix_timestamp_seconds(value: Any) -> int | None:
+    parsed = _to_float(value)
+    if parsed is None or parsed <= 0:
+        return None
+    if parsed > 1_000_000_000_000:
+        parsed /= 1000
+    return int(parsed)
+
+
+def _resolve_codex_consumption_window_start_ts(codex_metadata: dict[str, Any]) -> int | None:
+    window_start_candidates: list[int] = []
+
+    for prefix in ("primary", "secondary"):
+        window_minutes = _to_float(codex_metadata.get(f"{prefix}_window_minutes"))
+        if window_minutes is None or window_minutes <= 0:
+            continue
+
+        window_seconds = int(window_minutes * 60)
+        reset_at = _normalize_unix_timestamp_seconds(codex_metadata.get(f"{prefix}_reset_at"))
+        if reset_at is not None:
+            window_start_candidates.append(max(reset_at - window_seconds, 0))
+            continue
+
+        reset_seconds = _to_float(codex_metadata.get(f"{prefix}_reset_seconds"))
+        updated_at = _normalize_unix_timestamp_seconds(codex_metadata.get("updated_at"))
+        if reset_seconds is None or reset_seconds < 0 or updated_at is None:
+            continue
+
+        window_end = updated_at + int(reset_seconds)
+        window_start_candidates.append(max(window_end - window_seconds, 0))
+
+    if not window_start_candidates:
+        return None
+    return max(window_start_candidates)
+
+
+def _resolve_pool_consumption_window_start_ts(
+    provider_type: str,
+    upstream_metadata: Any,
+) -> int | None:
+    if not isinstance(upstream_metadata, dict):
+        return None
+
+    normalized_provider_type = normalize_provider_type(provider_type)
+    if normalized_provider_type != ProviderType.CODEX.value:
+        return None
+
+    codex_metadata = upstream_metadata.get(ProviderType.CODEX.value)
+    if not isinstance(codex_metadata, dict):
+        return None
+    return _resolve_codex_consumption_window_start_ts(codex_metadata)
+
+
+def _resolve_pool_consumption_window_starts(
+    *,
+    keys: list[ProviderAPIKey],
+    provider_type: str,
+) -> dict[str, datetime]:
+    starts: dict[str, datetime] = {}
+    for key in keys:
+        key_id = str(getattr(key, "id", "") or "")
+        if not key_id:
+            continue
+
+        start_ts = _resolve_pool_consumption_window_start_ts(
+            provider_type,
+            getattr(key, "upstream_metadata", None),
+        )
+        if start_ts is None:
+            continue
+
+        starts[key_id] = datetime.fromtimestamp(start_ts, tz=timezone.utc)
+    return starts
+
+
 @dataclass(frozen=True)
 class _PoolConsumptionPeriodDef:
     key: str
@@ -361,6 +437,7 @@ def _load_pool_key_consumption_rows(
     provider_id: str,
     key_ids: list[str],
     time_range: TimeRangeParams | None,
+    usage_window_starts: dict[str, datetime] | None = None,
 ) -> dict[str, dict[str, Any]]:
     if not key_ids:
         return {}
@@ -382,12 +459,47 @@ def _load_pool_key_consumption_rows(
         Usage.provider_api_key_id.in_(key_ids),
     )
 
+    start_utc: datetime | None = None
+    end_utc: datetime | None = None
     if time_range is not None:
         start_utc, end_utc = time_range.to_utc_datetime_range()
-        query = query.filter(
-            Usage.created_at >= start_utc,
-            Usage.created_at < end_utc,
+        query = query.filter(Usage.created_at < end_utc)
+
+    key_filters: list[Any] = []
+    keys_without_window_start: list[str] = []
+
+    for key_id in key_ids:
+        window_start = usage_window_starts.get(key_id) if usage_window_starts else None
+        if window_start is None:
+            keys_without_window_start.append(key_id)
+            continue
+
+        effective_start = max(window_start, start_utc) if start_utc is not None else window_start
+        if end_utc is not None and effective_start >= end_utc:
+            continue
+
+        key_filters.append(
+            and_(
+                Usage.provider_api_key_id == key_id,
+                Usage.created_at >= effective_start,
+            )
         )
+
+    if keys_without_window_start:
+        if start_utc is not None:
+            key_filters.append(
+                and_(
+                    Usage.provider_api_key_id.in_(keys_without_window_start),
+                    Usage.created_at >= start_utc,
+                )
+            )
+        else:
+            key_filters.append(Usage.provider_api_key_id.in_(keys_without_window_start))
+
+    if not key_filters:
+        return {}
+
+    query = query.filter(or_(*key_filters))
 
     rows = query.group_by(Usage.provider_api_key_id).all()
 
@@ -1005,6 +1117,10 @@ class AdminPoolConsumptionStatsAdapter(AdminApiAdapter):
         )
 
         key_ids = [str(getattr(key, "id", "") or "") for key in keys if getattr(key, "id", None)]
+        usage_window_starts = _resolve_pool_consumption_window_starts(
+            keys=keys,
+            provider_type=provider_type,
+        )
         period_defs = _resolve_pool_consumption_period_defs(
             self.timezone_name,
             self.tz_offset_minutes,
@@ -1022,6 +1138,7 @@ class AdminPoolConsumptionStatsAdapter(AdminApiAdapter):
                 provider_id=provider_id,
                 key_ids=key_ids,
                 time_range=time_range,
+                usage_window_starts=usage_window_starts,
             )
             accounts = _build_pool_consumption_accounts(
                 keys=keys,

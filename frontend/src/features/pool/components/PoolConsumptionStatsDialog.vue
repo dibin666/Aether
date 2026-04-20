@@ -44,6 +44,9 @@
       >
         {{ formatPeriodRange(currentPeriod) }}
       </p>
+      <p class="text-[11px] text-muted-foreground/80">
+        仅统计账号当前额度窗口内的消耗；已跨额度重置窗口的历史消耗会自动剔除。
+      </p>
 
       <div
         v-if="loading"
@@ -315,6 +318,14 @@
         </div>
       </div>
     </div>
+    <template #footer>
+      <Button
+        variant="outline"
+        @click="closeDialog()"
+      >
+        关闭
+      </Button>
+    </template>
   </Dialog>
 </template>
 
@@ -363,7 +374,9 @@ let requestId = 0
 const periods = computed(() => stats.value?.periods ?? [])
 const providerLabel = computed(() => props.providerName || stats.value?.provider_name || '当前 Provider')
 const dialogTitle = computed(() => `${providerLabel.value} 账号消耗统计`)
-const dialogDescription = computed(() => '按当前浏览器时区汇总今天、近 3 天、近 7 天、近 30 天及全部消耗账号数据')
+const dialogDescription = computed(
+  () => '按当前浏览器时区汇总今天、近 3 天、近 7 天、近 30 天及全部消耗账号数据',
+)
 const currentPeriod = computed<PoolConsumptionPeriod | null>(() => {
   if (periods.value.length === 0) return null
   return periods.value.find(period => period.key === activePeriodKey.value) ?? periods.value[0] ?? null
@@ -422,6 +435,10 @@ async function loadStats(): Promise<void> {
       loading.value = false
     }
   }
+}
+
+function closeDialog(): void {
+  emit('update:modelValue', false)
 }
 
 function formatPeriodRange(period: PoolConsumptionPeriod): string {
