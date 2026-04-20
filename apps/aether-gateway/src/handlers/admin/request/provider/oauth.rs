@@ -578,12 +578,25 @@ async fn post_kiro_device_oidc_json(
     let status = response.status;
     let body_text = response.body_text;
     Ok(
-        serde_json::from_str::<serde_json::Value>(&body_text).unwrap_or_else(|_| {
-            json!({
+        match serde_json::from_str::<serde_json::Value>(&body_text) {
+            Ok(mut payload) => {
+                if !status.is_success() {
+                    if let Some(object) = payload.as_object_mut() {
+                        object.insert("_error".to_string(), json!(true));
+                    } else {
+                        payload = json!({
+                            "_error": true,
+                            "data": payload,
+                        });
+                    }
+                }
+                payload
+            }
+            Err(_) => json!({
                 "_error": !status.is_success(),
                 "error": body_text.trim(),
-            })
-        }),
+            }),
+        },
     )
 }
 

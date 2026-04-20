@@ -445,6 +445,86 @@ async fn gateway_handles_admin_provider_oauth_device_poll_locally_with_trusted_a
 }
 
 #[tokio::test]
+async fn gateway_keeps_admin_provider_oauth_device_poll_pending_for_authorization_pending_error() {
+    let token_server = Router::new().route(
+        "/token",
+        post(move |_request: Request| async move {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "authorization_pending",
+                    "error_description": "waiting for user confirmation",
+                })),
+            )
+        }),
+    );
+
+    let mut provider = sample_provider("provider-kiro", "kiro", 10);
+    provider.provider_type = "kiro".to_string();
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![],
+        vec![],
+    ));
+
+    let (token_url, token_handle) = start_server(token_server).await;
+    let state = AppState::new()
+        .expect("gateway should build")
+        .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
+            provider_catalog_repository,
+        ))
+        .with_provider_oauth_device_session_entry_for_tests(
+            "session-pending",
+            json!({
+                "provider_id": "provider-kiro",
+                "region": "us-east-1",
+                "client_id": "kiro-device-client",
+                "client_secret": "kiro-device-secret",
+                "device_code": "device-code-123",
+                "interval": 5,
+                "expires_at_unix_secs": 4_102_444_800u64,
+                "status": "pending",
+                "proxy_node_id": null,
+                "created_at_unix_ms": 1_711_000_000u64,
+                "key_id": null,
+                "email": null,
+                "replaced": false,
+                "error_msg": null,
+            }),
+        )
+        .with_provider_oauth_token_url_for_tests("kiro_device_poll", format!("{token_url}/token"));
+
+    let response = local_admin_provider_oauth_response(
+        &state,
+        http::Method::POST,
+        "/api/admin/provider-oauth/providers/provider-kiro/device-poll",
+        Some(json!({ "session_id": "session-pending" })),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.extensions().get::<AdminAuditEvent>().is_none(),
+        "pending state should not attach terminal audit"
+    );
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should read");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("json body should parse");
+    assert_eq!(payload["status"], "pending");
+    assert_eq!(payload["replaced"], false);
+
+    let stored = state
+        .load_provider_oauth_device_session_for_tests("device_auth_session:session-pending")
+        .expect("device session should persist");
+    let stored: serde_json::Value =
+        serde_json::from_str(&stored).expect("device session json should parse");
+    assert_eq!(stored["status"], "pending");
+    assert_eq!(stored["error_msg"], serde_json::Value::Null);
+
+    token_handle.abort();
+}
+
+#[tokio::test]
 async fn gateway_revalidates_kiro_device_poll_via_idc_refresh_and_backfills_email() {
     let upstream_hits = Arc::new(Mutex::new(0usize));
     let upstream_hits_clone = Arc::clone(&upstream_hits);

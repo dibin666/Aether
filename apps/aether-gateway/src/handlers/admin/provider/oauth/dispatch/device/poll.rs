@@ -217,7 +217,11 @@ pub(super) async fn handle_admin_provider_oauth_device_poll(
         .into_response());
     }
 
-    let Some(access_token) = json_non_empty_string(token_result.get("accessToken")) else {
+    let Some(access_token) = json_non_empty_string(
+        token_result
+            .get("accessToken")
+            .or_else(|| token_result.get("access_token")),
+    ) else {
         return Ok(Json(json!({
             "status": "error",
             "error": "token 响应缺少 accessToken 或 refreshToken",
@@ -225,7 +229,11 @@ pub(super) async fn handle_admin_provider_oauth_device_poll(
         }))
         .into_response());
     };
-    let Some(refresh_token) = json_non_empty_string(token_result.get("refreshToken")) else {
+    let Some(refresh_token) = json_non_empty_string(
+        token_result
+            .get("refreshToken")
+            .or_else(|| token_result.get("refresh_token")),
+    ) else {
         return Ok(Json(json!({
             "status": "error",
             "error": "token 响应缺少 accessToken 或 refreshToken",
@@ -233,9 +241,13 @@ pub(super) async fn handle_admin_provider_oauth_device_poll(
         }))
         .into_response());
     };
-    let initial_expires_at = json_u64_value(token_result.get("expiresIn"))
-        .map(|expires_in| current_unix_secs().saturating_add(expires_in))
-        .unwrap_or_else(|| current_unix_secs().saturating_add(3600));
+    let initial_expires_at = json_u64_value(
+        token_result
+            .get("expiresIn")
+            .or_else(|| token_result.get("expires_in")),
+    )
+    .map(|expires_in| current_unix_secs().saturating_add(expires_in))
+    .unwrap_or_else(|| current_unix_secs().saturating_add(3600));
     let social_refresh_base_url =
         admin_provider_oauth_kiro_refresh_base_url_override(state, "kiro_social_refresh");
     let idc_refresh_base_url =
