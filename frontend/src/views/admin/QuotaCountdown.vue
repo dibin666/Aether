@@ -41,6 +41,20 @@
         <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
 
+      <!-- Error -->
+      <div
+        v-else-if="loadError"
+        class="flex flex-col items-center justify-center py-20 text-destructive"
+      >
+        <p class="text-sm">{{ loadError }}</p>
+        <button
+          class="mt-3 text-xs text-primary underline hover:no-underline"
+          @click="refreshAll"
+        >
+          重试
+        </button>
+      </div>
+
       <!-- Empty -->
       <div
         v-else-if="!loading && providerGroups.length === 0"
@@ -289,10 +303,21 @@ function parseQuotaResetRemainingSeconds(detail: string | undefined): number | n
   const minuteMatch = text.match(/(\d+)分钟/)
   const secondMatch = text.match(/(\d+)秒/)
 
-  const days = dayMatch ? Number(dayMatch[1]) : 0
-  const hours = hourMatch ? Number(hourMatch[1]) : 0
-  const minutes = minuteMatch ? Number(minuteMatch[1]) : 0
-  const seconds = secondMatch ? Number(secondMatch[1]) : 0
+  let days = dayMatch ? Number(dayMatch[1]) : 0
+  let hours = hourMatch ? Number(hourMatch[1]) : 0
+  let minutes = minuteMatch ? Number(minuteMatch[1]) : 0
+  let seconds = secondMatch ? Number(secondMatch[1]) : 0
+
+  // Handle H:MM:SS or H:MM format (e.g. "3天2:51:46后重置")
+  if (!hourMatch && !minuteMatch && !secondMatch) {
+    const hmsMatch = text.match(/(\d+):(\d+)(?::(\d+))?/)
+    if (hmsMatch) {
+      hours = Number(hmsMatch[1])
+      minutes = Number(hmsMatch[2])
+      seconds = hmsMatch[3] != null ? Number(hmsMatch[3]) : 0
+    }
+  }
+
   const total = days * 86400 + hours * 3600 + minutes * 60 + seconds
 
   if (total <= 0) return 1
@@ -376,22 +401,32 @@ function getCountdownTextClass(qi: QuotaItem): string {
 // Data loading
 // ---------------------------------------------------------------------------
 
-const QUOTA_PROVIDER_TYPES = new Set(['codex', 'kiro', 'antigravity'])
+const QUOTA_PROVIDER_TYPES = new Set(['codex', 'kiro', 'antigravity', 'gemini_cli'])
+
+const loadError = ref<string | null>(null)
 
 async function loadAll() {
   loading.value = true
+  loadError.value = null
   try {
     const overview = await getPoolOverview()
-    const quotaProviders = overview.items.filter(
+    const allProviders = Array.isArray(overview?.items) ? overview.items : []
+    const quotaProviders = allProviders.filter(
       (p: PoolOverviewItem) => QUOTA_PROVIDER_TYPES.has(p.provider_type) && p.total_keys > 0
     )
+
+    if (quotaProviders.length === 0) {
+      providerGroups.value = []
+      return
+    }
 
     // Fetch all keys for each provider in parallel (page_size=500 to get as many as possible)
     const groups: ProviderGroup[] = []
     const results = await Promise.allSettled(
       quotaProviders.map(async (p) => {
         const resp = await listPoolKeys(p.provider_id, { page: 1, page_size: 500 })
-        return { provider: p, keys: resp.keys }
+        const keys = Array.isArray(resp?.keys) ? resp.keys : []
+        return { provider: p, keys }
       })
     )
 
@@ -425,6 +460,10 @@ async function loadAll() {
     }
 
     providerGroups.value = groups
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    loadError.value = `加载配额数据失败: ${msg}`
+    console.error('[QuotaCountdown] loadAll error:', err)
   } finally {
     loading.value = false
   }
