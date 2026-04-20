@@ -85,6 +85,7 @@ async def test_record_usage_updates_provider_key_totals(monkeypatch: Any) -> Non
         "model": "gpt-4o",
         "status": "completed",
         "total_tokens": 123,
+        "total_cost_usd": 1.25,
         "actual_total_cost_usd": 1.75,
     }
 
@@ -123,7 +124,7 @@ async def test_record_usage_updates_provider_key_totals(monkeypatch: Any) -> Non
     _, provider_key_id = helper.call_args.args
     assert provider_key_id == "provider-key-1"
     assert helper.call_args.kwargs["total_tokens"] == 123
-    assert float(helper.call_args.kwargs["total_cost"]) == 1.75
+    assert float(helper.call_args.kwargs["total_cost"]) == 1.25
 
 
 @pytest.mark.asyncio
@@ -136,6 +137,7 @@ async def test_record_usage_async_updates_provider_key_totals(monkeypatch: Any) 
         "model": "gpt-4o-mini",
         "status": "completed",
         "total_tokens": 77,
+        "total_cost_usd": 0.5,
         "actual_total_cost_usd": 0.75,
     }
 
@@ -174,7 +176,7 @@ async def test_record_usage_async_updates_provider_key_totals(monkeypatch: Any) 
     _, provider_key_id = helper.call_args.args
     assert provider_key_id == "provider-key-async"
     assert helper.call_args.kwargs["total_tokens"] == 77
-    assert helper.call_args.kwargs["total_cost"] == 0.75
+    assert helper.call_args.kwargs["total_cost"] == 0.5
 
 
 @pytest.mark.asyncio
@@ -188,6 +190,7 @@ async def test_record_usage_batch_aggregates_provider_key_totals(monkeypatch: An
         "model": "claude-sonnet",
         "status": "completed",
         "total_tokens": 321,
+        "total_cost_usd": 2.0,
         "actual_total_cost_usd": 2.5,
     }
     usage_params_2 = {
@@ -196,6 +199,7 @@ async def test_record_usage_batch_aggregates_provider_key_totals(monkeypatch: An
         "model": "claude-sonnet",
         "status": "completed",
         "total_tokens": 79,
+        "total_cost_usd": 0.5,
         "actual_total_cost_usd": 0.75,
     }
 
@@ -246,4 +250,4 @@ async def test_record_usage_batch_aggregates_provider_key_totals(monkeypatch: An
     _, provider_key_id = helper.call_args.args
     assert provider_key_id == "provider-key-batch"
     assert helper.call_args.kwargs["total_tokens"] == 400
-    assert helper.call_args.kwargs["total_cost"] == 3.25
+    assert helper.call_args.kwargs["total_cost"] == 2.5

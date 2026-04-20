@@ -30,7 +30,7 @@ from src.core.exceptions import NotFoundException
 from src.core.logger import logger
 from src.core.provider_oauth_utils import normalize_oauth_organizations
 from src.database import get_db
-from src.models.database import Provider, ProviderAPIKey
+from src.models.database import Provider, ProviderAPIKey, Usage
 from src.services.billing.precision import to_money_decimal
 from src.services.provider.fingerprint import generate_fingerprint
 from src.services.provider.pool import redis_ops as pool_redis
@@ -246,6 +246,26 @@ def _to_float(value: Any) -> float | None:
 
 def _serialize_money(value: Any) -> str:
     return format(to_money_decimal(value), "f")
+
+
+def _load_pool_key_total_costs(db: Session, key_ids: list[str]) -> dict[str, Any]:
+    if not key_ids:
+        return {}
+
+    rows = (
+        db.query(
+            Usage.provider_api_key_id,
+            func.coalesce(func.sum(Usage.total_cost_usd), 0),
+        )
+        .filter(Usage.provider_api_key_id.in_(key_ids))
+        .group_by(Usage.provider_api_key_id)
+        .all()
+    )
+    return {
+        str(provider_api_key_id): total_cost
+        for provider_api_key_id, total_cost in rows
+        if provider_api_key_id
+    }
 
 
 def _is_known_banned_key(key: ProviderAPIKey, provider_type: str) -> bool:
@@ -763,6 +783,7 @@ def _build_quota_counts_by_provider(
 
     return counts_by_provider
 
+
 _POOL_KEY_LOAD_ONLY_ATTRS: tuple[Any, ...] = (
     cast(Any, ProviderAPIKey.id),
     cast(Any, ProviderAPIKey.provider_id),
@@ -1069,6 +1090,7 @@ def _apply_pool_key_order(query: Any) -> Any:
 
 async def _serialize_pool_key_details(
     *,
+    db: Session,
     keys: list[ProviderAPIKey],
     pid: str,
     provider_type: str,
@@ -1118,6 +1140,7 @@ async def _serialize_pool_key_details(
             {},
         )
 
+    cumulative_costs = _load_pool_key_total_costs(db, key_ids)
     cooldowns_map = cast(dict[str, str | None], cooldowns)
 
     key_details: list[PoolKeyDetail] = []
@@ -1208,7 +1231,9 @@ async def _serialize_pool_key_details(
         )
         key_request_count = int(getattr(k, "request_count", 0) or 0)
         key_total_tokens = int(getattr(k, "total_tokens", 0) or 0)
-        key_total_cost_usd = _serialize_money(getattr(k, "total_cost_usd", 0.0))
+        key_total_cost_usd = _serialize_money(
+            cumulative_costs.get(kid, getattr(k, "total_cost_usd", 0.0))
+        )
         key_last_used_at = getattr(k, "last_used_at", None)
         oauth_invalid_at = status_snapshot.oauth.invalid_at
 
@@ -1308,6 +1333,7 @@ async def _resolve_filtered_pool_key_details(
     keys = ordered.limit(max_scan).all() if max_scan > 0 else ordered.all()
     keys_query_ms = (time.perf_counter() - keys_query_started_at) * 1000.0
     key_details, redis_state_ms, serialize_ms = await _serialize_pool_key_details(
+        db=cast(Session, query.session),
         keys=keys,
         pid=pid,
         provider_type=provider_type,
@@ -1401,6 +1427,7 @@ class AdminListPoolKeysAdapter(AdminApiAdapter):
                 extra_redis_ms,
                 serialize_ms,
             ) = await _serialize_pool_key_details(
+                db=db,
                 keys=keys,
                 pid=pid,
                 provider_type=provider_type,

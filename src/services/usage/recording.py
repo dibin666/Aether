@@ -128,8 +128,8 @@ def _increment_provider_api_key_totals(
     )
 
 
-def _get_actual_total_cost_usd(usage_params: dict[str, Any]) -> float:
-    return float(to_money_decimal(usage_params.get("actual_total_cost_usd") or 0.0))
+def _get_total_cost_usd(usage_params: dict[str, Any]) -> float:
+    return float(to_money_decimal(usage_params.get("total_cost_usd") or 0.0))
 
 
 class UsageRecordingMixin(UsageBillingIntegrationMixin):
@@ -377,7 +377,7 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
                     db,
                     provider_api_key_id,
                     total_tokens=int(usage_params.get("total_tokens") or 0),
-                    total_cost=_get_actual_total_cost_usd(usage_params),
+                    total_cost=_get_total_cost_usd(usage_params),
                 )
 
             dispatch_codex_quota_sync_from_response_headers(
@@ -558,7 +558,7 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
                     db,
                     provider_api_key_id,
                     total_tokens=int(usage_params.get("total_tokens") or 0),
-                    total_cost=_get_actual_total_cost_usd(usage_params),
+                    total_cost=_get_total_cost_usd(usage_params),
                 )
 
                 # 更新 GlobalModel 使用计数
@@ -791,7 +791,7 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
                 db,
                 provider_api_key_id,
                 total_tokens=int(usage_params.get("total_tokens") or 0),
-                total_cost=_get_actual_total_cost_usd(usage_params),
+                total_cost=_get_total_cost_usd(usage_params),
             )
 
             # 更新 GlobalModel 使用计数
@@ -931,7 +931,7 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
             lambda: {"requests": 0, "cost": 0.0, "is_standalone": False}
         )
         provider_key_stats: dict[str, dict[str, Any]] = defaultdict(
-            lambda: {"tokens": 0, "actual_cost": 0.0}
+            lambda: {"tokens": 0, "total_cost": 0.0}
         )
         model_counts: dict[str, int] = defaultdict(int)  # model -> count
         user_model_counts: dict[tuple[str, str], int] = defaultdict(
@@ -1105,8 +1105,8 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
                             usage_params.get("total_tokens") or 0
                         )
                         provider_key_stats[provider_api_key_id][
-                            "actual_cost"
-                        ] += _get_actual_total_cost_usd(usage_params)
+                            "total_cost"
+                        ] += _get_total_cost_usd(usage_params)
 
                     manual_nid = _extract_manual_proxy_node_id(record.get("metadata"))
                     if manual_nid:
@@ -1178,8 +1178,8 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
                             usage_params.get("total_tokens") or 0
                         )
                         provider_key_stats[provider_api_key_id][
-                            "actual_cost"
-                        ] += _get_actual_total_cost_usd(usage_params)
+                            "total_cost"
+                        ] += _get_total_cost_usd(usage_params)
 
                     manual_nid = _extract_manual_proxy_node_id(record.get("metadata"))
                     if manual_nid:
@@ -1274,7 +1274,7 @@ class UsageRecordingMixin(UsageBillingIntegrationMixin):
                 db,
                 provider_key_id,
                 total_tokens=int(stats["tokens"]),
-                total_cost=float(stats["actual_cost"]),
+                total_cost=float(stats["total_cost"]),
             )
 
         # 批量更新手动代理节点请求计数
