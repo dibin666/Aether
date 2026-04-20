@@ -11,7 +11,7 @@ vi.mock('@/utils/cache', () => ({
 }))
 
 import client from '@/api/client'
-import { listAllPoolKeys } from '@/api/endpoints/pool'
+import { getPoolConsumptionStats, listAllPoolKeys } from '@/api/endpoints/pool'
 
 function buildKeys(count: number, prefix: string) {
   return Array.from({ length: count }, (_, index) => ({
@@ -95,6 +95,33 @@ describe('pool api', () => {
       '/api/admin/pool/provider-2/keys',
       expect.objectContaining({
         params: expect.objectContaining({ page: 1, page_size: 200, status: 'active' }),
+      }),
+    )
+  })
+
+  it('loads pool consumption stats with timezone params', async () => {
+    const getMock = vi.mocked(client.get)
+    getMock.mockResolvedValueOnce({
+      data: {
+        provider_id: 'provider-3',
+        provider_name: 'Codex',
+        periods: [],
+      },
+    })
+
+    const result = await getPoolConsumptionStats('provider-3', {
+      timezone: 'Asia/Shanghai',
+      tz_offset_minutes: 480,
+    })
+
+    expect(result.provider_id).toBe('provider-3')
+    expect(getMock).toHaveBeenCalledWith(
+      '/api/admin/pool/provider-3/consumption-stats',
+      expect.objectContaining({
+        params: {
+          timezone: 'Asia/Shanghai',
+          tz_offset_minutes: 480,
+        },
       }),
     )
   })

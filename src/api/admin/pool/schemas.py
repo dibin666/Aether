@@ -171,6 +171,68 @@ class PoolKeysPageResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Pool consumption stats
+# ---------------------------------------------------------------------------
+
+
+class PoolConsumptionAccount(BaseModel):
+    """Aggregated consumption stats for a single provider account."""
+
+    key_id: str
+    key_name: str
+    auth_type: str = "api_key"
+    is_active: bool = True
+    account_quota: str | None = None
+    request_count: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_tokens: int = 0
+    total_tokens: int = 0
+    total_cost_usd: str = "0.00000000"
+
+
+class PoolConsumptionSummary(BaseModel):
+    """Summary stats for one time range."""
+
+    account_count: int = 0
+    request_count: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_tokens: int = 0
+    total_tokens: int = 0
+    total_cost_usd: str = "0.00000000"
+    avg_request_count: int = 0
+    avg_input_tokens: int = 0
+    avg_output_tokens: int = 0
+    avg_cache_tokens: int = 0
+    avg_total_tokens: int = 0
+    avg_total_cost_usd: str = "0.00000000"
+    max_account: PoolConsumptionAccount | None = None
+    min_account: PoolConsumptionAccount | None = None
+
+
+class PoolConsumptionPeriod(BaseModel):
+    """Consumption report for a fixed period."""
+
+    key: str
+    label: str
+    start_date: str | None = None
+    end_date: str | None = None
+    summary: PoolConsumptionSummary = Field(default_factory=PoolConsumptionSummary)
+    accounts: list[PoolConsumptionAccount] = Field(default_factory=list)
+
+
+class PoolConsumptionStatsResponse(BaseModel):
+    """Consumption reports for all supported periods."""
+
+    provider_id: str
+    provider_name: str
+    periods: list[PoolConsumptionPeriod] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Batch import
 # ---------------------------------------------------------------------------
 

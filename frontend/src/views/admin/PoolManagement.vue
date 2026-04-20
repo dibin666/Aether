@@ -336,6 +336,15 @@
             <div class="mt-1 text-2xl font-semibold tracking-tight text-foreground">
               {{ selectedProviderTodayConsumedAccountsLabel }}
             </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              class="mt-3 h-7 px-2 text-xs"
+              :disabled="!selectedProviderId"
+              @click="showConsumptionStatsDialog = true"
+            >
+              查看详情
+            </Button>
           </div>
         </div>
         <p
@@ -1150,6 +1159,12 @@
       @close="closeKeyPermissionsDialog"
       @saved="handleDialogSaved"
     />
+    <PoolConsumptionStatsDialog
+      v-if="selectedProviderId"
+      v-model="showConsumptionStatsDialog"
+      :provider-id="selectedProviderId"
+      :provider-name="selectedProviderData?.name || selectedProviderOverview?.provider_name || ''"
+    />
   </div>
 </template>
 
@@ -1235,6 +1250,7 @@ import { useProxyNodesStore } from '@/stores/proxy-nodes'
 import PoolSchedulingDialog from '@/features/pool/components/PoolSchedulingDialog.vue'
 import PoolAdvancedDialog from '@/features/pool/components/PoolAdvancedDialog.vue'
 import PoolAccountBatchDialog from '@/features/pool/components/PoolAccountBatchDialog.vue'
+import PoolConsumptionStatsDialog from '@/features/pool/components/PoolConsumptionStatsDialog.vue'
 import ProviderProxyPopover from '@/features/pool/components/ProviderProxyPopover.vue'
 import KeyAllowedModelsEditDialog from '@/features/providers/components/KeyAllowedModelsEditDialog.vue'
 import KeyFormDialog from '@/features/providers/components/KeyFormDialog.vue'
@@ -1250,6 +1266,11 @@ import {
   getOAuthStatusDisplay,
   getOAuthStatusTitle as resolveOAuthStatusTitle,
 } from '@/utils/providerKeyStatus'
+import {
+  formatPoolStatInteger as formatStatInteger,
+  formatPoolStatUsd as formatStatUsd,
+  formatPoolTokenCount as formatTokenCount,
+} from '@/features/pool/utils/display'
 
 const { success, error: showError, warning: showWarning } = useToast()
 const { confirm } = useConfirm()
@@ -1291,8 +1312,8 @@ async function loadOverview() {
         urlProviderId && enabledProviders.some(item => item.provider_id === urlProviderId),
       )
 
-      if (urlProviderExists) {
-        void selectProvider(urlProviderId!)
+      if (urlProviderExists && urlProviderId) {
+        void selectProvider(urlProviderId)
       } else if (enabledProviders.length > 0) {
         // Do not block overview loading on key list fetch; keys area has its own loader.
         void selectProvider(enabledProviders[0].provider_id)
@@ -1545,6 +1566,7 @@ async function selectProvider(id: string, options: { preserveSearch?: boolean } 
   selectedProviderData.value = null
   editingKeyDetail.value = null
   showAccountBatchDialog.value = false
+  showConsumptionStatsDialog.value = false
   keyPermissionsDialogOpen.value = false
   keyFormDialogOpen.value = false
   oauthKeyEditDialogOpen.value = false
@@ -2230,6 +2252,7 @@ const showImportDialog = ref(false)
 const showSchedulingDialog = ref(false)
 const showAdvancedDialog = ref(false)
 const showAccountBatchDialog = ref(false)
+const showConsumptionStatsDialog = ref(false)
 const providerProxyMobilePopoverOpen = ref(false)
 const providerProxyDesktopPopoverOpen = ref(false)
 const savingProviderProxy = ref(false)
@@ -2687,29 +2710,6 @@ function getQuotaTextClass(quotaText: string): string {
     return 'text-[11px] text-destructive leading-4'
   }
   return 'text-[11px] text-foreground/90 leading-4'
-}
-
-function formatStatInteger(value: number | null | undefined): string {
-  const n = Number(value ?? 0)
-  if (!Number.isFinite(n) || n <= 0) return '0'
-  return Math.round(n).toLocaleString('en-US')
-}
-
-function formatTokenCount(value: number | null | undefined): string {
-  const n = Number(value ?? 0)
-  if (!Number.isFinite(n) || n <= 0) return '0'
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(Math.round(n))
-}
-
-function formatStatUsd(value: number | string | null | undefined): string {
-  const n = Number(value ?? 0)
-  if (!Number.isFinite(n) || n <= 0) return '$0.00'
-  if (n < 0.01) return `$${n.toFixed(4)}`
-  if (n < 1) return `$${n.toFixed(3)}`
-  if (n < 1000) return `$${n.toFixed(2)}`
-  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function formatRelativeTime(isoStr: string): string {

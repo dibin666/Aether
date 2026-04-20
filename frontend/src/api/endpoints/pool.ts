@@ -180,6 +180,55 @@ export interface PoolKeysPageResponse {
   keys: PoolKeyDetail[]
 }
 
+export interface PoolConsumptionAccount {
+  key_id: string
+  key_name: string
+  auth_type: string
+  is_active: boolean
+  account_quota: string | null
+  request_count: number
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens: number
+  cache_read_input_tokens: number
+  cache_tokens: number
+  total_tokens: number
+  total_cost_usd: string
+}
+
+export interface PoolConsumptionSummary {
+  account_count: number
+  request_count: number
+  input_tokens: number
+  output_tokens: number
+  cache_tokens: number
+  total_tokens: number
+  total_cost_usd: string
+  avg_request_count: number
+  avg_input_tokens: number
+  avg_output_tokens: number
+  avg_cache_tokens: number
+  avg_total_tokens: number
+  avg_total_cost_usd: string
+  max_account: PoolConsumptionAccount | null
+  min_account: PoolConsumptionAccount | null
+}
+
+export interface PoolConsumptionPeriod {
+  key: 'today' | 'last3days' | 'last7days' | 'last30days' | 'all' | string
+  label: string
+  start_date: string | null
+  end_date: string | null
+  summary: PoolConsumptionSummary
+  accounts: PoolConsumptionAccount[]
+}
+
+export interface PoolConsumptionStatsResponse {
+  provider_id: string
+  provider_name: string
+  periods: PoolConsumptionPeriod[]
+}
+
 export interface PoolKeysQuery {
   page?: number
   page_size?: number
@@ -275,6 +324,33 @@ export async function listAllPoolKeys(
   }
 
   return allKeys
+}
+
+export async function getPoolConsumptionStats(
+  providerId: string,
+  params: {
+    timezone?: string | null
+    tz_offset_minutes?: number
+  } = {},
+): Promise<PoolConsumptionStatsResponse> {
+  const timezone = typeof params.timezone === 'string' ? params.timezone.trim() : ''
+  const tzOffsetMinutes = Number.isFinite(params.tz_offset_minutes)
+    ? Number(params.tz_offset_minutes)
+    : undefined
+  const key = `pool:consumption:${providerId}|${timezone || ''}|${tzOffsetMinutes ?? ''}`
+
+  return dedupedRequest(key, async () => {
+    const response = await client.get<PoolConsumptionStatsResponse>(
+      `/api/admin/pool/${providerId}/consumption-stats`,
+      {
+        params: {
+          timezone: timezone || undefined,
+          tz_offset_minutes: tzOffsetMinutes,
+        },
+      },
+    )
+    return response.data
+  })
 }
 
 export async function resolvePoolKeySelection(

@@ -13,7 +13,8 @@ import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -59,6 +60,7 @@ from src.services.provider_keys.status_snapshot_store import (
 from src.services.provider_keys.status_snapshot_store import (
     resolve_provider_key_status_snapshot,
 )
+from src.services.system.time_range import TimeRangeParams
 
 from .schemas import (
     BatchActionRequest,
@@ -68,6 +70,10 @@ from .schemas import (
     BatchImportRequest,
     BatchImportResponse,
     OAuthOrganizationSummary,
+    PoolConsumptionAccount,
+    PoolConsumptionPeriod,
+    PoolConsumptionStatsResponse,
+    PoolConsumptionSummary,
     PoolKeyDetail,
     PoolKeySelectionItem,
     PoolKeySelectionRequest,
@@ -152,6 +158,28 @@ async def list_pool_keys(
         status=status,
         quick_selectors=quick_selectors.split(",") if quick_selectors else [],
         search_scope=search_scope,
+    )
+    return await pipeline.run(adapter=adapter, http_request=request, db=db, mode=adapter.mode)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/pool/{provider_id}/consumption-stats
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{provider_id}/consumption-stats", response_model=PoolConsumptionStatsResponse)
+async def get_pool_consumption_stats(
+    provider_id: str,
+    request: Request,
+    timezone_name: str | None = Query(None, alias="timezone"),
+    tz_offset_minutes: int = Query(0),
+    db: Session = Depends(get_db),
+) -> PoolConsumptionStatsResponse:
+    """Return per-account consumption stats for fixed time ranges."""
+    adapter = AdminPoolConsumptionStatsAdapter(
+        provider_id=provider_id,
+        timezone_name=timezone_name,
+        tz_offset_minutes=tz_offset_minutes,
     )
     return await pipeline.run(adapter=adapter, http_request=request, db=db, mode=adapter.mode)
 
@@ -246,6 +274,222 @@ def _to_float(value: Any) -> float | None:
 
 def _serialize_money(value: Any) -> str:
     return format(to_money_decimal(value), "f")
+
+
+@dataclass(frozen=True)
+class _PoolConsumptionPeriodDef:
+    key: str
+    label: str
+    start_date: date | None = None
+    end_date: date | None = None
+
+
+def _pool_consumption_sort_key(
+    account: PoolConsumptionAccount,
+) -> tuple[Decimal, int, int, str]:
+    return (
+        to_money_decimal(account.total_cost_usd),
+        int(account.total_tokens or 0),
+        int(account.request_count or 0),
+        str(account.key_name or "").strip().casefold(),
+    )
+
+
+def _resolve_pool_consumption_period_defs(
+    timezone_name: str | None,
+    tz_offset_minutes: int,
+) -> list[_PoolConsumptionPeriodDef]:
+    anchor = TimeRangeParams(
+        start_date=date.today(),
+        end_date=date.today(),
+        timezone=timezone_name,
+        tz_offset_minutes=tz_offset_minutes,
+    )
+    user_today = anchor._get_user_today()
+
+    return [
+        _PoolConsumptionPeriodDef(
+            key="today",
+            label="今天",
+            start_date=user_today,
+            end_date=user_today,
+        ),
+        _PoolConsumptionPeriodDef(
+            key="last3days",
+            label="近 3 天",
+            start_date=user_today - timedelta(days=2),
+            end_date=user_today,
+        ),
+        _PoolConsumptionPeriodDef(
+            key="last7days",
+            label="近 7 天",
+            start_date=user_today - timedelta(days=6),
+            end_date=user_today,
+        ),
+        _PoolConsumptionPeriodDef(
+            key="last30days",
+            label="近 30 天",
+            start_date=user_today - timedelta(days=29),
+            end_date=user_today,
+        ),
+        _PoolConsumptionPeriodDef(
+            key="all",
+            label="全部",
+        ),
+    ]
+
+
+def _build_pool_consumption_time_range(
+    period: _PoolConsumptionPeriodDef,
+    *,
+    timezone_name: str | None,
+    tz_offset_minutes: int,
+) -> TimeRangeParams | None:
+    if period.start_date is None or period.end_date is None:
+        return None
+    return TimeRangeParams(
+        start_date=period.start_date,
+        end_date=period.end_date,
+        timezone=timezone_name,
+        tz_offset_minutes=tz_offset_minutes,
+    ).validate_and_resolve()
+
+
+def _load_pool_key_consumption_rows(
+    db: Session,
+    *,
+    provider_id: str,
+    key_ids: list[str],
+    time_range: TimeRangeParams | None,
+) -> dict[str, dict[str, Any]]:
+    if not key_ids:
+        return {}
+
+    query = db.query(
+        Usage.provider_api_key_id.label("key_id"),
+        func.count(Usage.id).label("request_count"),
+        func.coalesce(func.sum(Usage.input_tokens), 0).label("input_tokens"),
+        func.coalesce(func.sum(Usage.output_tokens), 0).label("output_tokens"),
+        func.coalesce(func.sum(Usage.cache_creation_input_tokens), 0).label(
+            "cache_creation_input_tokens"
+        ),
+        func.coalesce(func.sum(Usage.cache_read_input_tokens), 0).label("cache_read_input_tokens"),
+        func.coalesce(func.sum(Usage.total_tokens), 0).label("total_tokens"),
+        func.coalesce(func.sum(Usage.total_cost_usd), 0).label("total_cost_usd"),
+    ).filter(
+        Usage.provider_id == provider_id,
+        Usage.provider_api_key_id.isnot(None),
+        Usage.provider_api_key_id.in_(key_ids),
+    )
+
+    if time_range is not None:
+        start_utc, end_utc = time_range.to_utc_datetime_range()
+        query = query.filter(
+            Usage.created_at >= start_utc,
+            Usage.created_at < end_utc,
+        )
+
+    rows = query.group_by(Usage.provider_api_key_id).all()
+
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key_id = str(getattr(row, "key_id", "") or "")
+        if not key_id:
+            continue
+        result[key_id] = {
+            "request_count": int(getattr(row, "request_count", 0) or 0),
+            "input_tokens": int(getattr(row, "input_tokens", 0) or 0),
+            "output_tokens": int(getattr(row, "output_tokens", 0) or 0),
+            "cache_creation_input_tokens": int(getattr(row, "cache_creation_input_tokens", 0) or 0),
+            "cache_read_input_tokens": int(getattr(row, "cache_read_input_tokens", 0) or 0),
+            "total_tokens": int(getattr(row, "total_tokens", 0) or 0),
+            "total_cost_usd": getattr(row, "total_cost_usd", 0) or 0,
+        }
+    return result
+
+
+def _build_pool_consumption_accounts(
+    *,
+    keys: list[ProviderAPIKey],
+    provider_type: str,
+    aggregates: dict[str, dict[str, Any]],
+) -> list[PoolConsumptionAccount]:
+    accounts: list[PoolConsumptionAccount] = []
+
+    for key in keys:
+        key_id = str(getattr(key, "id", "") or "")
+        aggregate = aggregates.get(key_id)
+        if not aggregate:
+            continue
+
+        cache_creation_tokens = int(aggregate.get("cache_creation_input_tokens", 0) or 0)
+        cache_read_tokens = int(aggregate.get("cache_read_input_tokens", 0) or 0)
+        accounts.append(
+            PoolConsumptionAccount(
+                key_id=key_id,
+                key_name=str(getattr(key, "name", "") or ""),
+                auth_type=str(getattr(key, "auth_type", "api_key") or "api_key"),
+                is_active=bool(getattr(key, "is_active", True)),
+                account_quota=_build_account_quota(
+                    provider_type,
+                    getattr(key, "upstream_metadata", None),
+                ),
+                request_count=int(aggregate.get("request_count", 0) or 0),
+                input_tokens=int(aggregate.get("input_tokens", 0) or 0),
+                output_tokens=int(aggregate.get("output_tokens", 0) or 0),
+                cache_creation_input_tokens=cache_creation_tokens,
+                cache_read_input_tokens=cache_read_tokens,
+                cache_tokens=cache_creation_tokens + cache_read_tokens,
+                total_tokens=int(aggregate.get("total_tokens", 0) or 0),
+                total_cost_usd=_serialize_money(aggregate.get("total_cost_usd", 0)),
+            )
+        )
+
+    accounts.sort(key=_pool_consumption_sort_key, reverse=True)
+    return accounts
+
+
+def _build_pool_consumption_summary(
+    accounts: list[PoolConsumptionAccount],
+) -> PoolConsumptionSummary:
+    if not accounts:
+        return PoolConsumptionSummary()
+
+    account_count = len(accounts)
+    request_count = sum(int(account.request_count or 0) for account in accounts)
+    input_tokens = sum(int(account.input_tokens or 0) for account in accounts)
+    output_tokens = sum(int(account.output_tokens or 0) for account in accounts)
+    cache_tokens = sum(int(account.cache_tokens or 0) for account in accounts)
+    total_tokens = sum(int(account.total_tokens or 0) for account in accounts)
+    total_cost = sum(
+        (to_money_decimal(account.total_cost_usd) for account in accounts),
+        Decimal("0"),
+    )
+
+    avg_request_count = int(round(request_count / account_count))
+    avg_input_tokens = int(round(input_tokens / account_count))
+    avg_output_tokens = int(round(output_tokens / account_count))
+    avg_cache_tokens = int(round(cache_tokens / account_count))
+    avg_total_tokens = int(round(total_tokens / account_count))
+    avg_total_cost = total_cost / Decimal(account_count)
+
+    return PoolConsumptionSummary(
+        account_count=account_count,
+        request_count=request_count,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_tokens=cache_tokens,
+        total_tokens=total_tokens,
+        total_cost_usd=_serialize_money(total_cost),
+        avg_request_count=avg_request_count,
+        avg_input_tokens=avg_input_tokens,
+        avg_output_tokens=avg_output_tokens,
+        avg_cache_tokens=avg_cache_tokens,
+        avg_total_tokens=avg_total_tokens,
+        avg_total_cost_usd=_serialize_money(avg_total_cost),
+        max_account=max(accounts, key=_pool_consumption_sort_key),
+        min_account=min(accounts, key=_pool_consumption_sort_key),
+    )
 
 
 def _load_pool_key_total_costs(db: Session, key_ids: list[str]) -> dict[str, Any]:
@@ -712,6 +956,100 @@ class AdminPoolOverviewAdapter(AdminApiAdapter):
             )
 
         return PoolOverviewResponse(items=items)
+
+
+@dataclass
+class AdminPoolConsumptionStatsAdapter(AdminApiAdapter):
+    provider_id: str = ""
+    timezone_name: str | None = None
+    tz_offset_minutes: int = 0
+
+    async def handle(self, context: ApiRequestContext) -> Any:  # type: ignore[override]
+        db = context.db
+        provider = (
+            db.query(Provider)
+            .options(
+                load_only(
+                    cast(Any, Provider.id),
+                    cast(Any, Provider.name),
+                    cast(Any, Provider.provider_type),
+                )
+            )
+            .filter(Provider.id == self.provider_id)
+            .first()
+        )
+        if not provider:
+            raise NotFoundException("Provider not found", "provider")
+
+        provider_id = str(provider.id)
+        provider_name = str(getattr(provider, "name", "") or "")
+        provider_type = str(getattr(provider, "provider_type", "custom") or "custom")
+
+        keys = (
+            db.query(ProviderAPIKey)
+            .options(
+                load_only(
+                    cast(Any, ProviderAPIKey.id),
+                    cast(Any, ProviderAPIKey.name),
+                    cast(Any, ProviderAPIKey.auth_type),
+                    cast(Any, ProviderAPIKey.is_active),
+                    cast(Any, ProviderAPIKey.upstream_metadata),
+                )
+            )
+            .filter(ProviderAPIKey.provider_id == provider_id)
+            .order_by(
+                ProviderAPIKey.internal_priority.asc(),
+                ProviderAPIKey.created_at.asc(),
+            )
+            .all()
+        )
+
+        key_ids = [str(getattr(key, "id", "") or "") for key in keys if getattr(key, "id", None)]
+        period_defs = _resolve_pool_consumption_period_defs(
+            self.timezone_name,
+            self.tz_offset_minutes,
+        )
+
+        periods: list[PoolConsumptionPeriod] = []
+        for period_def in period_defs:
+            time_range = _build_pool_consumption_time_range(
+                period_def,
+                timezone_name=self.timezone_name,
+                tz_offset_minutes=self.tz_offset_minutes,
+            )
+            aggregates = _load_pool_key_consumption_rows(
+                db,
+                provider_id=provider_id,
+                key_ids=key_ids,
+                time_range=time_range,
+            )
+            accounts = _build_pool_consumption_accounts(
+                keys=keys,
+                provider_type=provider_type,
+                aggregates=aggregates,
+            )
+            periods.append(
+                PoolConsumptionPeriod(
+                    key=period_def.key,
+                    label=period_def.label,
+                    start_date=(
+                        period_def.start_date.isoformat()
+                        if period_def.start_date is not None
+                        else None
+                    ),
+                    end_date=(
+                        period_def.end_date.isoformat() if period_def.end_date is not None else None
+                    ),
+                    summary=_build_pool_consumption_summary(accounts),
+                    accounts=accounts,
+                )
+            )
+
+        return PoolConsumptionStatsResponse(
+            provider_id=provider_id,
+            provider_name=provider_name,
+            periods=periods,
+        )
 
 
 _FULL_SEARCH_SCOPE = "full"
