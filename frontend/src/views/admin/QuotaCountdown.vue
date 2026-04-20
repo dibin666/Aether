@@ -20,7 +20,7 @@
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部额度</SelectItem>
+                <SelectItem value="all">全部倒计时</SelectItem>
                 <SelectItem value="urgent">紧急 (&le;30%)</SelectItem>
                 <SelectItem value="critical">危险 (&le;10%)</SelectItem>
               </SelectContent>
@@ -57,11 +57,11 @@
 
       <!-- Empty -->
       <div
-        v-else-if="!loading && providerGroups.length === 0"
+        v-else-if="!loading && countdownProviderGroups.length === 0"
         class="flex flex-col items-center justify-center py-20 text-muted-foreground"
       >
         <Timer class="w-10 h-10 mb-3 opacity-30" />
-        <p class="text-sm">暂无配额数据</p>
+        <p class="text-sm">暂无正在倒计时的账号</p>
       </div>
 
       <!-- Provider groups -->
@@ -113,70 +113,37 @@
                 </Badge>
               </div>
 
-              <!-- Quota progress bars -->
-              <div
-                v-if="keyItem.quotaItems.length > 0"
-                class="space-y-2"
-              >
+              <div class="space-y-2">
                 <div
-                  v-for="(qi, idx) in keyItem.quotaItems"
+                  v-for="(qi, idx) in keyItem.countdownItems"
                   :key="idx"
-                  class="space-y-1"
+                  class="space-y-1.5"
                 >
-                  <!-- Label + countdown + percent -->
-                  <div class="flex items-center justify-between text-[11px] leading-none">
-                    <div class="flex items-center gap-1.5">
+                  <div class="flex items-center justify-between gap-3 text-[11px] leading-none">
+                    <div class="flex min-w-0 items-center gap-1.5">
                       <span
                         class="font-semibold px-1 py-0.5 rounded text-[10px]"
                         :class="getQuotaLabelBadgeClass(qi.label)"
                       >
                         {{ qi.label }}
                       </span>
-                      <span
-                        v-if="getCountdownText(qi)"
-                        class="text-muted-foreground/80 tabular-nums text-[10px]"
-                        :class="getCountdownTextClass(qi)"
-                      >
+                      <span class="truncate text-muted-foreground/80 tabular-nums text-[10px]" :class="getCountdownTextClass(qi)">
                         {{ getCountdownText(qi) }}
                       </span>
                     </div>
-                    <span
-                      class="font-bold tabular-nums text-xs"
-                      :class="getQuotaRemainingClassByRemaining(qi.remainingPercent)"
-                    >
-                      {{ qi.remainingPercent.toFixed(1) }}%
+                    <span class="shrink-0 tabular-nums text-[10px] text-muted-foreground">
+                      {{ getCountdownProgressText(qi) }}
                     </span>
                   </div>
 
-                  <!-- Progress bar -->
-                  <div class="relative h-2.5 rounded-full bg-muted/60 overflow-hidden">
+                  <div class="h-2 rounded-full bg-muted/60 overflow-hidden">
                     <div
-                      class="absolute left-0 top-0 h-full rounded-full transition-all duration-500 ease-out"
-                      :class="getQuotaBarGradientClass(qi.remainingPercent)"
-                      :style="{ width: `${qi.remainingPercent}%` }"
-                    />
-                    <!-- Glow effect for low percentages -->
-                    <div
-                      v-if="qi.remainingPercent <= 30 && qi.remainingPercent > 0"
-                      class="absolute left-0 top-0 h-full rounded-full blur-sm opacity-40"
-                      :class="getQuotaBarGradientClass(qi.remainingPercent)"
-                      :style="{ width: `${qi.remainingPercent}%` }"
+                      class="h-full rounded-full transition-all duration-500 ease-out"
+                      :class="getCountdownBarClass(qi)"
+                      :style="{ width: `${getCountdownProgressPercent(qi)}%` }"
                     />
                   </div>
                 </div>
-              </div>
-
-              <!-- Raw quota text fallback -->
-              <div
-                v-else-if="keyItem.rawQuota"
-                class="text-[11px] text-muted-foreground"
-              >
-                {{ keyItem.rawQuota }}
-              </div>
-
-              <!-- No quota -->
-              <div v-else class="text-[11px] text-muted-foreground italic">
-                无配额信息
               </div>
             </div>
           </div>
@@ -184,7 +151,7 @@
 
         <!-- Filtered empty -->
         <div
-          v-if="filteredProviderGroups.length === 0 && providerGroups.length > 0"
+          v-if="filteredProviderGroups.length === 0 && countdownProviderGroups.length > 0"
           class="flex flex-col items-center justify-center py-16 text-muted-foreground"
         >
           <p class="text-sm">没有符合筛选条件的账号</p>
@@ -201,7 +168,12 @@ import { Card, Badge, Select, SelectTrigger, SelectValue, SelectContent, SelectI
 import RefreshButton from '@/components/ui/refresh-button.vue'
 import { getPoolOverview, listAllPoolKeys } from '@/api/endpoints/pool'
 import type { PoolOverviewItem, PoolKeyDetail } from '@/api/endpoints/pool'
-import { useCountdownTimer, getCodexResetCountdown } from '@/composables/useCountdownTimer'
+import { useCountdownTimer } from '@/composables/useCountdownTimer'
+import {
+  getQuotaCountdownProgressPercent,
+  getQuotaCountdownStatus,
+  isQuotaCountdownActive,
+} from '@/features/pool/utils/quota-countdown'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -218,7 +190,6 @@ interface KeyQuotaInfo {
   keyId: string
   keyName: string
   isActive: boolean
-  rawQuota: string | null
   quotaItems: QuotaItem[]
 }
 
@@ -227,6 +198,18 @@ interface ProviderGroup {
   providerName: string
   providerType: string
   keys: KeyQuotaInfo[]
+}
+
+interface CountdownKeyQuotaInfo extends KeyQuotaInfo {
+  countdownItems: QuotaItem[]
+  nextResetAtSeconds: number | null
+}
+
+interface CountdownProviderGroup {
+  providerId: string
+  providerName: string
+  providerType: string
+  keys: CountdownKeyQuotaInfo[]
 }
 
 // ---------------------------------------------------------------------------
@@ -243,20 +226,63 @@ const { tick: countdownTick, start: startCountdown, stop: stopCountdown } = useC
 // Computed
 // ---------------------------------------------------------------------------
 
+const countdownProviderGroups = computed<CountdownProviderGroup[]>(() => {
+  const tick = countdownTick.value
+
+  return providerGroups.value
+    .map((group): CountdownProviderGroup | null => {
+      const keys = group.keys
+        .map((key): CountdownKeyQuotaInfo | null => {
+          const countdownItems = key.quotaItems.filter(item => isQuotaCountdownActive(item, tick))
+          if (countdownItems.length === 0) return null
+
+          const nextResetAtSeconds = Math.min(
+            ...countdownItems.map(item => item.resetAtSeconds ?? Number.POSITIVE_INFINITY)
+          )
+
+          return {
+            ...key,
+            countdownItems,
+            nextResetAtSeconds: Number.isFinite(nextResetAtSeconds) ? nextResetAtSeconds : null,
+          }
+        })
+        .filter((key): key is CountdownKeyQuotaInfo => key != null)
+        .sort((a, b) => {
+          const aNext = a.nextResetAtSeconds ?? Number.POSITIVE_INFINITY
+          const bNext = b.nextResetAtSeconds ?? Number.POSITIVE_INFINITY
+          if (aNext !== bNext) return aNext - bNext
+
+          const aMin = Math.min(...a.countdownItems.map(item => item.remainingPercent), 100)
+          const bMin = Math.min(...b.countdownItems.map(item => item.remainingPercent), 100)
+          return aMin - bMin
+        })
+
+      if (keys.length === 0) return null
+
+      return {
+        providerId: group.providerId,
+        providerName: group.providerName,
+        providerType: group.providerType,
+        keys,
+      }
+    })
+    .filter((group): group is CountdownProviderGroup => group != null)
+})
+
 const totalKeysCount = computed(() =>
-  providerGroups.value.reduce((sum, g) => sum + g.keys.length, 0)
+  countdownProviderGroups.value.reduce((sum, group) => sum + group.keys.length, 0)
 )
 
-const filteredProviderGroups = computed(() => {
-  if (filterLevel.value === 'all') return providerGroups.value
+const filteredProviderGroups = computed<CountdownProviderGroup[]>(() => {
+  if (filterLevel.value === 'all') return countdownProviderGroups.value
 
   const threshold = filterLevel.value === 'critical' ? 10 : 30
 
-  return providerGroups.value
+  return countdownProviderGroups.value
     .map(group => ({
       ...group,
       keys: group.keys.filter(k =>
-        k.quotaItems.some(qi => qi.remainingPercent <= threshold)
+        k.countdownItems.some(qi => qi.remainingPercent <= threshold)
       )
     }))
     .filter(group => group.keys.length > 0)
@@ -360,19 +386,6 @@ function parseQuotaProgressItems(quotaText: string | null | undefined): QuotaIte
 // Display helpers
 // ---------------------------------------------------------------------------
 
-function getQuotaRemainingClassByRemaining(remaining: number): string {
-  if (remaining <= 10) return 'text-red-600 dark:text-red-400'
-  if (remaining <= 30) return 'text-yellow-600 dark:text-yellow-400'
-  return 'text-green-600 dark:text-green-400'
-}
-
-function getQuotaBarGradientClass(remaining: number): string {
-  if (remaining <= 10) return 'bg-gradient-to-r from-red-600 to-red-400 dark:from-red-500 dark:to-red-300'
-  if (remaining <= 30) return 'bg-gradient-to-r from-yellow-500 to-amber-400 dark:from-yellow-400 dark:to-amber-300'
-  if (remaining <= 60) return 'bg-gradient-to-r from-emerald-500 to-green-400 dark:from-emerald-400 dark:to-green-300'
-  return 'bg-gradient-to-r from-green-500 to-teal-400 dark:from-green-400 dark:to-teal-300'
-}
-
 function getQuotaLabelBadgeClass(label: string): string {
   if (label === '5H') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
   if (label === '周') return 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300'
@@ -382,19 +395,33 @@ function getQuotaLabelBadgeClass(label: string): string {
 }
 
 function getCountdownText(qi: QuotaItem): string {
-  if ((qi.label !== '5H' && qi.label !== '周') || qi.resetAtSeconds == null) return ''
-  const status = getCodexResetCountdown(qi.resetAtSeconds, null, null, countdownTick.value, qi.remainingPercent)
+  const status = getQuotaCountdownStatus(qi, countdownTick.value)
   if (!status) return ''
   return status.isExpired ? status.text : `${status.text} 后重置`
 }
 
 function getCountdownTextClass(qi: QuotaItem): string {
-  if ((qi.label !== '5H' && qi.label !== '周') || qi.resetAtSeconds == null) return ''
-  const status = getCodexResetCountdown(qi.resetAtSeconds, null, null, countdownTick.value, qi.remainingPercent)
+  const status = getQuotaCountdownStatus(qi, countdownTick.value)
   if (!status) return ''
   if (status.isCritical) return 'text-red-500 dark:text-red-400 font-medium'
   if (status.isUrgent) return 'text-yellow-600 dark:text-yellow-400'
   return ''
+}
+
+function getCountdownBarClass(qi: QuotaItem): string {
+  const status = getQuotaCountdownStatus(qi, countdownTick.value)
+  if (!status) return 'bg-muted-foreground/40'
+  if (status.isCritical) return 'bg-red-500 dark:bg-red-400'
+  if (status.isUrgent) return 'bg-amber-500 dark:bg-amber-400'
+  return 'bg-emerald-500 dark:bg-emerald-400'
+}
+
+function getCountdownProgressPercent(qi: QuotaItem): number {
+  return getQuotaCountdownProgressPercent(qi, countdownTick.value)
+}
+
+function getCountdownProgressText(qi: QuotaItem): string {
+  return `进度 ${Math.round(getCountdownProgressPercent(qi))}%`
 }
 
 // ---------------------------------------------------------------------------
@@ -443,19 +470,8 @@ async function loadAll() {
         keyId: k.key_id,
         keyName: k.key_name,
         isActive: k.is_active,
-        rawQuota: k.account_quota,
         quotaItems: parseQuotaProgressItems(k.account_quota),
       }))
-
-      // Sort: keys with quota data first, then by lowest remaining percent
-      keyInfos.sort((a, b) => {
-        const aHas = a.quotaItems.length > 0 ? 0 : 1
-        const bHas = b.quotaItems.length > 0 ? 0 : 1
-        if (aHas !== bHas) return aHas - bHas
-        const aMin = Math.min(...a.quotaItems.map(q => q.remainingPercent), 100)
-        const bMin = Math.min(...b.quotaItems.map(q => q.remainingPercent), 100)
-        return aMin - bMin
-      })
 
       groups.push({
         providerId: provider.provider_id,
