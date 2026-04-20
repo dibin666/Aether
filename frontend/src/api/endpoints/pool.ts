@@ -4,6 +4,7 @@ import type { AllowedModels, OAuthOrganizationInfo, ProxyConfig } from './types/
 import type { ProviderKeyStatusSnapshot } from './types/statusSnapshot'
 
 const POOL_BATCH_ACTION_TIMEOUT_MS = 5 * 60 * 1000
+const POOL_KEYS_MAX_PAGE_SIZE = 200
 
 export interface PoolKeyStatus {
   key_id: string
@@ -245,6 +246,35 @@ export async function listPoolKeys(
     const response = await client.get<PoolKeysPageResponse>(`/api/admin/pool/${providerId}/keys`, { params: normalizedParams })
     return response.data
   })
+}
+
+export async function listAllPoolKeys(
+  providerId: string,
+  params: Omit<PoolKeysQuery, 'page' | 'page_size'> = {},
+): Promise<PoolKeyDetail[]> {
+  let page = 1
+  const allKeys: PoolKeyDetail[] = []
+
+  while (true) {
+    const response = await listPoolKeys(providerId, {
+      ...params,
+      page,
+      page_size: POOL_KEYS_MAX_PAGE_SIZE,
+    })
+    const batch = Array.isArray(response?.keys) ? response.keys : []
+    allKeys.push(...batch)
+
+    const total = Number(response?.total ?? allKeys.length)
+    const pageSize = Number(response?.page_size ?? POOL_KEYS_MAX_PAGE_SIZE)
+
+    if (batch.length === 0 || allKeys.length >= total || batch.length < pageSize) {
+      break
+    }
+
+    page += 1
+  }
+
+  return allKeys
 }
 
 export async function resolvePoolKeySelection(

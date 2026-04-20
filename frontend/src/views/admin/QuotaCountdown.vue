@@ -199,7 +199,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Timer, Database } from 'lucide-vue-next'
 import { Card, Badge, Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui'
 import RefreshButton from '@/components/ui/refresh-button.vue'
-import { getPoolOverview, listPoolKeys } from '@/api/endpoints/pool'
+import { getPoolOverview, listAllPoolKeys } from '@/api/endpoints/pool'
 import type { PoolOverviewItem, PoolKeyDetail } from '@/api/endpoints/pool'
 import { useCountdownTimer, getCodexResetCountdown } from '@/composables/useCountdownTimer'
 
@@ -303,7 +303,7 @@ function parseQuotaResetRemainingSeconds(detail: string | undefined): number | n
   const minuteMatch = text.match(/(\d+)分钟/)
   const secondMatch = text.match(/(\d+)秒/)
 
-  let days = dayMatch ? Number(dayMatch[1]) : 0
+  const days = dayMatch ? Number(dayMatch[1]) : 0
   let hours = hourMatch ? Number(hourMatch[1]) : 0
   let minutes = minuteMatch ? Number(minuteMatch[1]) : 0
   let seconds = secondMatch ? Number(secondMatch[1]) : 0
@@ -420,15 +420,21 @@ async function loadAll() {
       return
     }
 
-    // Fetch all keys for each provider in parallel (page_size=500 to get as many as possible)
+    // Fetch all keys for each provider in parallel while respecting backend page_size limits.
     const groups: ProviderGroup[] = []
     const results = await Promise.allSettled(
       quotaProviders.map(async (p) => {
-        const resp = await listPoolKeys(p.provider_id, { page: 1, page_size: 500 })
-        const keys = Array.isArray(resp?.keys) ? resp.keys : []
+        const keys = await listAllPoolKeys(p.provider_id)
         return { provider: p, keys }
       })
     )
+
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (failures.length === results.length) {
+      const firstReason = failures[0]?.reason
+      const message = firstReason instanceof Error ? firstReason.message : String(firstReason)
+      throw new Error(message || '所有 Provider 配额数据加载失败')
+    }
 
     for (const result of results) {
       if (result.status !== 'fulfilled') continue
