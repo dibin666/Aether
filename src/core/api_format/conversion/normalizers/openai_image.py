@@ -27,6 +27,8 @@ from src.core.api_format.conversion.stream_state import StreamState
 from .openai_cli import OpenAICliNormalizer
 
 _OPENAI_IMAGE_DEFAULT_MODEL = "gpt-image-2"
+_OPENAI_IMAGE_INTERNAL_MODEL = "gpt-5.4"
+_OPENAI_IMAGE_INTERNAL_INSTRUCTIONS = "you are a helpful assistant"
 _TOOL_OPTION_KEYS = (
     "size",
     "quality",
@@ -81,21 +83,23 @@ class OpenAIImageNormalizer(OpenAICliNormalizer):
                 if value is not None:
                     tool[key] = value
 
+        image_extra = internal.extra.get("openai_image", {}) if internal.extra else {}
+        prompt = ""
+        user = None
+        if isinstance(image_extra, dict):
+            prompt = str(image_extra.get("prompt") or "")
+            user = image_extra.get("user")
+
         result: dict[str, Any] = {
-            "model": internal.model or _OPENAI_IMAGE_DEFAULT_MODEL,
-            "input": self._internal_messages_to_input(
-                internal.messages,
-                system_to_developer=False,
-            ),
+            "model": _OPENAI_IMAGE_INTERNAL_MODEL,
+            "input": [{"role": "user", "content": prompt}],
             "tools": [tool],
             "tool_choice": "auto",
+            "instructions": _OPENAI_IMAGE_INTERNAL_INSTRUCTIONS,
+            "store": False,
         }
-        if internal.instructions:
-            instructions_text = self._join_instructions(internal.instructions)
-            if instructions_text:
-                result["instructions"] = instructions_text
-        elif internal.system:
-            result["instructions"] = internal.system
+        if user is not None:
+            result["user"] = user
         return result
 
     def response_to_internal(self, response: dict[str, Any]) -> InternalResponse:
@@ -240,3 +244,8 @@ def _output_format_to_media_type(output_format: str) -> str:
 
 
 __all__ = ["OpenAIImageNormalizer"]
+__all__ += [
+    "_OPENAI_IMAGE_DEFAULT_MODEL",
+    "_OPENAI_IMAGE_INTERNAL_INSTRUCTIONS",
+    "_OPENAI_IMAGE_INTERNAL_MODEL",
+]

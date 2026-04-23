@@ -20,15 +20,14 @@ def test_openai_image_request_roundtrip_builds_responses_tool_request() -> None:
     assert internal.model == "gpt-image-2"
     out = normalizer.request_from_internal(internal)
 
-    assert out["model"] == "gpt-image-2"
+    assert out["model"] == "gpt-5.4"
     assert out["tool_choice"] == "auto"
     assert out["tools"][0]["type"] == "image_generation"
     assert out["tools"][0]["size"] == "1024x1024"
     assert out["tools"][0]["quality"] == "medium"
-    assert out["input"][0]["content"][0] == {
-        "type": "input_text",
-        "text": "A poster about Chinese history",
-    }
+    assert out["input"] == [{"role": "user", "content": "A poster about Chinese history"}]
+    assert out["instructions"] == "you are a helpful assistant"
+    assert out["store"] is False
 
 
 def test_openai_image_response_uses_tool_usage_and_emits_images_payload() -> None:

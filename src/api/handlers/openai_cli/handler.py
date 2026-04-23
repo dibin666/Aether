@@ -13,6 +13,7 @@ from src.api.handlers.base.cli_handler_base import (
 )
 from src.core.api_format import ApiFamily, EndpointKind
 from src.core.api_format.conversion.normalizers.openai_image import (
+    _OPENAI_IMAGE_INTERNAL_MODEL,
     OpenAIImageNormalizer,
 )
 
@@ -250,3 +251,18 @@ class OpenAIImageMessageHandler(OpenAICliMessageHandler):
         internal = self._image_normalizer.request_to_internal(dict(request_body))
         dispatch_request_body = self._image_normalizer.request_from_internal(internal)
         return requested_model, requested_model, dispatch_request_body
+
+    def finalize_provider_request(
+        self,
+        request_body: dict[str, Any],
+        *,
+        mapped_model: str | None,
+        provider_api_format: str | None,
+    ) -> dict[str, Any]:
+        result = super().finalize_provider_request(
+            request_body,
+            mapped_model=mapped_model,
+            provider_api_format=provider_api_format,
+        )
+        result["model"] = _OPENAI_IMAGE_INTERNAL_MODEL
+        return result
