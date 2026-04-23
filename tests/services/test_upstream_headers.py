@@ -61,6 +61,25 @@ def test_build_upstream_extra_headers_for_codex_openai_compact() -> None:
     }
 
 
+def test_build_upstream_extra_headers_for_codex_openai_image() -> None:
+    request_body = {"model": "gpt-image-2", "input": [], "prompt_cache_key": "pcache-123"}
+
+    headers = build_upstream_extra_headers(
+        provider_type="codex",
+        endpoint_sig="openai:image",
+        request_body=request_body,
+        original_headers={},
+        decrypted_auth_config={"account_id": "acc-1"},
+    )
+
+    short_id = hashlib.sha256(b"pcache-123").hexdigest()[:16]
+    assert headers == {
+        "chatgpt-account-id": "acc-1",
+        "session_id": short_id,
+        "conversation_id": short_id,
+    }
+
+
 def test_build_upstream_extra_headers_for_legacy_codex_compact_context() -> None:
     request_body = {"model": "gpt-5", "input": [], "prompt_cache_key": "pcache-123"}
 

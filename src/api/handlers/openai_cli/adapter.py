@@ -8,12 +8,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastapi.responses import JSONResponse
+
 from src.api.base.context import ApiRequestContext
 from src.api.handlers.base.cli_adapter_base import CliAdapterBase, register_cli_adapter
 from src.api.handlers.base.cli_handler_base import CliMessageHandlerBase
 from src.config.settings import config
 from src.core.api_format import ApiFamily, EndpointKind
 from src.core.provider_types import ProviderType
+from src.models.openai import OpenAIImageGenerationRequest
 from src.utils.url_utils import is_codex_url
 
 
@@ -136,3 +139,132 @@ class OpenAICompactAdapter(OpenAICliAdapter):
 
 
 __all__.append("OpenAICompactAdapter")
+
+
+@register_cli_adapter
+class OpenAIImageAdapter(OpenAICliAdapter):
+    """OpenAI Images adapter (/v1/images/generations)."""
+
+    FORMAT_ID = "openai:image"
+    ENDPOINT_KIND = EndpointKind.IMAGE
+    name = "openai.image"
+
+    @property
+    def HANDLER_CLASS(self) -> type[CliMessageHandlerBase]:
+        from src.api.handlers.openai_cli.handler import OpenAIImageMessageHandler
+
+        return OpenAIImageMessageHandler
+
+    async def handle(self, context: ApiRequestContext) -> Any:
+        body = await context.ensure_json_body_async()
+        normalized = self._normalize_image_request_body(body)
+        if isinstance(normalized, JSONResponse):
+            return normalized
+        normalized.pop("stream", None)
+        return await super().handle(context)
+
+    def _normalize_image_request_body(self, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+        if not isinstance(body, dict):
+            return self._error_response(
+                400,
+                "Request body must be a JSON object",
+                "invalid_request_error",
+            )
+
+        if not str(body.get("model") or "").strip():
+            body["model"] = "gpt-image-2"
+        if body.get("n") is None:
+            body["n"] = 1
+        if not str(body.get("response_format") or "").strip():
+            body["response_format"] = "b64_json"
+
+        try:
+            request = OpenAIImageGenerationRequest.model_validate(body, strict=False)
+        except ValueError as e:
+            return self._error_response(400, str(e), "invalid_request_error")
+
+        if str(request.model or "").strip().lower() != "gpt-image-2":
+            return self._error_response(
+                400,
+                "图片接口当前仅支持模型 gpt-image-2",
+                "invalid_request_error",
+            )
+        if int(request.n or 1) != 1:
+            return self._error_response(
+                400,
+                "图片接口当前仅支持 n=1",
+                "invalid_request_error",
+            )
+        if str(request.response_format or "b64_json").strip().lower() != "b64_json":
+            return self._error_response(
+                400,
+                "图片接口当前仅支持 response_format=b64_json",
+                "invalid_request_error",
+            )
+        body["model"] = "gpt-image-2"
+        body["n"] = 1
+        body["response_format"] = "b64_json"
+        return body
+
+    def _build_audit_metadata(
+        self,
+        payload: dict[str, Any],
+        path_params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del path_params
+        prompt = str(payload.get("prompt") or "")
+        return {
+            "action": "openai:image_request",
+            "model": str(payload.get("model") or "gpt-image-2"),
+            "stream": False,
+            "messages_count": 1 if prompt else 0,
+            "prompt_length": len(prompt),
+            "size": payload.get("size"),
+            "quality": payload.get("quality"),
+            "response_format": payload.get("response_format"),
+        }
+
+    @classmethod
+    def build_endpoint_url(
+        cls,
+        base_url: str,
+        request_data: dict[str, Any],
+        model_name: str | None = None,
+        *,
+        compact: bool = False,
+        provider_type: str | None = None,
+    ) -> str:
+        del compact, request_data, model_name
+        base_url = base_url.rstrip("/")
+        is_codex = (
+            (provider_type or "").lower() == ProviderType.CODEX
+            if provider_type
+            else is_codex_url(base_url)
+        )
+        if is_codex:
+            return f"{base_url}/responses"
+        if base_url.endswith("/v1"):
+            return f"{base_url}/images/generations"
+        return f"{base_url}/v1/images/generations"
+
+    @classmethod
+    def build_request_body(
+        cls,
+        request_data: dict[str, Any] | None = None,
+        *,
+        base_url: str | None = None,
+        provider_type: str | None = None,
+    ) -> dict[str, Any]:
+        del base_url, provider_type
+        payload = {
+            "model": "gpt-image-2",
+            "prompt": "A calm mountain lake at sunrise",
+            "n": 1,
+            "response_format": "b64_json",
+        }
+        if request_data:
+            payload.update(request_data)
+        return payload
+
+
+__all__.append("OpenAIImageAdapter")

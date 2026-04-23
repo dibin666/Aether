@@ -4,7 +4,7 @@ OpenAI API 数据模型定义
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # 配置允许额外字段，以支持 API 的新特性
@@ -94,6 +94,22 @@ class ResponsesRequest(BaseModelWithExtras):
     temperature: float | None = None
     top_p: float | None = None
     stop: str | list[str] | None = None
+
+
+class OpenAIImageGenerationRequest(BaseModelWithExtras):
+    """OpenAI Images API 请求模型。"""
+
+    prompt: str = Field(..., min_length=1)
+    model: str | None = "gpt-image-2"
+    n: int | None = 1
+    size: str | None = None
+    quality: str | None = None
+    background: str | None = None
+    moderation: str | None = None
+    output_format: str | None = None
+    output_compression: int | None = None
+    response_format: str | None = "b64_json"
+    user: str | None = None
 
 
 class OpenAIUsage(BaseModelWithExtras):

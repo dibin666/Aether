@@ -25,6 +25,7 @@ def test_public_api_routes_contract_paths_and_tags() -> None:
         ("/v1/messages", "post", "Claude API"),
         ("/v1/messages/count_tokens", "post", "Claude API"),
         ("/v1/chat/completions", "post", "OpenAI API"),
+        ("/v1/images/generations", "post", "OpenAI API"),
         ("/v1/responses", "post", "OpenAI API"),
         ("/v1beta/models/{model}:generateContent", "post", "Gemini API"),
         ("/v1beta/models/{model}:streamGenerateContent", "post", "Gemini API"),

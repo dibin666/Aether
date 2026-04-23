@@ -598,6 +598,13 @@ def _register_builtin_capabilities() -> None:
     )
     register_api_format_capability(
         ApiFormatCapability(
+            api_format="openai:image",
+            billing_template="openai",
+            model_fetcher=_fetch_openai_cli_models,
+        )
+    )
+    register_api_format_capability(
+        ApiFormatCapability(
             api_format="claude:chat",
             billing_template="claude",
             total_input_context_resolver=_claude_total_input_context,

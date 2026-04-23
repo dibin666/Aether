@@ -8,7 +8,9 @@ from typing import Any
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "OpenAICliAdapter": (".adapter", "OpenAICliAdapter"),
     "OpenAICompactAdapter": (".adapter", "OpenAICompactAdapter"),
+    "OpenAIImageAdapter": (".adapter", "OpenAIImageAdapter"),
     "OpenAICliMessageHandler": (".handler", "OpenAICliMessageHandler"),
+    "OpenAIImageMessageHandler": (".handler", "OpenAIImageMessageHandler"),
 }
 
 __all__ = list(_LAZY_EXPORTS.keys())

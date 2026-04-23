@@ -66,6 +66,9 @@ def _detect_data_format(
     if "/responses/compact" in normalized:
         return EndpointSignature(api_family=ApiFamily.OPENAI, endpoint_kind=EndpointKind.COMPACT)
 
+    if normalized.startswith("/v1/images/generations"):
+        return EndpointSignature(api_family=ApiFamily.OPENAI, endpoint_kind=EndpointKind.IMAGE)
+
     # OpenAI CLI: /responses
     if "/responses" in normalized:
         return EndpointSignature(api_family=ApiFamily.OPENAI, endpoint_kind=EndpointKind.CLI)

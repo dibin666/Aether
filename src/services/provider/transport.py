@@ -263,7 +263,9 @@ def build_provider_url(
         path = _resolve_default_path(endpoint_sig)
         # Codex OAuth 端点（chatgpt.com/backend-api/codex）使用 /responses 而非 /v1/responses
         base_url = getattr(endpoint, "base_url", "") or ""
-        if endpoint_sig in {"openai:cli", "openai:compact"} and is_codex_url(base_url):
+        if endpoint_sig in {"openai:cli", "openai:compact", "openai:image"} and is_codex_url(
+            base_url
+        ):
             path = "/responses/compact" if endpoint_sig == "openai:compact" else "/responses"
         if effective_path_params:
             try:

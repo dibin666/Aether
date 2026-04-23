@@ -883,6 +883,7 @@ class AdminGetApiFormatsAdapter(AdminApiAdapter):
             "openai:chat",
             "openai:cli",
             "openai:compact",
+            "openai:image",
             "openai:video",
             "claude:chat",
             "claude:cli",

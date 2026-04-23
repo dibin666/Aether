@@ -66,6 +66,15 @@ def test_get_upstream_stream_policy_codex_openai_cli_forces_stream() -> None:
     assert get_upstream_stream_policy(ep) == UpstreamStreamPolicy.FORCE_STREAM
 
 
+def test_get_upstream_stream_policy_codex_openai_image_forces_stream() -> None:
+    ep = _DummyEndpoint(
+        api_format="openai:image",
+        config=None,
+        provider=SimpleNamespace(provider_type="codex"),
+    )
+    assert get_upstream_stream_policy(ep) == UpstreamStreamPolicy.FORCE_STREAM
+
+
 def test_get_upstream_stream_policy_codex_ignores_force_non_stream_config() -> None:
     ep = _DummyEndpoint(
         api_format="openai:cli",

@@ -28,6 +28,7 @@ export function useProviderFilters(
     { value: 'openai:chat', label: 'OpenAI Chat' },
     { value: 'openai:cli', label: 'OpenAI CLI' },
     { value: 'openai:compact', label: 'OpenAI Compact' },
+    { value: 'openai:image', label: 'OpenAI Image' },
     { value: 'gemini:chat', label: 'Gemini Chat' },
     { value: 'gemini:cli', label: 'Gemini CLI' },
   ]

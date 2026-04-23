@@ -2,6 +2,7 @@
 OpenAI API 端点
 
 - /v1/chat/completions - OpenAI Chat API
+- /v1/images/generations - OpenAI Images API
 - /v1/responses - OpenAI Responses API (CLI)
 - /v1/responses/compact - OpenAI Responses Compaction API (CLI)
 
@@ -46,6 +47,29 @@ async def create_chat_completion(
     from src.api.handlers.openai import OpenAIChatAdapter
 
     adapter = OpenAIChatAdapter()
+    return await pipeline.run(
+        adapter=adapter,
+        http_request=http_request,
+        db=db,
+        mode=adapter.mode,
+        api_format_hint=adapter.allowed_api_formats[0],
+    )
+
+
+@router.post("/v1/images/generations")
+async def create_image_generation(
+    http_request: Request,
+    db: Session = Depends(get_db),
+) -> Any:
+    """
+    OpenAI Images API
+
+    兼容 OpenAI `/v1/images/generations`，内部通过 Codex Responses
+    `image_generation` tool 执行生图。
+    """
+    from src.api.handlers.openai_cli import OpenAIImageAdapter
+
+    adapter = OpenAIImageAdapter()
     return await pipeline.run(
         adapter=adapter,
         http_request=http_request,

@@ -57,6 +57,14 @@ class OpenAIChatAdapter(ChatAdapterBase):
                 "invalid_request_error",
             )
 
+        model_name = str(original_request_body.get("model") or "").strip().lower()
+        if model_name == "gpt-image-2":
+            return self._error_response(
+                400,
+                "gpt-image-2 仅支持通过 /v1/images/generations 调用",
+                "invalid_request_error",
+            )
+
         try:
             return OpenAIRequest.model_validate(original_request_body, strict=False)
         except ValueError as e:

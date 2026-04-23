@@ -12,6 +12,9 @@ from src.api.handlers.base.cli_handler_base import (
     StreamContext,
 )
 from src.core.api_format import ApiFamily, EndpointKind
+from src.core.api_format.conversion.normalizers.openai_image import (
+    OpenAIImageNormalizer,
+)
 
 
 class OpenAICliMessageHandler(CliMessageHandlerBase):
@@ -224,3 +227,26 @@ class OpenAICliMessageHandler(CliMessageHandlerBase):
         # 如果没有从响应中获取到 model，使用上下文中的
         if "model" not in ctx.response_metadata and ctx.model:
             ctx.response_metadata["model"] = ctx.model
+
+
+class OpenAIImageMessageHandler(OpenAICliMessageHandler):
+    """OpenAI Images handler，内部改写为 Responses image_generation 请求。"""
+
+    FORMAT_ID = "openai:image"
+    API_FAMILY = ApiFamily.OPENAI
+    ENDPOINT_KIND = EndpointKind.IMAGE
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._image_normalizer = OpenAIImageNormalizer()
+
+    def prepare_request_for_dispatch(
+        self,
+        request_body: dict[str, Any],
+        path_params: dict[str, Any] | None = None,
+    ) -> tuple[str, str, dict[str, Any]]:
+        del path_params
+        requested_model = str(request_body.get("model") or "gpt-image-2")
+        internal = self._image_normalizer.request_to_internal(dict(request_body))
+        dispatch_request_body = self._image_normalizer.request_from_internal(internal)
+        return requested_model, requested_model, dispatch_request_body

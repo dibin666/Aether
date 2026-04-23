@@ -134,6 +134,13 @@ PRESET_MODELS: dict[str, list[dict[str, Any]]] = {
     # Codex (OpenAI CLI 反代)
     "codex": [
         {
+            "id": "gpt-image-2",
+            "object": "model",
+            "owned_by": "openai",
+            "display_name": "GPT Image 2",
+            "api_format": "openai:image",
+        },
+        {
             "id": "gpt-5",
             "object": "model",
             "owned_by": "openai",

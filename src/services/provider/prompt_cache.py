@@ -112,7 +112,7 @@ def resolve_prompt_cache_key_scope(
     """Resolve which prompt cache strategy should be used for this request."""
     fmt = str(provider_api_format or "").strip().lower()
     pt = normalize_provider_type(provider_type)
-    if pt == ProviderType.CODEX.value and fmt in {"openai:cli", "openai:compact"}:
+    if pt == ProviderType.CODEX.value and fmt in {"openai:cli", "openai:compact", "openai:image"}:
         return "codex"
 
     if fmt == "openai:compact":

@@ -350,8 +350,10 @@ def register_all() -> None:
     # Transport
     register_transport_hook("codex", "openai:cli", build_codex_url)
     register_transport_hook("codex", "openai:compact", build_codex_url)
+    register_transport_hook("codex", "openai:image", build_codex_url)
     register_upstream_headers_hook("codex", "openai:cli", build_codex_cli_headers)
     register_upstream_headers_hook("codex", "openai:compact", build_codex_compact_headers)
+    register_upstream_headers_hook("codex", "openai:image", build_codex_cli_headers)
 
     # Auth
     register_auth_enricher("codex", enrich_codex)
@@ -360,6 +362,7 @@ def register_all() -> None:
     from src.core.api_format.metadata import CODEX_DEFAULT_BODY_RULES
 
     register_provider_default_body_rules("codex", "openai:cli", CODEX_DEFAULT_BODY_RULES)
+    register_provider_default_body_rules("codex", "openai:image", CODEX_DEFAULT_BODY_RULES)
 
     # Export: Codex uses the default export builder (strip null + temp fields)
     # No need to register a custom one — the default in export.py suffices.

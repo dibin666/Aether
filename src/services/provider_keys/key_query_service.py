@@ -27,6 +27,7 @@ _LEGACY_API_FORMAT_MAP: dict[str, str] = {
     "OPENAI": "openai:chat",
     "OPENAI_CLI": "openai:cli",
     "OPENAI_COMPACT": "openai:compact",
+    "OPENAI_IMAGE": "openai:image",
     "OPENAI_VIDEO": "openai:video",
     "GEMINI": "gemini:chat",
     "GEMINI_CLI": "gemini:cli",

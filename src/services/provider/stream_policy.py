@@ -56,7 +56,7 @@ def get_upstream_stream_policy(
     Config source: endpoint.config["upstream_stream_policy"] (preferred).
 
     Defaults:
-    - Codex + openai:cli: FORCE_STREAM (Codex upstream requires stream=true).
+    - Codex + openai:cli/openai:image: FORCE_STREAM (Codex upstream requires stream=true).
     - Codex + openai:compact: follow endpoint/client policy (no hard force).
     """
 
@@ -69,7 +69,7 @@ def get_upstream_stream_policy(
         or ""
     )
     sig = str(endpoint_sig or getattr(endpoint, "api_format", "") or "").strip().lower()
-    is_codex_cli = pt == ProviderType.CODEX and sig == "openai:cli"
+    is_codex_cli = pt == ProviderType.CODEX and sig in {"openai:cli", "openai:image"}
     is_codex_compact = pt == ProviderType.CODEX and sig == "openai:compact"
     if is_codex_cli:
         is_codex_compact = is_codex_compact_request(endpoint_sig=sig)

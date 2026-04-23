@@ -121,6 +121,21 @@ def test_maybe_patch_request_with_prompt_cache_key_for_codex_openai_compact() ->
     assert out["prompt_cache_key"] == build_stable_codex_prompt_cache_key("user-key-123")
 
 
+def test_maybe_patch_request_with_prompt_cache_key_for_codex_openai_image() -> None:
+    req = {"model": "gpt-image-2", "input": []}
+
+    out = maybe_patch_request_with_prompt_cache_key(
+        req,
+        provider_api_format="openai:image",
+        provider_type="codex",
+        base_url="https://chatgpt.com/backend-api/codex",
+        user_api_key_id="user-key-123",
+    )
+
+    assert out is not req
+    assert out["prompt_cache_key"] == build_stable_codex_prompt_cache_key("user-key-123")
+
+
 def test_maybe_patch_request_with_prompt_cache_key_skips_official_compact() -> None:
     req = {"model": "gpt-5", "input": []}
 

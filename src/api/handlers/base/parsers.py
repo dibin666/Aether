@@ -382,6 +382,12 @@ class OpenAICliResponseParser(OpenAIResponseParser):
         return "".join(text_parts)
 
 
+class OpenAIImageResponseParser(OpenAICliResponseParser):
+    """OpenAI Images route internally still consumes Responses-style upstream payloads."""
+
+    API_FORMAT = "openai:image"
+
+
 class ClaudeResponseParser(ResponseParser):
     """Claude 格式响应解析器"""
 

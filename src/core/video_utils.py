@@ -70,8 +70,8 @@ def normalize_gemini_operation_id(operation_id: str) -> str:
 
 
 def is_image_gen_model(model: str | None) -> bool:
-    """判断是否为图像生成模型（模式匹配，覆盖 gemini-*-image / imagen-* 系列）"""
+    """判断是否为图像生成模型。"""
     if not model:
         return False
     m = model.lower()
-    return "image" in m and ("gemini" in m or "imagen" in m)
+    return m == "gpt-image-2" or ("image" in m and ("gemini" in m or "imagen" in m))

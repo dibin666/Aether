@@ -1152,6 +1152,7 @@ class ListAvailableModelsAdapter(AuthenticatedApiAdapter):
             "openai:chat",
             "openai:cli",
             "openai:compact",
+            "openai:image",
             "claude:chat",
             "claude:cli",
             "gemini:chat",

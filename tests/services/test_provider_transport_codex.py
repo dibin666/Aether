@@ -111,6 +111,20 @@ def test_codex_openai_compact_uses_compact_path_without_v1_prefix() -> None:
     assert url == "https://chatgpt.com/backend-api/codex/responses/compact"
 
 
+def test_codex_openai_image_uses_responses_path_without_v1_prefix() -> None:
+    endpoint = _DummyEndpoint(
+        base_url="https://chatgpt.com/backend-api/codex",
+        api_format="openai:image",
+        provider=SimpleNamespace(provider_type="codex"),
+    )
+    url = build_provider_url(
+        endpoint,  # type: ignore[arg-type]
+        path_params={"model": "ignored"},
+        is_stream=False,
+    )
+    assert url == "https://chatgpt.com/backend-api/codex/responses"
+
+
 def test_codex_openai_cli_uses_provider_id_lookup_without_touching_endpoint_provider(
     monkeypatch,
 ) -> None:
