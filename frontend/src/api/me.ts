@@ -19,8 +19,8 @@ export interface Profile {
   created_at: string
   updated_at?: string
   last_login_at?: string
-  auth_source?: 'local' | 'ldap' | 'oauth'
-  has_password?: boolean
+  auth_source: 'local' | 'ldap' | 'oauth'
+  has_password: boolean
   preferences?: UserPreferences
 }
 
