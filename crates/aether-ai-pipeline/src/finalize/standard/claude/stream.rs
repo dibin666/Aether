@@ -20,6 +20,7 @@ pub struct ClaudeProviderState {
     model: Option<String>,
     started: bool,
     finished: bool,
+    usage: Option<CanonicalUsage>,
     tool_calls: BTreeMap<usize, ClaudeProviderToolState>,
 }
 
@@ -73,6 +74,7 @@ impl ClaudeProviderState {
                         .get("model")
                         .and_then(Value::as_str)
                         .map(ToOwned::to_owned);
+                    self.merge_usage(canonical_usage_from_claude_usage(message.get("usage")));
                 }
                 self.ensure_started(report_context, &mut out);
             }
@@ -303,7 +305,9 @@ impl ClaudeProviderState {
                     model,
                     event: CanonicalStreamEvent::Finish {
                         finish_reason,
-                        usage: canonical_usage_from_claude_usage(event_object.get("usage")),
+                        usage: self.finish_usage(canonical_usage_from_claude_usage(
+                            event_object.get("usage"),
+                        )),
                     },
                 });
                 self.finished = true;
@@ -330,6 +334,19 @@ impl ClaudeProviderState {
                 usage: None,
             },
         }])
+    }
+
+    fn merge_usage(&mut self, usage: Option<CanonicalUsage>) {
+        let Some(usage) = usage else {
+            return;
+        };
+        let current = self.usage.take().unwrap_or_default();
+        self.usage = Some(merge_claude_usage(current, usage));
+    }
+
+    fn finish_usage(&mut self, usage: Option<CanonicalUsage>) -> Option<CanonicalUsage> {
+        self.merge_usage(usage);
+        self.usage.take()
     }
 }
 
@@ -771,6 +788,34 @@ impl ClaudeClientEmitter {
         )?);
         Ok(out)
     }
+
+}
+
+fn merge_claude_usage(mut current: CanonicalUsage, next: CanonicalUsage) -> CanonicalUsage {
+    if next.input_tokens > 0 {
+        current.input_tokens = next.input_tokens;
+    }
+    if next.output_tokens > 0 {
+        current.output_tokens = next.output_tokens;
+    }
+    if next.cache_creation_tokens > 0 {
+        current.cache_creation_tokens = next.cache_creation_tokens;
+    }
+    if next.cache_creation_ephemeral_5m_tokens > 0 {
+        current.cache_creation_ephemeral_5m_tokens = next.cache_creation_ephemeral_5m_tokens;
+    }
+    if next.cache_creation_ephemeral_1h_tokens > 0 {
+        current.cache_creation_ephemeral_1h_tokens = next.cache_creation_ephemeral_1h_tokens;
+    }
+    if next.cache_read_tokens > 0 {
+        current.cache_read_tokens = next.cache_read_tokens;
+    }
+    current.total_tokens = current
+        .input_tokens
+        .saturating_add(current.output_tokens)
+        .saturating_add(current.cache_creation_tokens)
+        .saturating_add(current.cache_read_tokens);
+    current
 }
 
 fn canonical_content_part_from_claude_block(
@@ -942,6 +987,58 @@ mod tests {
         assert!(frames.iter().any(|frame| matches!(
             frame.event,
             CanonicalStreamEvent::ReasoningSignature(ref signature) if signature == "sig_123"
+        )));
+    }
+
+    #[test]
+    fn claude_provider_state_merges_start_and_delta_usage() {
+        let mut state = ClaudeProviderState::default();
+        let report_context = json!({});
+        let _ = state
+            .push_line(
+                &report_context,
+                data_line(json!({
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg_123",
+                        "model": "claude-sonnet-4-5",
+                        "usage": {
+                            "input_tokens": 5,
+                            "cache_creation_input_tokens": 59_573,
+                            "cache_read_input_tokens": 0,
+                            "output_tokens": 0,
+                        },
+                    },
+                })),
+            )
+            .expect("message_start should parse");
+        let frames = state
+            .push_line(
+                &report_context,
+                data_line(json!({
+                    "type": "message_delta",
+                    "delta": {
+                        "stop_reason": "end_turn",
+                    },
+                    "usage": {
+                        "output_tokens": 162,
+                    },
+                })),
+            )
+            .expect("message_delta should parse");
+
+        assert!(frames.iter().any(|frame| matches!(
+            frame.event,
+            CanonicalStreamEvent::Finish {
+                usage: Some(CanonicalUsage {
+                    input_tokens: 5,
+                    output_tokens: 162,
+                    cache_creation_tokens: 59_573,
+                    cache_read_tokens: 0,
+                    ..
+                }),
+                ..
+            }
         )));
     }
 

@@ -569,7 +569,7 @@
                 <span>{{ formatTokens(record.output_tokens || 0) }}</span>
               </div>
               <div class="flex items-center gap-1 text-muted-foreground">
-                <span :class="hasPositiveTokens(record.cache_read_input_tokens) ? 'text-foreground/70' : ''">{{ formatOptionalTokens(record.cache_read_input_tokens) }}</span>
+                <span :class="hasPositiveTokens(getRecordCacheTokens(record)) ? 'text-foreground/70' : ''">{{ formatOptionalTokens(getRecordCacheTokens(record)) }}</span>
                 <span>/</span>
                 <span>-</span>
               </div>
@@ -689,7 +689,7 @@ import {
 import { RefreshCcw, Search } from 'lucide-vue-next'
 import { formatTokens, formatCurrency } from '@/utils/format'
 import { formatDateTime } from '../composables'
-import { getEffectiveInputTokens } from '../token-normalization'
+import { getCacheCreationTokens, getEffectiveInputTokens } from '../token-normalization'
 import {
   formatUsageStreamLabel,
   isUsageRecordFailed,
@@ -823,6 +823,10 @@ function handleRowClick(event: MouseEvent, id: string) {
 
 function getRecordEffectiveInputTokens(record: UsageRecord): number {
   return getEffectiveInputTokens(record)
+}
+
+function getRecordCacheTokens(record: UsageRecord): number {
+  return getCacheCreationTokens(record) + (record.cache_read_input_tokens || 0)
 }
 
 function hasPositiveTokens(value: number | null | undefined): boolean {
