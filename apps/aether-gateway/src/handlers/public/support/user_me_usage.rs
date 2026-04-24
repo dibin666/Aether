@@ -1341,6 +1341,31 @@ mod tests {
     }
 
     #[test]
+    fn user_usage_payload_keeps_claude_effective_input_when_cache_read_is_large() {
+        let item = StoredRequestUsageAudit {
+            provider_name: "Claude".to_string(),
+            model: "claude-sonnet-4-5".to_string(),
+            api_format: Some("claude:chat".to_string()),
+            api_family: Some("claude".to_string()),
+            endpoint_api_format: Some("claude:chat".to_string()),
+            provider_api_family: Some("claude".to_string()),
+            input_tokens: 4941,
+            output_tokens: 973,
+            total_tokens: 59474,
+            cache_creation_input_tokens: 687,
+            cache_read_input_tokens: 52873,
+            ..sample_usage("completed")
+        };
+
+        let payload = build_users_me_usage_record_payload(&item, false, &BTreeMap::new(), false);
+
+        assert_eq!(payload["input_tokens"], 4941);
+        assert_eq!(payload["effective_input_tokens"], 4941);
+        assert_eq!(payload["cache_creation_input_tokens"], 687);
+        assert_eq!(payload["cache_read_input_tokens"], 52873);
+    }
+
+    #[test]
     fn user_usage_active_pending_with_failure_signal_is_not_active() {
         let item = StoredRequestUsageAudit {
             status_code: Some(503),

@@ -2180,16 +2180,7 @@ fn extract_token_counts_from_json(value: &Value) -> Option<(u64, u64, u64)> {
             .get("totalTokenCount")
             .and_then(Value::as_u64)
             .unwrap_or(input + output);
-        let cache_read = usage
-            .get("cachedContentTokenCount")
-            .and_then(Value::as_u64)
-            .unwrap_or_default();
-        let total = if cache_read > 0 {
-            input.saturating_add(output).saturating_add(cache_read)
-        } else {
-            raw_total
-        };
-        return Some((input, output, total));
+        return Some((input, output, raw_total));
     }
 
     if let Some(chunks) = value.get("chunks").and_then(Value::as_array) {
@@ -2351,6 +2342,21 @@ mod tests {
         .expect("tokens should exist");
 
         assert_eq!(tokens, (6, 20, 41883));
+    }
+
+    #[test]
+    fn extracts_gemini_usage_tokens_without_adding_cached_content_twice() {
+        let tokens = extract_token_counts_from_json(&json!({
+            "usageMetadata": {
+                "promptTokenCount": 14,
+                "candidatesTokenCount": 6,
+                "cachedContentTokenCount": 2,
+                "totalTokenCount": 20
+            }
+        }))
+        .expect("tokens should exist");
+
+        assert_eq!(tokens, (14, 6, 20));
     }
 
     #[test]

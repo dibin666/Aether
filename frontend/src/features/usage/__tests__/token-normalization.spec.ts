@@ -26,4 +26,14 @@ describe('usage token normalization', () => {
       api_format: 'openai:chat',
     })).toBe(80)
   })
+
+  it('does not subtract cache read tokens for Claude usage', () => {
+    expect(getEffectiveInputTokens({
+      input_tokens: 4941,
+      cache_creation_input_tokens: 687,
+      cache_read_input_tokens: 52873,
+      output_tokens: 973,
+      api_format: 'claude:chat',
+    })).toBe(4941)
+  })
 })

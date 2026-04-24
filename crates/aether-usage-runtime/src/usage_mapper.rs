@@ -419,6 +419,54 @@ mod tests {
     }
 
     #[test]
+    fn maps_claude_usage_with_large_cache_read_tokens_without_subtracting_input() {
+        let usage = map_usage(
+            &serde_json::json!({
+                "input_tokens": 4941,
+                "cache_creation_input_tokens": 687,
+                "cache_read_input_tokens": 52873,
+                "output_tokens": 973
+            }),
+            "claude:chat",
+        );
+
+        assert_eq!(usage.input_tokens, 4941);
+        assert_eq!(usage.cache_creation_tokens, 687);
+        assert_eq!(usage.cache_read_tokens, 52873);
+        assert_eq!(usage.output_tokens, 973);
+    }
+
+    #[test]
+    fn maps_claude_usage_with_cache_creation_total_and_zero_ttl_breakdown() {
+        let usage = map_usage(
+            &serde_json::json!({
+                "cache_creation": {
+                    "ephemeral_1h_input_tokens": 0,
+                    "ephemeral_5m_input_tokens": 0
+                },
+                "cache_creation_input_tokens": 2051,
+                "cache_read_input_tokens": 2051,
+                "inference_geo": "inference_geo",
+                "input_tokens": 2095,
+                "output_tokens": 503,
+                "server_tool_use": {
+                    "web_fetch_requests": 2,
+                    "web_search_requests": 0
+                },
+                "service_tier": "standard"
+            }),
+            "claude:chat",
+        );
+
+        assert_eq!(usage.input_tokens, 2095);
+        assert_eq!(usage.cache_creation_tokens, 2051);
+        assert_eq!(usage.cache_creation_ephemeral_5m_tokens, 0);
+        assert_eq!(usage.cache_creation_ephemeral_1h_tokens, 0);
+        assert_eq!(usage.cache_read_tokens, 2051);
+        assert_eq!(usage.output_tokens, 503);
+    }
+
+    #[test]
     fn maps_claude_usage_with_ephemeral_cache_breakdown() {
         let usage = map_usage(
             &serde_json::json!({
