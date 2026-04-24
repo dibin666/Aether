@@ -41,6 +41,7 @@ use self::execution_failures::{
 use crate::ai_pipeline_api::{
     maybe_bridge_standard_sync_json_to_stream, maybe_build_provider_private_stream_normalizer,
     maybe_build_stream_response_rewriter, normalize_provider_private_report_context,
+    StreamingStandardTerminalObserver,
 };
 use crate::api::response::{
     attach_control_metadata_headers, build_client_response, build_client_response_from_parts,
@@ -202,6 +203,84 @@ fn append_stream_capture_bytes(
     if keep_len < chunk.len() {
         *truncated = true;
     }
+}
+
+fn observe_stream_usage_bytes(
+    observer: &mut StreamingStandardTerminalObserver,
+    report_context: &Value,
+    buffered: &mut Vec<u8>,
+    chunk: &[u8],
+) {
+    if chunk.is_empty() {
+        return;
+    }
+
+    buffered.extend_from_slice(chunk);
+    while let Some(line_end) = buffered.iter().position(|byte| *byte == b'\n') {
+        let line = buffered.drain(..=line_end).collect::<Vec<_>>();
+        if let Err(err) = observer.push_line(report_context, line) {
+            observer.disable_with_error(err.to_string());
+            buffered.clear();
+            break;
+        }
+    }
+}
+
+fn finalize_stream_usage_observer(
+    observer: &mut Option<StreamingStandardTerminalObserver>,
+    report_context: Option<&Value>,
+    buffered: &mut Vec<u8>,
+) -> Option<ExecutionStreamTerminalSummary> {
+    let (Some(observer), Some(report_context)) = (observer.as_mut(), report_context) else {
+        return None;
+    };
+
+    if !buffered.is_empty() {
+        let line = std::mem::take(buffered);
+        if let Err(err) = observer.push_line(report_context, line) {
+            observer.disable_with_error(err.to_string());
+        }
+    }
+
+    match observer.finish(report_context) {
+        Ok(summary) => summary,
+        Err(err) => {
+            observer.disable_with_error(err.to_string());
+            observer.latest_summary().cloned()
+        }
+    }
+}
+
+fn merge_stream_terminal_summary(
+    mut current: Option<ExecutionStreamTerminalSummary>,
+    observed: Option<ExecutionStreamTerminalSummary>,
+) -> Option<ExecutionStreamTerminalSummary> {
+    let Some(observed) = observed else {
+        return current;
+    };
+
+    let Some(current_summary) = current.as_mut() else {
+        return Some(observed);
+    };
+
+    if current_summary.standardized_usage.is_none() {
+        current_summary.standardized_usage = observed.standardized_usage;
+    }
+    if current_summary.finish_reason.is_none() {
+        current_summary.finish_reason = observed.finish_reason;
+    }
+    if current_summary.response_id.is_none() {
+        current_summary.response_id = observed.response_id;
+    }
+    if current_summary.model.is_none() {
+        current_summary.model = observed.model;
+    }
+    current_summary.observed_finish |= observed.observed_finish;
+    if current_summary.parser_error.is_none() {
+        current_summary.parser_error = observed.parser_error;
+    }
+
+    current
 }
 
 async fn execute_in_process_stream(
@@ -1333,6 +1412,18 @@ async fn execute_stream_from_frame_stream(
         } else {
             maybe_build_stream_response_rewriter(normalized_stream_report_context_owned.as_ref())
         };
+        let stream_usage_report_context =
+            normalized_stream_report_context_owned.clone().or_else(|| {
+                Some(serde_json::json!({
+                    "provider_api_format": plan_for_report.provider_api_format.as_str(),
+                    "client_api_format": plan_for_report.client_api_format.as_str(),
+                }))
+            });
+        let mut stream_usage_observer = stream_usage_report_context
+            .as_ref()
+            .filter(|_| !sync_json_stream_bridge_active_for_report)
+            .map(|_| StreamingStandardTerminalObserver::default());
+        let mut stream_usage_observer_buffered = Vec::new();
         append_stream_capture_bytes(
             &mut provider_buffered_body,
             &provider_prefetched_body_for_report,
@@ -1382,6 +1473,17 @@ async fn execute_stream_from_frame_stream(
             let replay_chunk = normalized_prefetched_chunk
                 .as_deref()
                 .unwrap_or(provider_prefetched_body_for_report.as_slice());
+            if let (Some(observer), Some(report_context)) = (
+                stream_usage_observer.as_mut(),
+                stream_usage_report_context.as_ref(),
+            ) {
+                observe_stream_usage_bytes(
+                    observer,
+                    report_context,
+                    &mut stream_usage_observer_buffered,
+                    replay_chunk,
+                );
+            }
             if terminal_failure.is_none() {
                 if let Some(rewriter) = local_stream_rewriter.as_mut() {
                     if let Err(err) = rewriter.push_chunk(replay_chunk) {
@@ -1496,6 +1598,17 @@ async fn execute_stream_from_frame_stream(
                         } else {
                             chunk
                         };
+                        if let (Some(observer), Some(report_context)) = (
+                            stream_usage_observer.as_mut(),
+                            stream_usage_report_context.as_ref(),
+                        ) {
+                            observe_stream_usage_bytes(
+                                observer,
+                                report_context,
+                                &mut stream_usage_observer_buffered,
+                                &normalized_chunk,
+                            );
+                        }
                         let rewritten_chunk = if let Some(rewriter) = local_stream_rewriter.as_mut()
                         {
                             match rewriter.push_chunk(&normalized_chunk) {
@@ -1600,6 +1713,17 @@ async fn execute_stream_from_frame_stream(
             if let Some(normalizer) = private_stream_normalizer.as_mut() {
                 match normalizer.finish() {
                     Ok(normalized_chunk) if !normalized_chunk.is_empty() => {
+                        if let (Some(observer), Some(report_context)) = (
+                            stream_usage_observer.as_mut(),
+                            stream_usage_report_context.as_ref(),
+                        ) {
+                            observe_stream_usage_bytes(
+                                observer,
+                                report_context,
+                                &mut stream_usage_observer_buffered,
+                                &normalized_chunk,
+                            );
+                        }
                         let rewritten_chunk = if let Some(rewriter) = local_stream_rewriter.as_mut()
                         {
                             match rewriter.push_chunk(&normalized_chunk) {
@@ -1752,6 +1876,15 @@ async fn execute_stream_from_frame_stream(
         }
 
         drop(tx);
+
+        stream_terminal_summary = merge_stream_terminal_summary(
+            stream_terminal_summary,
+            finalize_stream_usage_observer(
+                &mut stream_usage_observer,
+                stream_usage_report_context.as_ref(),
+                &mut stream_usage_observer_buffered,
+            ),
+        );
 
         if downstream_dropped {
             debug!(
