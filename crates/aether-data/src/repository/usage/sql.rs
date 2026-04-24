@@ -1111,6 +1111,24 @@ INSERT INTO usage_settlement_snapshots (
   billing_status,
   billing_snapshot_schema_version,
   billing_snapshot_status,
+  settlement_snapshot_schema_version,
+  settlement_snapshot,
+  billing_dimensions,
+  billing_input_tokens,
+  billing_effective_input_tokens,
+  billing_output_tokens,
+  billing_cache_creation_tokens,
+  billing_cache_creation_5m_tokens,
+  billing_cache_creation_1h_tokens,
+  billing_cache_read_tokens,
+  billing_total_input_context,
+  billing_cache_creation_cost_usd,
+  billing_cache_read_cost_usd,
+  billing_total_cost_usd,
+  billing_actual_total_cost_usd,
+  billing_pricing_source,
+  billing_rule_id,
+  billing_rule_version,
   rate_multiplier,
   is_free_tier,
   input_price_per_1m,
@@ -1129,7 +1147,25 @@ INSERT INTO usage_settlement_snapshots (
   $8,
   $9,
   $10,
-  $11
+  $11,
+  $12,
+  $13,
+  $14,
+  $15,
+  $16,
+  $17,
+  $18,
+  $19,
+  $20,
+  $21,
+  $22,
+  $23,
+  $24,
+  $25,
+  $26,
+  $27,
+  $28,
+  $29
 )
 ON CONFLICT (request_id)
 DO UPDATE SET
@@ -1140,6 +1176,78 @@ DO UPDATE SET
   billing_snapshot_status = COALESCE(
     EXCLUDED.billing_snapshot_status,
     usage_settlement_snapshots.billing_snapshot_status
+  ),
+  settlement_snapshot_schema_version = COALESCE(
+    EXCLUDED.settlement_snapshot_schema_version,
+    usage_settlement_snapshots.settlement_snapshot_schema_version
+  ),
+  settlement_snapshot = COALESCE(
+    EXCLUDED.settlement_snapshot,
+    usage_settlement_snapshots.settlement_snapshot
+  ),
+  billing_dimensions = COALESCE(
+    EXCLUDED.billing_dimensions,
+    usage_settlement_snapshots.billing_dimensions
+  ),
+  billing_input_tokens = COALESCE(
+    EXCLUDED.billing_input_tokens,
+    usage_settlement_snapshots.billing_input_tokens
+  ),
+  billing_effective_input_tokens = COALESCE(
+    EXCLUDED.billing_effective_input_tokens,
+    usage_settlement_snapshots.billing_effective_input_tokens
+  ),
+  billing_output_tokens = COALESCE(
+    EXCLUDED.billing_output_tokens,
+    usage_settlement_snapshots.billing_output_tokens
+  ),
+  billing_cache_creation_tokens = COALESCE(
+    EXCLUDED.billing_cache_creation_tokens,
+    usage_settlement_snapshots.billing_cache_creation_tokens
+  ),
+  billing_cache_creation_5m_tokens = COALESCE(
+    EXCLUDED.billing_cache_creation_5m_tokens,
+    usage_settlement_snapshots.billing_cache_creation_5m_tokens
+  ),
+  billing_cache_creation_1h_tokens = COALESCE(
+    EXCLUDED.billing_cache_creation_1h_tokens,
+    usage_settlement_snapshots.billing_cache_creation_1h_tokens
+  ),
+  billing_cache_read_tokens = COALESCE(
+    EXCLUDED.billing_cache_read_tokens,
+    usage_settlement_snapshots.billing_cache_read_tokens
+  ),
+  billing_total_input_context = COALESCE(
+    EXCLUDED.billing_total_input_context,
+    usage_settlement_snapshots.billing_total_input_context
+  ),
+  billing_cache_creation_cost_usd = COALESCE(
+    EXCLUDED.billing_cache_creation_cost_usd,
+    usage_settlement_snapshots.billing_cache_creation_cost_usd
+  ),
+  billing_cache_read_cost_usd = COALESCE(
+    EXCLUDED.billing_cache_read_cost_usd,
+    usage_settlement_snapshots.billing_cache_read_cost_usd
+  ),
+  billing_total_cost_usd = COALESCE(
+    EXCLUDED.billing_total_cost_usd,
+    usage_settlement_snapshots.billing_total_cost_usd
+  ),
+  billing_actual_total_cost_usd = COALESCE(
+    EXCLUDED.billing_actual_total_cost_usd,
+    usage_settlement_snapshots.billing_actual_total_cost_usd
+  ),
+  billing_pricing_source = COALESCE(
+    EXCLUDED.billing_pricing_source,
+    usage_settlement_snapshots.billing_pricing_source
+  ),
+  billing_rule_id = COALESCE(
+    EXCLUDED.billing_rule_id,
+    usage_settlement_snapshots.billing_rule_id
+  ),
+  billing_rule_version = COALESCE(
+    EXCLUDED.billing_rule_version,
+    usage_settlement_snapshots.billing_rule_version
   ),
   rate_multiplier = COALESCE(
     EXCLUDED.rate_multiplier,
@@ -1195,21 +1303,72 @@ SELECT
   "usage".provider_endpoint_kind,
   COALESCE("usage".has_format_conversion, FALSE) AS has_format_conversion,
   COALESCE("usage".is_stream, FALSE) AS is_stream,
-  "usage".input_tokens,
-  "usage".output_tokens,
-  "usage".total_tokens,
-  COALESCE("usage".cache_creation_input_tokens, 0) AS cache_creation_input_tokens,
-  COALESCE("usage".cache_creation_input_tokens_5m, 0) AS cache_creation_ephemeral_5m_input_tokens,
-  COALESCE("usage".cache_creation_input_tokens_1h, 0) AS cache_creation_ephemeral_1h_input_tokens,
-  COALESCE("usage".cache_read_input_tokens, 0) AS cache_read_input_tokens,
-  COALESCE(CAST("usage".cache_creation_cost_usd AS DOUBLE PRECISION), 0) AS cache_creation_cost_usd,
-  COALESCE(CAST("usage".cache_read_cost_usd AS DOUBLE PRECISION), 0) AS cache_read_cost_usd,
+  CAST(COALESCE(usage_settlement_snapshots.billing_input_tokens, "usage".input_tokens) AS INTEGER) AS input_tokens,
+  CAST(COALESCE(usage_settlement_snapshots.billing_output_tokens, "usage".output_tokens) AS INTEGER) AS output_tokens,
+  CAST(COALESCE(
+    CASE
+      WHEN usage_settlement_snapshots.billing_input_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_output_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_5m_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_1h_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_read_tokens IS NOT NULL
+      THEN COALESCE(usage_settlement_snapshots.billing_input_tokens, 0)
+        + COALESCE(usage_settlement_snapshots.billing_output_tokens, 0)
+        + COALESCE(
+            usage_settlement_snapshots.billing_cache_creation_tokens,
+            COALESCE(usage_settlement_snapshots.billing_cache_creation_5m_tokens, 0)
+              + COALESCE(usage_settlement_snapshots.billing_cache_creation_1h_tokens, 0),
+            0
+          )
+        + COALESCE(usage_settlement_snapshots.billing_cache_read_tokens, 0)
+    END,
+    "usage".total_tokens
+  ) AS INTEGER) AS total_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_tokens,
+    "usage".cache_creation_input_tokens,
+    0
+  ) AS INTEGER) AS cache_creation_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_5m_tokens,
+    "usage".cache_creation_input_tokens_5m,
+    0
+  ) AS INTEGER) AS cache_creation_ephemeral_5m_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_1h_tokens,
+    "usage".cache_creation_input_tokens_1h,
+    0
+  ) AS INTEGER) AS cache_creation_ephemeral_1h_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_read_tokens,
+    "usage".cache_read_input_tokens,
+    0
+  ) AS INTEGER) AS cache_read_input_tokens,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_cache_creation_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".cache_creation_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS cache_creation_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_cache_read_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".cache_read_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS cache_read_cost_usd,
   COALESCE(
     CAST(usage_settlement_snapshots.output_price_per_1m AS DOUBLE PRECISION),
     CAST("usage".output_price_per_1m AS DOUBLE PRECISION)
   ) AS output_price_per_1m,
-  COALESCE(CAST("usage".total_cost_usd AS DOUBLE PRECISION), 0) AS total_cost_usd,
-  COALESCE(CAST("usage".actual_total_cost_usd AS DOUBLE PRECISION), 0) AS actual_total_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_total_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".total_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS total_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_actual_total_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".actual_total_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS actual_total_cost_usd,
   "usage".status_code,
   "usage".error_message,
   "usage".error_category,
@@ -1261,6 +1420,24 @@ SELECT
   CAST(usage_settlement_snapshots.cache_creation_price_per_1m AS DOUBLE PRECISION) AS settlement_cache_creation_price_per_1m,
   CAST(usage_settlement_snapshots.cache_read_price_per_1m AS DOUBLE PRECISION) AS settlement_cache_read_price_per_1m,
   CAST(usage_settlement_snapshots.price_per_request AS DOUBLE PRECISION) AS settlement_price_per_request,
+  usage_settlement_snapshots.settlement_snapshot_schema_version AS settlement_snapshot_schema_version,
+  usage_settlement_snapshots.settlement_snapshot AS settlement_snapshot,
+  usage_settlement_snapshots.billing_dimensions AS settlement_billing_dimensions,
+  usage_settlement_snapshots.billing_input_tokens AS settlement_billing_input_tokens,
+  usage_settlement_snapshots.billing_effective_input_tokens AS settlement_billing_effective_input_tokens,
+  usage_settlement_snapshots.billing_output_tokens AS settlement_billing_output_tokens,
+  usage_settlement_snapshots.billing_cache_creation_tokens AS settlement_billing_cache_creation_tokens,
+  usage_settlement_snapshots.billing_cache_creation_5m_tokens AS settlement_billing_cache_creation_5m_tokens,
+  usage_settlement_snapshots.billing_cache_creation_1h_tokens AS settlement_billing_cache_creation_1h_tokens,
+  usage_settlement_snapshots.billing_cache_read_tokens AS settlement_billing_cache_read_tokens,
+  usage_settlement_snapshots.billing_total_input_context AS settlement_billing_total_input_context,
+  CAST(usage_settlement_snapshots.billing_cache_creation_cost_usd AS DOUBLE PRECISION) AS settlement_billing_cache_creation_cost_usd,
+  CAST(usage_settlement_snapshots.billing_cache_read_cost_usd AS DOUBLE PRECISION) AS settlement_billing_cache_read_cost_usd,
+  CAST(usage_settlement_snapshots.billing_total_cost_usd AS DOUBLE PRECISION) AS settlement_billing_total_cost_usd,
+  CAST(usage_settlement_snapshots.billing_actual_total_cost_usd AS DOUBLE PRECISION) AS settlement_billing_actual_total_cost_usd,
+  usage_settlement_snapshots.billing_pricing_source AS settlement_billing_pricing_source,
+  usage_settlement_snapshots.billing_rule_id AS settlement_billing_rule_id,
+  usage_settlement_snapshots.billing_rule_version AS settlement_billing_rule_version,
   CAST(EXTRACT(EPOCH FROM "usage".created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(
     EXTRACT(
@@ -1310,21 +1487,72 @@ SELECT
   "usage".provider_endpoint_kind,
   COALESCE("usage".has_format_conversion, FALSE) AS has_format_conversion,
   COALESCE("usage".is_stream, FALSE) AS is_stream,
-  "usage".input_tokens,
-  "usage".output_tokens,
-  "usage".total_tokens,
-  COALESCE("usage".cache_creation_input_tokens, 0) AS cache_creation_input_tokens,
-  COALESCE("usage".cache_creation_input_tokens_5m, 0) AS cache_creation_ephemeral_5m_input_tokens,
-  COALESCE("usage".cache_creation_input_tokens_1h, 0) AS cache_creation_ephemeral_1h_input_tokens,
-  COALESCE("usage".cache_read_input_tokens, 0) AS cache_read_input_tokens,
-  COALESCE(CAST("usage".cache_creation_cost_usd AS DOUBLE PRECISION), 0) AS cache_creation_cost_usd,
-  COALESCE(CAST("usage".cache_read_cost_usd AS DOUBLE PRECISION), 0) AS cache_read_cost_usd,
+  CAST(COALESCE(usage_settlement_snapshots.billing_input_tokens, "usage".input_tokens) AS INTEGER) AS input_tokens,
+  CAST(COALESCE(usage_settlement_snapshots.billing_output_tokens, "usage".output_tokens) AS INTEGER) AS output_tokens,
+  CAST(COALESCE(
+    CASE
+      WHEN usage_settlement_snapshots.billing_input_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_output_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_5m_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_1h_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_read_tokens IS NOT NULL
+      THEN COALESCE(usage_settlement_snapshots.billing_input_tokens, 0)
+        + COALESCE(usage_settlement_snapshots.billing_output_tokens, 0)
+        + COALESCE(
+            usage_settlement_snapshots.billing_cache_creation_tokens,
+            COALESCE(usage_settlement_snapshots.billing_cache_creation_5m_tokens, 0)
+              + COALESCE(usage_settlement_snapshots.billing_cache_creation_1h_tokens, 0),
+            0
+          )
+        + COALESCE(usage_settlement_snapshots.billing_cache_read_tokens, 0)
+    END,
+    "usage".total_tokens
+  ) AS INTEGER) AS total_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_tokens,
+    "usage".cache_creation_input_tokens,
+    0
+  ) AS INTEGER) AS cache_creation_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_5m_tokens,
+    "usage".cache_creation_input_tokens_5m,
+    0
+  ) AS INTEGER) AS cache_creation_ephemeral_5m_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_1h_tokens,
+    "usage".cache_creation_input_tokens_1h,
+    0
+  ) AS INTEGER) AS cache_creation_ephemeral_1h_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_read_tokens,
+    "usage".cache_read_input_tokens,
+    0
+  ) AS INTEGER) AS cache_read_input_tokens,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_cache_creation_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".cache_creation_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS cache_creation_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_cache_read_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".cache_read_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS cache_read_cost_usd,
   COALESCE(
     CAST(usage_settlement_snapshots.output_price_per_1m AS DOUBLE PRECISION),
     CAST("usage".output_price_per_1m AS DOUBLE PRECISION)
   ) AS output_price_per_1m,
-  COALESCE(CAST("usage".total_cost_usd AS DOUBLE PRECISION), 0) AS total_cost_usd,
-  COALESCE(CAST("usage".actual_total_cost_usd AS DOUBLE PRECISION), 0) AS actual_total_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_total_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".total_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS total_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_actual_total_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".actual_total_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS actual_total_cost_usd,
   "usage".status_code,
   "usage".error_message,
   "usage".error_category,
@@ -1372,6 +1600,24 @@ SELECT
   CAST(usage_settlement_snapshots.cache_creation_price_per_1m AS DOUBLE PRECISION) AS settlement_cache_creation_price_per_1m,
   CAST(usage_settlement_snapshots.cache_read_price_per_1m AS DOUBLE PRECISION) AS settlement_cache_read_price_per_1m,
   CAST(usage_settlement_snapshots.price_per_request AS DOUBLE PRECISION) AS settlement_price_per_request,
+  usage_settlement_snapshots.settlement_snapshot_schema_version AS settlement_snapshot_schema_version,
+  usage_settlement_snapshots.settlement_snapshot AS settlement_snapshot,
+  usage_settlement_snapshots.billing_dimensions AS settlement_billing_dimensions,
+  usage_settlement_snapshots.billing_input_tokens AS settlement_billing_input_tokens,
+  usage_settlement_snapshots.billing_effective_input_tokens AS settlement_billing_effective_input_tokens,
+  usage_settlement_snapshots.billing_output_tokens AS settlement_billing_output_tokens,
+  usage_settlement_snapshots.billing_cache_creation_tokens AS settlement_billing_cache_creation_tokens,
+  usage_settlement_snapshots.billing_cache_creation_5m_tokens AS settlement_billing_cache_creation_5m_tokens,
+  usage_settlement_snapshots.billing_cache_creation_1h_tokens AS settlement_billing_cache_creation_1h_tokens,
+  usage_settlement_snapshots.billing_cache_read_tokens AS settlement_billing_cache_read_tokens,
+  usage_settlement_snapshots.billing_total_input_context AS settlement_billing_total_input_context,
+  CAST(usage_settlement_snapshots.billing_cache_creation_cost_usd AS DOUBLE PRECISION) AS settlement_billing_cache_creation_cost_usd,
+  CAST(usage_settlement_snapshots.billing_cache_read_cost_usd AS DOUBLE PRECISION) AS settlement_billing_cache_read_cost_usd,
+  CAST(usage_settlement_snapshots.billing_total_cost_usd AS DOUBLE PRECISION) AS settlement_billing_total_cost_usd,
+  CAST(usage_settlement_snapshots.billing_actual_total_cost_usd AS DOUBLE PRECISION) AS settlement_billing_actual_total_cost_usd,
+  usage_settlement_snapshots.billing_pricing_source AS settlement_billing_pricing_source,
+  usage_settlement_snapshots.billing_rule_id AS settlement_billing_rule_id,
+  usage_settlement_snapshots.billing_rule_version AS settlement_billing_rule_version,
   CAST(EXTRACT(EPOCH FROM "usage".created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(
     EXTRACT(
@@ -1422,7 +1668,7 @@ SELECT
     ),
     0
   ) AS total_tokens
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 WHERE api_key_id = ANY($1::TEXT[])
 GROUP BY api_key_id
 ORDER BY api_key_id ASC
@@ -1433,7 +1679,7 @@ SELECT
   "usage".user_id,
   COUNT(*)::BIGINT AS request_count,
   COALESCE(SUM(GREATEST(COALESCE("usage".total_tokens, 0), 0)), 0)::BIGINT AS total_tokens
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 WHERE "usage".user_id = ANY($1::TEXT[])
   AND "usage".status NOT IN ('pending', 'streaming')
   AND "usage".provider_name NOT IN ('unknown', 'pending')
@@ -1505,7 +1751,7 @@ WITH aggregated AS (
     ), 0)::BIGINT AS total_tokens,
     COALESCE(SUM(COALESCE(total_cost_usd, 0)), 0)::NUMERIC(20,8) AS total_cost_usd,
     MAX(created_at) AS last_used_at
-  FROM "usage"
+  FROM usage_billing_facts AS "usage"
   WHERE api_key_id IS NOT NULL
     AND BTRIM(api_key_id) <> ''
   GROUP BY api_key_id
@@ -1608,7 +1854,7 @@ WITH aggregated AS (
       END
     ), 0)::INTEGER AS total_response_time_ms,
     MAX(created_at) AS last_used_at
-  FROM "usage"
+  FROM usage_billing_facts AS "usage"
   WHERE provider_api_key_id IS NOT NULL
     AND BTRIM(provider_api_key_id) <> ''
   GROUP BY provider_api_key_id
@@ -1649,21 +1895,72 @@ SELECT
   "usage".provider_endpoint_kind,
   COALESCE("usage".has_format_conversion, FALSE) AS has_format_conversion,
   COALESCE("usage".is_stream, FALSE) AS is_stream,
-  "usage".input_tokens,
-  "usage".output_tokens,
-  "usage".total_tokens,
-  COALESCE("usage".cache_creation_input_tokens, 0) AS cache_creation_input_tokens,
-  COALESCE("usage".cache_creation_input_tokens_5m, 0) AS cache_creation_ephemeral_5m_input_tokens,
-  COALESCE("usage".cache_creation_input_tokens_1h, 0) AS cache_creation_ephemeral_1h_input_tokens,
-  COALESCE("usage".cache_read_input_tokens, 0) AS cache_read_input_tokens,
-  COALESCE(CAST("usage".cache_creation_cost_usd AS DOUBLE PRECISION), 0) AS cache_creation_cost_usd,
-  COALESCE(CAST("usage".cache_read_cost_usd AS DOUBLE PRECISION), 0) AS cache_read_cost_usd,
+  CAST(COALESCE(usage_settlement_snapshots.billing_input_tokens, "usage".input_tokens) AS INTEGER) AS input_tokens,
+  CAST(COALESCE(usage_settlement_snapshots.billing_output_tokens, "usage".output_tokens) AS INTEGER) AS output_tokens,
+  CAST(COALESCE(
+    CASE
+      WHEN usage_settlement_snapshots.billing_input_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_output_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_5m_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_1h_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_read_tokens IS NOT NULL
+      THEN COALESCE(usage_settlement_snapshots.billing_input_tokens, 0)
+        + COALESCE(usage_settlement_snapshots.billing_output_tokens, 0)
+        + COALESCE(
+            usage_settlement_snapshots.billing_cache_creation_tokens,
+            COALESCE(usage_settlement_snapshots.billing_cache_creation_5m_tokens, 0)
+              + COALESCE(usage_settlement_snapshots.billing_cache_creation_1h_tokens, 0),
+            0
+          )
+        + COALESCE(usage_settlement_snapshots.billing_cache_read_tokens, 0)
+    END,
+    "usage".total_tokens
+  ) AS INTEGER) AS total_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_tokens,
+    "usage".cache_creation_input_tokens,
+    0
+  ) AS INTEGER) AS cache_creation_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_5m_tokens,
+    "usage".cache_creation_input_tokens_5m,
+    0
+  ) AS INTEGER) AS cache_creation_ephemeral_5m_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_1h_tokens,
+    "usage".cache_creation_input_tokens_1h,
+    0
+  ) AS INTEGER) AS cache_creation_ephemeral_1h_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_read_tokens,
+    "usage".cache_read_input_tokens,
+    0
+  ) AS INTEGER) AS cache_read_input_tokens,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_cache_creation_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".cache_creation_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS cache_creation_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_cache_read_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".cache_read_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS cache_read_cost_usd,
   COALESCE(
     CAST(usage_settlement_snapshots.output_price_per_1m AS DOUBLE PRECISION),
     CAST("usage".output_price_per_1m AS DOUBLE PRECISION)
   ) AS output_price_per_1m,
-  COALESCE(CAST("usage".total_cost_usd AS DOUBLE PRECISION), 0) AS total_cost_usd,
-  COALESCE(CAST("usage".actual_total_cost_usd AS DOUBLE PRECISION), 0) AS actual_total_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_total_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".total_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS total_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_actual_total_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".actual_total_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS actual_total_cost_usd,
   "usage".status_code,
   "usage".error_message,
   "usage".error_category,
@@ -1755,6 +2052,24 @@ SELECT
   CAST(usage_settlement_snapshots.cache_creation_price_per_1m AS DOUBLE PRECISION) AS settlement_cache_creation_price_per_1m,
   CAST(usage_settlement_snapshots.cache_read_price_per_1m AS DOUBLE PRECISION) AS settlement_cache_read_price_per_1m,
   CAST(usage_settlement_snapshots.price_per_request AS DOUBLE PRECISION) AS settlement_price_per_request,
+  usage_settlement_snapshots.settlement_snapshot_schema_version AS settlement_snapshot_schema_version,
+  usage_settlement_snapshots.settlement_snapshot AS settlement_snapshot,
+  usage_settlement_snapshots.billing_dimensions AS settlement_billing_dimensions,
+  usage_settlement_snapshots.billing_input_tokens AS settlement_billing_input_tokens,
+  usage_settlement_snapshots.billing_effective_input_tokens AS settlement_billing_effective_input_tokens,
+  usage_settlement_snapshots.billing_output_tokens AS settlement_billing_output_tokens,
+  usage_settlement_snapshots.billing_cache_creation_tokens AS settlement_billing_cache_creation_tokens,
+  usage_settlement_snapshots.billing_cache_creation_5m_tokens AS settlement_billing_cache_creation_5m_tokens,
+  usage_settlement_snapshots.billing_cache_creation_1h_tokens AS settlement_billing_cache_creation_1h_tokens,
+  usage_settlement_snapshots.billing_cache_read_tokens AS settlement_billing_cache_read_tokens,
+  usage_settlement_snapshots.billing_total_input_context AS settlement_billing_total_input_context,
+  CAST(usage_settlement_snapshots.billing_cache_creation_cost_usd AS DOUBLE PRECISION) AS settlement_billing_cache_creation_cost_usd,
+  CAST(usage_settlement_snapshots.billing_cache_read_cost_usd AS DOUBLE PRECISION) AS settlement_billing_cache_read_cost_usd,
+  CAST(usage_settlement_snapshots.billing_total_cost_usd AS DOUBLE PRECISION) AS settlement_billing_total_cost_usd,
+  CAST(usage_settlement_snapshots.billing_actual_total_cost_usd AS DOUBLE PRECISION) AS settlement_billing_actual_total_cost_usd,
+  usage_settlement_snapshots.billing_pricing_source AS settlement_billing_pricing_source,
+  usage_settlement_snapshots.billing_rule_id AS settlement_billing_rule_id,
+  usage_settlement_snapshots.billing_rule_version AS settlement_billing_rule_version,
   CAST(EXTRACT(EPOCH FROM "usage".created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(
     EXTRACT(
@@ -1887,21 +2202,72 @@ SELECT
   "usage".provider_endpoint_kind,
   COALESCE("usage".has_format_conversion, FALSE) AS has_format_conversion,
   COALESCE("usage".is_stream, FALSE) AS is_stream,
-  "usage".input_tokens,
-  "usage".output_tokens,
-  "usage".total_tokens,
-  COALESCE("usage".cache_creation_input_tokens, 0) AS cache_creation_input_tokens,
-  COALESCE("usage".cache_creation_input_tokens_5m, 0) AS cache_creation_ephemeral_5m_input_tokens,
-  COALESCE("usage".cache_creation_input_tokens_1h, 0) AS cache_creation_ephemeral_1h_input_tokens,
-  COALESCE("usage".cache_read_input_tokens, 0) AS cache_read_input_tokens,
-  COALESCE(CAST("usage".cache_creation_cost_usd AS DOUBLE PRECISION), 0) AS cache_creation_cost_usd,
-  COALESCE(CAST("usage".cache_read_cost_usd AS DOUBLE PRECISION), 0) AS cache_read_cost_usd,
+  CAST(COALESCE(usage_settlement_snapshots.billing_input_tokens, "usage".input_tokens) AS INTEGER) AS input_tokens,
+  CAST(COALESCE(usage_settlement_snapshots.billing_output_tokens, "usage".output_tokens) AS INTEGER) AS output_tokens,
+  CAST(COALESCE(
+    CASE
+      WHEN usage_settlement_snapshots.billing_input_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_output_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_5m_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_creation_1h_tokens IS NOT NULL
+        OR usage_settlement_snapshots.billing_cache_read_tokens IS NOT NULL
+      THEN COALESCE(usage_settlement_snapshots.billing_input_tokens, 0)
+        + COALESCE(usage_settlement_snapshots.billing_output_tokens, 0)
+        + COALESCE(
+            usage_settlement_snapshots.billing_cache_creation_tokens,
+            COALESCE(usage_settlement_snapshots.billing_cache_creation_5m_tokens, 0)
+              + COALESCE(usage_settlement_snapshots.billing_cache_creation_1h_tokens, 0),
+            0
+          )
+        + COALESCE(usage_settlement_snapshots.billing_cache_read_tokens, 0)
+    END,
+    "usage".total_tokens
+  ) AS INTEGER) AS total_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_tokens,
+    "usage".cache_creation_input_tokens,
+    0
+  ) AS INTEGER) AS cache_creation_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_5m_tokens,
+    "usage".cache_creation_input_tokens_5m,
+    0
+  ) AS INTEGER) AS cache_creation_ephemeral_5m_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_creation_1h_tokens,
+    "usage".cache_creation_input_tokens_1h,
+    0
+  ) AS INTEGER) AS cache_creation_ephemeral_1h_input_tokens,
+  CAST(COALESCE(
+    usage_settlement_snapshots.billing_cache_read_tokens,
+    "usage".cache_read_input_tokens,
+    0
+  ) AS INTEGER) AS cache_read_input_tokens,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_cache_creation_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".cache_creation_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS cache_creation_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_cache_read_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".cache_read_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS cache_read_cost_usd,
   COALESCE(
     CAST(usage_settlement_snapshots.output_price_per_1m AS DOUBLE PRECISION),
     CAST("usage".output_price_per_1m AS DOUBLE PRECISION)
   ) AS output_price_per_1m,
-  COALESCE(CAST("usage".total_cost_usd AS DOUBLE PRECISION), 0) AS total_cost_usd,
-  COALESCE(CAST("usage".actual_total_cost_usd AS DOUBLE PRECISION), 0) AS actual_total_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_total_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".total_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS total_cost_usd,
+  COALESCE(
+    CAST(usage_settlement_snapshots.billing_actual_total_cost_usd AS DOUBLE PRECISION),
+    CAST("usage".actual_total_cost_usd AS DOUBLE PRECISION),
+    0
+  ) AS actual_total_cost_usd,
   "usage".status_code,
   "usage".error_message,
   "usage".error_category,
@@ -1993,6 +2359,24 @@ SELECT
   CAST(usage_settlement_snapshots.cache_creation_price_per_1m AS DOUBLE PRECISION) AS settlement_cache_creation_price_per_1m,
   CAST(usage_settlement_snapshots.cache_read_price_per_1m AS DOUBLE PRECISION) AS settlement_cache_read_price_per_1m,
   CAST(usage_settlement_snapshots.price_per_request AS DOUBLE PRECISION) AS settlement_price_per_request,
+  usage_settlement_snapshots.settlement_snapshot_schema_version AS settlement_snapshot_schema_version,
+  usage_settlement_snapshots.settlement_snapshot AS settlement_snapshot,
+  usage_settlement_snapshots.billing_dimensions AS settlement_billing_dimensions,
+  usage_settlement_snapshots.billing_input_tokens AS settlement_billing_input_tokens,
+  usage_settlement_snapshots.billing_effective_input_tokens AS settlement_billing_effective_input_tokens,
+  usage_settlement_snapshots.billing_output_tokens AS settlement_billing_output_tokens,
+  usage_settlement_snapshots.billing_cache_creation_tokens AS settlement_billing_cache_creation_tokens,
+  usage_settlement_snapshots.billing_cache_creation_5m_tokens AS settlement_billing_cache_creation_5m_tokens,
+  usage_settlement_snapshots.billing_cache_creation_1h_tokens AS settlement_billing_cache_creation_1h_tokens,
+  usage_settlement_snapshots.billing_cache_read_tokens AS settlement_billing_cache_read_tokens,
+  usage_settlement_snapshots.billing_total_input_context AS settlement_billing_total_input_context,
+  CAST(usage_settlement_snapshots.billing_cache_creation_cost_usd AS DOUBLE PRECISION) AS settlement_billing_cache_creation_cost_usd,
+  CAST(usage_settlement_snapshots.billing_cache_read_cost_usd AS DOUBLE PRECISION) AS settlement_billing_cache_read_cost_usd,
+  CAST(usage_settlement_snapshots.billing_total_cost_usd AS DOUBLE PRECISION) AS settlement_billing_total_cost_usd,
+  CAST(usage_settlement_snapshots.billing_actual_total_cost_usd AS DOUBLE PRECISION) AS settlement_billing_actual_total_cost_usd,
+  usage_settlement_snapshots.billing_pricing_source AS settlement_billing_pricing_source,
+  usage_settlement_snapshots.billing_rule_id AS settlement_billing_rule_id,
+  usage_settlement_snapshots.billing_rule_version AS settlement_billing_rule_version,
   CAST(EXTRACT(EPOCH FROM "usage".created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(
     EXTRACT(
@@ -2153,18 +2537,18 @@ DO UPDATE SET
   provider_endpoint_kind = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.provider_endpoint_kind, "usage".provider_endpoint_kind) ELSE "usage".provider_endpoint_kind END,
   has_format_conversion = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.has_format_conversion, "usage".has_format_conversion) ELSE "usage".has_format_conversion END,
   is_stream = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.is_stream, "usage".is_stream) ELSE "usage".is_stream END,
-  input_tokens = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.input_tokens, "usage".input_tokens) ELSE "usage".input_tokens END,
-  output_tokens = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.output_tokens, "usage".output_tokens) ELSE "usage".output_tokens END,
-  total_tokens = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.total_tokens, "usage".total_tokens) ELSE "usage".total_tokens END,
-  cache_creation_input_tokens = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.cache_creation_input_tokens, "usage".cache_creation_input_tokens) ELSE "usage".cache_creation_input_tokens END,
-  cache_creation_input_tokens_5m = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.cache_creation_input_tokens_5m, "usage".cache_creation_input_tokens_5m) ELSE "usage".cache_creation_input_tokens_5m END,
-  cache_creation_input_tokens_1h = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.cache_creation_input_tokens_1h, "usage".cache_creation_input_tokens_1h) ELSE "usage".cache_creation_input_tokens_1h END,
-  cache_read_input_tokens = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.cache_read_input_tokens, "usage".cache_read_input_tokens) ELSE "usage".cache_read_input_tokens END,
-  cache_creation_cost_usd = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.cache_creation_cost_usd, "usage".cache_creation_cost_usd) ELSE "usage".cache_creation_cost_usd END,
-  cache_read_cost_usd = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.cache_read_cost_usd, "usage".cache_read_cost_usd) ELSE "usage".cache_read_cost_usd END,
+  input_tokens = "usage".input_tokens,
+  output_tokens = "usage".output_tokens,
+  total_tokens = "usage".total_tokens,
+  cache_creation_input_tokens = "usage".cache_creation_input_tokens,
+  cache_creation_input_tokens_5m = "usage".cache_creation_input_tokens_5m,
+  cache_creation_input_tokens_1h = "usage".cache_creation_input_tokens_1h,
+  cache_read_input_tokens = "usage".cache_read_input_tokens,
+  cache_creation_cost_usd = "usage".cache_creation_cost_usd,
+  cache_read_cost_usd = "usage".cache_read_cost_usd,
   output_price_per_1m = NULL,
-  total_cost_usd = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.total_cost_usd, "usage".total_cost_usd) ELSE "usage".total_cost_usd END,
-  actual_total_cost_usd = CASE WHEN "usage".billing_status = 'pending' THEN COALESCE(EXCLUDED.actual_total_cost_usd, "usage".actual_total_cost_usd) ELSE "usage".actual_total_cost_usd END,
+  total_cost_usd = "usage".total_cost_usd,
+  actual_total_cost_usd = "usage".actual_total_cost_usd,
   status_code = CASE WHEN "usage".billing_status = 'pending' THEN CASE
     WHEN "usage".status = 'streaming' AND EXCLUDED.status = 'pending' THEN "usage".status_code
     WHEN EXCLUDED.status IN ('pending', 'streaming', 'completed', 'cancelled') AND EXCLUDED.status_code IS NULL THEN NULL
@@ -2304,6 +2688,24 @@ RETURNING
   NULL::double precision AS settlement_cache_creation_price_per_1m,
   NULL::double precision AS settlement_cache_read_price_per_1m,
   NULL::double precision AS settlement_price_per_request,
+  NULL::varchar AS settlement_snapshot_schema_version,
+  NULL::jsonb AS settlement_snapshot,
+  NULL::jsonb AS settlement_billing_dimensions,
+  NULL::bigint AS settlement_billing_input_tokens,
+  NULL::bigint AS settlement_billing_effective_input_tokens,
+  NULL::bigint AS settlement_billing_output_tokens,
+  NULL::bigint AS settlement_billing_cache_creation_tokens,
+  NULL::bigint AS settlement_billing_cache_creation_5m_tokens,
+  NULL::bigint AS settlement_billing_cache_creation_1h_tokens,
+  NULL::bigint AS settlement_billing_cache_read_tokens,
+  NULL::bigint AS settlement_billing_total_input_context,
+  NULL::double precision AS settlement_billing_cache_creation_cost_usd,
+  NULL::double precision AS settlement_billing_cache_read_cost_usd,
+  NULL::double precision AS settlement_billing_total_cost_usd,
+  NULL::double precision AS settlement_billing_actual_total_cost_usd,
+  NULL::varchar AS settlement_billing_pricing_source,
+  NULL::varchar AS settlement_billing_rule_id,
+  NULL::varchar AS settlement_billing_rule_version,
   CAST(EXTRACT(EPOCH FROM created_at) AS BIGINT) AS created_at_unix_ms,
   CAST(EXTRACT(EPOCH FROM COALESCE(finalized_at, created_at)) AS BIGINT) AS updated_at_unix_secs,
   CAST(EXTRACT(EPOCH FROM finalized_at) AS BIGINT) AS finalized_at_unix_secs
@@ -2578,7 +2980,7 @@ SELECT
       ELSE 0
     END
   ), 0)::BIGINT AS response_time_samples
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 "#,
         );
         let mut has_where = false;
@@ -2668,7 +3070,7 @@ ORDER BY request_count DESC, provider_name ASC
 SELECT
   "usage".provider_name AS provider_name,
   COUNT(*)::BIGINT AS request_count
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 "#,
         );
         let mut has_where = false;
@@ -3524,7 +3926,7 @@ SELECT
       ELSE 0
     END
   ), 0)::BIGINT AS error_requests
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 "#,
         );
         let mut has_where = false;
@@ -3663,7 +4065,7 @@ SELECT
   COUNT(*) FILTER (
     WHERE GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0) > 0
   )::BIGINT AS cache_hit_requests
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 "#,
         );
         let mut has_where = false;
@@ -3879,7 +4281,7 @@ SELECT
     AS first_finalized_at_unix_secs,
   MAX(CAST(EXTRACT(EPOCH FROM "usage".finalized_at) AS BIGINT))
     AS last_finalized_at_unix_secs
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 "#,
         );
         let mut has_where = false;
@@ -4242,7 +4644,7 @@ SELECT
     AS cache_read_cost_usd,
   COALESCE(SUM(COALESCE(CAST("usage".cache_creation_cost_usd AS DOUBLE PRECISION), 0)), 0)
     AS cache_creation_cost_usd
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 "#,
         );
         let mut has_where = false;
@@ -4746,7 +5148,7 @@ SELECT
       ELSE 0
     END
   ), 0)::BIGINT AS response_time_samples
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 "#,
         );
         let mut has_where = false;
@@ -5044,7 +5446,7 @@ WITH filtered_usage AS (
       ELSE 0
     END AS successful_response_time_samples,
     COALESCE(COALESCE("usage".endpoint_api_format, "usage".api_format), '') AS normalized_api_format
-  FROM "usage"
+  FROM usage_billing_facts AS "usage"
 "#,
         ));
         let mut has_where = false;
@@ -5641,14 +6043,11 @@ SELECT
     AS cache_creation_cost_usd,
   COALESCE(SUM(
     COALESCE(
-      CAST(usage_settlement_snapshots.output_price_per_1m AS DOUBLE PRECISION),
       CAST("usage".output_price_per_1m AS DOUBLE PRECISION),
       0
     ) * GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)::DOUBLE PRECISION / 1000000.0
   ), 0) AS estimated_full_cost_usd
-FROM "usage"
-LEFT JOIN usage_settlement_snapshots
-  ON usage_settlement_snapshots.request_id = "usage".request_id
+FROM usage_billing_facts AS "usage"
 "#,
         );
         builder
@@ -5977,7 +6376,7 @@ WHERE user_id = $1
     AS total_cost_usd,
   COALESCE(SUM(GREATEST(COALESCE("usage".response_time_ms, 0), 0)::DOUBLE PRECISION), 0)
     AS total_response_time_ms
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 "#,
         );
         let mut has_where = false;
@@ -6332,7 +6731,7 @@ SELECT
   ), 0)::BIGINT AS total_tokens,
   COALESCE(SUM(COALESCE(CAST("usage".total_cost_usd AS DOUBLE PRECISION), 0)), 0)
     AS total_cost_usd
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 WHERE "usage".created_at >= TO_TIMESTAMP($1::double precision)
   AND "usage".created_at < TO_TIMESTAMP($2::double precision)
   AND "usage".status NOT IN ('pending', 'streaming')
@@ -6743,7 +7142,7 @@ WITH filtered_usage AS (
       THEN 1
       ELSE 0
     END AS success_flag
-  FROM "usage"
+  FROM usage_billing_facts AS "usage"
   WHERE "usage".created_at >= TO_TIMESTAMP($1::double precision)
     AND "usage".created_at < TO_TIMESTAMP($2::double precision)
     AND "usage".status NOT IN ('pending', 'streaming')
@@ -6947,7 +7346,7 @@ LIMIT $3
     + COALESCE("usage".cache_read_input_tokens, 0)), 0)::BIGINT AS total_tokens,
   COALESCE(SUM(CAST("usage".total_cost_usd AS DOUBLE PRECISION)), 0) AS total_cost_usd,
   COALESCE(SUM(CAST("usage".actual_total_cost_usd AS DOUBLE PRECISION)), 0) AS actual_total_cost_usd
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 WHERE "usage".created_at >= $1
   AND "usage".created_at < $2
   AND "usage".status NOT IN ('pending', 'streaming')
@@ -7196,7 +7595,7 @@ SELECT
     ),
     0
   ) AS total_tokens
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 WHERE api_key_id = ANY(
 "#,
             );
@@ -7294,7 +7693,7 @@ SELECT
   "usage".user_id,
   COUNT(*)::BIGINT AS request_count,
   COALESCE(SUM(GREATEST(COALESCE("usage".total_tokens, 0), 0)), 0)::BIGINT AS total_tokens
-FROM "usage"
+FROM usage_billing_facts AS "usage"
 WHERE "usage".user_id = ANY(
 "#,
             );
@@ -7549,9 +7948,9 @@ ORDER BY "usage".user_id ASC
                     let settlement_pricing_snapshot = usage_settlement_pricing_snapshot_from_usage(
                         &usage,
                         request_metadata_value.as_ref(),
-                    );
+                    )?;
                     let request_metadata_json = json_bind_text(request_metadata_value.as_ref())?;
-                    let row = sqlx::query(UPSERT_SQL)
+                    let _row = sqlx::query(UPSERT_SQL)
                         .bind(Uuid::new_v4().to_string())
                         .bind(&usage.request_id)
                         .bind(&usage.user_id)
@@ -7573,39 +7972,18 @@ ORDER BY "usage".user_id ASC
                         .bind(&usage.provider_endpoint_kind)
                         .bind(usage.has_format_conversion)
                         .bind(usage.is_stream)
-                        .bind(usage.input_tokens.map(to_i32).transpose()?)
-                        .bind(usage.output_tokens.map(to_i32).transpose()?)
-                        .bind(
-                            usage
-                                .total_tokens
-                                .or_else(|| {
-                                    Some(
-                                        usage.input_tokens.unwrap_or_default()
-                                            + usage.output_tokens.unwrap_or_default(),
-                                    )
-                                })
-                                .map(to_i32)
-                                .transpose()?,
-                        )
-                        .bind(usage.cache_creation_input_tokens.map(to_i32).transpose()?)
-                        .bind(
-                            usage
-                                .cache_creation_ephemeral_5m_input_tokens
-                                .map(to_i32)
-                                .transpose()?,
-                        )
-                        .bind(
-                            usage
-                                .cache_creation_ephemeral_1h_input_tokens
-                                .map(to_i32)
-                                .transpose()?,
-                        )
-                        .bind(usage.cache_read_input_tokens.map(to_i32).transpose()?)
-                        .bind(usage.cache_creation_cost_usd)
-                        .bind(usage.cache_read_cost_usd)
+                        .bind(None::<i32>)
+                        .bind(None::<i32>)
+                        .bind(None::<i32>)
+                        .bind(None::<i32>)
+                        .bind(None::<i32>)
+                        .bind(None::<i32>)
+                        .bind(None::<i32>)
                         .bind(None::<f64>)
-                        .bind(usage.total_cost_usd)
-                        .bind(usage.actual_total_cost_usd)
+                        .bind(None::<f64>)
+                        .bind(None::<f64>)
+                        .bind(None::<f64>)
+                        .bind(None::<f64>)
                         .bind(usage.status_code.map(i32::from))
                         .bind(&usage.error_message)
                         .bind(&usage.error_category)
@@ -7695,7 +8073,14 @@ ORDER BY "usage".user_id ASC
                     )
                     .await?;
 
-                    let mut stored = map_usage_row(&row, true)?;
+                    let mut stored = find_usage_by_request_id_in_tx(tx, &usage.request_id)
+                        .await?
+                        .ok_or_else(|| {
+                            DataLayerError::UnexpectedValue(format!(
+                                "usage row missing after upsert: {}",
+                                usage.request_id
+                            ))
+                        })?;
                     if request_body_storage.has_detached_blob() {
                         stored.request_body = usage.request_body.clone();
                     }
@@ -8576,6 +8961,24 @@ struct UsageSettlementPricingSnapshot {
     billing_status: Option<String>,
     billing_snapshot_schema_version: Option<String>,
     billing_snapshot_status: Option<String>,
+    settlement_snapshot_schema_version: Option<String>,
+    settlement_snapshot: Option<Value>,
+    billing_dimensions: Option<Value>,
+    billing_input_tokens: Option<i64>,
+    billing_effective_input_tokens: Option<i64>,
+    billing_output_tokens: Option<i64>,
+    billing_cache_creation_tokens: Option<i64>,
+    billing_cache_creation_5m_tokens: Option<i64>,
+    billing_cache_creation_1h_tokens: Option<i64>,
+    billing_cache_read_tokens: Option<i64>,
+    billing_total_input_context: Option<i64>,
+    billing_cache_creation_cost_usd: Option<f64>,
+    billing_cache_read_cost_usd: Option<f64>,
+    billing_total_cost_usd: Option<f64>,
+    billing_actual_total_cost_usd: Option<f64>,
+    billing_pricing_source: Option<String>,
+    billing_rule_id: Option<String>,
+    billing_rule_version: Option<String>,
     rate_multiplier: Option<f64>,
     is_free_tier: Option<bool>,
     input_price_per_1m: Option<f64>,
@@ -8590,6 +8993,24 @@ impl UsageSettlementPricingSnapshot {
         self.billing_status.is_some()
             || self.billing_snapshot_schema_version.is_some()
             || self.billing_snapshot_status.is_some()
+            || self.settlement_snapshot_schema_version.is_some()
+            || self.settlement_snapshot.is_some()
+            || self.billing_dimensions.is_some()
+            || self.billing_input_tokens.is_some()
+            || self.billing_effective_input_tokens.is_some()
+            || self.billing_output_tokens.is_some()
+            || self.billing_cache_creation_tokens.is_some()
+            || self.billing_cache_creation_5m_tokens.is_some()
+            || self.billing_cache_creation_1h_tokens.is_some()
+            || self.billing_cache_read_tokens.is_some()
+            || self.billing_total_input_context.is_some()
+            || self.billing_cache_creation_cost_usd.is_some()
+            || self.billing_cache_read_cost_usd.is_some()
+            || self.billing_total_cost_usd.is_some()
+            || self.billing_actual_total_cost_usd.is_some()
+            || self.billing_pricing_source.is_some()
+            || self.billing_rule_id.is_some()
+            || self.billing_rule_version.is_some()
             || self.rate_multiplier.is_some()
             || self.is_free_tier.is_some()
             || self.input_price_per_1m.is_some()
@@ -8801,6 +9222,157 @@ fn billing_snapshot_resolved_number(
         .filter(|value| value.is_finite())
 }
 
+fn settlement_snapshot_object(
+    metadata: Option<&serde_json::Map<String, Value>>,
+) -> Option<&serde_json::Map<String, Value>> {
+    metadata
+        .and_then(|object| object.get("settlement_snapshot"))
+        .and_then(Value::as_object)
+}
+
+fn settlement_snapshot_schema_version(
+    metadata: Option<&serde_json::Map<String, Value>>,
+) -> Option<String> {
+    metadata_ref_value(metadata, "settlement_snapshot_schema_version").or_else(|| {
+        settlement_snapshot_object(metadata)
+            .and_then(|snapshot| snapshot.get("schema_version"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn settlement_snapshot_value(metadata: Option<&serde_json::Map<String, Value>>) -> Option<Value> {
+    metadata
+        .and_then(|object| object.get("settlement_snapshot"))
+        .cloned()
+}
+
+fn settlement_snapshot_child_value<'a>(
+    metadata: Option<&'a serde_json::Map<String, Value>>,
+    child: &str,
+) -> Option<&'a Value> {
+    settlement_snapshot_object(metadata).and_then(|snapshot| snapshot.get(child))
+}
+
+fn settlement_snapshot_child_object<'a>(
+    metadata: Option<&'a serde_json::Map<String, Value>>,
+    child: &str,
+) -> Option<&'a serde_json::Map<String, Value>> {
+    settlement_snapshot_child_value(metadata, child).and_then(Value::as_object)
+}
+
+fn metadata_or_snapshot_dimensions(
+    metadata: Option<&serde_json::Map<String, Value>>,
+) -> Option<Value> {
+    metadata
+        .and_then(|object| object.get("billing_dimensions"))
+        .cloned()
+        .or_else(|| settlement_snapshot_child_value(metadata, "resolved_dimensions").cloned())
+        .or_else(|| {
+            billing_snapshot_object(metadata)
+                .and_then(|snapshot| snapshot.get("resolved_dimensions"))
+                .cloned()
+        })
+}
+
+fn json_i64_value(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
+}
+
+fn billing_dimension_i64(
+    metadata: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+) -> Option<i64> {
+    metadata_or_snapshot_dimensions(metadata)
+        .and_then(|dimensions| dimensions.get(key).and_then(json_i64_value))
+        .filter(|value| *value >= 0)
+}
+
+fn settlement_snapshot_number(
+    metadata: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+) -> Option<f64> {
+    settlement_snapshot_object(metadata)
+        .and_then(|snapshot| snapshot.get(key))
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+}
+
+fn billing_snapshot_number(
+    metadata: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+) -> Option<f64> {
+    billing_snapshot_object(metadata)
+        .and_then(|snapshot| snapshot.get(key))
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+}
+
+fn settlement_cost_breakdown_number(
+    metadata: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+) -> Option<f64> {
+    settlement_snapshot_child_object(metadata, "cost_breakdown")
+        .or_else(|| {
+            billing_snapshot_object(metadata)
+                .and_then(|snapshot| snapshot.get("cost_breakdown"))
+                .and_then(Value::as_object)
+        })
+        .and_then(|breakdown| breakdown.get(key))
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+}
+
+fn settlement_cache_creation_cost(
+    metadata: Option<&serde_json::Map<String, Value>>,
+) -> Option<f64> {
+    let keys = [
+        "cache_creation_uncategorized_cost",
+        "cache_creation_ephemeral_5m_cost",
+        "cache_creation_ephemeral_1h_cost",
+        "cache_creation_cost",
+    ];
+    let mut found = false;
+    let total = keys.into_iter().fold(0.0, |sum, key| {
+        if let Some(value) = settlement_cost_breakdown_number(metadata, key) {
+            found = true;
+            sum + value
+        } else {
+            sum
+        }
+    });
+    found.then_some(total)
+}
+
+fn settlement_snapshot_nested_string(
+    metadata: Option<&serde_json::Map<String, Value>>,
+    child: &str,
+    key: &str,
+) -> Option<String> {
+    settlement_snapshot_child_object(metadata, child)
+        .and_then(|object| object.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn billing_snapshot_string_field(
+    metadata: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+) -> Option<String> {
+    billing_snapshot_object(metadata)
+        .and_then(|snapshot| snapshot.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn usage_http_audit_capture_mode(
     refs: &UsageHttpAuditRefs,
     body_values: [Option<&Value>; 4],
@@ -8867,11 +9439,171 @@ fn usage_routing_snapshot_from_usage(
     snapshot
 }
 
+fn usage_optional_i64(value: Option<u64>, field_name: &str) -> Result<Option<i64>, DataLayerError> {
+    value
+        .map(|value| {
+            i64::try_from(value).map_err(|_| {
+                DataLayerError::UnexpectedValue(format!(
+                    "usage {field_name} exceeds bigint: {value}"
+                ))
+            })
+        })
+        .transpose()
+}
+
+fn usage_cache_creation_tokens_from_parts(
+    uncategorized: Option<i64>,
+    ephemeral_5m: Option<i64>,
+    ephemeral_1h: Option<i64>,
+) -> Option<i64> {
+    let categorized = ephemeral_5m
+        .unwrap_or_default()
+        .saturating_add(ephemeral_1h.unwrap_or_default());
+    match uncategorized {
+        Some(0) if categorized > 0 => Some(categorized),
+        Some(value) => Some(value),
+        None if categorized > 0 => Some(categorized),
+        None => None,
+    }
+}
+
+fn usage_normalized_api_family(usage: &UpsertUsageRecord) -> String {
+    usage
+        .endpoint_api_format
+        .as_deref()
+        .or(usage.api_format.as_deref())
+        .unwrap_or_default()
+        .split(':')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn usage_effective_input_tokens(
+    input_tokens: Option<i64>,
+    cache_read_tokens: Option<i64>,
+    api_family: &str,
+) -> Option<i64> {
+    let input_tokens = input_tokens?;
+    let cache_read_tokens = cache_read_tokens.unwrap_or_default();
+    if matches!(api_family, "openai" | "gemini" | "google")
+        && input_tokens > 0
+        && cache_read_tokens > 0
+    {
+        return Some(input_tokens.saturating_sub(cache_read_tokens));
+    }
+    Some(input_tokens)
+}
+
+fn usage_total_input_context(
+    input_tokens: Option<i64>,
+    effective_input_tokens: Option<i64>,
+    cache_creation_tokens: Option<i64>,
+    cache_read_tokens: Option<i64>,
+    api_family: &str,
+) -> Option<i64> {
+    if input_tokens.is_none()
+        && effective_input_tokens.is_none()
+        && cache_creation_tokens.is_none()
+        && cache_read_tokens.is_none()
+    {
+        return None;
+    }
+
+    let input_tokens = input_tokens.unwrap_or_default();
+    let effective_input_tokens = effective_input_tokens.unwrap_or(input_tokens);
+    let cache_creation_tokens = cache_creation_tokens.unwrap_or_default();
+    let cache_read_tokens = cache_read_tokens.unwrap_or_default();
+    match api_family {
+        "claude" | "anthropic" => Some(
+            input_tokens
+                .saturating_add(cache_creation_tokens)
+                .saturating_add(cache_read_tokens),
+        ),
+        "openai" | "gemini" | "google" => {
+            Some(effective_input_tokens.saturating_add(cache_read_tokens))
+        }
+        _ => Some(
+            input_tokens
+                .saturating_add(cache_creation_tokens)
+                .saturating_add(cache_read_tokens),
+        ),
+    }
+}
+
 fn usage_settlement_pricing_snapshot_from_usage(
     usage: &UpsertUsageRecord,
     metadata: Option<&Value>,
-) -> UsageSettlementPricingSnapshot {
+) -> Result<UsageSettlementPricingSnapshot, DataLayerError> {
     let object = metadata.and_then(Value::as_object);
+    let billing_dimensions = metadata_or_snapshot_dimensions(object);
+    let has_billing_dimensions = billing_dimensions.is_some();
+    let usage_input_tokens = usage_optional_i64(usage.input_tokens, "input_tokens")?;
+    let usage_output_tokens = usage_optional_i64(usage.output_tokens, "output_tokens")?;
+    let usage_cache_creation_uncategorized_tokens = usage_optional_i64(
+        usage.cache_creation_input_tokens,
+        "cache_creation_input_tokens",
+    )?;
+    let usage_cache_creation_5m_tokens = usage_optional_i64(
+        usage.cache_creation_ephemeral_5m_input_tokens,
+        "cache_creation_ephemeral_5m_input_tokens",
+    )?;
+    let usage_cache_creation_1h_tokens = usage_optional_i64(
+        usage.cache_creation_ephemeral_1h_input_tokens,
+        "cache_creation_ephemeral_1h_input_tokens",
+    )?;
+    let usage_cache_read_tokens =
+        usage_optional_i64(usage.cache_read_input_tokens, "cache_read_input_tokens")?;
+    let usage_cache_creation_tokens = usage_cache_creation_tokens_from_parts(
+        usage_cache_creation_uncategorized_tokens,
+        usage_cache_creation_5m_tokens,
+        usage_cache_creation_1h_tokens,
+    );
+    let billing_cache_creation_tokens = billing_dimension_i64(object, "cache_creation_tokens")
+        .or_else(|| {
+            usage_cache_creation_tokens_from_parts(
+                billing_dimension_i64(object, "cache_creation_uncategorized_tokens"),
+                billing_dimension_i64(object, "cache_creation_ephemeral_5m_tokens"),
+                billing_dimension_i64(object, "cache_creation_ephemeral_1h_tokens"),
+            )
+        })
+        .or(usage_cache_creation_tokens);
+    let billing_cache_creation_5m_tokens =
+        billing_dimension_i64(object, "cache_creation_ephemeral_5m_tokens")
+            .or(usage_cache_creation_5m_tokens);
+    let billing_cache_creation_1h_tokens =
+        billing_dimension_i64(object, "cache_creation_ephemeral_1h_tokens")
+            .or(usage_cache_creation_1h_tokens);
+    let billing_input_tokens = billing_dimension_i64(object, "input_tokens").or(usage_input_tokens);
+    let billing_output_tokens =
+        billing_dimension_i64(object, "output_tokens").or(usage_output_tokens);
+    let billing_cache_read_tokens =
+        billing_dimension_i64(object, "cache_read_tokens").or(usage_cache_read_tokens);
+    let api_family = usage_normalized_api_family(usage);
+    let billing_effective_input_tokens = billing_dimension_i64(object, "effective_input_tokens")
+        .or_else(|| {
+            has_billing_dimensions
+                .then(|| billing_dimension_i64(object, "input_tokens"))
+                .flatten()
+        })
+        .or_else(|| {
+            usage_effective_input_tokens(
+                billing_input_tokens,
+                billing_cache_read_tokens,
+                api_family.as_str(),
+            )
+        });
+    let billing_total_input_context =
+        billing_dimension_i64(object, "total_input_context").or_else(|| {
+            usage_total_input_context(
+                billing_input_tokens,
+                billing_effective_input_tokens,
+                billing_cache_creation_tokens,
+                billing_cache_read_tokens,
+                api_family.as_str(),
+            )
+        });
     let snapshot = UsageSettlementPricingSnapshot {
         billing_status: Some(usage.billing_status.clone()),
         billing_snapshot_schema_version: metadata_ref_value(
@@ -8881,6 +9613,42 @@ fn usage_settlement_pricing_snapshot_from_usage(
         .or_else(|| billing_snapshot_string_value(object, "schema_version")),
         billing_snapshot_status: metadata_ref_value(object, "billing_snapshot_status")
             .or_else(|| billing_snapshot_string_value(object, "status")),
+        settlement_snapshot_schema_version: settlement_snapshot_schema_version(object),
+        settlement_snapshot: settlement_snapshot_value(object),
+        billing_dimensions,
+        billing_input_tokens,
+        billing_effective_input_tokens,
+        billing_output_tokens,
+        billing_cache_creation_tokens,
+        billing_cache_creation_5m_tokens,
+        billing_cache_creation_1h_tokens,
+        billing_cache_read_tokens,
+        billing_total_input_context,
+        billing_cache_creation_cost_usd: settlement_cache_creation_cost(object)
+            .or(usage.cache_creation_cost_usd),
+        billing_cache_read_cost_usd: settlement_cost_breakdown_number(object, "cache_read_cost")
+            .or(usage.cache_read_cost_usd),
+        billing_total_cost_usd: settlement_snapshot_number(object, "total_cost")
+            .or_else(|| billing_snapshot_number(object, "total_cost"))
+            .or(usage.total_cost_usd),
+        billing_actual_total_cost_usd: settlement_snapshot_number(object, "actual_total_cost")
+            .or(usage.actual_total_cost_usd),
+        billing_pricing_source: settlement_snapshot_nested_string(
+            object,
+            "pricing_snapshot",
+            "pricing_source",
+        ),
+        billing_rule_id: settlement_snapshot_nested_string(
+            object,
+            "billing_plan_snapshot",
+            "rule_id",
+        )
+        .or_else(|| billing_snapshot_string_field(object, "rule_id")),
+        billing_rule_version: settlement_snapshot_nested_string(
+            object,
+            "billing_plan_snapshot",
+            "rule_version",
+        ),
         rate_multiplier: metadata_number_value(object, "rate_multiplier"),
         is_free_tier: metadata_bool_value(object, "is_free_tier"),
         input_price_per_1m: metadata_number_value(object, "input_price_per_1m")
@@ -8895,11 +9663,11 @@ fn usage_settlement_pricing_snapshot_from_usage(
         price_per_request: metadata_number_value(object, "price_per_request")
             .or_else(|| billing_snapshot_resolved_number(object, "price_per_request")),
     };
-    if snapshot.any_present() {
+    Ok(if snapshot.any_present() {
         snapshot
     } else {
         UsageSettlementPricingSnapshot::default()
-    }
+    })
 }
 
 // Decode deprecated inline/compressed body columns from `public.usage`.
@@ -9244,6 +10012,24 @@ where
         .bind(snapshot.billing_status.as_deref().unwrap_or("pending"))
         .bind(snapshot.billing_snapshot_schema_version.as_deref())
         .bind(snapshot.billing_snapshot_status.as_deref())
+        .bind(snapshot.settlement_snapshot_schema_version.as_deref())
+        .bind(snapshot.settlement_snapshot.as_ref())
+        .bind(snapshot.billing_dimensions.as_ref())
+        .bind(snapshot.billing_input_tokens)
+        .bind(snapshot.billing_effective_input_tokens)
+        .bind(snapshot.billing_output_tokens)
+        .bind(snapshot.billing_cache_creation_tokens)
+        .bind(snapshot.billing_cache_creation_5m_tokens)
+        .bind(snapshot.billing_cache_creation_1h_tokens)
+        .bind(snapshot.billing_cache_read_tokens)
+        .bind(snapshot.billing_total_input_context)
+        .bind(snapshot.billing_cache_creation_cost_usd)
+        .bind(snapshot.billing_cache_read_cost_usd)
+        .bind(snapshot.billing_total_cost_usd)
+        .bind(snapshot.billing_actual_total_cost_usd)
+        .bind(snapshot.billing_pricing_source.as_deref())
+        .bind(snapshot.billing_rule_id.as_deref())
+        .bind(snapshot.billing_rule_version.as_deref())
         .bind(snapshot.rate_multiplier)
         .bind(snapshot.is_free_tier)
         .bind(snapshot.input_price_per_1m)
@@ -9345,6 +10131,54 @@ fn usage_settlement_pricing_snapshot_from_row(
             "settlement_billing_snapshot_schema_version",
         )?,
         billing_snapshot_status: row_try_get_optional(row, "settlement_billing_snapshot_status")?,
+        settlement_snapshot_schema_version: row_try_get_optional(
+            row,
+            "settlement_snapshot_schema_version",
+        )?,
+        settlement_snapshot: row_try_get_optional(row, "settlement_snapshot")?,
+        billing_dimensions: row_try_get_optional(row, "settlement_billing_dimensions")?,
+        billing_input_tokens: row_try_get_optional(row, "settlement_billing_input_tokens")?,
+        billing_effective_input_tokens: row_try_get_optional(
+            row,
+            "settlement_billing_effective_input_tokens",
+        )?,
+        billing_output_tokens: row_try_get_optional(row, "settlement_billing_output_tokens")?,
+        billing_cache_creation_tokens: row_try_get_optional(
+            row,
+            "settlement_billing_cache_creation_tokens",
+        )?,
+        billing_cache_creation_5m_tokens: row_try_get_optional(
+            row,
+            "settlement_billing_cache_creation_5m_tokens",
+        )?,
+        billing_cache_creation_1h_tokens: row_try_get_optional(
+            row,
+            "settlement_billing_cache_creation_1h_tokens",
+        )?,
+        billing_cache_read_tokens: row_try_get_optional(
+            row,
+            "settlement_billing_cache_read_tokens",
+        )?,
+        billing_total_input_context: row_try_get_optional(
+            row,
+            "settlement_billing_total_input_context",
+        )?,
+        billing_cache_creation_cost_usd: row_try_get_optional(
+            row,
+            "settlement_billing_cache_creation_cost_usd",
+        )?,
+        billing_cache_read_cost_usd: row_try_get_optional(
+            row,
+            "settlement_billing_cache_read_cost_usd",
+        )?,
+        billing_total_cost_usd: row_try_get_optional(row, "settlement_billing_total_cost_usd")?,
+        billing_actual_total_cost_usd: row_try_get_optional(
+            row,
+            "settlement_billing_actual_total_cost_usd",
+        )?,
+        billing_pricing_source: row_try_get_optional(row, "settlement_billing_pricing_source")?,
+        billing_rule_id: row_try_get_optional(row, "settlement_billing_rule_id")?,
+        billing_rule_version: row_try_get_optional(row, "settlement_billing_rule_version")?,
         rate_multiplier: row_try_get_optional(row, "settlement_rate_multiplier")?,
         is_free_tier: row_try_get_optional(row, "settlement_is_free_tier")?,
         input_price_per_1m: row_try_get_optional(row, "settlement_input_price_per_1m")?,
@@ -9381,6 +10215,21 @@ fn attach_usage_settlement_pricing_snapshot_metadata(
         "billing_snapshot_status",
         snapshot.billing_snapshot_status.as_deref(),
     );
+    maybe_insert_string_value(
+        &mut metadata,
+        "settlement_snapshot_schema_version",
+        snapshot.settlement_snapshot_schema_version.as_deref(),
+    );
+    if !metadata.contains_key("settlement_snapshot") {
+        if let Some(value) = snapshot.settlement_snapshot.clone() {
+            metadata.insert("settlement_snapshot".to_string(), value);
+        }
+    }
+    if !metadata.contains_key("billing_dimensions") {
+        if let Some(value) = snapshot.billing_dimensions.clone() {
+            metadata.insert("billing_dimensions".to_string(), value);
+        }
+    }
     maybe_insert_number_value(&mut metadata, "rate_multiplier", snapshot.rate_multiplier);
     maybe_insert_bool_value(&mut metadata, "is_free_tier", snapshot.is_free_tier);
     maybe_insert_number_value(
@@ -9836,6 +10685,20 @@ mod tests {
     }
 
     #[test]
+    fn usage_sql_raw_aggregates_use_canonical_billing_facts() {
+        let source = include_str!("sql.rs");
+        assert!(source.contains("FROM usage_billing_facts AS \"usage\""));
+        assert!(super::REBUILD_API_KEY_USAGE_STATS_SQL
+            .contains("FROM usage_billing_facts AS \"usage\""));
+        assert!(super::REBUILD_PROVIDER_API_KEY_USAGE_STATS_SQL
+            .contains("FROM usage_billing_facts AS \"usage\""));
+        assert!(super::SUMMARIZE_TOTAL_TOKENS_BY_API_KEY_IDS_SQL
+            .contains("FROM usage_billing_facts AS \"usage\""));
+        assert!(super::SUMMARIZE_USAGE_TOTALS_BY_USER_IDS_SQL
+            .contains("FROM usage_billing_facts AS \"usage\""));
+    }
+
+    #[test]
     fn usage_sql_reads_http_audits_for_single_record_fetches() {
         assert!(super::FIND_BY_REQUEST_ID_SQL.contains("LEFT JOIN usage_http_audits"));
         assert!(super::FIND_BY_ID_SQL.contains("LEFT JOIN usage_http_audits"));
@@ -9860,6 +10723,15 @@ mod tests {
             super::FIND_BY_REQUEST_ID_SQL.contains("settlement_billing_snapshot_schema_version")
         );
         assert!(super::FIND_BY_ID_SQL.contains("settlement_price_per_request"));
+        for sql in [super::FIND_BY_REQUEST_ID_SQL, super::FIND_BY_ID_SQL] {
+            assert!(sql.contains(
+                "COALESCE(usage_settlement_snapshots.billing_input_tokens, \"usage\".input_tokens)"
+            ));
+            assert!(sql.contains("usage_settlement_snapshots.billing_cache_creation_5m_tokens"));
+            assert!(sql.contains(
+                "CAST(usage_settlement_snapshots.billing_total_cost_usd AS DOUBLE PRECISION)"
+            ));
+        }
     }
 
     #[test]
@@ -9929,6 +10801,18 @@ mod tests {
             super::LIST_RECENT_USAGE_AUDITS_PREFIX.contains("LEFT JOIN usage_settlement_snapshots")
         );
         assert!(super::LIST_RECENT_USAGE_AUDITS_PREFIX.contains("settlement_price_per_request"));
+        for sql in [
+            super::LIST_USAGE_AUDITS_PREFIX,
+            super::LIST_RECENT_USAGE_AUDITS_PREFIX,
+        ] {
+            assert!(sql.contains(
+                "COALESCE(usage_settlement_snapshots.billing_input_tokens, \"usage\".input_tokens)"
+            ));
+            assert!(sql.contains("usage_settlement_snapshots.billing_cache_creation_1h_tokens"));
+            assert!(sql.contains(
+                "CAST(usage_settlement_snapshots.billing_total_cost_usd AS DOUBLE PRECISION)"
+            ));
+        }
         assert!(!super::LIST_USAGE_AUDITS_PREFIX.contains("NULL::jsonb"));
         assert!(!super::LIST_RECENT_USAGE_AUDITS_PREFIX.contains("NULL::jsonb"));
     }
@@ -9973,12 +10857,36 @@ mod tests {
     }
 
     #[test]
-    fn usage_sql_dual_writes_usage_settlement_pricing_snapshots() {
+    fn usage_sql_writes_usage_settlement_pricing_snapshots() {
         assert!(super::UPSERT_USAGE_SETTLEMENT_PRICING_SNAPSHOT_SQL
             .contains("INSERT INTO usage_settlement_snapshots"));
         assert!(super::UPSERT_USAGE_SETTLEMENT_PRICING_SNAPSHOT_SQL
             .contains("billing_snapshot_schema_version"));
         assert!(super::UPSERT_USAGE_SETTLEMENT_PRICING_SNAPSHOT_SQL.contains("price_per_request"));
+    }
+
+    #[test]
+    fn usage_sql_does_not_update_deprecated_billing_mirror_columns() {
+        for assignment in [
+            "input_tokens = \"usage\".input_tokens",
+            "output_tokens = \"usage\".output_tokens",
+            "total_tokens = \"usage\".total_tokens",
+            "cache_creation_input_tokens = \"usage\".cache_creation_input_tokens",
+            "cache_creation_input_tokens_5m = \"usage\".cache_creation_input_tokens_5m",
+            "cache_creation_input_tokens_1h = \"usage\".cache_creation_input_tokens_1h",
+            "cache_read_input_tokens = \"usage\".cache_read_input_tokens",
+            "cache_creation_cost_usd = \"usage\".cache_creation_cost_usd",
+            "cache_read_cost_usd = \"usage\".cache_read_cost_usd",
+            "total_cost_usd = \"usage\".total_cost_usd",
+            "actual_total_cost_usd = \"usage\".actual_total_cost_usd",
+        ] {
+            assert!(
+                super::UPSERT_SQL.contains(assignment),
+                "missing deprecated mirror no-op assignment: {assignment}"
+            );
+        }
+        assert!(!super::UPSERT_SQL.contains("EXCLUDED.input_tokens"));
+        assert!(!super::UPSERT_SQL.contains("EXCLUDED.total_cost_usd"));
     }
 
     #[test]
@@ -10760,7 +11668,8 @@ mod tests {
                     }
                 }
             })),
-        );
+        )
+        .expect("snapshot should build");
 
         assert_eq!(
             snapshot,
@@ -10768,6 +11677,10 @@ mod tests {
                 billing_status: Some("pending".to_string()),
                 billing_snapshot_schema_version: Some("2.0".to_string()),
                 billing_snapshot_status: Some("complete".to_string()),
+                billing_input_tokens: Some(1),
+                billing_effective_input_tokens: Some(1),
+                billing_output_tokens: Some(2),
+                billing_total_input_context: Some(1),
                 rate_multiplier: Some(0.5),
                 is_free_tier: Some(false),
                 input_price_per_1m: Some(3.0),
@@ -10775,6 +11688,7 @@ mod tests {
                 cache_creation_price_per_1m: Some(3.75),
                 cache_read_price_per_1m: Some(0.30),
                 price_per_request: Some(0.02),
+                ..UsageSettlementPricingSnapshot::default()
             }
         );
     }
@@ -10807,6 +11721,7 @@ mod tests {
                 cache_creation_price_per_1m: Some(3.75),
                 cache_read_price_per_1m: Some(0.30),
                 price_per_request: Some(0.02),
+                ..UsageSettlementPricingSnapshot::default()
             },
         )
         .expect("metadata should remain");

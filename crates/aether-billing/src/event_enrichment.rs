@@ -2,12 +2,14 @@ use aether_data_contracts::repository::billing::StoredBillingModelContext;
 use aether_data_contracts::DataLayerError;
 use aether_usage_runtime::{UsageEvent, UsageEventType};
 use async_trait::async_trait;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use crate::{
     BillingComputation, BillingModelPricingSnapshot, BillingService, BillingSnapshotStatus,
     BillingUsageInput,
 };
+
+const SETTLEMENT_SNAPSHOT_SCHEMA_VERSION: &str = "3.0";
 
 #[async_trait]
 pub trait BillingModelContextLookup: Send + Sync {
@@ -65,7 +67,7 @@ pub async fn enrich_usage_event_with_billing(
         {
             let pricing = map_pricing_context(context);
             let computation = calculate_billing_computation(&pricing, event)?;
-            apply_billing_computation(event, computation)?;
+            apply_billing_computation(event, &pricing, computation)?;
             return Ok(());
         }
     }
@@ -89,15 +91,15 @@ pub async fn enrich_usage_event_with_billing(
             computation.cost_result.status,
             BillingSnapshotStatus::NoRule
         ) {
-            first_no_rule.get_or_insert(computation);
+            first_no_rule.get_or_insert((pricing, computation));
             continue;
         }
-        apply_billing_computation(event, computation)?;
+        apply_billing_computation(event, &pricing, computation)?;
         return Ok(());
     }
 
-    if let Some(computation) = first_no_rule {
-        apply_billing_computation(event, computation)?;
+    if let Some((pricing, computation)) = first_no_rule {
+        apply_billing_computation(event, &pricing, computation)?;
     }
     Ok(())
 }
@@ -162,13 +164,16 @@ fn calculate_billing_computation(
 
 fn apply_billing_computation(
     event: &mut UsageEvent,
+    pricing: &BillingModelPricingSnapshot,
     computation: BillingComputation,
 ) -> Result<(), DataLayerError> {
     event.data.total_cost_usd = Some(computation.cost_result.cost);
     event.data.actual_total_cost_usd = Some(computation.actual_total_cost);
     merge_billing_snapshot_metadata(
         &mut event.data.request_metadata,
+        pricing,
         &computation.cost_result.snapshot,
+        computation.actual_total_cost,
         computation.rate_multiplier,
         computation.is_free_tier,
     )
@@ -196,23 +201,81 @@ fn map_pricing_context(context: StoredBillingModelContext) -> BillingModelPricin
 
 fn merge_billing_snapshot_metadata(
     request_metadata: &mut Option<Value>,
+    pricing: &BillingModelPricingSnapshot,
     snapshot: &crate::BillingSnapshot,
+    actual_total_cost: f64,
     rate_multiplier: f64,
     is_free_tier: bool,
 ) -> Result<(), DataLayerError> {
-    let snapshot = serde_json::to_value(snapshot).map_err(|err| {
+    let billing_snapshot = serde_json::to_value(snapshot).map_err(|err| {
         DataLayerError::UnexpectedValue(format!("failed to serialize billing snapshot: {err}"))
     })?;
+    let settlement_snapshot = build_settlement_snapshot(
+        pricing,
+        snapshot,
+        actual_total_cost,
+        rate_multiplier,
+        is_free_tier,
+    );
 
     let mut metadata = match request_metadata.take() {
         Some(Value::Object(object)) => object,
         _ => Map::new(),
     };
-    metadata.insert("billing_snapshot".to_string(), snapshot);
+    metadata.insert("billing_snapshot".to_string(), billing_snapshot);
+    metadata.insert(
+        "settlement_snapshot_schema_version".to_string(),
+        Value::from(SETTLEMENT_SNAPSHOT_SCHEMA_VERSION),
+    );
+    metadata.insert("settlement_snapshot".to_string(), settlement_snapshot);
+    metadata.insert(
+        "billing_dimensions".to_string(),
+        Value::Object(snapshot.resolved_dimensions.clone().into_iter().collect()),
+    );
     metadata.insert("rate_multiplier".to_string(), Value::from(rate_multiplier));
     metadata.insert("is_free_tier".to_string(), Value::from(is_free_tier));
     *request_metadata = Some(Value::Object(metadata));
     Ok(())
+}
+
+fn build_settlement_snapshot(
+    pricing: &BillingModelPricingSnapshot,
+    snapshot: &crate::BillingSnapshot,
+    actual_total_cost: f64,
+    rate_multiplier: f64,
+    is_free_tier: bool,
+) -> Value {
+    json!({
+        "schema_version": SETTLEMENT_SNAPSHOT_SCHEMA_VERSION,
+        "pricing_snapshot": {
+            "provider_id": pricing.provider_id.clone(),
+            "provider_billing_type": pricing.provider_billing_type.clone(),
+            "provider_api_key_id": pricing.provider_api_key_id.clone(),
+            "global_model_id": pricing.global_model_id.clone(),
+            "global_model_name": pricing.global_model_name.clone(),
+            "model_id": pricing.model_id.clone(),
+            "provider_model_name": pricing.model_provider_model_name.clone(),
+            "pricing_source": pricing.pricing_source(),
+            "tiered_pricing": pricing.effective_tiered_pricing().cloned(),
+            "price_per_request": pricing.effective_price_per_request(),
+            "rate_multiplier": rate_multiplier,
+            "is_free_tier": is_free_tier,
+        },
+        "billing_plan_snapshot": {
+            "rule_id": snapshot.rule_id.clone(),
+            "rule_name": snapshot.rule_name.clone(),
+            "scope": snapshot.scope.clone(),
+            "expression": snapshot.expression.clone(),
+            "engine_version": snapshot.engine_version.clone(),
+        },
+        "resolved_dimensions": snapshot.resolved_dimensions.clone(),
+        "resolved_variables": snapshot.resolved_variables.clone(),
+        "cost_breakdown": snapshot.cost_breakdown.clone(),
+        "total_cost": snapshot.total_cost,
+        "actual_total_cost": actual_total_cost,
+        "status": snapshot.status,
+        "calculated_at": snapshot.calculated_at.clone(),
+    })
 }
 
 #[cfg(test)]

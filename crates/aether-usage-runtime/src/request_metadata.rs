@@ -75,6 +75,9 @@ fn copy_allowed_metadata_fields(source: &Map<String, Value>, target: &mut Map<St
     copy_non_null_value(source, target, "billing_snapshot");
     copy_non_empty_string(source, target, "billing_snapshot_schema_version");
     copy_non_empty_string(source, target, "billing_snapshot_status");
+    copy_non_null_value(source, target, "settlement_snapshot");
+    copy_non_empty_string(source, target, "settlement_snapshot_schema_version");
+    copy_non_null_value(source, target, "billing_dimensions");
     copy_non_empty_string(source, target, "model_id");
     copy_non_empty_string(source, target, "global_model_id");
     copy_non_empty_string(source, target, "global_model_name");
@@ -100,6 +103,9 @@ fn move_allowed_metadata_fields(mut source: Map<String, Value>, target: &mut Map
     remove_non_null_value(&mut source, target, "billing_snapshot");
     remove_non_empty_string(&mut source, target, "billing_snapshot_schema_version");
     remove_non_empty_string(&mut source, target, "billing_snapshot_status");
+    remove_non_null_value(&mut source, target, "settlement_snapshot");
+    remove_non_empty_string(&mut source, target, "settlement_snapshot_schema_version");
+    remove_non_null_value(&mut source, target, "billing_dimensions");
     remove_non_empty_string(&mut source, target, "model_id");
     remove_non_empty_string(&mut source, target, "global_model_id");
     remove_non_empty_string(&mut source, target, "global_model_name");

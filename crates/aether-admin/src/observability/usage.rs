@@ -299,6 +299,9 @@ fn admin_usage_strip_settlement_metadata(metadata: &mut serde_json::Map<String, 
     metadata.remove("billing_snapshot");
     metadata.remove("billing_snapshot_schema_version");
     metadata.remove("billing_snapshot_status");
+    metadata.remove("settlement_snapshot");
+    metadata.remove("settlement_snapshot_schema_version");
+    metadata.remove("billing_dimensions");
     metadata.remove("rate_multiplier");
     metadata.remove("is_free_tier");
     metadata.remove("input_price_per_1m");
@@ -353,6 +356,36 @@ fn admin_usage_body_capture_json(item: &StoredRequestUsageAudit) -> Value {
 
 fn admin_usage_settlement_json(item: &StoredRequestUsageAudit) -> Value {
     let mut settlement = serde_json::Map::new();
+    if let Some(snapshot) = item
+        .request_metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("settlement_snapshot"))
+        .cloned()
+    {
+        settlement.insert("settlement_snapshot".to_string(), snapshot);
+    }
+    if let Some(schema_version) = item
+        .request_metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("settlement_snapshot_schema_version"))
+        .and_then(Value::as_str)
+    {
+        settlement.insert(
+            "settlement_snapshot_schema_version".to_string(),
+            json!(schema_version),
+        );
+    }
+    if let Some(dimensions) = item
+        .request_metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("billing_dimensions"))
+        .cloned()
+    {
+        settlement.insert("billing_dimensions".to_string(), dimensions);
+    }
     if let Some(snapshot) = item
         .request_metadata
         .as_ref()
@@ -2339,6 +2372,17 @@ mod tests {
                 "cache_creation_price_per_1m": 3.75,
                 "cache_read_price_per_1m": 0.30,
                 "price_per_request": 0.02,
+                "settlement_snapshot_schema_version": "3.0",
+                "billing_dimensions": {
+                    "input_tokens": 35,
+                    "total_input_context": 42
+                },
+                "settlement_snapshot": {
+                    "schema_version": "3.0",
+                    "pricing_snapshot": {
+                        "pricing_source": "provider_override"
+                    }
+                },
                 "billing_snapshot": {
                     "resolved_variables": {
                         "output_price_per_1m": 11.0
@@ -2369,6 +2413,18 @@ mod tests {
             payload["settlement"]["billing_snapshot"]["resolved_variables"]["output_price_per_1m"],
             11.0
         );
+        assert_eq!(
+            payload["settlement"]["settlement_snapshot_schema_version"],
+            "3.0"
+        );
+        assert_eq!(
+            payload["settlement"]["settlement_snapshot"]["pricing_snapshot"]["pricing_source"],
+            "provider_override"
+        );
+        assert_eq!(
+            payload["settlement"]["billing_dimensions"]["input_tokens"],
+            35
+        );
         assert_eq!(payload["settlement"]["billing_snapshot_status"], "resolved");
         assert_eq!(payload["settlement"]["rate_multiplier"], 0.5);
         assert_eq!(payload["settlement"]["is_free_tier"], false);
@@ -2381,6 +2437,9 @@ mod tests {
         assert!(payload["metadata"]["billing_snapshot"].is_null());
         assert!(payload["metadata"]["billing_snapshot_schema_version"].is_null());
         assert!(payload["metadata"]["billing_snapshot_status"].is_null());
+        assert!(payload["metadata"]["settlement_snapshot"].is_null());
+        assert!(payload["metadata"]["settlement_snapshot_schema_version"].is_null());
+        assert!(payload["metadata"]["billing_dimensions"].is_null());
         assert!(payload["metadata"]["rate_multiplier"].is_null());
         assert!(payload["metadata"]["is_free_tier"].is_null());
         assert!(payload["metadata"]["input_price_per_1m"].is_null());

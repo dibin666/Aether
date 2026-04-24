@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::Error as IoError;
+use std::time::Instant;
 
 use aether_contracts::{
     ExecutionPlan, ExecutionStreamTerminalSummary, ExecutionTelemetry, StreamFrame,
@@ -304,6 +305,7 @@ pub(crate) async fn execute_execution_runtime_stream(
     report_kind: Option<String>,
     mut report_context: Option<serde_json::Value>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
+    let stream_started_at = Instant::now();
     ensure_execution_request_candidate_slot(state, &mut plan, &mut report_context).await;
     let lifecycle_seed = build_lifecycle_usage_seed(&plan, report_context.as_ref());
     let request_candidate_status_snapshot =
@@ -391,6 +393,7 @@ pub(crate) async fn execute_execution_runtime_stream(
             report_kind,
             report_context,
             candidate_started_unix_secs,
+            stream_started_at,
             frame_stream,
         )
         .await;
@@ -450,6 +453,7 @@ pub(crate) async fn execute_execution_runtime_stream(
                 report_kind,
                 report_context,
                 candidate_started_unix_secs,
+                stream_started_at,
                 frame_stream,
             )
             .await;
@@ -534,6 +538,7 @@ pub(crate) async fn execute_execution_runtime_stream(
             report_kind,
             report_context,
             candidate_started_unix_secs,
+            stream_started_at,
             frame_stream,
         )
         .await;
@@ -675,6 +680,7 @@ async fn execute_stream_from_frame_stream(
     report_kind: Option<String>,
     report_context: Option<serde_json::Value>,
     candidate_started_unix_secs: u64,
+    stream_started_at: Instant,
     frame_stream: BoxStream<'static, Result<Bytes, IoError>>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
     let request_id = plan.request_id.as_str();
@@ -1639,6 +1645,32 @@ async fn execute_stream_from_frame_stream(
                             continue;
                         }
 
+                        if usage_stream_telemetry
+                            .as_ref()
+                            .and_then(|telemetry| telemetry.ttfb_ms)
+                            .is_none()
+                        {
+                            let first_data_elapsed_ms = stream_started_at
+                                .elapsed()
+                                .as_millis()
+                                .min(u128::from(u64::MAX))
+                                as u64;
+                            let first_data_telemetry = ExecutionTelemetry {
+                                ttfb_ms: Some(first_data_elapsed_ms),
+                                elapsed_ms: Some(first_data_elapsed_ms),
+                                upstream_bytes: telemetry
+                                    .as_ref()
+                                    .and_then(|telemetry| telemetry.upstream_bytes),
+                            };
+                            state_for_report.usage_runtime.record_stream_started(
+                                state_for_report.data.as_ref(),
+                                &lifecycle_seed_for_report,
+                                status_code,
+                                Some(&first_data_telemetry),
+                            );
+                            usage_stream_telemetry = Some(first_data_telemetry);
+                        }
+
                         append_stream_capture_bytes(
                             &mut buffered_body,
                             &rewritten_chunk,
@@ -2082,16 +2114,22 @@ fn apply_stream_summary_report_context(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::convert::Infallible;
     use std::sync::Arc;
+    use std::time::Duration;
 
     use aether_contracts::{ExecutionPlan, ExecutionTimeouts, RequestBody};
-    use axum::body::{to_bytes, Body};
+    use aether_data::repository::usage::InMemoryUsageReadRepository;
+    use aether_data_contracts::repository::usage::UsageReadRepository;
+    use aether_usage_runtime::UsageRuntimeConfig;
+    use async_stream::stream;
+    use axum::body::{to_bytes, Body, Bytes};
     use axum::extract::ws::Message;
     use axum::extract::Request;
     use axum::routing::any;
     use axum::{http::header, http::HeaderValue, Router};
     use serde_json::{json, Value};
-    use tokio::sync::watch;
+    use tokio::sync::{watch, Notify};
 
     use super::{execute_execution_runtime_stream, should_skip_direct_finalize_prefetch};
     use crate::control::GatewayControlDecision;
@@ -2166,6 +2204,153 @@ mod tests {
             false,
             true,
         ));
+    }
+
+    #[tokio::test]
+    async fn execute_execution_runtime_stream_records_first_data_as_streaming_before_terminal_telemetry(
+    ) {
+        let listener = crate::test_support::bind_loopback_listener()
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should resolve");
+        let first_data_seen = Arc::new(Notify::new());
+        let release_terminal = Arc::new(Notify::new());
+        let first_data_seen_for_route = Arc::clone(&first_data_seen);
+        let release_terminal_for_route = Arc::clone(&release_terminal);
+        let server = tokio::spawn(async move {
+            let app = Router::new().route(
+                "/v1/execute/stream",
+                any(move |_request: Request| {
+                    let first_data_seen = Arc::clone(&first_data_seen_for_route);
+                    let release_terminal = Arc::clone(&release_terminal_for_route);
+                    async move {
+                        let frames = stream! {
+                            yield Ok::<Bytes, Infallible>(Bytes::from_static(
+                                b"{\"type\":\"headers\",\"payload\":{\"kind\":\"headers\",\"status_code\":200,\"headers\":{\"content-type\":\"text/event-stream\"}}}\n",
+                            ));
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            yield Ok::<Bytes, Infallible>(Bytes::from_static(
+                                b"{\"type\":\"data\",\"payload\":{\"kind\":\"data\",\"text\":\"event: response.output_text.delta\\ndata: {\\\"type\\\":\\\"response.output_text.delta\\\",\\\"delta\\\":\\\"hi\\\"}\\n\\n\"}}\n",
+                            ));
+                            first_data_seen.notify_one();
+                            release_terminal.notified().await;
+                            yield Ok::<Bytes, Infallible>(Bytes::from_static(
+                                b"{\"type\":\"telemetry\",\"payload\":{\"kind\":\"telemetry\",\"telemetry\":{\"ttfb_ms\":123,\"elapsed_ms\":456}}}\n",
+                            ));
+                            yield Ok::<Bytes, Infallible>(Bytes::from_static(
+                                b"{\"type\":\"eof\",\"payload\":{\"kind\":\"eof\"}}\n",
+                            ));
+                        };
+                        let mut response = axum::http::Response::new(Body::from_stream(frames));
+                        response.headers_mut().insert(
+                            header::CONTENT_TYPE,
+                            HeaderValue::from_static("application/x-ndjson"),
+                        );
+                        response
+                    }
+                }),
+            );
+            axum::serve(listener, app)
+                .await
+                .expect("server should start");
+        });
+
+        let usage_repository = Arc::new(InMemoryUsageReadRepository::default());
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_usage_data_repository_for_tests(Arc::clone(&usage_repository))
+            .with_usage_runtime_for_tests(UsageRuntimeConfig {
+                enabled: true,
+                ..UsageRuntimeConfig::default()
+            })
+            .with_execution_runtime_override_base_url(format!("http://{addr}"));
+        let plan = ExecutionPlan {
+            request_id: "req-live-stream-first-data".into(),
+            candidate_id: Some("cand-live-stream-first-data".into()),
+            provider_name: Some("openai".into()),
+            provider_id: "prov-1".into(),
+            endpoint_id: "ep-1".into(),
+            key_id: "key-1".into(),
+            method: "POST".into(),
+            url: "https://chatgpt.com/backend-api/codex/responses".into(),
+            headers: BTreeMap::from([
+                ("content-type".into(), "application/json".into()),
+                ("accept".into(), "text/event-stream".into()),
+            ]),
+            content_type: Some("application/json".into()),
+            content_encoding: None,
+            body: RequestBody::from_json(json!({
+                "model": "gpt-5.4",
+                "input": "hello",
+                "stream": true
+            })),
+            stream: true,
+            client_api_format: "openai:cli".into(),
+            provider_api_format: "openai:cli".into(),
+            model_name: Some("gpt-5.4".into()),
+            proxy: None,
+            tls_profile: None,
+            timeouts: Some(ExecutionTimeouts {
+                connect_ms: Some(5_000),
+                total_ms: Some(5_000),
+                ..ExecutionTimeouts::default()
+            }),
+        };
+        let decision = GatewayControlDecision::synthetic(
+            "/v1/responses",
+            Some("ai_public".to_string()),
+            Some("openai".to_string()),
+            Some("cli".to_string()),
+            Some("openai:cli".to_string()),
+        )
+        .with_execution_runtime_candidate(true);
+
+        let response = execute_execution_runtime_stream(
+            &state,
+            plan,
+            "trace-live-stream-first-data",
+            &decision,
+            "openai_cli_stream",
+            None,
+            Some(json!({
+                "provider_api_format": "openai:cli",
+                "client_api_format": "openai:cli",
+            })),
+        )
+        .await
+        .expect("execution should succeed")
+        .expect("execution should return a client response");
+
+        first_data_seen.notified().await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let live_usage = loop {
+            let usage = usage_repository
+                .find_by_request_id("req-live-stream-first-data")
+                .await
+                .expect("usage should read");
+            if usage.as_ref().is_some_and(|usage| {
+                usage.status == "streaming" && usage.first_byte_time_ms.is_some()
+            }) {
+                break usage.expect("live usage should exist");
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "usage should record streaming status with first byte before terminal telemetry"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+
+        assert_eq!(live_usage.status, "streaming");
+        assert!(live_usage.first_byte_time_ms.is_some());
+
+        release_terminal.notify_one();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let text = String::from_utf8(body.to_vec()).expect("response body should be utf8");
+        assert!(text.contains("response.output_text.delta"));
+
+        server.abort();
     }
 
     #[tokio::test]

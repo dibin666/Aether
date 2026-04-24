@@ -33,6 +33,22 @@ impl BillingModelPricingSnapshot {
             .or(self.default_price_per_request)
     }
 
+    pub fn pricing_source(&self) -> &'static str {
+        if self
+            .model_tiered_pricing
+            .as_ref()
+            .is_some_and(has_tiered_pricing_tiers)
+            || self.model_price_per_request.is_some()
+        {
+            "provider_override"
+        } else if self.default_tiered_pricing.is_some() || self.default_price_per_request.is_some()
+        {
+            "global_default"
+        } else {
+            "unpriced"
+        }
+    }
+
     pub fn is_free_tier(&self) -> bool {
         self.provider_billing_type
             .as_deref()
