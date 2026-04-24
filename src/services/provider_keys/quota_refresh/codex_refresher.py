@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from src.core.crypto import crypto_service
 from src.models.database import Provider, ProviderAPIKey, ProviderEndpoint
+from src.services.provider.adapters.codex.quota import apply_live_quota_snapshot
 from src.services.provider.auth import get_provider_auth
 from src.services.provider.oauth_token import looks_like_token_invalidated
 from src.services.provider.pool.account_state import (
@@ -47,6 +48,24 @@ def _build_quota_exhausted_fallback_metadata(plan_type: str | None) -> dict[str,
     if normalized_plan != "free":
         metadata["secondary_used_percent"] = 100.0
     return metadata
+
+
+def _resolve_current_codex_namespace(
+    *,
+    key: ProviderAPIKey,
+    metadata_updates: dict[str, dict],
+) -> dict[str, Any] | None:
+    pending_updates = metadata_updates.get(str(getattr(key, "id", "") or ""))
+    if isinstance(pending_updates, dict):
+        pending_codex = pending_updates.get("codex")
+        if isinstance(pending_codex, dict):
+            return pending_codex
+
+    current_metadata = (
+        key.upstream_metadata if isinstance(getattr(key, "upstream_metadata", None), dict) else {}
+    )
+    current_codex = current_metadata.get("codex")
+    return current_codex if isinstance(current_codex, dict) else None
 
 
 def _extract_error_message_from_response(response: httpx.Response) -> str:
@@ -225,7 +244,12 @@ async def refresh_codex_key_quota(
 
         header_quota = parse_codex_usage_headers(dict(response.headers) if response.headers else {})
         if isinstance(header_quota, dict) and header_quota:
-            metadata_updates[key.id] = {"codex": header_quota}
+            metadata_updates[key.id] = {
+                "codex": apply_live_quota_snapshot(
+                    _resolve_current_codex_namespace(key=key, metadata_updates=metadata_updates),
+                    header_quota,
+                )
+            }
 
         if status_code == 401:
             state_updates[key.id] = _build_invalid_state_update(
@@ -345,7 +369,12 @@ async def refresh_codex_key_quota(
 
     if metadata:
         # 收集元数据，稍后统一更新数据库（存储到 codex 子对象）
-        metadata_updates[key.id] = {"codex": metadata}
+        metadata_updates[key.id] = {
+            "codex": apply_live_quota_snapshot(
+                _resolve_current_codex_namespace(key=key, metadata_updates=metadata_updates),
+                metadata,
+            )
+        }
         state_updates[key.id] = build_success_state_update(key)
         return {
             "key_id": key.id,

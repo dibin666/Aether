@@ -146,6 +146,36 @@ def test_sync_codex_quota_from_headers_updates_and_preserves_existing_fields() -
     assert codex_meta["legacy_marker"] == "keep-me"
 
 
+def test_sync_codex_quota_from_headers_clears_usage_limit_marker() -> None:
+    realtime_module._header_fingerprint_cache.clear()
+
+    key = SimpleNamespace(
+        id="sync-clear-exhausted-key",
+        provider=SimpleNamespace(provider_type="codex"),
+        upstream_metadata={
+            "codex": {
+                "quota_exhausted": True,
+                "quota_exhausted_reason": "usage_limit_reached",
+                "quota_reset_at": 1777546708,
+                "legacy_marker": "keep-me",
+            }
+        },
+    )
+    db = _FakeDB(key)
+
+    updated = sync_codex_quota_from_response_headers(
+        db=_as_session(db),
+        provider_api_key_id="sync-clear-exhausted-key",
+        response_headers=_paid_headers(),
+    )
+
+    assert updated is True
+    codex_meta = key.upstream_metadata["codex"]
+    assert "quota_exhausted" not in codex_meta
+    assert "quota_reset_at" not in codex_meta
+    assert codex_meta["legacy_marker"] == "keep-me"
+
+
 def test_sync_codex_quota_from_headers_skips_when_only_reset_seconds_changed() -> None:
     realtime_module._header_fingerprint_cache.clear()
 

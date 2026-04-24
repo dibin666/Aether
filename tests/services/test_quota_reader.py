@@ -52,6 +52,29 @@ def test_codex_reader_hides_reset_countdown_when_remaining_is_full() -> None:
     assert reader.display_summary() == "周剩余 100.0% | 5H剩余 100.0%"
 
 
+def test_codex_reader_uses_explicit_quota_exhausted_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(quota_reader.time, "time", lambda: 100.0)
+    reader = get_quota_reader(
+        "codex",
+        {
+            "codex": {
+                "quota_exhausted": True,
+                "quota_exhausted_reason": "usage_limit_reached",
+                "quota_reset_at": 700.0,
+            }
+        },
+    )
+
+    exhausted = reader.is_exhausted()
+    assert exhausted.exhausted is True
+    assert exhausted.reason == "Codex 账号额度已耗尽"
+    assert reader.usage_ratio() == pytest.approx(1.0)
+    assert reader.reset_seconds() == pytest.approx(600.0)
+    assert reader.display_summary() == "额度耗尽 (10分钟后重置)"
+
+
 def test_antigravity_reader_keeps_used_percent_fallbacks() -> None:
     reader = get_quota_reader(
         "antigravity",

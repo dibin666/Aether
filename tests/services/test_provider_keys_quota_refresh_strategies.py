@@ -332,6 +332,82 @@ async def test_codex_refresher_success_preserves_refresh_failed_marker(
 
 
 @pytest.mark.asyncio
+async def test_codex_refresher_success_clears_usage_limit_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.services.provider_keys.quota_refresh import codex_refresher as module
+
+    key = SimpleNamespace(
+        id="k1",
+        name="K1",
+        api_key="enc-key",
+        auth_type="oauth",
+        auth_config="enc-config",
+        proxy=None,
+        oauth_invalid_at=None,
+        oauth_invalid_reason=None,
+        upstream_metadata={
+            "codex": {
+                "quota_exhausted": True,
+                "quota_reset_at": 1777546708,
+                "legacy_marker": "keep-me",
+            }
+        },
+    )
+    provider = SimpleNamespace(proxy=None)
+    endpoint = SimpleNamespace()
+    metadata_updates: dict[str, dict[str, Any]] = {}
+    state_updates: dict[str, dict[str, Any]] = {}
+
+    async def _fake_auth_info(_endpoint: Any, _key: Any) -> Any:
+        return None
+
+    _install_module(
+        monkeypatch,
+        "src.services.proxy_node.resolver",
+        {
+            "resolve_effective_proxy": lambda provider_proxy, key_proxy: None,
+            "build_proxy_client_kwargs": lambda proxy, timeout: {"timeout": timeout},
+        },
+    )
+    monkeypatch.setattr(module, "get_provider_auth", _fake_auth_info)
+    monkeypatch.setattr(
+        module.crypto_service,
+        "decrypt",
+        lambda value: (
+            "sk-test"
+            if value == "enc-key"
+            else json.dumps({"plan_type": "team", "account_id": "acc-1"})
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "parse_codex_wham_usage_response",
+        lambda _data: {"primary_used_percent": 64.0, "secondary_used_percent": 3.0},
+    )
+    response = _FakeResponse(status_code=200, payload={"ok": True})
+    monkeypatch.setattr(
+        module.httpx, "AsyncClient", lambda **kwargs: _FakeAsyncClient(response, **kwargs)
+    )
+
+    result = await refresh_codex_key_quota(
+        db=cast(Any, _FakeDB()),
+        provider=cast(Any, provider),
+        key=cast(Any, key),
+        endpoint=cast(Any, endpoint),
+        codex_wham_usage_url="https://example.test",
+        metadata_updates=metadata_updates,
+        state_updates=state_updates,
+    )
+
+    assert result["status"] == "success"
+    codex_meta = metadata_updates["k1"]["codex"]
+    assert "quota_exhausted" not in codex_meta
+    assert "quota_reset_at" not in codex_meta
+    assert codex_meta["legacy_marker"] == "keep-me"
+
+
+@pytest.mark.asyncio
 async def test_codex_refresher_quota_exhausted_preserves_refresh_failed_marker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -553,7 +629,8 @@ async def test_codex_refresher_success_updates_metadata(
     )
 
     assert result["status"] == "success"
-    assert metadata_updates == {"k1": {"codex": {"used_percent": 10.0}}}
+    assert metadata_updates["k1"]["codex"]["used_percent"] == 10.0
+    assert isinstance(metadata_updates["k1"]["codex"].get("updated_at"), int)
     assert state_updates == {"k1": {"oauth_invalid_at": None, "oauth_invalid_reason": None}}
 
 

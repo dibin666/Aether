@@ -15,6 +15,7 @@ from src.core.logger import logger
 from src.core.provider_types import ProviderType, normalize_provider_type
 from src.models.database import ProviderAPIKey
 from src.services.model.upstream_fetcher import merge_upstream_metadata
+from src.services.provider.adapters.codex.quota import apply_live_quota_snapshot
 from src.services.provider_keys.codex_usage_parser import (
     CodexUsageParseError,
     parse_codex_usage_headers,
@@ -135,8 +136,11 @@ def sync_codex_quota_from_response_headers(
     if not isinstance(current_codex, dict):
         current_codex = {}
 
-    merged_codex = dict(current_codex)
-    merged_codex.update(parsed)
+    merged_codex = apply_live_quota_snapshot(
+        current_codex,
+        parsed,
+        now_ts=int(now_ts),
+    )
 
     current_fingerprint = _fingerprint_payload(_build_compare_payload(current_codex))
     merged_fingerprint = _fingerprint_payload(_build_compare_payload(merged_codex))

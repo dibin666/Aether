@@ -189,6 +189,19 @@ class CodexQuotaReader(PoolQuotaReader):
 
     def is_exhausted(self, model_name: str | None = None) -> QuotaExhaustedResult:
         _ = model_name
+        if _is_truthy_flag(self._data.get("quota_exhausted")):
+            reason = _extract_reason(
+                self._data,
+                "quota_exhausted_reason",
+                "reason",
+                "message",
+            )
+            if reason == "usage_limit_reached" or not reason:
+                reason = "Codex 账号额度已耗尽"
+            elif not reason.startswith("Codex "):
+                reason = f"Codex {reason}"
+            return QuotaExhaustedResult(True, reason)
+
         exhausted_parts: list[str] = []
         if _pct_is_exhausted(self._data.get("primary_used_percent")):
             exhausted_parts.append("周限额剩余 0%")
@@ -206,6 +219,8 @@ class CodexQuotaReader(PoolQuotaReader):
                 continue
             values.append(max(0.0, min(parsed, 100.0)) / 100.0)
         if not values:
+            if _is_truthy_flag(self._data.get("quota_exhausted")):
+                return 1.0
             return None
         return sum(values) / len(values)
 
@@ -220,7 +235,20 @@ class CodexQuotaReader(PoolQuotaReader):
                 continue
             candidates.append(parsed)
         if not candidates:
-            return None
+            reset_at = _to_float(self._data.get("quota_reset_at"))
+            if reset_at is not None and reset_at > 0:
+                return max(0.0, reset_at - time.time())
+
+            reset_seconds = _to_float(self._data.get("quota_reset_seconds"))
+            if reset_seconds is None or reset_seconds < 0:
+                return None
+
+            updated_at = self.updated_at()
+            if updated_at is not None:
+                elapsed = max(time.time() - updated_at, 0.0)
+                return max(reset_seconds - elapsed, 0.0)
+
+            return reset_seconds
         return min(candidates)
 
     def account_block(self) -> AccountBlockResult:
@@ -270,6 +298,12 @@ class CodexQuotaReader(PoolQuotaReader):
 
         if parts:
             return " | ".join(parts)
+
+        if _is_truthy_flag(self._data.get("quota_exhausted")):
+            reset_text = _format_reset_after(self.reset_seconds())
+            if reset_text:
+                return f"额度耗尽 ({reset_text})"
+            return "额度耗尽"
 
         has_credits = self._data.get("has_credits")
         credits_balance = _to_float(self._data.get("credits_balance"))

@@ -10,6 +10,7 @@ from src.core.error_utils import extract_error_message
 from src.core.exceptions import (
     ConcurrencyLimitError,
     EmbeddedErrorException,
+    ProviderRateLimitException,
     ProxyNodeUnavailableError,
     ThinkingSignatureException,
     UpstreamClientException,
@@ -389,6 +390,17 @@ class TaskErrorOperationsService:
                 concurrent_requests=captured_key_concurrent,
                 extra_data=_proxy_extra,
             )
+            from src.services.provider.adapters.codex.quota import sync_codex_usage_limit_state
+
+            if sync_codex_usage_limit_state(
+                db=self.db,
+                provider=provider,
+                key=key,
+                error_text=error_message,
+                request_id=request_id,
+            ):
+                return "break"
+
             return "continue" if has_retry_left else "break"
 
         if isinstance(cause, httpx.HTTPStatusError):
@@ -467,6 +479,19 @@ class TaskErrorOperationsService:
                 concurrent_requests=captured_key_concurrent,
                 extra_data=serializable_extra_data,
             )
+            error_response_text = serializable_extra_data.get("error_response")
+            from src.services.provider.adapters.codex.quota import is_usage_limit_reached_error
+
+            if (
+                isinstance(converted_error, ProviderRateLimitException)
+                and str(getattr(provider, "provider_type", "") or "").strip().lower()
+                == ProviderType.CODEX
+                and is_usage_limit_reached_error(
+                    error_response_text if isinstance(error_response_text, str) else None
+                )
+            ):
+                return "break"
+
             return "continue" if has_retry_left else "break"
 
         if isinstance(cause, error_classifier.RETRIABLE_ERRORS):

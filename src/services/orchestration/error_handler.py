@@ -64,7 +64,9 @@ class ErrorHandlerService:
         if not isinstance(proxy_cfg, dict):
             return None, None
         proxy_node_id = str(proxy_cfg.get("node_id") or "").strip() or None
-        proxy_node_name = str(proxy_cfg.get("name") or proxy_cfg.get("node_name") or "").strip() or None
+        proxy_node_name = (
+            str(proxy_cfg.get("name") or proxy_cfg.get("node_name") or "").strip() or None
+        )
         return proxy_node_id, proxy_node_name
 
     async def _maybe_delete_access_token_key_for_http400(
@@ -285,6 +287,12 @@ class ErrorHandlerService:
                 provider_name=str(provider.name),
                 current_rpm=captured_key_concurrent,
                 exception=converted_error,
+                request_id=request_id,
+            )
+            self._sync_codex_usage_limit_state(
+                key=key,
+                provider=provider,
+                error_text=error_response_text,
                 request_id=request_id,
             )
             self._sync_gemini_cli_quota_state(
@@ -631,3 +639,35 @@ class ErrorHandlerService:
             )
         except Exception as exc:
             logger.debug("  [{}] Gemini CLI 冷却元数据写入失败: {}", request_id, exc)
+
+    def _sync_codex_usage_limit_state(
+        self,
+        *,
+        key: ProviderAPIKey | None,
+        provider: Provider | None,
+        error_text: str | None,
+        request_id: str | None,
+    ) -> bool:
+        if key is None or provider is None:
+            return False
+
+        try:
+            from src.services.provider.adapters.codex.quota import sync_codex_usage_limit_state
+
+            updated = sync_codex_usage_limit_state(
+                db=self.db,
+                provider=provider,
+                key=key,
+                error_text=error_text,
+                request_id=request_id,
+            )
+            if updated:
+                logger.info(
+                    "  [{}] Codex key {} 记录 usage_limit_reached，已移出调度候选",
+                    request_id,
+                    str(getattr(key, "id", "") or "")[:8],
+                )
+            return updated
+        except Exception as exc:
+            logger.debug("  [{}] Codex usage_limit 元数据写入失败: {}", request_id, exc)
+            return False

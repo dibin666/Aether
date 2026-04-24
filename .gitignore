@@ -216,6 +216,7 @@ backups/
 
 # Runtime lock files
 .locks/
+.worktrees/
 # Demo and test files
 frontend/public/*-demo.html
 frontend/public/*-measure.html
