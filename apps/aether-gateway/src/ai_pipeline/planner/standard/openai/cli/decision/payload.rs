@@ -99,6 +99,8 @@ pub(crate) async fn maybe_build_local_openai_cli_decision_payload_for_candidate(
                 mapped_model: Some(&resolved.mapped_model),
                 candidate_group_id: eligible.orchestration.candidate_group_id.as_deref(),
                 upstream_url: Some(&resolved.upstream_url),
+                header_rules: resolved.transport.endpoint.header_rules.as_ref(),
+                body_rules: resolved.transport.endpoint.body_rules.as_ref(),
                 provider_request_method: Some(serde_json::Value::Null),
                 provider_request_headers: Some(&resolved.provider_request_headers),
                 original_headers: &parts.headers,

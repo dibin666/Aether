@@ -20,6 +20,8 @@ pub struct SchedulerRequestCandidateReportContext {
     pub upstream_url: Option<String>,
     pub mapped_model: Option<String>,
     pub key_name: Option<String>,
+    pub header_rules: Option<Value>,
+    pub body_rules: Option<Value>,
     pub proxy: Option<Value>,
 }
 
@@ -109,6 +111,14 @@ pub fn parse_request_candidate_report_context(
         upstream_url: string_field(report_context, "upstream_url"),
         mapped_model: string_field(report_context, "mapped_model"),
         key_name: string_field(report_context, "key_name"),
+        header_rules: report_context
+            .get("header_rules")
+            .cloned()
+            .filter(|value| !value.is_null()),
+        body_rules: report_context
+            .get("body_rules")
+            .cloned()
+            .filter(|value| !value.is_null()),
         proxy: report_context
             .get("proxy")
             .cloned()
@@ -138,6 +148,8 @@ pub fn resolve_report_request_candidate_slot(
         upstream_url,
         mapped_model,
         key_name,
+        header_rules,
+        body_rules,
         proxy,
     } = metadata;
     let request_id = request_id?;
@@ -147,6 +159,8 @@ pub fn resolve_report_request_candidate_slot(
         upstream_url,
         mapped_model,
         key_name,
+        header_rules,
+        body_rules,
         proxy,
     );
     let created_at_unix_ms = matched_candidate
@@ -308,6 +322,8 @@ pub fn build_local_request_candidate_status_record(
         metadata.upstream_url.clone(),
         metadata.mapped_model.clone(),
         metadata.key_name.clone(),
+        metadata.header_rules.clone(),
+        metadata.body_rules.clone(),
         metadata.proxy.clone(),
     );
     let created_at_unix_ms = started_at_unix_ms.or(finished_at_unix_ms);
@@ -516,6 +532,8 @@ fn build_report_candidate_extra_data(
     upstream_url: Option<String>,
     mapped_model: Option<String>,
     key_name: Option<String>,
+    header_rules: Option<Value>,
+    body_rules: Option<Value>,
     proxy: Option<Value>,
 ) -> Option<Value> {
     let mut extra_data = Map::with_capacity(8);
@@ -541,6 +559,12 @@ fn build_report_candidate_extra_data(
     }
     if let Some(key_name) = key_name {
         extra_data.insert("key_name".to_string(), Value::String(key_name));
+    }
+    if let Some(header_rules) = header_rules {
+        extra_data.insert("header_rules".to_string(), header_rules);
+    }
+    if let Some(body_rules) = body_rules {
+        extra_data.insert("body_rules".to_string(), body_rules);
     }
     if let Some(proxy) = proxy {
         extra_data.insert("proxy".to_string(), proxy);
@@ -683,6 +707,12 @@ mod tests {
             "key_id": "catalog-key-1",
             "client_api_format": "openai:chat",
             "provider_api_format": "openai:cli",
+            "header_rules": [
+                {"op": "set", "name": "x-test", "value": "1"}
+            ],
+            "body_rules": [
+                {"op": "remove", "path": "/store"}
+            ],
             "proxy": {
                 "node_id": "proxy-node-1",
                 "node_name": "edge-1",
@@ -718,6 +748,22 @@ mod tests {
                 .and_then(|value| value.get("proxy"))
                 .and_then(|value| value.get("source")),
             Some(&json!("provider"))
+        );
+        assert_eq!(
+            slot.extra_data
+                .as_ref()
+                .and_then(|value| value.get("header_rules"))
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            slot.extra_data
+                .as_ref()
+                .and_then(|value| value.get("body_rules"))
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1)
         );
     }
 

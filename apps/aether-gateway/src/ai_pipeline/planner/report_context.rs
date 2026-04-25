@@ -24,6 +24,8 @@ pub(crate) struct LocalExecutionReportContextParts<'a> {
     pub(crate) mapped_model: Option<&'a str>,
     pub(crate) candidate_group_id: Option<&'a str>,
     pub(crate) upstream_url: Option<&'a str>,
+    pub(crate) header_rules: Option<&'a Value>,
+    pub(crate) body_rules: Option<&'a Value>,
     pub(crate) provider_request_method: Option<Value>,
     pub(crate) provider_request_headers: Option<&'a BTreeMap<String, String>>,
     pub(crate) original_headers: &'a http::HeaderMap,
@@ -171,6 +173,12 @@ pub(crate) fn build_local_execution_report_context(
             "upstream_url".to_string(),
             Value::String(upstream_url.to_string()),
         );
+    }
+    if let Some(header_rules) = parts.header_rules {
+        object.insert("header_rules".to_string(), header_rules.clone());
+    }
+    if let Some(body_rules) = parts.body_rules {
+        object.insert("body_rules".to_string(), body_rules.clone());
     }
     if let Some(provider_request_method) = parts.provider_request_method {
         object.insert(
