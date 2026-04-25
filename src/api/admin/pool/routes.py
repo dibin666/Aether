@@ -1217,7 +1217,7 @@ def _build_quota_counts_by_provider(
         pid = str(provider_id or "")
         if not pid:
             continue
-        snapshot = resolve_quota_status_snapshot(
+        quota_bucket = _resolve_overview_quota_bucket(
             provider_type=provider_type_by_id.get(pid, ""),
             upstream_metadata=upstream_metadata,
         )
@@ -1229,14 +1229,41 @@ def _build_quota_counts_by_provider(
                 "unknown": 0,
             },
         )
-        if snapshot.exhausted:
+        if quota_bucket == "exhausted":
             counts["exhausted"] += 1
-        elif snapshot.code == "ok":
+        elif quota_bucket == "available":
             counts["available"] += 1
         else:
             counts["unknown"] += 1
 
     return counts_by_provider
+
+
+def _resolve_overview_quota_bucket(
+    *,
+    provider_type: str | None,
+    upstream_metadata: Any,
+) -> str:
+    """Classify overview quota counts via the shared quota snapshot helper.
+
+    This keeps the pool overview's `quota_exhausted_keys` on the same runtime
+    path as provider-key status snapshots and scheduling hard-block decisions.
+    For Codex, `resolve_quota_status_snapshot()` already delegates to
+    `CodexQuotaReader.is_exhausted()`, so `primary_used_percent >= 98` or
+    `secondary_used_percent >= 98` continues to count as exhausted here.
+    """
+
+    snapshot = resolve_quota_status_snapshot(
+        provider_type=provider_type,
+        upstream_metadata=upstream_metadata,
+    )
+    if snapshot.exhausted:
+        return "exhausted"
+
+    if snapshot.code == "ok":
+        return "available"
+
+    return "unknown"
 
 
 _POOL_KEY_LOAD_ONLY_ATTRS: tuple[Any, ...] = (
