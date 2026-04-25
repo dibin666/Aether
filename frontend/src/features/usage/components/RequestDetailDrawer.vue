@@ -457,9 +457,21 @@
                     </div>
 
                     <!-- Tab 内容（统一容器） -->
-                    <div class="content-block rounded-md border overflow-hidden">
-                      <!-- 表头栏：工具按钮 -->
-                      <div class="flex items-center justify-end gap-0.5 px-3 py-1 border-b bg-muted/40">
+                    <JsonContentPanel
+                      class="content-block"
+                      :title="activeJsonPanelTitle"
+                      :data="activeJsonPanelData"
+                      :is-dark="isDark"
+                      :expand-depth="currentExpandDepth"
+                      :copied="Boolean(copiedStates[activeTab])"
+                      :custom-copy="true"
+                      :expand-disabled="viewMode === 'compare' || (supportsConversationView && contentViewMode === 'conversation')"
+                      :copy-disabled="viewMode === 'compare'"
+                      max-height="500px"
+                      @update:expand-depth="currentExpandDepth = $event"
+                      @copy="copyContent(activeTab)"
+                    >
+                      <template #toolbar-actions-before>
                         <!-- 区域1：条件性按钮（cURL、视图切换、对比） -->
                         <!-- cURL 复制（仅在请求头/请求体 Tab） -->
                         <template v-if="['request-headers', 'request-body'].includes(activeTab)">
@@ -538,47 +550,7 @@
 
                         <!-- 区域3：常驻按钮（展开/收缩、复制） -->
                         <div class="w-px h-3.5 bg-border mx-0.5" />
-
-                        <!-- 展开/收缩 -->
-                        <button
-                          :title="currentExpandDepth === 0 ? '展开全部' : '收缩全部'"
-                          class="p-1 rounded transition-colors"
-                          :class="viewMode === 'compare' || (supportsConversationView && contentViewMode === 'conversation')
-                            ? 'text-muted-foreground/40 cursor-not-allowed'
-                            : 'text-muted-foreground hover:bg-muted'"
-                          :disabled="viewMode === 'compare' || (supportsConversationView && contentViewMode === 'conversation')"
-                          @click="currentExpandDepth === 0 ? expandAll() : collapseAll()"
-                        >
-                          <Maximize2
-                            v-if="currentExpandDepth === 0"
-                            class="w-3.5 h-3.5"
-                          />
-                          <Minimize2
-                            v-else
-                            class="w-3.5 h-3.5"
-                          />
-                        </button>
-
-                        <!-- 复制 -->
-                        <button
-                          :title="copiedStates[activeTab] ? '已复制' : '复制'"
-                          class="p-1 rounded transition-colors"
-                          :class="viewMode === 'compare'
-                            ? 'text-muted-foreground/40 cursor-not-allowed'
-                            : 'text-muted-foreground hover:bg-muted'"
-                          :disabled="viewMode === 'compare'"
-                          @click="copyContent(activeTab)"
-                        >
-                          <Check
-                            v-if="copiedStates[activeTab]"
-                            class="w-3.5 h-3.5 text-green-500"
-                          />
-                          <Copy
-                            v-else
-                            class="w-3.5 h-3.5"
-                          />
-                        </button>
-                      </div>
+                      </template>
                       <TabsContent value="request-headers">
                         <RequestHeadersContent
                           :detail="detail"
@@ -672,7 +644,7 @@
                           empty-message="无元数据信息"
                         />
                       </TabsContent>
-                    </div>
+                    </JsonContentPanel>
                   </Tabs>
                 </div>
               </Card>
@@ -703,7 +675,7 @@ import Separator from '@/components/ui/separator.vue'
 import Skeleton from '@/components/ui/skeleton.vue'
 import Tabs from '@/components/ui/tabs.vue'
 import TabsContent from '@/components/ui/tabs-content.vue'
-import { Copy, Check, Maximize2, Minimize2, Columns2, RefreshCw, X, Monitor, Server, MessageSquareText, Code2, Terminal, Play } from 'lucide-vue-next'
+import { Check, Columns2, RefreshCw, X, Monitor, Server, MessageSquareText, Code2, Terminal, Play } from 'lucide-vue-next'
 import { dashboardApi, type RequestDetail } from '@/api/dashboard'
 import { formatApiFormat } from '@/api/endpoints/types/api-format'
 import { formatShortRequestId } from '@/utils/format'
@@ -719,6 +691,7 @@ import {
 // 子组件
 import RequestHeadersContent from './RequestDetailDrawer/RequestHeadersContent.vue'
 import JsonContent from './RequestDetailDrawer/JsonContent.vue'
+import JsonContentPanel from './JsonContentPanel.vue'
 import ConversationView from './RequestDetailDrawer/ConversationView.vue'
 import HorizontalRequestTimeline from './HorizontalRequestTimeline.vue'
 import ReplayDialog from './ReplayDialog.vue'
@@ -1069,6 +1042,29 @@ const currentHeaderData = computed(() => {
     return detail.value.request_headers
   }
   return detail.value.provider_request_headers
+})
+
+const activeJsonPanelData = computed(() => {
+  switch (activeTab.value) {
+    case 'request-headers':
+      return currentHeaderData.value
+    case 'request-body':
+      return currentRequestBody.value
+    case 'response-headers':
+      return currentResponseHeaderData.value
+    case 'response-body':
+      return currentResponseBody.value
+    case 'metadata':
+      return metadataPanelData.value
+    default:
+      return null
+  }
+})
+
+const activeJsonPanelTitle = computed(() => {
+  if (viewMode.value === 'compare') return '对比'
+  if (supportsConversationView.value && contentViewMode.value === 'conversation') return 'Chat'
+  return 'JSON'
 })
 
 // 请求体渲染结果
@@ -2043,14 +2039,6 @@ function toggleContentView() {
   } else {
     contentViewMode.value = 'json'
   }
-}
-
-function expandAll() {
-  currentExpandDepth.value = 999
-}
-
-function collapseAll() {
-  currentExpandDepth.value = 0
 }
 
 // 复制 cURL 命令

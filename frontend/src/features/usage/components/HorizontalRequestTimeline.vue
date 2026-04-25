@@ -460,7 +460,12 @@
                   <summary class="extra-toggle">
                     额外信息
                   </summary>
-                  <pre class="extra-json">{{ JSON.stringify(currentAttempt.extra_data, null, 2) }}</pre>
+                  <JsonContentPanel
+                    class="extra-json-panel"
+                    :data="currentAttempt.extra_data"
+                    :is-dark="isDark"
+                    empty-message="无额外信息"
+                  />
                 </details>
               </div>
             </div>
@@ -489,6 +494,7 @@ import { isAxiosError } from 'axios'
 import Card from '@/components/ui/card.vue'
 import Badge from '@/components/ui/badge.vue'
 import Skeleton from '@/components/ui/skeleton.vue'
+import JsonContentPanel from './JsonContentPanel.vue'
 import { ChevronLeft, ChevronRight, ExternalLink } from 'lucide-vue-next'
 import { requestTraceApi, type RequestTrace, type CandidateRecord } from '@/api/requestTrace'
 import { log } from '@/utils/logger'
@@ -615,6 +621,7 @@ const getFinalStatusBadgeVariant = (status: string): BadgeVariant => {
 const loading = ref(false)
 const error = ref<string | null>(null)
 const internalTrace = ref<RequestTrace | null>(null)
+const isDark = computed(() => document.documentElement.classList.contains('dark'))
 const trace = computed(() => props.traceData ?? internalTrace.value)
 const selectedGroupIndex = ref(0)
 const selectedAttemptIndex = ref(0)
@@ -2381,16 +2388,8 @@ const getDisplayStatus = (attempt: CandidateRecord | null | undefined): string =
   color: hsl(var(--foreground));
 }
 
-.extra-json {
+.extra-json-panel {
   margin-top: 0.5rem;
-  padding: 0.75rem;
-  background: hsl(var(--muted) / 0.5);
-  border-radius: 8px;
-  font-size: 0.75rem;
-  font-family: ui-monospace, monospace;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-all;
 }
 
 /* 动画 */
