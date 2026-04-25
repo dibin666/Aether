@@ -66,6 +66,13 @@ def _pct_is_exhausted(value: Any) -> bool:
     return pct >= 100.0 - 1e-6
 
 
+def _pct_reaches_threshold(value: Any, threshold: float) -> bool:
+    pct = _to_float(value)
+    if pct is None:
+        return False
+    return pct >= threshold - 1e-6
+
+
 def _format_percent(value: float) -> str:
     clamped = max(0.0, min(value, 100.0))
     return f"{clamped:.1f}%"
@@ -186,6 +193,15 @@ class NullQuotaReader(PoolQuotaReader):
 
 class CodexQuotaReader(PoolQuotaReader):
     namespace = "codex"
+    _LOW_QUOTA_USED_PERCENT_THRESHOLD = 98.0
+
+    @classmethod
+    def _window_exhausted_reason(cls, used_percent: Any, *, label: str) -> str | None:
+        if _pct_is_exhausted(used_percent):
+            return f"{label}剩余 0%"
+        if _pct_reaches_threshold(used_percent, cls._LOW_QUOTA_USED_PERCENT_THRESHOLD):
+            return f"{label}剩余低于 2%"
+        return None
 
     def is_exhausted(self, model_name: str | None = None) -> QuotaExhaustedResult:
         _ = model_name
@@ -203,10 +219,18 @@ class CodexQuotaReader(PoolQuotaReader):
             return QuotaExhaustedResult(True, reason)
 
         exhausted_parts: list[str] = []
-        if _pct_is_exhausted(self._data.get("primary_used_percent")):
-            exhausted_parts.append("周限额剩余 0%")
-        if _pct_is_exhausted(self._data.get("secondary_used_percent")):
-            exhausted_parts.append("5H 限额剩余 0%")
+        primary_reason = self._window_exhausted_reason(
+            self._data.get("primary_used_percent"),
+            label="周限额",
+        )
+        if primary_reason:
+            exhausted_parts.append(primary_reason)
+        secondary_reason = self._window_exhausted_reason(
+            self._data.get("secondary_used_percent"),
+            label="5H 限额",
+        )
+        if secondary_reason:
+            exhausted_parts.append(secondary_reason)
         if exhausted_parts:
             return QuotaExhaustedResult(True, "Codex " + "，".join(exhausted_parts))
         return QuotaExhaustedResult(False)

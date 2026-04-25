@@ -106,14 +106,16 @@ def test_codex_5h_quota_exhausted_skips(mock_get_health_monitor: MagicMock) -> N
 
 
 @patch("src.services.scheduling.candidate_builder.get_health_monitor")
-def test_codex_oauth_quota_exhausted_still_allows(mock_get_health_monitor: MagicMock) -> None:
-    mock_get_health_monitor.return_value.get_circuit_breaker_status.return_value = (True, None)
+def test_codex_access_token_only_low_quota_still_skips(
+    mock_get_health_monitor: MagicMock,
+) -> None:
+    mock_get_health_monitor.return_value.get_circuit_breaker_status.return_value = (False, "熔断中")
     scheduler = CacheAwareScheduler()
     key = _make_key(
         upstream_metadata={
             "codex": {
-                "primary_used_percent": 100.0,
-                "secondary_used_percent": 100.0,
+                "primary_used_percent": 98.2,
+                "secondary_used_percent": 10.0,
             }
         },
         auth_type="oauth",
@@ -127,8 +129,8 @@ def test_codex_oauth_quota_exhausted_still_allows(mock_get_health_monitor: Magic
         provider_type="codex",
     )
 
-    assert ok is True
-    assert reason is None
+    assert ok is False
+    assert reason == "Codex 周限额剩余低于 2%"
 
 
 @patch("src.services.scheduling.candidate_builder.get_health_monitor")

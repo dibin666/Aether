@@ -1,10 +1,10 @@
 """
-号池额度主动探测调度器。
+号池额度定时检查调度器。
 
 行为：
 - 当 provider.pool_advanced.probing_enabled=true 时启用
-- Key 以固定间隔主动触发额度刷新，用于检查 OAuth / 额度状态
-- 实际请求使用不会跳过定期探测；探测节流仅由刷新时间与主动探测时间控制
+- Codex 号池仅执行本地额度检查，不请求上游刷新接口
+- 其他已支持的 provider 保持原有主动刷新行为
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from src.services.provider_keys.key_quota_service import (
     QUOTA_REFRESH_PROVIDER_TYPES,
     refresh_provider_quota_for_provider,
 )
+from src.services.provider_keys.quota_reader import get_quota_reader
 from src.services.system.scheduler import get_scheduler
 
 _REDIS_PREFIX = "ap:quota_probe:last"
@@ -127,7 +128,7 @@ def _select_probe_key_ids(
 
 
 class PoolQuotaProbeScheduler:
-    """按号池高级配置执行额度主动探测。"""
+    """按号池高级配置执行额度定时检查。"""
 
     def __init__(self) -> None:
         scan_interval_raw = os.getenv(
@@ -162,10 +163,10 @@ class PoolQuotaProbeScheduler:
             self._scheduled_probe_check,
             seconds=self.scan_interval_seconds,
             job_id="pool_quota_probe_check",
-            name="号池额度主动探测检查",
+            name="号池额度定时检查",
         )
-        # 不在启动时立即探测：大号池场景下会阻塞启动并占用大量内存。
-        # 首次探测由定时调度器在 scan_interval_seconds 后自动触发。
+        # 不在启动时立即检查：大号池场景下会阻塞启动并占用大量内存。
+        # 首次检查由定时调度器在 scan_interval_seconds 后自动触发。
 
     async def stop(self) -> Any:
         if not self.running:
@@ -253,7 +254,7 @@ class PoolQuotaProbeScheduler:
         if not eligible_providers:
             return
 
-        # 第二阶段：逐个 provider 查询 key 并筛选探测目标
+        # 第二阶段：逐个 provider 查询 key 并筛选检查目标
         # 避免一次性加载所有 provider 的全部 key 到内存
         for provider_id, provider_type, interval_seconds in eligible_providers:
             if not self.running:
@@ -280,20 +281,36 @@ class PoolQuotaProbeScheduler:
 
             probe_db = create_session()
             try:
-                result = await refresh_provider_quota_for_provider(
-                    db=probe_db,
-                    provider_id=provider_id,
-                    codex_wham_usage_url=CODEX_WHAM_USAGE_URL,
-                    key_ids=probe_key_ids,
-                )
-                logger.info(
-                    "[POOL_PROBE] Provider {} ({}) 静默探测完成: selected={}, success={}, failed={}",
-                    provider_id[:8],
-                    provider_type,
-                    len(probe_key_ids),
-                    int(result.get("success") or 0),
-                    int(result.get("failed") or 0),
-                )
+                if provider_type == ProviderType.CODEX:
+                    result = await self._run_local_quota_check_for_provider(
+                        db=probe_db,
+                        provider_id=provider_id,
+                        provider_type=provider_type,
+                        key_ids=probe_key_ids,
+                    )
+                    logger.info(
+                        "[POOL_PROBE] Provider {} ({}) 本地额度检查完成: selected={}, hard_blocked={}, available={}",
+                        provider_id[:8],
+                        provider_type,
+                        int(result.get("selected") or 0),
+                        int(result.get("hard_blocked") or 0),
+                        int(result.get("available") or 0),
+                    )
+                else:
+                    result = await refresh_provider_quota_for_provider(
+                        db=probe_db,
+                        provider_id=provider_id,
+                        codex_wham_usage_url=CODEX_WHAM_USAGE_URL,
+                        key_ids=probe_key_ids,
+                    )
+                    logger.info(
+                        "[POOL_PROBE] Provider {} ({}) 静默探测完成: selected={}, success={}, failed={}",
+                        provider_id[:8],
+                        provider_type,
+                        len(probe_key_ids),
+                        int(result.get("success") or 0),
+                        int(result.get("failed") or 0),
+                    )
             except Exception as exc:
                 try:
                     probe_db.rollback()
@@ -307,6 +324,54 @@ class PoolQuotaProbeScheduler:
                 )
             finally:
                 probe_db.close()
+
+    async def _run_local_quota_check_for_provider(
+        self,
+        *,
+        db: Any,
+        provider_id: str,
+        provider_type: str,
+        key_ids: list[str],
+    ) -> dict[str, int]:
+        """Run a local-only quota hard-block scan for the selected keys."""
+        if not key_ids:
+            return {
+                "selected": 0,
+                "hard_blocked": 0,
+                "available": 0,
+            }
+
+        keys = (
+            db.query(ProviderAPIKey)
+            .options(
+                load_only(
+                    ProviderAPIKey.id, ProviderAPIKey.provider_id, ProviderAPIKey.upstream_metadata
+                )
+            )
+            .filter(
+                ProviderAPIKey.provider_id == provider_id,
+                ProviderAPIKey.id.in_(key_ids),
+            )
+            .all()
+        )
+        blocked_count = 0
+        available_count = 0
+
+        for key in keys:
+            result = get_quota_reader(
+                provider_type,
+                getattr(key, "upstream_metadata", None),
+            ).is_exhausted()
+            if result.exhausted:
+                blocked_count += 1
+            else:
+                available_count += 1
+
+        return {
+            "selected": len(keys),
+            "hard_blocked": blocked_count,
+            "available": available_count,
+        }
 
     async def _select_keys_for_provider(
         self,

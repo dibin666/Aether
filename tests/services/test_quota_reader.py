@@ -75,6 +75,22 @@ def test_codex_reader_uses_explicit_quota_exhausted_marker(
     assert reader.display_summary() == "额度耗尽 (10分钟后重置)"
 
 
+def test_codex_reader_hard_blocks_low_remaining_windows() -> None:
+    reader = get_quota_reader(
+        "codex",
+        {
+            "codex": {
+                "primary_used_percent": 98.0,
+                "secondary_used_percent": 99.5,
+            }
+        },
+    )
+
+    exhausted = reader.is_exhausted()
+    assert exhausted.exhausted is True
+    assert exhausted.reason == "Codex 周限额剩余低于 2%，5H 限额剩余低于 2%"
+
+
 def test_antigravity_reader_keeps_used_percent_fallbacks() -> None:
     reader = get_quota_reader(
         "antigravity",
@@ -240,3 +256,16 @@ def test_quota_skipper_uses_unified_reader() -> None:
     )
     assert exhausted is True
     assert reason == "Antigravity 模型 gemini-2.5-pro 配额剩余 0%"
+
+
+def test_quota_skipper_does_not_bypass_codex_access_token_only_low_quota() -> None:
+    codex_key = SimpleNamespace(
+        upstream_metadata={"codex": {"primary_used_percent": 98.2, "secondary_used_percent": 12.0}},
+        auth_type="oauth",
+        auth_config="{}",
+    )
+
+    exhausted, reason = is_key_quota_exhausted("codex", codex_key, model_name="")  # type: ignore[arg-type]
+
+    assert exhausted is True
+    assert reason == "Codex 周限额剩余低于 2%"

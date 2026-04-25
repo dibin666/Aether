@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
-from src.services.provider_keys.pool_quota_probe_scheduler import _select_probe_key_ids
+import pytest
+
+from src.services.provider_keys.pool_quota_probe_scheduler import (
+    PoolQuotaProbeScheduler,
+    _select_probe_key_ids,
+)
 
 
 def _key(
@@ -86,3 +92,77 @@ def test_select_probe_key_ids_applies_limit_by_oldest_anchor_first() -> None:
         limit=2,
     )
     assert selected == ["k1", "k2"]
+
+
+@pytest.mark.asyncio
+async def test_run_local_quota_check_for_provider_counts_hard_blocked_keys() -> None:
+    scheduler = PoolQuotaProbeScheduler()
+    db = MagicMock()
+    db.query.return_value.options.return_value.filter.return_value.all.return_value = [
+        _key("k1", upstream_metadata={"codex": {"primary_used_percent": 98.5}}),
+        _key("k2", upstream_metadata={"codex": {"primary_used_percent": 40.0}}),
+        _key("k3", upstream_metadata={"codex": {"secondary_used_percent": 100.0}}),
+    ]
+
+    result = await scheduler._run_local_quota_check_for_provider(
+        db=db,
+        provider_id="provider-1",
+        provider_type="codex",
+        key_ids=["k1", "k2", "k3"],
+    )
+
+    assert result == {
+        "selected": 3,
+        "hard_blocked": 2,
+        "available": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_probe_cycle_uses_local_check_for_codex(monkeypatch: pytest.MonkeyPatch) -> None:
+    scheduler = PoolQuotaProbeScheduler()
+    scheduler.running = True
+
+    provider = SimpleNamespace(
+        id="provider-codex-1",
+        provider_type="codex",
+        config={"pool_advanced": {"probing_enabled": True, "probing_interval_minutes": 10}},
+    )
+    provider_db = MagicMock()
+    provider_db.query.return_value.filter.return_value.all.return_value = [provider]
+    probe_db = MagicMock()
+
+    create_session_mock = MagicMock(side_effect=[provider_db, probe_db])
+    monkeypatch.setattr(
+        "src.services.provider_keys.pool_quota_probe_scheduler.create_session",
+        create_session_mock,
+    )
+    monkeypatch.setattr(
+        "src.services.provider_keys.pool_quota_probe_scheduler.get_redis_client",
+        AsyncMock(return_value=None),
+    )
+
+    select_mock = AsyncMock(return_value=["k1", "k2"])
+    mark_mock = AsyncMock()
+    local_check_mock = AsyncMock(return_value={"selected": 2, "hard_blocked": 1, "available": 1})
+    refresh_mock = AsyncMock()
+
+    monkeypatch.setattr(scheduler, "_select_keys_for_provider", select_mock)
+    monkeypatch.setattr(scheduler, "_mark_probe_timestamps", mark_mock)
+    monkeypatch.setattr(scheduler, "_run_local_quota_check_for_provider", local_check_mock)
+    monkeypatch.setattr(
+        "src.services.provider_keys.pool_quota_probe_scheduler.refresh_provider_quota_for_provider",
+        refresh_mock,
+    )
+
+    await scheduler._run_probe_cycle()
+
+    select_mock.assert_awaited_once()
+    mark_mock.assert_awaited_once()
+    local_check_mock.assert_awaited_once_with(
+        db=probe_db,
+        provider_id="provider-codex-1",
+        provider_type="codex",
+        key_ids=["k1", "k2"],
+    )
+    refresh_mock.assert_not_awaited()
