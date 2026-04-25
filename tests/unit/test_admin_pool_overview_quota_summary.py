@@ -51,3 +51,46 @@ def test_build_quota_counts_by_provider_groups_available_exhausted_and_unknown()
         "exhausted": 0,
         "unknown": 0,
     }
+
+
+def test_build_quota_counts_by_provider_counts_codex_low_quota_as_exhausted() -> None:
+    result = _build_quota_counts_by_provider(
+        [
+            (
+                "provider-codex",
+                {
+                    "codex": {
+                        "primary_used_percent": 98.2,
+                        "secondary_used_percent": 10.0,
+                    }
+                },
+            ),
+            (
+                "provider-codex",
+                {
+                    "codex": {
+                        "primary_used_percent": 20.0,
+                        "secondary_used_percent": 98.0,
+                    }
+                },
+            ),
+            (
+                "provider-codex",
+                {
+                    "codex": {
+                        "primary_used_percent": 35.0,
+                        "secondary_used_percent": 12.0,
+                    }
+                },
+            ),
+        ],
+        {
+            "provider-codex": "codex",
+        },
+    )
+
+    assert result["provider-codex"] == {
+        "available": 1,
+        "exhausted": 2,
+        "unknown": 0,
+    }
