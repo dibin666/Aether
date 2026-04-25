@@ -504,7 +504,7 @@ fn admin_usage_error_domains_json(item: &StoredRequestUsageAudit) -> Value {
     } else {
         Value::Null
     };
-    let client_error = admin_usage_error_domain_json(
+    let mut client_error = admin_usage_error_domain_json(
         "client_response",
         item.status_code,
         item.client_response_headers.as_ref(),
@@ -512,6 +512,17 @@ fn admin_usage_error_domains_json(item: &StoredRequestUsageAudit) -> Value {
         item.error_category.as_deref(),
         item.error_message.as_deref(),
     );
+    if item.routing_execution_path() == Some("local_execution_runtime_miss") {
+        if let (Some(object), Some(message)) = (
+            client_error.as_object_mut(),
+            item.error_message
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty()),
+        ) {
+            object.insert("message".to_string(), Value::String(message.to_string()));
+        }
+    }
     let request_error = Value::Null;
     let failure_summary =
         admin_usage_failure_summary_json(item, &request_error, &upstream_error, &client_error);
@@ -2682,17 +2693,20 @@ mod tests {
     #[test]
     fn detail_payload_does_not_promote_local_client_error_to_upstream_error() {
         let message = "没有可用提供商支持模型 gpt-5.4 的同步请求。请检查模型映射、端点启用状态和 API Key 权限（原因代码: candidate_list_empty）";
+        let client_message = "没有可用提供商支持模型 gpt-5.4 的同步请求";
         let item = StoredRequestUsageAudit {
             provider_api_key_id: None,
             provider_request_headers: None,
             provider_request_body: None,
             provider_request_body_ref: None,
             candidate_id: None,
+            execution_path: Some("local_execution_runtime_miss".to_string()),
+            local_execution_runtime_miss_reason: Some("candidate_list_empty".to_string()),
             error_category: Some("http_error".to_string()),
             client_response_body: Some(json!({
                 "error": {
                     "type": "http_error",
-                    "message": message
+                    "message": client_message
                 }
             })),
             response_body: Some(json!({
@@ -2718,6 +2732,10 @@ mod tests {
 
         assert!(payload["upstream_error"].is_null());
         assert_eq!(payload["client_error"]["message"], message);
+        assert_eq!(
+            payload["client_response_body"]["error"]["message"],
+            client_message
+        );
         assert_eq!(payload["error_flow"]["source"], "gateway");
         assert_eq!(payload["error_flow"]["propagation"], "local");
     }

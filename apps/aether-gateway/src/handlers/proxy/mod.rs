@@ -36,9 +36,10 @@ use crate::control::{
     GatewayPublicRequestContext,
 };
 use crate::executor::{
-    build_local_execution_runtime_miss_context, maybe_execute_stream_request,
-    maybe_execute_sync_request, record_failed_usage_for_exhausted_request,
-    record_failed_usage_for_runtime_miss_request, LocalExecutionRequestOutcome,
+    beautify_local_execution_client_error_message, build_local_execution_runtime_miss_context,
+    maybe_execute_stream_request, maybe_execute_sync_request,
+    record_failed_usage_for_exhausted_request, record_failed_usage_for_runtime_miss_request,
+    LocalExecutionRequestOutcome,
 };
 use crate::frontdoor_loop_guard::{
     frontdoor_self_loop_public_ai_path, request_has_execution_runtime_loop_guard,
@@ -1364,7 +1365,10 @@ pub(crate) async fn proxy_request(
             &trace_id,
             control_decision,
             http::StatusCode::SERVICE_UNAVAILABLE,
-            local_execution_runtime_miss_detail.as_str(),
+            beautify_local_execution_client_error_message(
+                local_execution_runtime_miss_detail.as_str(),
+            )
+            .as_str(),
         )?;
         let local_execution_runtime_miss_reason = local_execution_runtime_miss_diagnostic
             .as_ref()

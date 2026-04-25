@@ -820,23 +820,6 @@ function formatErrorDomainMeta(domain: NormalizedErrorDomain): string {
   return parts.join(' · ')
 }
 
-function simplifyClientErrorMessage(message: string): string {
-  let simplified = message.trim()
-  if (!simplified) return ''
-
-  simplified = simplified
-    .replace(/[（(]\s*原因代码\s*[:：][^）)]*[）)]/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  const advisoryIndex = simplified.search(/[。.!?]\s*(请检查|请确认|原因代码|Reason|Code)/i)
-  if (advisoryIndex > 0) {
-    simplified = simplified.slice(0, advisoryIndex)
-  }
-
-  return simplified.replace(/[。.!?；;，,：:\s]+$/u, '').trim()
-}
-
 function handleTraceState(state: { loaded: boolean, hasTrace: boolean }) {
   timelineLoaded.value = state.loaded
   timelineHasTrace.value = state.hasTrace
@@ -968,7 +951,7 @@ const normalizedUpstreamError = computed(() =>
 )
 
 const displayClientErrorMessage = computed(() =>
-  normalizedClientError.value ? simplifyClientErrorMessage(normalizedClientError.value.message) : '',
+  normalizedClientError.value?.message ?? '',
 )
 
 const hasVisibleErrorCards = computed(() =>

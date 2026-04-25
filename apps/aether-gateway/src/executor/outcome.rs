@@ -252,7 +252,7 @@ pub(crate) async fn record_failed_usage_for_exhausted_request(
     data.client_response_body = Some(json!({
         "error": {
             "type": "http_error",
-            "message": local_execution_runtime_miss_detail,
+            "message": beautify_local_execution_client_error_message(local_execution_runtime_miss_detail),
         }
     }));
 
@@ -322,10 +322,12 @@ pub(crate) async fn record_failed_usage_for_runtime_miss_request(
         .filter(|value| !value.eq_ignore_ascii_case(model.as_str()));
 
     let status_code = http::StatusCode::SERVICE_UNAVAILABLE.as_u16();
+    let client_message =
+        beautify_local_execution_client_error_message(local_execution_runtime_miss_detail);
     let client_body = json!({
         "error": {
             "type": "http_error",
-            "message": local_execution_runtime_miss_detail,
+            "message": client_message,
         }
     });
     let mut client_headers = Map::from_iter([(
@@ -416,6 +418,66 @@ pub(crate) async fn record_failed_usage_for_runtime_miss_request(
             UsageEvent::new(UsageEventType::Failed, request_id, data),
         )
         .await;
+}
+
+pub(crate) fn beautify_local_execution_client_error_message(message: &str) -> String {
+    let without_reason_code = strip_parenthesized_reason_code(message);
+    let mut simplified = collapse_whitespace(without_reason_code.as_str());
+    for marker in [
+        "。请检查",
+        "。请确认",
+        ". 请检查",
+        ". 请确认",
+        "! 请检查",
+        "! 请确认",
+        "? 请检查",
+        "? 请确认",
+        "。Reason",
+        ". Reason",
+        "。Code",
+        ". Code",
+    ] {
+        if let Some(index) = simplified.find(marker) {
+            simplified.truncate(index);
+            break;
+        }
+    }
+    trim_trailing_message_punctuation(simplified.as_str()).to_string()
+}
+
+fn strip_parenthesized_reason_code(message: &str) -> String {
+    let Some(reason_index) = message.find("原因代码") else {
+        return message.to_string();
+    };
+    let Some((start, open)) = message[..reason_index]
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| *ch == '（' || *ch == '(')
+    else {
+        return message.to_string();
+    };
+    let close = if open == '(' { ')' } else { '）' };
+    let Some(close_offset) = message[start..].find(close) else {
+        return message[..start].to_string();
+    };
+    let end = start + close_offset + close.len_utf8();
+    format!("{}{}", &message[..start], &message[end..])
+}
+
+fn collapse_whitespace(message: &str) -> String {
+    message.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn trim_trailing_message_punctuation(message: &str) -> &str {
+    message
+        .trim_end_matches(|ch: char| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '。' | '.' | '!' | '?' | '；' | ';' | '，' | ',' | '：' | ':'
+                )
+        })
+        .trim()
 }
 
 fn select_last_failed_request_candidate(
@@ -870,7 +932,8 @@ fn trimmed_non_empty(value: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_runtime_miss_usage_routing, request_candidate_represents_provider_execution,
+        apply_runtime_miss_usage_routing, beautify_local_execution_client_error_message,
+        request_candidate_represents_provider_execution,
         select_last_runtime_miss_executed_candidate, RuntimeMissCandidateContext,
     };
     use crate::constants::EXECUTION_PATH_LOCAL_EXECUTION_RUNTIME_MISS;
@@ -880,6 +943,22 @@ mod tests {
     };
     use aether_usage_runtime::UsageEventData;
     use serde_json::{json, Map, Value};
+
+    #[test]
+    fn local_execution_client_error_message_is_client_friendly() {
+        assert_eq!(
+            beautify_local_execution_client_error_message(
+                "没有可用提供商支持模型 gpt-5.4 的同步请求。请检查模型映射、端点启用状态和 API Key 权限（原因代码: candidate_list_empty）",
+            ),
+            "没有可用提供商支持模型 gpt-5.4 的同步请求"
+        );
+        assert_eq!(
+            beautify_local_execution_client_error_message(
+                "请求缺少 model 字段，无法选择上游提供商（openai/chat，原因代码: missing_requested_model）",
+            ),
+            "请求缺少 model 字段，无法选择上游提供商"
+        );
+    }
 
     #[test]
     fn runtime_miss_routing_moves_to_typed_usage_fields_and_keeps_metadata_lightweight() {
