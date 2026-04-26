@@ -10,7 +10,7 @@ pub use crate::stream::{CanonicalStreamEvent, CanonicalStreamFrame};
 pub(crate) const OPENAI_RESPONSES_EXTENSION_NAMESPACE: &str = "openai_responses";
 pub(crate) const OPENAI_RESPONSES_LEGACY_EXTENSION_NAMESPACE: &str = "openai_cli";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CanonicalRole {
     User,
@@ -18,13 +18,8 @@ pub enum CanonicalRole {
     System,
     Developer,
     Tool,
+    #[default]
     Unknown,
-}
-
-impl Default for CanonicalRole {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2606,14 +2601,14 @@ pub(crate) fn gemini_response_format_to_canonical(
     })
 }
 
-pub(crate) fn gemini_tools_to_canonical(
-    value: Option<&Value>,
-) -> Option<(
+pub(crate) type GeminiCanonicalTools = (
     Vec<CanonicalToolDefinition>,
     Vec<Value>,
     Option<Value>,
     Option<Value>,
-)> {
+);
+
+pub(crate) fn gemini_tools_to_canonical(value: Option<&Value>) -> Option<GeminiCanonicalTools> {
     let Some(value) = value else {
         return Some((Vec::new(), Vec::new(), None, None));
     };

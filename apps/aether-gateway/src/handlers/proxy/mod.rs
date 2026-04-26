@@ -1371,7 +1371,6 @@ pub(crate) async fn proxy_request(
             http::StatusCode::SERVICE_UNAVAILABLE,
             local_execution_runtime_miss_client_message(
                 local_execution_runtime_miss_detail.as_str(),
-                local_execution_runtime_miss_diagnostic.as_ref(),
             )
             .as_str(),
         )?;
@@ -1440,15 +1439,8 @@ fn local_execution_runtime_miss_detail(
     local_execution_runtime_miss_route_detail(decision).map(ToOwned::to_owned)
 }
 
-fn local_execution_runtime_miss_client_message(
-    detail: &str,
-    diagnostic: Option<&LocalExecutionRuntimeMissDiagnostic>,
-) -> String {
-    if diagnostic.is_some_and(|diagnostic| diagnostic.reason.as_str() == "candidate_list_empty") {
-        beautify_local_execution_client_error_message(detail)
-    } else {
-        detail.to_string()
-    }
+fn local_execution_runtime_miss_client_message(detail: &str) -> String {
+    beautify_local_execution_client_error_message(detail)
 }
 
 fn local_execution_runtime_miss_diagnostic_detail(
