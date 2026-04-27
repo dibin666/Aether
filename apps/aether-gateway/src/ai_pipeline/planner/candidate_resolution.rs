@@ -10,7 +10,7 @@ use crate::ai_pipeline::{
 };
 use crate::orchestration::LocalExecutionCandidateMetadata;
 
-use super::candidate_affinity::rank_eligible_local_execution_candidates;
+use super::candidate_ranking::rank_eligible_local_execution_candidates;
 use super::pool_scheduler::apply_local_execution_pool_scheduler;
 
 #[derive(Debug, Clone, PartialEq)]

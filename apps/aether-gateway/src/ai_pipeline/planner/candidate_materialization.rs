@@ -3,7 +3,7 @@ use aether_scheduler_core::SchedulerRankingOutcome;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::ai_pipeline::planner::candidate_affinity::remember_scheduler_affinity_for_candidate;
+use crate::ai_pipeline::planner::candidate_affinity_cache::remember_scheduler_affinity_for_candidate;
 use crate::ai_pipeline::planner::candidate_resolution::{
     EligibleLocalExecutionCandidate, SkippedLocalExecutionCandidate,
 };

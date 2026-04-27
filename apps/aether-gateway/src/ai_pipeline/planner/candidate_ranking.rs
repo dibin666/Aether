@@ -3,34 +3,25 @@ use std::collections::BTreeMap;
 use tracing::warn;
 
 use crate::ai_pipeline::{
-    request_candidate_api_format_preference, GatewayAuthApiKeySnapshot,
-    GatewayProviderTransportSnapshot, PlannerAppState,
+    request_candidate_api_format_preference, GatewayAuthApiKeySnapshot, PlannerAppState,
 };
 use crate::handlers::shared::provider_pool::admin_provider_pool_config_from_config_value;
-use crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL;
 use crate::scheduler::config::{
     read_scheduler_ordering_config, SchedulerOrderingConfig, SchedulerSchedulingMode,
 };
 use aether_scheduler_core::{
-    apply_scheduler_candidate_ranking, build_scheduler_affinity_cache_key_for_api_key_id,
-    matches_affinity_target, requested_capability_priority_for_candidate, SchedulerAffinityTarget,
+    apply_scheduler_candidate_ranking, matches_affinity_target,
+    requested_capability_priority_for_candidate, SchedulerAffinityTarget,
     SchedulerMinimalCandidateSelectionCandidate, SchedulerPriorityMode, SchedulerRankableCandidate,
     SchedulerRankingContext, SchedulerRankingMode, SchedulerTunnelAffinityBucket,
 };
 
-use super::candidate_resolution::{
-    read_candidate_transport_snapshot, EligibleLocalExecutionCandidate,
+use super::candidate_affinity_cache::read_cached_scheduler_affinity_target;
+use super::candidate_resolution::EligibleLocalExecutionCandidate;
+use super::candidate_transport_ordering::{
+    resolve_cached_candidate_execution_ordering, resolve_cached_candidate_tunnel_owner_affinity,
+    resolve_cached_transport_execution_ordering, CandidateExecutionOrdering,
 };
-
-const PLANNER_SCHEDULER_AFFINITY_MAX_ENTRIES: usize = 10_000;
-
-type CandidateTransportIdentity<'a> = (&'a str, &'a str, &'a str);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CandidateExecutionOrdering {
-    tunnel_bucket: SchedulerTunnelAffinityBucket,
-    keep_priority_on_conversion: bool,
-}
 
 pub(crate) async fn prefer_local_tunnel_owner_candidates(
     state: PlannerAppState<'_>,
@@ -137,21 +128,29 @@ pub(crate) async fn rank_eligible_local_execution_candidates(
 ) -> Vec<EligibleLocalExecutionCandidate> {
     let ordering_config = read_scheduler_ordering_config_or_default(state).await;
     let mut candidates = candidates;
-    let cached_affinity_target = read_cached_affinity_target_for_ranking(
+    let affinity_requested_model = requested_model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            candidates
+                .first()
+                .map(|candidate| candidate.candidate.global_model_name.as_str())
+        });
+    let cached_affinity_target = read_cached_scheduler_affinity_target(
         state,
         auth_snapshot,
         normalized_client_api_format,
-        requested_model,
-        &candidates,
+        affinity_requested_model,
     );
     let mut rankables = Vec::with_capacity(candidates.len());
     let mut ordering_cache = BTreeMap::new();
 
     for (original_index, eligible) in candidates.iter().enumerate() {
-        let ordering = resolve_cached_eligible_candidate_execution_ordering(
+        let ordering = resolve_cached_transport_execution_ordering(
             state,
             &mut ordering_cache,
-            eligible,
+            &eligible.candidate,
+            eligible.transport.as_ref(),
             ordering_config,
         )
         .await;
@@ -230,35 +229,6 @@ fn local_execution_candidate_uses_pool(eligible: &EligibleLocalExecutionCandidat
         .is_some()
 }
 
-fn read_cached_affinity_target_for_ranking(
-    state: PlannerAppState<'_>,
-    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
-    client_api_format: &str,
-    requested_model: Option<&str>,
-    candidates: &[EligibleLocalExecutionCandidate],
-) -> Option<SchedulerAffinityTarget> {
-    let requested_model = requested_model
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            candidates
-                .first()
-                .map(|candidate| candidate.candidate.global_model_name.as_str())
-        })?;
-    let api_key_id = auth_snapshot
-        .map(|snapshot| snapshot.api_key_id.trim())
-        .filter(|value| !value.is_empty())?;
-    let cache_key = build_scheduler_affinity_cache_key_for_api_key_id(
-        api_key_id,
-        client_api_format,
-        requested_model,
-    )?;
-
-    state
-        .app()
-        .read_scheduler_affinity_target(&cache_key, SCHEDULER_AFFINITY_TTL)
-}
-
 fn planner_ranking_context(ordering_config: SchedulerOrderingConfig) -> SchedulerRankingContext {
     SchedulerRankingContext {
         priority_mode: ordering_config.priority_mode,
@@ -282,190 +252,6 @@ fn normalize_api_format_alias(value: &str) -> String {
 
 fn api_format_matches(left: &str, right: &str) -> bool {
     normalize_api_format_alias(left) == normalize_api_format_alias(right)
-}
-
-pub(crate) fn remember_scheduler_affinity_for_candidate(
-    state: PlannerAppState<'_>,
-    auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
-    client_api_format: &str,
-    requested_model: &str,
-    candidate: &SchedulerMinimalCandidateSelectionCandidate,
-) {
-    let Some(api_key_id) = auth_snapshot
-        .map(|snapshot| snapshot.api_key_id.trim())
-        .filter(|value| !value.is_empty())
-    else {
-        return;
-    };
-    let Some(cache_key) = build_scheduler_affinity_cache_key_for_api_key_id(
-        api_key_id,
-        client_api_format,
-        requested_model,
-    ) else {
-        return;
-    };
-
-    state.app().remember_scheduler_affinity_target(
-        &cache_key,
-        SchedulerAffinityTarget {
-            provider_id: candidate.provider_id.clone(),
-            endpoint_id: candidate.endpoint_id.clone(),
-            key_id: candidate.key_id.clone(),
-        },
-        SCHEDULER_AFFINITY_TTL,
-        PLANNER_SCHEDULER_AFFINITY_MAX_ENTRIES,
-    );
-}
-
-async fn resolve_candidate_tunnel_owner_affinity(
-    state: PlannerAppState<'_>,
-    candidate: &SchedulerMinimalCandidateSelectionCandidate,
-) -> SchedulerTunnelAffinityBucket {
-    let Some(transport) = read_candidate_transport_snapshot(state, candidate).await else {
-        return SchedulerTunnelAffinityBucket::Neutral;
-    };
-
-    resolve_tunnel_owner_affinity_from_transport(state, &transport).await
-}
-
-async fn resolve_cached_candidate_tunnel_owner_affinity<'a>(
-    state: PlannerAppState<'_>,
-    cache: &mut BTreeMap<CandidateTransportIdentity<'a>, SchedulerTunnelAffinityBucket>,
-    candidate: &'a SchedulerMinimalCandidateSelectionCandidate,
-) -> SchedulerTunnelAffinityBucket {
-    let identity = candidate_transport_identity(candidate);
-    if let Some(bucket) = cache.get(&identity).copied() {
-        return bucket;
-    }
-
-    let bucket = resolve_candidate_tunnel_owner_affinity(state, candidate).await;
-    cache.insert(identity, bucket);
-    bucket
-}
-
-async fn resolve_candidate_execution_ordering(
-    state: PlannerAppState<'_>,
-    candidate: &SchedulerMinimalCandidateSelectionCandidate,
-    ordering_config: SchedulerOrderingConfig,
-) -> CandidateExecutionOrdering {
-    let Some(transport) = read_candidate_transport_snapshot(state, candidate).await else {
-        return CandidateExecutionOrdering {
-            tunnel_bucket: SchedulerTunnelAffinityBucket::Neutral,
-            keep_priority_on_conversion: ordering_config.keep_priority_on_conversion,
-        };
-    };
-
-    resolve_candidate_execution_ordering_from_transport(state, &transport, ordering_config).await
-}
-
-async fn resolve_cached_candidate_execution_ordering<'a>(
-    state: PlannerAppState<'_>,
-    cache: &mut BTreeMap<CandidateTransportIdentity<'a>, CandidateExecutionOrdering>,
-    candidate: &'a SchedulerMinimalCandidateSelectionCandidate,
-    ordering_config: SchedulerOrderingConfig,
-) -> CandidateExecutionOrdering {
-    let identity = candidate_transport_identity(candidate);
-    if let Some(ordering) = cache.get(&identity).copied() {
-        return ordering;
-    }
-
-    let ordering = resolve_candidate_execution_ordering(state, candidate, ordering_config).await;
-    cache.insert(identity, ordering);
-    ordering
-}
-
-async fn resolve_cached_eligible_candidate_execution_ordering<'a>(
-    state: PlannerAppState<'_>,
-    cache: &mut BTreeMap<CandidateTransportIdentity<'a>, CandidateExecutionOrdering>,
-    eligible: &'a EligibleLocalExecutionCandidate,
-    ordering_config: SchedulerOrderingConfig,
-) -> CandidateExecutionOrdering {
-    let identity = candidate_transport_identity(&eligible.candidate);
-    if let Some(ordering) = cache.get(&identity).copied() {
-        return ordering;
-    }
-
-    let ordering = resolve_candidate_execution_ordering_from_transport(
-        state,
-        &eligible.transport,
-        ordering_config,
-    )
-    .await;
-    cache.insert(identity, ordering);
-    ordering
-}
-
-async fn resolve_candidate_execution_ordering_from_transport(
-    state: PlannerAppState<'_>,
-    transport: &GatewayProviderTransportSnapshot,
-    ordering_config: SchedulerOrderingConfig,
-) -> CandidateExecutionOrdering {
-    CandidateExecutionOrdering {
-        tunnel_bucket: resolve_tunnel_owner_affinity_from_transport(state, transport).await,
-        keep_priority_on_conversion: ordering_config.keep_priority_on_conversion
-            || transport.provider.keep_priority_on_conversion,
-    }
-}
-
-async fn resolve_tunnel_owner_affinity_from_transport(
-    state: PlannerAppState<'_>,
-    transport: &GatewayProviderTransportSnapshot,
-) -> SchedulerTunnelAffinityBucket {
-    let Some(proxy) = state
-        .app()
-        .resolve_transport_proxy_snapshot_with_tunnel_affinity(transport)
-        .await
-    else {
-        return SchedulerTunnelAffinityBucket::Neutral;
-    };
-    if proxy.enabled == Some(false) {
-        return SchedulerTunnelAffinityBucket::Neutral;
-    }
-    let Some(node_id) = proxy
-        .node_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return SchedulerTunnelAffinityBucket::Neutral;
-    };
-
-    if state.app().tunnel.has_local_proxy(node_id) {
-        return SchedulerTunnelAffinityBucket::LocalTunnel;
-    }
-
-    match state
-        .app()
-        .tunnel
-        .lookup_attachment_owner(state.app().data.as_ref(), node_id)
-        .await
-    {
-        Ok(Some(owner)) if owner.gateway_instance_id == state.app().tunnel.local_instance_id() => {
-            SchedulerTunnelAffinityBucket::LocalTunnel
-        }
-        Ok(Some(_)) => SchedulerTunnelAffinityBucket::RemoteTunnel,
-        Ok(None) => SchedulerTunnelAffinityBucket::Neutral,
-        Err(error) => {
-            warn!(
-                event_name = "candidate_affinity_tunnel_owner_lookup_failed",
-                log_type = "event",
-                node_id = node_id,
-                error = %error,
-                "failed to load tunnel attachment owner while evaluating scheduler affinity"
-            );
-            SchedulerTunnelAffinityBucket::Neutral
-        }
-    }
-}
-
-fn candidate_transport_identity(
-    candidate: &SchedulerMinimalCandidateSelectionCandidate,
-) -> CandidateTransportIdentity<'_> {
-    (
-        candidate.provider_id.as_str(),
-        candidate.endpoint_id.as_str(),
-        candidate.key_id.as_str(),
-    )
 }
 
 fn candidate_api_format_preference(client_api_format: &str, provider_api_format: &str) -> (u8, u8) {
@@ -501,9 +287,9 @@ mod tests {
     use aether_scheduler_core::RANKING_REASON_CACHED_AFFINITY;
     use serde_json::json;
 
+    use super::super::candidate_affinity_cache::remember_scheduler_affinity_for_candidate;
     use super::{
-        prefer_local_tunnel_owner_candidates, rank_local_execution_candidates,
-        remember_scheduler_affinity_for_candidate, PlannerAppState,
+        prefer_local_tunnel_owner_candidates, rank_local_execution_candidates, PlannerAppState,
         SchedulerMinimalCandidateSelectionCandidate,
     };
     use crate::ai_pipeline::planner::candidate_resolution::filter_and_rank_local_execution_candidates;
@@ -1466,7 +1252,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn realtime_gate_skips_cross_format_candidates_when_conversion_is_disabled() {
+    async fn realtime_gate_reports_cross_format_candidates_when_conversion_is_disabled() {
         let provider_catalog = InMemoryProviderCatalogReadRepository::seed(
             vec![
                 sample_provider_with_options("provider-cross", true, 0),
@@ -1533,11 +1319,13 @@ mod tests {
 
         assert_eq!(ranked.len(), 1);
         assert_eq!(ranked[0].candidate.endpoint_id, "endpoint-same");
-        assert!(skipped.is_empty());
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].candidate.endpoint_id, "endpoint-cross");
+        assert_eq!(skipped[0].skip_reason, "format_conversion_disabled");
     }
 
     #[tokio::test]
-    async fn realtime_gate_hides_cross_format_disablement_when_same_key_has_exact_endpoint() {
+    async fn realtime_gate_reports_cross_format_disablement_when_same_key_has_exact_endpoint() {
         let provider_catalog = InMemoryProviderCatalogReadRepository::seed(
             vec![sample_provider_with_options("provider-shared", false, 0)],
             vec![
@@ -1591,7 +1379,9 @@ mod tests {
 
         assert_eq!(ranked.len(), 1);
         assert_eq!(ranked[0].candidate.endpoint_id, "endpoint-exact");
-        assert!(skipped.is_empty());
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].candidate.endpoint_id, "endpoint-cross");
+        assert_eq!(skipped[0].skip_reason, "format_conversion_disabled");
     }
 
     #[tokio::test]

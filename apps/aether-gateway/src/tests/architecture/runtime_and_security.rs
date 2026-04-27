@@ -565,17 +565,17 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         );
     }
 
-    let planner_candidate_affinity =
-        read_workspace_file("apps/aether-gateway/src/ai_pipeline/planner/candidate_affinity.rs");
+    let planner_candidate_ranking =
+        read_workspace_file("apps/aether-gateway/src/ai_pipeline/planner/candidate_ranking.rs");
     assert!(
-        planner_candidate_affinity.contains("use aether_scheduler_core::{")
-            && planner_candidate_affinity.contains("SchedulerMinimalCandidateSelectionCandidate"),
-        "planner/candidate_affinity.rs should depend directly on core minimal candidate DTO"
+        planner_candidate_ranking.contains("use aether_scheduler_core::{")
+            && planner_candidate_ranking.contains("SchedulerMinimalCandidateSelectionCandidate"),
+        "planner/candidate_ranking.rs should depend directly on core minimal candidate DTO"
     );
     assert!(
-        !planner_candidate_affinity
+        !planner_candidate_ranking
             .contains("crate::scheduler::SchedulerMinimalCandidateSelectionCandidate"),
-        "planner/candidate_affinity.rs should not depend on scheduler candidate DTO re-export"
+        "planner/candidate_ranking.rs should not depend on scheduler candidate DTO re-export"
     );
 
     let request_candidate_runtime =

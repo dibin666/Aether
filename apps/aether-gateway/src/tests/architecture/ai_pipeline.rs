@@ -418,13 +418,14 @@ fn ai_pipeline_planner_gateway_state_seam_is_split_by_role() {
 }
 
 #[test]
-fn ai_pipeline_planner_separates_local_candidate_eligibility_from_affinity_ranking() {
+fn ai_pipeline_planner_separates_local_candidate_resolution_from_ranking() {
     let planner_mod = read_workspace_file("apps/aether-gateway/src/ai_pipeline/planner/mod.rs");
     for pattern in [
-        "mod candidate_affinity;",
-        "mod candidate_eligibility;",
+        "mod candidate_affinity_cache;",
+        "mod candidate_ranking;",
         "mod candidate_resolution;",
         "mod candidate_preparation;",
+        "mod candidate_transport_ordering;",
     ] {
         assert!(
             planner_mod.contains(pattern),
@@ -445,31 +446,74 @@ fn ai_pipeline_planner_separates_local_candidate_eligibility_from_affinity_ranki
         );
     }
 
-    let candidate_eligibility =
-        read_workspace_file("apps/aether-gateway/src/ai_pipeline/planner/candidate_eligibility.rs");
     assert!(
-        candidate_eligibility.contains("pub(crate) use super::candidate_resolution::*;"),
-        "planner/candidate_eligibility.rs should remain a compatibility shim"
-    );
-    assert!(
-        !candidate_eligibility.contains("async fn filter_and_rank_local_execution_candidates("),
-        "planner/candidate_eligibility.rs should not keep resolution implementation"
+        !planner_mod.contains("mod candidate_eligibility;"),
+        "planner should not wire the removed candidate eligibility compatibility shim"
     );
 
-    let candidate_affinity =
-        read_workspace_file("apps/aether-gateway/src/ai_pipeline/planner/candidate_affinity.rs");
+    let candidate_ranking =
+        read_workspace_file("apps/aether-gateway/src/ai_pipeline/planner/candidate_ranking.rs");
     assert!(
-        candidate_affinity.contains("#[cfg(test)]\nasync fn rank_local_execution_candidates("),
-        "planner/candidate_affinity.rs should keep raw local ranking as a test-only helper"
+        candidate_ranking.contains("#[cfg(test)]\nasync fn rank_local_execution_candidates("),
+        "planner/candidate_ranking.rs should keep raw local ranking as a test-only helper"
     );
     for forbidden in [
         "struct SkippedLocalExecutionCandidate",
         "async fn current_local_execution_candidate_skip_reason(",
         "pub(crate) async fn filter_and_rank_local_execution_candidates(",
+        "resolve_transport_proxy_snapshot_with_tunnel_affinity",
     ] {
         assert!(
-            !candidate_affinity.contains(forbidden),
-            "planner/candidate_affinity.rs should not own local candidate eligibility helper {forbidden}"
+            !candidate_ranking.contains(forbidden),
+            "planner/candidate_ranking.rs should not own local candidate resolution or transport ordering helper {forbidden}"
+        );
+    }
+
+    let candidate_affinity_cache = read_workspace_file(
+        "apps/aether-gateway/src/ai_pipeline/planner/candidate_affinity_cache.rs",
+    );
+    for pattern in [
+        "pub(crate) fn read_cached_scheduler_affinity_target(",
+        "pub(crate) fn remember_scheduler_affinity_for_candidate(",
+    ] {
+        assert!(
+            candidate_affinity_cache.contains(pattern),
+            "planner/candidate_affinity_cache.rs should own {pattern}"
+        );
+    }
+    for forbidden in [
+        "apply_scheduler_candidate_ranking",
+        "rank_eligible_local_execution_candidates",
+        "filter_and_rank_local_execution_candidates",
+    ] {
+        assert!(
+            !candidate_affinity_cache.contains(forbidden),
+            "planner/candidate_affinity_cache.rs should not own ranking or resolution helper {forbidden}"
+        );
+    }
+
+    let candidate_transport_ordering = read_workspace_file(
+        "apps/aether-gateway/src/ai_pipeline/planner/candidate_transport_ordering.rs",
+    );
+    for pattern in [
+        "pub(super) struct CandidateExecutionOrdering {",
+        "resolve_cached_candidate_execution_ordering",
+        "resolve_cached_transport_execution_ordering",
+        "resolve_transport_proxy_snapshot_with_tunnel_affinity",
+    ] {
+        assert!(
+            candidate_transport_ordering.contains(pattern),
+            "planner/candidate_transport_ordering.rs should own {pattern}"
+        );
+    }
+    for forbidden in [
+        "apply_scheduler_candidate_ranking",
+        "rank_eligible_local_execution_candidates",
+        "filter_and_rank_local_execution_candidates",
+    ] {
+        assert!(
+            !candidate_transport_ordering.contains(forbidden),
+            "planner/candidate_transport_ordering.rs should not own ranking or resolution helper {forbidden}"
         );
     }
 }

@@ -4,13 +4,14 @@ use crate::ai_pipeline::contracts::{
 use crate::ai_pipeline::GatewayControlDecision;
 use crate::{AppState, GatewayError};
 
-mod candidate_affinity;
-mod candidate_eligibility;
+mod candidate_affinity_cache;
 mod candidate_materialization;
 mod candidate_metadata;
 mod candidate_preparation;
+mod candidate_ranking;
 mod candidate_resolution;
 mod candidate_source;
+mod candidate_transport_ordering;
 mod common;
 mod decision;
 mod decision_input;
