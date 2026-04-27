@@ -18,21 +18,6 @@ pub(super) struct CandidateExecutionOrdering {
     pub(super) keep_priority_on_conversion: bool,
 }
 
-pub(super) async fn resolve_cached_candidate_tunnel_owner_affinity<'a>(
-    state: PlannerAppState<'_>,
-    cache: &mut BTreeMap<CandidateTransportIdentity<'a>, SchedulerTunnelAffinityBucket>,
-    candidate: &'a SchedulerMinimalCandidateSelectionCandidate,
-) -> SchedulerTunnelAffinityBucket {
-    let identity = candidate_transport_identity(candidate);
-    if let Some(bucket) = cache.get(&identity).copied() {
-        return bucket;
-    }
-
-    let bucket = resolve_candidate_tunnel_owner_affinity(state, candidate).await;
-    cache.insert(identity, bucket);
-    bucket
-}
-
 pub(super) async fn resolve_cached_candidate_execution_ordering<'a>(
     state: PlannerAppState<'_>,
     cache: &mut BTreeMap<CandidateTransportIdentity<'a>, CandidateExecutionOrdering>,
@@ -66,17 +51,6 @@ pub(super) async fn resolve_cached_transport_execution_ordering<'a>(
             .await;
     cache.insert(identity, ordering);
     ordering
-}
-
-async fn resolve_candidate_tunnel_owner_affinity(
-    state: PlannerAppState<'_>,
-    candidate: &SchedulerMinimalCandidateSelectionCandidate,
-) -> SchedulerTunnelAffinityBucket {
-    let Some(transport) = read_candidate_transport_snapshot(state, candidate).await else {
-        return SchedulerTunnelAffinityBucket::Neutral;
-    };
-
-    resolve_tunnel_owner_affinity_from_transport(state, &transport).await
 }
 
 async fn resolve_candidate_execution_ordering(

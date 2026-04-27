@@ -12,70 +12,16 @@ use crate::scheduler::config::{
 use aether_scheduler_core::{
     apply_scheduler_candidate_ranking, matches_affinity_target,
     requested_capability_priority_for_candidate, SchedulerAffinityTarget,
-    SchedulerMinimalCandidateSelectionCandidate, SchedulerPriorityMode, SchedulerRankableCandidate,
-    SchedulerRankingContext, SchedulerRankingMode, SchedulerTunnelAffinityBucket,
+    SchedulerMinimalCandidateSelectionCandidate, SchedulerRankableCandidate,
+    SchedulerRankingContext, SchedulerRankingMode,
 };
 
 use super::candidate_affinity_cache::read_cached_scheduler_affinity_target;
 use super::candidate_resolution::EligibleLocalExecutionCandidate;
 use super::candidate_transport_ordering::{
-    resolve_cached_candidate_execution_ordering, resolve_cached_candidate_tunnel_owner_affinity,
-    resolve_cached_transport_execution_ordering, CandidateExecutionOrdering,
+    resolve_cached_candidate_execution_ordering, resolve_cached_transport_execution_ordering,
+    CandidateExecutionOrdering,
 };
-
-pub(crate) async fn prefer_local_tunnel_owner_candidates(
-    state: PlannerAppState<'_>,
-    candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
-) -> Vec<SchedulerMinimalCandidateSelectionCandidate> {
-    let mut candidates = candidates;
-    let mut rankables = Vec::with_capacity(candidates.len());
-    let mut tunnel_affinity_cache = BTreeMap::new();
-    for (original_index, candidate) in candidates.iter().enumerate() {
-        let bucket = resolve_cached_candidate_tunnel_owner_affinity(
-            state,
-            &mut tunnel_affinity_cache,
-            candidate,
-        )
-        .await;
-        rankables.push(tunnel_owner_rankable_candidate(original_index, bucket));
-    }
-    drop(tunnel_affinity_cache);
-    apply_scheduler_candidate_ranking(
-        &mut candidates,
-        &rankables,
-        SchedulerRankingContext {
-            priority_mode: SchedulerPriorityMode::Provider,
-            ranking_mode: SchedulerRankingMode::CacheAffinity,
-            include_health: false,
-            load_balance_seed: 0,
-        },
-    );
-    candidates
-}
-
-fn tunnel_owner_rankable_candidate(
-    original_index: usize,
-    tunnel_bucket: SchedulerTunnelAffinityBucket,
-) -> SchedulerRankableCandidate {
-    SchedulerRankableCandidate {
-        provider_id: String::new(),
-        endpoint_id: String::new(),
-        key_id: String::new(),
-        selected_provider_model_name: String::new(),
-        provider_priority: 0,
-        key_internal_priority: 0,
-        key_global_priority_for_format: Some(0),
-        capability_priority: (0, 0),
-        cached_affinity_match: false,
-        affinity_hash: None,
-        tunnel_bucket,
-        demote_cross_format: false,
-        format_preference: (0, 0),
-        health_bucket: None,
-        health_score: 1.0,
-        original_index,
-    }
-}
 
 #[cfg(test)]
 async fn rank_local_execution_candidates(
@@ -289,7 +235,7 @@ mod tests {
 
     use super::super::candidate_affinity_cache::remember_scheduler_affinity_for_candidate;
     use super::{
-        prefer_local_tunnel_owner_candidates, rank_local_execution_candidates, PlannerAppState,
+        rank_local_execution_candidates, PlannerAppState,
         SchedulerMinimalCandidateSelectionCandidate,
     };
     use crate::ai_pipeline::planner::candidate_resolution::filter_and_rank_local_execution_candidates;
@@ -522,93 +468,6 @@ mod tests {
             selected_provider_model_name: "gpt-4.1".to_string(),
             mapping_matched_model: None,
         }
-    }
-
-    #[tokio::test]
-    async fn prefers_local_tunnel_owner_candidates_before_remote_tunnel_candidates() {
-        let provider_catalog = InMemoryProviderCatalogReadRepository::seed(
-            vec![sample_provider()],
-            vec![
-                sample_endpoint("endpoint-remote"),
-                sample_endpoint("endpoint-local"),
-            ],
-            vec![
-                sample_key("key-remote", "node-remote"),
-                sample_key("key-local", "node-local"),
-            ],
-        );
-        let observed_at_unix_secs = current_unix_secs();
-        let data_state = GatewayDataState::with_provider_transport_reader_for_tests(
-            std::sync::Arc::new(provider_catalog),
-            "development-key",
-        )
-        .with_system_config_values_for_tests(vec![
-            (
-                tunnel_attachment_key("node-remote"),
-                serde_json::to_value(TunnelAttachmentRecord {
-                    gateway_instance_id: "gateway-b".to_string(),
-                    relay_base_url: "http://gateway-b:8080".to_string(),
-                    conn_count: 1,
-                    observed_at_unix_secs,
-                })
-                .expect("remote attachment should serialize"),
-            ),
-            (
-                tunnel_attachment_key("node-local"),
-                serde_json::to_value(TunnelAttachmentRecord {
-                    gateway_instance_id: "gateway-a".to_string(),
-                    relay_base_url: "http://gateway-a:8080".to_string(),
-                    conn_count: 1,
-                    observed_at_unix_secs,
-                })
-                .expect("local attachment should serialize"),
-            ),
-        ]);
-        let state = AppState::new()
-            .expect("state should build")
-            .with_data_state_for_tests(data_state)
-            .with_tunnel_identity_for_tests("gateway-a", Some("http://gateway-a:8080"));
-
-        let reordered = prefer_local_tunnel_owner_candidates(
-            PlannerAppState::new(&state),
-            vec![
-                sample_candidate("endpoint-remote", "key-remote"),
-                sample_candidate("endpoint-local", "key-local"),
-            ],
-        )
-        .await;
-
-        assert_eq!(reordered[0].endpoint_id, "endpoint-local");
-        assert_eq!(reordered[1].endpoint_id, "endpoint-remote");
-    }
-
-    #[tokio::test]
-    async fn leaves_candidate_order_unchanged_when_transport_has_no_tunnel_proxy() {
-        let provider_catalog = InMemoryProviderCatalogReadRepository::seed(
-            vec![sample_provider()],
-            vec![sample_endpoint("endpoint-a"), sample_endpoint("endpoint-b")],
-            vec![sample_key("key-a", ""), sample_key("key-b", "")],
-        );
-        let data_state = GatewayDataState::with_provider_transport_reader_for_tests(
-            std::sync::Arc::new(provider_catalog),
-            "development-key",
-        );
-        let state = AppState::new()
-            .expect("state should build")
-            .with_data_state_for_tests(data_state)
-            .with_tunnel_identity_for_tests("gateway-a", Some("http://gateway-a:8080"));
-
-        let reordered = prefer_local_tunnel_owner_candidates(
-            PlannerAppState::new(&state),
-            vec![
-                sample_candidate("endpoint-a", "key-a"),
-                sample_candidate("endpoint-b", "key-b"),
-            ],
-        )
-        .await;
-
-        assert_eq!(reordered[0].endpoint_id, "endpoint-a");
-        assert_eq!(reordered[1].endpoint_id, "endpoint-b");
     }
 
     #[tokio::test]
