@@ -434,7 +434,7 @@
                 v-for="key in keyPage.keys"
                 :key="key.key_id"
                 class="border-b border-border/40 last:border-b-0 hover:bg-muted/30 transition-colors"
-                :class="keyUiStateMap[key.key_id]?.rowClass || ''"
+                :class="getKeyUiState(key.key_id)?.rowClass || ''"
               >
                 <TableCell
                   class="py-3"
@@ -497,7 +497,7 @@
                           size="icon"
                           class="h-4 w-4 shrink-0"
                           :disabled="refreshingOAuthKeyId === key.key_id"
-                          :title="keyUiStateMap[key.key_id]?.oauthRefreshButtonTitle || ''"
+                          :title="getKeyUiState(key.key_id)?.oauthRefreshButtonTitle || ''"
                           @click.stop="handleRefreshOAuth(key)"
                         >
                           <RefreshCw
@@ -506,33 +506,33 @@
                           />
                         </Button>
                         <span
-                          v-if="keyUiStateMap[key.key_id]?.visibleOAuthState"
+                          v-if="getKeyUiState(key.key_id)?.visibleOAuthState"
                           class="text-[10px]"
                           :class="{
-                            'text-destructive': keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid || keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired,
-                            'text-warning': keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpiringSoon && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid,
-                            'text-muted-foreground': !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpiringSoon && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid
+                            'text-destructive': getKeyUiState(key.key_id)?.visibleOAuthState?.isInvalid || getKeyUiState(key.key_id)?.visibleOAuthState?.isExpired,
+                            'text-warning': getKeyUiState(key.key_id)?.visibleOAuthState?.isExpiringSoon && !getKeyUiState(key.key_id)?.visibleOAuthState?.isExpired && !getKeyUiState(key.key_id)?.visibleOAuthState?.isInvalid,
+                            'text-muted-foreground': !getKeyUiState(key.key_id)?.visibleOAuthState?.isExpired && !getKeyUiState(key.key_id)?.visibleOAuthState?.isExpiringSoon && !getKeyUiState(key.key_id)?.visibleOAuthState?.isInvalid
                           }"
-                          :title="keyUiStateMap[key.key_id]?.oauthStatusTitle || ''"
+                          :title="getKeyUiState(key.key_id)?.oauthStatusTitle || ''"
                         >
-                          {{ keyUiStateMap[key.key_id]?.visibleOAuthState?.text }}
+                          {{ getKeyUiState(key.key_id)?.visibleOAuthState?.text }}
                         </span>
                       </template>
                       <Badge
                         v-if="key.oauth_plan_type"
                         variant="outline"
                         class="text-[9px] px-1 py-0 h-4 shrink-0"
-                        :class="keyUiStateMap[key.key_id]?.planClass || ''"
+                        :class="getKeyUiState(key.key_id)?.planClass || ''"
                       >
-                        {{ keyUiStateMap[key.key_id]?.planLabel }}
+                        {{ getKeyUiState(key.key_id)?.planLabel }}
                       </Badge>
                       <Badge
-                        v-if="keyUiStateMap[key.key_id]?.oauthOrgBadge"
+                        v-if="getKeyUiState(key.key_id)?.oauthOrgBadge"
                         variant="secondary"
                         class="text-[9px] px-1 py-0 h-4 shrink-0"
-                        :title="keyUiStateMap[key.key_id]?.oauthOrgBadge?.title"
+                        :title="getKeyUiState(key.key_id)?.oauthOrgBadge?.title"
                       >
-                        {{ keyUiStateMap[key.key_id]?.oauthOrgBadge?.label }}
+                        {{ getKeyUiState(key.key_id)?.oauthOrgBadge?.label }}
                       </Badge>
                     </div>
                   </div>
@@ -542,11 +542,11 @@
                   class="py-3 align-middle"
                 >
                   <div
-                    v-if="quotaProgressMap[key.key_id]?.length"
+                    v-if="getQuotaProgressItems(key.key_id).length"
                     class="max-w-[208px] space-y-2"
                   >
                     <div
-                      v-for="(item, idx) in quotaProgressMap[key.key_id].slice(0, 2)"
+                      v-for="(item, idx) in getQuotaProgressItems(key.key_id).slice(0, 2)"
                       :key="`${key.key_id}-quota-${idx}`"
                       class="flex flex-col gap-1 min-w-[140px] max-w-[208px]"
                     >
@@ -574,10 +574,10 @@
                     </div>
                   </div>
                   <span
-                    v-else-if="keyUiStateMap[key.key_id]?.quotaFallbackText"
-                    :class="keyUiStateMap[key.key_id]?.quotaTextClass || ''"
+                    v-else-if="getKeyUiState(key.key_id)?.quotaFallbackText"
+                    :class="getKeyUiState(key.key_id)?.quotaTextClass || ''"
                   >
-                    {{ keyUiStateMap[key.key_id]?.quotaFallbackText }}
+                    {{ getKeyUiState(key.key_id)?.quotaFallbackText }}
                   </span>
                   <span
                     v-else
@@ -608,16 +608,16 @@
                 </TableCell>
                 <TableCell class="py-3 text-center">
                   <span class="text-[10px] text-muted-foreground whitespace-nowrap">
-                    {{ keyUiStateMap[key.key_id]?.lastUsedRelative || '-' }}
+                    {{ getKeyUiState(key.key_id)?.lastUsedRelative || '-' }}
                   </span>
                 </TableCell>
                 <TableCell class="py-3 text-center">
                   <Badge
-                    :variant="keyUiStateMap[key.key_id]?.schedulingBadgeVariant || 'default'"
+                    :variant="getKeyUiState(key.key_id)?.schedulingBadgeVariant || 'default'"
                     class="text-[10px]"
-                    :title="keyUiStateMap[key.key_id]?.schedulingTitle || ''"
+                    :title="getKeyUiState(key.key_id)?.schedulingTitle || ''"
                   >
-                    {{ keyUiStateMap[key.key_id]?.schedulingBadgeLabel }}
+                    {{ getKeyUiState(key.key_id)?.schedulingBadgeLabel }}
                   </Badge>
                 </TableCell>
                 <TableCell class="py-3 px-2 align-middle">
@@ -733,7 +733,7 @@
             v-for="key in keyPage.keys"
             :key="key.key_id"
             class="p-4 sm:p-5 hover:bg-muted/30 transition-colors"
-            :class="keyUiStateMap[key.key_id]?.rowClass || ''"
+            :class="getKeyUiState(key.key_id)?.rowClass || ''"
           >
             <div class="space-y-3">
               <div class="text-sm font-medium truncate">
@@ -742,11 +742,11 @@
 
               <div class="flex flex-wrap items-center gap-1.5">
                 <Badge
-                  :variant="keyUiStateMap[key.key_id]?.schedulingBadgeVariant || 'default'"
+                  :variant="getKeyUiState(key.key_id)?.schedulingBadgeVariant || 'default'"
                   class="text-[10px] shrink-0"
-                  :title="keyUiStateMap[key.key_id]?.schedulingTitle || ''"
+                  :title="getKeyUiState(key.key_id)?.schedulingTitle || ''"
                 >
-                  {{ keyUiStateMap[key.key_id]?.schedulingBadgeLabel }}
+                  {{ getKeyUiState(key.key_id)?.schedulingBadgeLabel }}
                 </Badge>
                 <span
                   v-if="key.cooldown_ttl_seconds"
@@ -755,7 +755,7 @@
                   冷却 {{ formatTTL(key.cooldown_ttl_seconds) }}
                 </span>
                 <template
-                  v-for="item in keyUiStateMap[key.key_id]?.mobileTagItems || []"
+                  v-for="item in getKeyUiState(key.key_id)?.mobileTagItems || []"
                   :key="`${key.key_id}-${item.key}`"
                 >
                   <button
@@ -772,7 +772,7 @@
                     v-else-if="item.key === 'plan'"
                     variant="outline"
                     class="text-[9px] px-1 py-0 h-4 shrink-0"
-                    :class="keyUiStateMap[key.key_id]?.planClass || ''"
+                    :class="getKeyUiState(key.key_id)?.planClass || ''"
                   >
                     {{ item.label }}
                   </Badge>
@@ -780,7 +780,7 @@
                     v-else-if="item.key === 'org'"
                     variant="secondary"
                     class="text-[9px] px-1 py-0 h-4 shrink-0"
-                    :title="keyUiStateMap[key.key_id]?.oauthOrgBadge?.title"
+                    :title="getKeyUiState(key.key_id)?.oauthOrgBadge?.title"
                   >
                     {{ item.label }}
                   </Badge>
@@ -803,7 +803,7 @@
                   <span class="mx-1.5 text-muted-foreground/40">|</span>
                   <span class="font-medium text-foreground/90">费用:{{ formatStatUsd(key.total_cost_usd) }}</span>
                   <span class="mx-1.5 text-muted-foreground/40">|</span>
-                  <span class="font-medium text-foreground/90">最后使用:{{ keyUiStateMap[key.key_id]?.lastUsedRelative || '-' }}</span>
+                  <span class="font-medium text-foreground/90">最后使用:{{ getKeyUiState(key.key_id)?.lastUsedRelative || '-' }}</span>
                 </div>
               </div>
 
@@ -815,11 +815,11 @@
                   配额
                 </div>
                 <div
-                  v-if="quotaProgressMap[key.key_id]?.length"
+                  v-if="getQuotaProgressItems(key.key_id).length"
                   class="space-y-2"
                 >
                   <div
-                    v-for="(item, idx) in quotaProgressMap[key.key_id]"
+                    v-for="(item, idx) in getQuotaProgressItems(key.key_id)"
                     :key="`${key.key_id}-quota-mobile-${idx}`"
                     class="flex flex-col gap-1 min-w-0"
                   >
@@ -847,10 +847,10 @@
                   </div>
                 </div>
                 <div
-                  v-else-if="keyUiStateMap[key.key_id]?.quotaFallbackText"
-                  :class="keyUiStateMap[key.key_id]?.quotaTextClass || ''"
+                  v-else-if="getKeyUiState(key.key_id)?.quotaFallbackText"
+                  :class="getKeyUiState(key.key_id)?.quotaTextClass || ''"
                 >
-                  {{ keyUiStateMap[key.key_id]?.quotaFallbackText }}
+                  {{ getKeyUiState(key.key_id)?.quotaFallbackText }}
                 </div>
                 <div
                   v-else
@@ -862,7 +862,7 @@
 
               <div class="flex items-center gap-0.5">
                 <div
-                  v-for="actionId in keyUiStateMap[key.key_id]?.mobileActionIds || []"
+                  v-for="actionId in getKeyUiState(key.key_id)?.mobileActionIds || []"
                   :key="`${key.key_id}-${actionId}`"
                   class="min-w-0 flex-1 flex justify-center"
                 >
@@ -892,7 +892,7 @@
                     size="icon"
                     class="h-7 w-7 shrink-0"
                     :disabled="refreshingOAuthKeyId === key.key_id"
-                    :title="keyUiStateMap[key.key_id]?.oauthRefreshButtonTitle || ''"
+                    :title="getKeyUiState(key.key_id)?.oauthRefreshButtonTitle || ''"
                     @click.stop="handleRefreshOAuth(key)"
                   >
                     <RefreshCw
@@ -1770,6 +1770,14 @@ const keyUiStateMap = computed<Record<string, PoolKeyUiState>>(() => {
 
   return map
 })
+
+function getQuotaProgressItems(keyId: string): QuotaProgressItem[] {
+  return quotaProgressMap.value[keyId] ?? []
+}
+
+function getKeyUiState(keyId: string): PoolKeyUiState | null {
+  return keyUiStateMap.value[keyId] ?? null
+}
 
 const quotaRefreshSupported = computed(() => {
   return selectedProviderType.value === 'codex'
