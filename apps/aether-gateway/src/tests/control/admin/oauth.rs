@@ -1465,7 +1465,10 @@ async fn gateway_batch_imports_admin_provider_oauth_locally_with_trusted_admin_p
         .expect("keys should load");
     let persisted = reloaded.first().expect("persisted key should exist");
     assert!(persisted.is_active);
-    assert_eq!(persisted.proxy, None);
+    assert_eq!(
+        persisted.proxy,
+        Some(json!({"node_id": "proxy-node-batch-import", "enabled": true}))
+    );
     let decrypted_api_key =
         decrypt_python_fernet_ciphertext(DEVELOPMENT_ENCRYPTION_KEY, &persisted.encrypted_api_key)
             .expect("api key should decrypt");
@@ -1610,6 +1613,164 @@ async fn gateway_starts_admin_provider_oauth_batch_import_task_locally_with_trus
         .await
         .expect("keys should load");
     assert_eq!(keys.len(), 1);
+
+    gateway_handle.abort();
+    token_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_updates_admin_provider_oauth_batch_import_task_progress() {
+    let upstream = Router::new().fallback(any(|| async {
+        (StatusCode::OK, Body::from("quota refresh body"))
+    }));
+
+    let token_hits = Arc::new(Mutex::new(0usize));
+    let token_hits_clone = Arc::clone(&token_hits);
+    let token_server = Router::new().route(
+        "/oauth/token",
+        any(move |_request: Request| {
+            let token_hits_inner = Arc::clone(&token_hits_clone);
+            async move {
+                let hit = {
+                    let mut guard = token_hits_inner.lock().expect("mutex should lock");
+                    *guard += 1;
+                    *guard
+                };
+                if hit == 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+                Json(json!({
+                    "access_token": format!("progress-codex-access-token-{hit}"),
+                    "refresh_token": format!("progress-codex-refresh-token-{hit}"),
+                    "token_type": "Bearer",
+                    "expires_in": 1800,
+                    "scope": "openid email profile offline_access",
+                    "email": format!("progress-{hit}@example.com"),
+                    "account_id": format!("acct-progress-{hit}"),
+                    "account_user_id": format!("acct-user-progress-{hit}"),
+                    "plan_type": "plus",
+                }))
+            }
+        }),
+    );
+
+    let mut provider = sample_provider("provider-codex", "codex", 10);
+    provider.provider_type = "codex".to_string();
+    let endpoint = sample_endpoint(
+        "endpoint-codex-chat",
+        "provider-codex",
+        "openai:chat",
+        "https://chatgpt.com/backend-api/codex",
+    );
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![endpoint],
+        vec![],
+    ));
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let (token_url, token_handle) = start_server(token_server).await;
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(
+                    provider_catalog_repository,
+                )
+                .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+            )
+            .with_provider_oauth_token_url_for_tests("codex", format!("{token_url}/oauth/token")),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let client = reqwest::Client::new();
+    let submit_response = client
+        .post(format!(
+            "{gateway_url}/api/admin/provider-oauth/providers/provider-codex/batch-import/tasks"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "credentials": "progress-refresh-one\nprogress-refresh-two"
+        }))
+        .send()
+        .await
+        .expect("submit request should succeed");
+
+    assert_eq!(submit_response.status(), StatusCode::OK);
+    let submit_payload: serde_json::Value = submit_response
+        .json()
+        .await
+        .expect("submit payload should parse");
+    let task_id = submit_payload["task_id"]
+        .as_str()
+        .expect("task id should exist")
+        .to_string();
+
+    let mut progress_payload = serde_json::Value::Null;
+    for _ in 0..50 {
+        let response = client
+            .get(format!(
+                "{gateway_url}/api/admin/provider-oauth/providers/provider-codex/batch-import/tasks/{task_id}"
+            ))
+            .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+            .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+            .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+            .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+            .send()
+            .await
+            .expect("status request should succeed");
+        assert_eq!(response.status(), StatusCode::OK);
+        progress_payload = response.json().await.expect("status payload should parse");
+        if progress_payload["status"] == "processing" && progress_payload["processed"] == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    assert_eq!(
+        progress_payload["status"], "processing",
+        "payload={progress_payload}"
+    );
+    assert_eq!(progress_payload["total"], 2);
+    assert_eq!(progress_payload["processed"], 1);
+    assert_eq!(progress_payload["success"], 1);
+    assert_eq!(progress_payload["failed"], 0);
+    assert_eq!(progress_payload["created_count"], 1);
+    assert_eq!(progress_payload["progress_percent"], 50);
+
+    let mut completed_payload = progress_payload;
+    for _ in 0..50 {
+        let response = client
+            .get(format!(
+                "{gateway_url}/api/admin/provider-oauth/providers/provider-codex/batch-import/tasks/{task_id}"
+            ))
+            .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+            .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+            .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+            .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+            .send()
+            .await
+            .expect("status request should succeed");
+        assert_eq!(response.status(), StatusCode::OK);
+        completed_payload = response.json().await.expect("status payload should parse");
+        if completed_payload["status"] == "completed" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    assert_eq!(
+        completed_payload["status"], "completed",
+        "payload={completed_payload}"
+    );
+    assert_eq!(completed_payload["processed"], 2);
+    assert_eq!(completed_payload["success"], 2);
+    assert_eq!(completed_payload["progress_percent"], 100);
+    assert_eq!(*token_hits.lock().expect("mutex should lock"), 2);
 
     gateway_handle.abort();
     token_handle.abort();
@@ -1935,7 +2096,10 @@ async fn gateway_completes_admin_provider_oauth_provider_locally_with_trusted_ad
         .expect("keys should load");
     let persisted = reloaded.first().expect("persisted key should exist");
     assert!(persisted.is_active);
-    assert_eq!(persisted.proxy, None);
+    assert_eq!(
+        persisted.proxy,
+        Some(json!({"node_id": "proxy-node-codex-oauth", "enabled": true}))
+    );
     let decrypted_api_key =
         decrypt_python_fernet_ciphertext(DEVELOPMENT_ENCRYPTION_KEY, &persisted.encrypted_api_key)
             .expect("api key should decrypt");
@@ -2103,7 +2267,10 @@ async fn gateway_imports_admin_provider_oauth_refresh_token_locally_with_trusted
         .expect("keys should load");
     let persisted = reloaded.first().expect("persisted key should exist");
     assert!(persisted.is_active);
-    assert_eq!(persisted.proxy, None);
+    assert_eq!(
+        persisted.proxy,
+        Some(json!({"node_id": "proxy-node-codex-import", "enabled": true}))
+    );
     let decrypted_api_key =
         decrypt_python_fernet_ciphertext(DEVELOPMENT_ENCRYPTION_KEY, &persisted.encrypted_api_key)
             .expect("api key should decrypt");
@@ -2275,7 +2442,10 @@ async fn gateway_imports_admin_provider_oauth_refresh_token_over_active_expired_
         .expect("keys should load");
     let persisted = reloaded.first().expect("persisted key should exist");
     assert!(persisted.is_active);
-    assert_eq!(persisted.proxy, None);
+    assert_eq!(
+        persisted.proxy,
+        Some(json!({"node_id": "proxy-node-codex-import", "enabled": true}))
+    );
     assert_eq!(persisted.oauth_invalid_at_unix_secs, None);
     assert_eq!(persisted.oauth_invalid_reason, None);
     let decrypted_api_key =
@@ -2473,7 +2643,10 @@ async fn gateway_imports_admin_provider_oauth_refresh_token_via_execution_runtim
         .await
         .expect("keys should load");
     assert_eq!(keys.len(), 1);
-    assert_eq!(keys[0].proxy, None);
+    assert_eq!(
+        keys[0].proxy,
+        Some(json!({"node_id": "proxy-node-codex-import", "enabled": true}))
+    );
 
     let plans = execution_plans.lock().expect("mutex should lock");
     assert_eq!(plans.len(), 1);
@@ -2907,7 +3080,10 @@ async fn gateway_batch_imports_admin_provider_oauth_kiro_locally_with_trusted_ad
         .next()
         .expect("persisted key should exist");
     assert!(stored_key.is_active);
-    assert_eq!(stored_key.proxy, None);
+    assert_eq!(
+        stored_key.proxy,
+        Some(json!({"node_id": "proxy-node-kiro-batch", "enabled": true}))
+    );
     let decrypted_auth_config = decrypt_python_fernet_ciphertext(
         DEVELOPMENT_ENCRYPTION_KEY,
         stored_key
@@ -3048,7 +3224,10 @@ async fn gateway_batch_imports_admin_provider_oauth_kiro_over_active_expired_dup
         .next()
         .expect("persisted key should exist");
     assert!(stored_key.is_active);
-    assert_eq!(stored_key.proxy, None);
+    assert_eq!(
+        stored_key.proxy,
+        Some(json!({"node_id": "proxy-node-kiro-batch", "enabled": true}))
+    );
     assert_eq!(stored_key.oauth_invalid_at_unix_secs, None);
     assert_eq!(stored_key.oauth_invalid_reason, None);
     let decrypted_auth_config = decrypt_python_fernet_ciphertext(
@@ -3244,7 +3423,10 @@ async fn gateway_batch_imports_admin_provider_oauth_kiro_via_execution_runtime_p
         .next()
         .expect("persisted key should exist");
     assert!(stored_key.is_active);
-    assert_eq!(stored_key.proxy, None);
+    assert_eq!(
+        stored_key.proxy,
+        Some(json!({"node_id": "proxy-node-kiro-batch-runtime", "enabled": true}))
+    );
     let decrypted_auth_config = decrypt_python_fernet_ciphertext(
         DEVELOPMENT_ENCRYPTION_KEY,
         stored_key

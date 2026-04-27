@@ -4,11 +4,15 @@ use super::parse::{
     parse_admin_provider_oauth_batch_import_entries, AdminProviderOAuthBatchImportEntry,
     AdminProviderOAuthBatchImportOutcome,
 };
+use super::progress::{
+    maybe_report_admin_provider_oauth_batch_import_progress,
+    AdminProviderOAuthBatchProgressReporter,
+};
 use crate::handlers::admin::provider::oauth::duplicates::find_duplicate_provider_oauth_key;
 use crate::handlers::admin::provider::oauth::provisioning::build_provider_oauth_auth_config_from_token_payload;
 use crate::handlers::admin::provider::oauth::provisioning::{
     create_provider_oauth_catalog_key, provider_oauth_active_api_formats,
-    update_existing_provider_oauth_catalog_key,
+    provider_oauth_key_proxy_value, update_existing_provider_oauth_catalog_key,
 };
 use crate::handlers::admin::provider::oauth::runtime::{
     provider_oauth_runtime_endpoint_for_provider,
@@ -41,6 +45,7 @@ pub(super) async fn execute_admin_provider_oauth_batch_import_for_provider_type(
     provider_type: &str,
     raw_credentials: &str,
     proxy_node_id: Option<&str>,
+    progress: Option<&mut dyn AdminProviderOAuthBatchProgressReporter>,
 ) -> Result<AdminProviderOAuthBatchImportOutcome, GatewayError> {
     if provider_type.eq_ignore_ascii_case("kiro") {
         execute_admin_provider_oauth_kiro_batch_import(
@@ -48,6 +53,7 @@ pub(super) async fn execute_admin_provider_oauth_batch_import_for_provider_type(
             provider_id,
             raw_credentials,
             proxy_node_id,
+            progress,
         )
         .await
     } else {
@@ -58,6 +64,7 @@ pub(super) async fn execute_admin_provider_oauth_batch_import_for_provider_type(
             provider_type,
             &entries,
             proxy_node_id,
+            progress,
         )
         .await
     }
@@ -69,6 +76,7 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
     provider_type: &str,
     entries: &[AdminProviderOAuthBatchImportEntry],
     proxy_node_id: Option<&str>,
+    mut progress: Option<&mut dyn AdminProviderOAuthBatchProgressReporter>,
 ) -> Result<AdminProviderOAuthBatchImportOutcome, GatewayError> {
     let Some(provider) = state
         .read_provider_catalog_providers_by_ids(&[provider_id.to_string()])
@@ -131,6 +139,7 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
             ],
         )
         .await;
+    let key_proxy = provider_oauth_key_proxy_value(proxy_node_id);
     let mut results = Vec::with_capacity(entries.len());
     let mut success = 0usize;
     let mut failed = 0usize;
@@ -156,6 +165,14 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
                     ),
                     "replaced": false,
                 }));
+                maybe_report_admin_provider_oauth_batch_import_progress(
+                    &mut progress,
+                    entries.len(),
+                    success,
+                    failed,
+                    &results,
+                )
+                .await;
                 continue;
             }
         };
@@ -170,6 +187,14 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
                 "error": "Token 刷新返回缺少 access_token",
                 "replaced": false,
             }));
+            maybe_report_admin_provider_oauth_batch_import_progress(
+                &mut progress,
+                entries.len(),
+                success,
+                failed,
+                &results,
+            )
+            .await;
             continue;
         };
 
@@ -192,6 +217,14 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
                         "error": detail,
                         "replaced": false,
                     }));
+                    maybe_report_admin_provider_oauth_batch_import_progress(
+                        &mut progress,
+                        entries.len(),
+                        success,
+                        failed,
+                        &results,
+                    )
+                    .await;
                     continue;
                 }
             };
@@ -205,7 +238,7 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
                 &access_token,
                 &auth_config,
                 &api_formats,
-                None,
+                key_proxy.clone(),
                 expires_at,
             )
             .await?
@@ -219,6 +252,14 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
                         "error": "provider oauth write unavailable",
                         "replaced": true,
                     }));
+                    maybe_report_admin_provider_oauth_batch_import_progress(
+                        &mut progress,
+                        entries.len(),
+                        success,
+                        failed,
+                        &results,
+                    )
+                    .await;
                     continue;
                 }
             }
@@ -249,7 +290,7 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
                 &access_token,
                 &auth_config,
                 &api_formats,
-                None,
+                key_proxy.clone(),
                 expires_at,
             )
             .await?
@@ -263,6 +304,14 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
                         "error": "provider oauth write unavailable",
                         "replaced": false,
                     }));
+                    maybe_report_admin_provider_oauth_batch_import_progress(
+                        &mut progress,
+                        entries.len(),
+                        success,
+                        failed,
+                        &results,
+                    )
+                    .await;
                     continue;
                 }
             }
@@ -284,6 +333,14 @@ pub(super) async fn execute_admin_provider_oauth_batch_import(
             "error": serde_json::Value::Null,
             "replaced": replaced,
         }));
+        maybe_report_admin_provider_oauth_batch_import_progress(
+            &mut progress,
+            entries.len(),
+            success,
+            failed,
+            &results,
+        )
+        .await;
     }
 
     Ok(AdminProviderOAuthBatchImportOutcome {
