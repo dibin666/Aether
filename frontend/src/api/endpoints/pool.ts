@@ -9,6 +9,7 @@ import type {
 import type { ProviderKeyStatusSnapshot } from './types/statusSnapshot'
 
 const POOL_BATCH_ACTION_TIMEOUT_MS = 5 * 60 * 1000
+const POOL_KEYS_MAX_PAGE_SIZE = 200
 
 export interface PoolKeyStatus {
   key_id: string
@@ -188,6 +189,55 @@ export interface PoolKeysPageResponse {
   keys: PoolKeyDetail[]
 }
 
+export interface PoolConsumptionAccount {
+  key_id: string
+  key_name: string
+  auth_type: string
+  is_active: boolean
+  account_quota: string | null
+  request_count: number
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens: number
+  cache_read_input_tokens: number
+  cache_tokens: number
+  total_tokens: number
+  total_cost_usd: string
+}
+
+export interface PoolConsumptionSummary {
+  account_count: number
+  request_count: number
+  input_tokens: number
+  output_tokens: number
+  cache_tokens: number
+  total_tokens: number
+  total_cost_usd: string
+  avg_request_count: number
+  avg_input_tokens: number
+  avg_output_tokens: number
+  avg_cache_tokens: number
+  avg_total_tokens: number
+  avg_total_cost_usd: string
+  max_account: PoolConsumptionAccount | null
+  min_account: PoolConsumptionAccount | null
+}
+
+export interface PoolConsumptionPeriod {
+  key: 'today' | 'last3days' | 'last7days' | 'last30days' | 'all' | string
+  label: string
+  start_date: string | null
+  end_date: string | null
+  summary: PoolConsumptionSummary
+  accounts: PoolConsumptionAccount[]
+}
+
+export interface PoolConsumptionStatsResponse {
+  provider_id: string
+  provider_name: string
+  periods: PoolConsumptionPeriod[]
+}
+
 export interface PoolKeysQuery {
   page?: number
   page_size?: number
@@ -279,6 +329,83 @@ export async function listPoolKeys(
     cacheKey,
     async () => {
       const response = await client.get<PoolKeysPageResponse>(`/api/admin/pool/${providerId}/keys`, { params: normalizedParams })
+      return response.data
+    },
+    options.cacheTtlMs ?? 0,
+  )
+}
+
+export async function listAllPoolKeys(
+  providerId: string,
+  params: Omit<PoolKeysQuery, 'page' | 'page_size'> = {},
+  options: PoolReadOptions = {},
+): Promise<PoolKeyDetail[]> {
+  const normalizedParams = {
+    ...params,
+    quick_selectors: params.quick_selectors?.length ? params.quick_selectors.join(',') : undefined,
+  }
+  const cacheKey = buildCacheKey(
+    `pool:keys:all:${providerId}`,
+    normalizedParams as Record<string, unknown>,
+  )
+
+  return cachedRequest(
+    cacheKey,
+    async () => {
+      const items: PoolKeyDetail[] = []
+      const maxPages = 200
+
+      for (let page = 1; page <= maxPages; page += 1) {
+        const response = await listPoolKeys(
+          providerId,
+          {
+            ...params,
+            page,
+            page_size: POOL_KEYS_MAX_PAGE_SIZE,
+          },
+          { cacheTtlMs: 0 },
+        )
+        const batch = Array.isArray(response?.keys) ? response.keys : []
+        items.push(...batch)
+
+        const total = Number(response?.total ?? items.length)
+        const pageSize = Number(response?.page_size ?? POOL_KEYS_MAX_PAGE_SIZE)
+        if (batch.length === 0 || items.length >= total || batch.length < pageSize) {
+          return items
+        }
+      }
+
+      throw new Error(`号池账号列表分页超过最大页数 ${maxPages}，已中止请求`)
+    },
+    options.cacheTtlMs ?? 0,
+  )
+}
+
+export async function getPoolConsumptionStats(
+  providerId: string,
+  params: {
+    timezone?: string | null
+    tz_offset_minutes?: number
+  } = {},
+  options: PoolReadOptions = {},
+): Promise<PoolConsumptionStatsResponse> {
+  const normalizedParams = {
+    timezone: typeof params.timezone === 'string' ? params.timezone.trim() || undefined : undefined,
+    tz_offset_minutes: Number.isFinite(params.tz_offset_minutes)
+      ? Number(params.tz_offset_minutes)
+      : undefined,
+  }
+  const cacheKey = buildCacheKey(
+    `pool:consumption:${providerId}`,
+    normalizedParams as Record<string, unknown>,
+  )
+  return cachedRequest(
+    cacheKey,
+    async () => {
+      const response = await client.get<PoolConsumptionStatsResponse>(
+        `/api/admin/pool/${providerId}/consumption-stats`,
+        { params: normalizedParams },
+      )
       return response.data
     },
     options.cacheTtlMs ?? 0,

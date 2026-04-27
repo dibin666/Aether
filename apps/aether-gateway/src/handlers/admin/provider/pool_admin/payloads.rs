@@ -622,6 +622,18 @@ fn admin_pool_build_account_quota(
     None
 }
 
+pub(super) fn admin_pool_account_quota_from_key(
+    key: &StoredProviderCatalogKey,
+    provider_type: &str,
+) -> Option<String> {
+    let status_snapshot = provider_key_status_snapshot_payload(key, provider_type);
+    let quota_snapshot = status_snapshot
+        .as_object()
+        .and_then(|snapshot| snapshot.get("quota"))
+        .and_then(serde_json::Value::as_object);
+    admin_pool_build_account_quota(provider_type, quota_snapshot)
+}
+
 fn admin_pool_health_score(key: &StoredProviderCatalogKey) -> f64 {
     let scores = key
         .health_by_format

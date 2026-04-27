@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// Joined usage read model assembled from the accounting row plus the newer audit/snapshot
 /// satellite tables.
@@ -616,6 +617,25 @@ pub struct StoredProviderApiKeyUsageSummary {
     pub total_tokens: u64,
     pub total_cost_usd: f64,
     pub last_used_at_unix_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredProviderApiKeyConsumptionSummary {
+    pub provider_api_key_id: String,
+    pub request_count: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub total_tokens: u64,
+    pub total_cost_usd: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct ProviderApiKeyConsumptionSummaryQuery {
+    pub provider_id: String,
+    pub created_until_unix_secs: Option<u64>,
+    pub created_from_unix_secs_by_provider_api_key_id: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -1395,6 +1415,14 @@ pub trait UsageReadRepository: Send + Sync {
         provider_api_key_ids: &[String],
     ) -> Result<
         std::collections::BTreeMap<String, StoredProviderApiKeyUsageSummary>,
+        crate::DataLayerError,
+    >;
+
+    async fn summarize_provider_api_key_consumption(
+        &self,
+        query: &ProviderApiKeyConsumptionSummaryQuery,
+    ) -> Result<
+        std::collections::BTreeMap<String, StoredProviderApiKeyConsumptionSummary>,
         crate::DataLayerError,
     >;
 

@@ -230,6 +230,18 @@ pub(super) fn classify_admin_observability_family_route(
         ))
     } else if method == http::Method::GET
         && normalized_path_no_trailing.starts_with("/api/admin/pool/")
+        && normalized_path_no_trailing.ends_with("/consumption-stats")
+        && normalized_path_no_trailing.matches('/').count() == 5
+    {
+        Some(classified(
+            "admin_proxy",
+            "pool_manage",
+            "consumption_stats",
+            "admin:pool",
+            false,
+        ))
+    } else if method == http::Method::GET
+        && normalized_path_no_trailing.starts_with("/api/admin/pool/")
         && normalized_path_no_trailing.ends_with("/keys")
         && normalized_path_no_trailing.matches('/').count() == 5
     {

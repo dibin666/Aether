@@ -13,6 +13,8 @@ pub(crate) const ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL: &str =
     "Admin pool overview requires provider catalog reader";
 pub(crate) const ADMIN_POOL_PROVIDER_CATALOG_WRITER_UNAVAILABLE_DETAIL: &str =
     "Admin pool cleanup requires provider catalog writer";
+pub(crate) const ADMIN_POOL_USAGE_READER_UNAVAILABLE_DETAIL: &str =
+    "Admin pool consumption stats requires usage reader";
 pub(crate) const ADMIN_POOL_BANNED_KEY_CLEANUP_EMPTY_MESSAGE: &str = "未发现可清理的异常账号";
 
 pub(crate) fn build_admin_pool_error_response(
@@ -95,6 +97,18 @@ pub(crate) fn admin_pool_provider_id_from_path(request_path: &str) -> Option<Str
     }
 }
 
+pub(crate) fn admin_pool_provider_id_from_consumption_path(request_path: &str) -> Option<String> {
+    let raw = request_path.strip_prefix("/api/admin/pool/")?;
+    let mut segments = raw.split('/');
+    let provider_id = segments.next()?.trim();
+    let stats_segment = segments.next()?.trim();
+    if provider_id.is_empty() || stats_segment != "consumption-stats" {
+        None
+    } else {
+        Some(provider_id.to_string())
+    }
+}
+
 pub(crate) fn is_admin_pool_route(request_context: &AdminRequestContext<'_>) -> bool {
     let normalized_path = request_context.path().trim_end_matches('/');
     let path = if normalized_path.is_empty() {
@@ -106,6 +120,10 @@ pub(crate) fn is_admin_pool_route(request_context: &AdminRequestContext<'_>) -> 
     (request_context.method() == http::Method::GET && path == "/api/admin/pool/overview")
         || (request_context.method() == http::Method::GET
             && path == "/api/admin/pool/scheduling-presets")
+        || (request_context.method() == http::Method::GET
+            && path.starts_with("/api/admin/pool/")
+            && path.ends_with("/consumption-stats")
+            && path.matches('/').count() == 5)
         || (request_context.method() == http::Method::GET
             && path.starts_with("/api/admin/pool/")
             && path.ends_with("/keys")

@@ -27,10 +27,12 @@ use serde_json::Value;
 use super::{
     api_key_usage_contribution, provider_api_key_usage_contribution,
     strip_deprecated_usage_display_fields, usage_can_recover_terminal_failure,
-    ApiKeyUsageContribution, ApiKeyUsageDelta, ProviderApiKeyUsageContribution,
-    ProviderApiKeyUsageDelta, StoredProviderApiKeyUsageSummary, StoredProviderUsageSummary,
-    StoredProviderUsageWindow, StoredRequestUsageAudit, StoredUsageDailySummary, UpsertUsageRecord,
-    UsageAuditListQuery, UsageDailyHeatmapQuery, UsageReadRepository, UsageWriteRepository,
+    ApiKeyUsageContribution, ApiKeyUsageDelta, ProviderApiKeyConsumptionSummaryQuery,
+    ProviderApiKeyUsageContribution, ProviderApiKeyUsageDelta,
+    StoredProviderApiKeyConsumptionSummary, StoredProviderApiKeyUsageSummary,
+    StoredProviderUsageSummary, StoredProviderUsageWindow, StoredRequestUsageAudit,
+    StoredUsageDailySummary, UpsertUsageRecord, UsageAuditListQuery, UsageDailyHeatmapQuery,
+    UsageReadRepository, UsageWriteRepository,
 };
 use crate::repository::auth::InMemoryAuthApiKeySnapshotRepository;
 use crate::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
@@ -1969,6 +1971,68 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                     .unwrap_or_default()
                     .max(item.created_at_unix_ms),
             );
+        }
+        Ok(summaries)
+    }
+
+    async fn summarize_provider_api_key_consumption(
+        &self,
+        query: &ProviderApiKeyConsumptionSummaryQuery,
+    ) -> Result<BTreeMap<String, StoredProviderApiKeyConsumptionSummary>, DataLayerError> {
+        if query.provider_id.trim().is_empty()
+            || query
+                .created_from_unix_secs_by_provider_api_key_id
+                .is_empty()
+        {
+            return Ok(BTreeMap::new());
+        }
+
+        let starts_by_id = &query.created_from_unix_secs_by_provider_api_key_id;
+        let mut summaries = BTreeMap::<String, StoredProviderApiKeyConsumptionSummary>::new();
+        for item in self
+            .by_request_id
+            .read()
+            .expect("usage repository lock")
+            .values()
+        {
+            if item.provider_id.as_deref() != Some(query.provider_id.as_str()) {
+                continue;
+            }
+            let Some(provider_api_key_id) = item.provider_api_key_id.as_deref() else {
+                continue;
+            };
+            let Some(created_from_unix_secs) = starts_by_id.get(provider_api_key_id) else {
+                continue;
+            };
+            if item.created_at_unix_ms < *created_from_unix_secs {
+                continue;
+            }
+            if query
+                .created_until_unix_secs
+                .is_some_and(|created_until_unix_secs| {
+                    item.created_at_unix_ms >= created_until_unix_secs
+                })
+            {
+                continue;
+            }
+
+            let entry = summaries
+                .entry(provider_api_key_id.to_string())
+                .or_insert_with(|| StoredProviderApiKeyConsumptionSummary {
+                    provider_api_key_id: provider_api_key_id.to_string(),
+                    ..StoredProviderApiKeyConsumptionSummary::default()
+                });
+            entry.request_count = entry.request_count.saturating_add(1);
+            entry.input_tokens = entry.input_tokens.saturating_add(item.input_tokens);
+            entry.output_tokens = entry.output_tokens.saturating_add(item.output_tokens);
+            entry.cache_creation_tokens = entry
+                .cache_creation_tokens
+                .saturating_add(usage_cache_creation_tokens(item));
+            entry.cache_read_tokens = entry
+                .cache_read_tokens
+                .saturating_add(item.cache_read_input_tokens);
+            entry.total_tokens = entry.total_tokens.saturating_add(item.total_tokens);
+            entry.total_cost_usd += item.total_cost_usd;
         }
         Ok(summaries)
     }

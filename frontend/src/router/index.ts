@@ -181,6 +181,11 @@ const routes: RouteRecordRaw[] = [
         component: () => importWithRetry(() => import('@/views/admin/PoolManagement.vue'))
       },
       {
+        path: 'quota-countdown',
+        name: 'QuotaCountdown',
+        component: () => importWithRetry(() => import('@/views/admin/QuotaCountdown.vue'))
+      },
+      {
         path: 'models',
         name: 'ModelManagement',
         component: () => importWithRetry(() => import('@/views/admin/ModelManagement.vue'))

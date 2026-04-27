@@ -52,6 +52,14 @@ fn classifies_admin_pool_provider_key_routes_as_admin_proxy_route() {
     assert_eq!(list.route_family.as_deref(), Some("pool_manage"));
     assert_eq!(list.route_kind.as_deref(), Some("list_keys"));
 
+    let consumption_uri: Uri = "/api/admin/pool/provider-1/consumption-stats?tz_offset_minutes=480"
+        .parse()
+        .expect("uri should parse");
+    let consumption = classify_control_route(&http::Method::GET, &consumption_uri, &headers)
+        .expect("route should classify");
+    assert_eq!(consumption.route_family.as_deref(), Some("pool_manage"));
+    assert_eq!(consumption.route_kind.as_deref(), Some("consumption_stats"));
+
     let batch_import_uri: Uri = "/api/admin/pool/provider-1/keys/batch-import"
         .parse()
         .expect("uri should parse");
@@ -132,6 +140,14 @@ fn classifies_admin_pool_trailing_slash_routes_as_admin_proxy_route() {
     assert_eq!(list.route_family.as_deref(), Some("pool_manage"));
     assert_eq!(list.route_kind.as_deref(), Some("list_keys"));
 
+    let consumption_uri: Uri = "/api/admin/pool/provider-1/consumption-stats/"
+        .parse()
+        .expect("uri should parse");
+    let consumption = classify_control_route(&http::Method::GET, &consumption_uri, &headers)
+        .expect("route should classify");
+    assert_eq!(consumption.route_family.as_deref(), Some("pool_manage"));
+    assert_eq!(consumption.route_kind.as_deref(), Some("consumption_stats"));
+
     let resolve_selection_uri: Uri = "/api/admin/pool/provider-1/keys/resolve-selection/"
         .parse()
         .expect("uri should parse");
@@ -157,6 +173,14 @@ fn classifies_admin_pool_malformed_provider_id_routes_as_admin_proxy_route() {
         .expect("route should classify");
     assert_eq!(list.route_family.as_deref(), Some("pool_manage"));
     assert_eq!(list.route_kind.as_deref(), Some("list_keys"));
+
+    let consumption_uri: Uri = "/api/admin/pool//consumption-stats"
+        .parse()
+        .expect("uri should parse");
+    let consumption = classify_control_route(&http::Method::GET, &consumption_uri, &headers)
+        .expect("route should classify");
+    assert_eq!(consumption.route_family.as_deref(), Some("pool_manage"));
+    assert_eq!(consumption.route_kind.as_deref(), Some("consumption_stats"));
 
     let import_uri: Uri = "/api/admin/pool//keys/batch-import"
         .parse()

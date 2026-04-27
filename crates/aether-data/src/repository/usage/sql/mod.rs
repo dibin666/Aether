@@ -35,9 +35,11 @@ use uuid::Uuid;
 use super::{
     api_key_usage_contribution, incoming_usage_can_recover_terminal_failure,
     provider_api_key_usage_contribution, strip_deprecated_usage_display_fields, ApiKeyUsageDelta,
-    ProviderApiKeyUsageDelta, StoredProviderApiKeyUsageSummary, StoredProviderUsageSummary,
-    StoredRequestUsageAudit, StoredUsageDailySummary, UpsertUsageRecord, UsageAuditListQuery,
-    UsageDailyHeatmapQuery, UsageReadRepository, UsageWriteRepository,
+    ProviderApiKeyConsumptionSummaryQuery, ProviderApiKeyUsageDelta,
+    StoredProviderApiKeyConsumptionSummary, StoredProviderApiKeyUsageSummary,
+    StoredProviderUsageSummary, StoredRequestUsageAudit, StoredUsageDailySummary,
+    UpsertUsageRecord, UsageAuditListQuery, UsageDailyHeatmapQuery, UsageReadRepository,
+    UsageWriteRepository,
 };
 use crate::postgres::PostgresTransactionRunner;
 use crate::{
@@ -949,6 +951,9 @@ const SUMMARIZE_USAGE_TOTALS_BY_USER_IDS_SQL: &str =
 
 const SUMMARIZE_USAGE_BY_PROVIDER_API_KEY_IDS_SQL: &str =
     include_str!("queries/summarize_usage_by_provider_api_key_ids_sql.sql");
+
+const SUMMARIZE_PROVIDER_API_KEY_CONSUMPTION_SQL: &str =
+    include_str!("queries/summarize_provider_api_key_consumption_sql.sql");
 
 const APPLY_API_KEY_USAGE_DELTA_SQL: &str =
     include_str!("queries/apply_api_key_usage_delta_sql.sql");
@@ -6176,6 +6181,138 @@ ORDER BY "usage".user_id ASC
         Ok(summaries)
     }
 
+    pub async fn summarize_provider_api_key_consumption(
+        &self,
+        query: &ProviderApiKeyConsumptionSummaryQuery,
+    ) -> Result<
+        std::collections::BTreeMap<String, StoredProviderApiKeyConsumptionSummary>,
+        DataLayerError,
+    > {
+        if query.provider_id.trim().is_empty()
+            || query
+                .created_from_unix_secs_by_provider_api_key_id
+                .is_empty()
+        {
+            return Ok(std::collections::BTreeMap::new());
+        }
+
+        let mut provider_api_key_ids =
+            Vec::with_capacity(query.created_from_unix_secs_by_provider_api_key_id.len());
+        let mut created_from_unix_secs =
+            Vec::with_capacity(query.created_from_unix_secs_by_provider_api_key_id.len());
+        for (provider_api_key_id, created_from_unix_secs_value) in
+            &query.created_from_unix_secs_by_provider_api_key_id
+        {
+            provider_api_key_ids.push(provider_api_key_id.clone());
+            created_from_unix_secs.push(i64::try_from(*created_from_unix_secs_value).map_err(
+                |_| {
+                    DataLayerError::UnexpectedValue(
+                        "usage.created_from_unix_secs exceeds i64::MAX".to_string(),
+                    )
+                },
+            )?);
+        }
+        let created_until_unix_secs = query
+            .created_until_unix_secs
+            .map(|value| {
+                i64::try_from(value).map_err(|_| {
+                    DataLayerError::UnexpectedValue(
+                        "usage.created_until_unix_secs exceeds i64::MAX".to_string(),
+                    )
+                })
+            })
+            .transpose()?;
+
+        let mut rows = sqlx::query(SUMMARIZE_PROVIDER_API_KEY_CONSUMPTION_SQL)
+            .bind(query.provider_id.clone())
+            .bind(provider_api_key_ids)
+            .bind(created_from_unix_secs)
+            .bind(created_until_unix_secs)
+            .fetch(&self.pool);
+
+        let mut summaries = std::collections::BTreeMap::new();
+        while let Some(row) = rows.try_next().await.map_postgres_err()? {
+            let provider_api_key_id: String =
+                row.try_get("provider_api_key_id").map_postgres_err()?;
+            let request_count = row
+                .try_get::<i64, _>("request_count")
+                .map_postgres_err()?
+                .try_into()
+                .map_err(|_| {
+                    DataLayerError::UnexpectedValue(
+                        "usage.request_count aggregate is negative".to_string(),
+                    )
+                })?;
+            let input_tokens = row
+                .try_get::<i64, _>("input_tokens")
+                .map_postgres_err()?
+                .try_into()
+                .map_err(|_| {
+                    DataLayerError::UnexpectedValue(
+                        "usage.input_tokens aggregate is negative".to_string(),
+                    )
+                })?;
+            let output_tokens = row
+                .try_get::<i64, _>("output_tokens")
+                .map_postgres_err()?
+                .try_into()
+                .map_err(|_| {
+                    DataLayerError::UnexpectedValue(
+                        "usage.output_tokens aggregate is negative".to_string(),
+                    )
+                })?;
+            let cache_creation_tokens = row
+                .try_get::<i64, _>("cache_creation_tokens")
+                .map_postgres_err()?
+                .try_into()
+                .map_err(|_| {
+                    DataLayerError::UnexpectedValue(
+                        "usage.cache_creation_tokens aggregate is negative".to_string(),
+                    )
+                })?;
+            let cache_read_tokens = row
+                .try_get::<i64, _>("cache_read_tokens")
+                .map_postgres_err()?
+                .try_into()
+                .map_err(|_| {
+                    DataLayerError::UnexpectedValue(
+                        "usage.cache_read_tokens aggregate is negative".to_string(),
+                    )
+                })?;
+            let total_tokens = row
+                .try_get::<i64, _>("total_tokens")
+                .map_postgres_err()?
+                .try_into()
+                .map_err(|_| {
+                    DataLayerError::UnexpectedValue(
+                        "usage.total_tokens aggregate is negative".to_string(),
+                    )
+                })?;
+            let total_cost_usd: f64 = row.try_get("total_cost_usd").map_postgres_err()?;
+            if !total_cost_usd.is_finite() {
+                return Err(DataLayerError::UnexpectedValue(
+                    "usage.total_cost_usd aggregate is not finite".to_string(),
+                ));
+            }
+
+            summaries.insert(
+                provider_api_key_id.clone(),
+                StoredProviderApiKeyConsumptionSummary {
+                    provider_api_key_id,
+                    request_count,
+                    input_tokens,
+                    output_tokens,
+                    cache_creation_tokens,
+                    cache_read_tokens,
+                    total_tokens,
+                    total_cost_usd,
+                },
+            );
+        }
+
+        Ok(summaries)
+    }
+
     pub async fn upsert(
         &self,
         usage: UpsertUsageRecord,
@@ -6824,6 +6961,16 @@ impl UsageReadRepository for SqlxUsageReadRepository {
     ) -> Result<std::collections::BTreeMap<String, StoredProviderApiKeyUsageSummary>, DataLayerError>
     {
         Self::summarize_usage_by_provider_api_key_ids(self, provider_api_key_ids).await
+    }
+
+    async fn summarize_provider_api_key_consumption(
+        &self,
+        query: &ProviderApiKeyConsumptionSummaryQuery,
+    ) -> Result<
+        std::collections::BTreeMap<String, StoredProviderApiKeyConsumptionSummary>,
+        DataLayerError,
+    > {
+        Self::summarize_provider_api_key_consumption(self, query).await
     }
 
     async fn summarize_provider_usage_since(

@@ -88,6 +88,19 @@ impl<'a> AdminAppState<'a> {
         self.app.summarize_usage_audits(query).await
     }
 
+    pub(crate) async fn summarize_provider_api_key_consumption(
+        &self,
+        query: &aether_data_contracts::repository::usage::ProviderApiKeyConsumptionSummaryQuery,
+    ) -> Result<
+        std::collections::BTreeMap<
+            String,
+            aether_data_contracts::repository::usage::StoredProviderApiKeyConsumptionSummary,
+        >,
+        GatewayError,
+    > {
+        self.app.summarize_provider_api_key_consumption(query).await
+    }
+
     pub(crate) async fn summarize_usage_cache_hit_summary(
         &self,
         query: &aether_data_contracts::repository::usage::UsageCacheHitSummaryQuery,

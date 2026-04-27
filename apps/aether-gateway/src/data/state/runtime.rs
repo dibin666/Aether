@@ -1125,6 +1125,26 @@ impl GatewayDataState {
         }
     }
 
+    pub(crate) async fn summarize_provider_api_key_consumption(
+        &self,
+        query: &aether_data_contracts::repository::usage::ProviderApiKeyConsumptionSummaryQuery,
+    ) -> Result<
+        std::collections::BTreeMap<
+            String,
+            aether_data_contracts::repository::usage::StoredProviderApiKeyConsumptionSummary,
+        >,
+        DataLayerError,
+    > {
+        match &self.usage_reader {
+            Some(repository) => {
+                repository
+                    .summarize_provider_api_key_consumption(query)
+                    .await
+            }
+            None => Ok(std::collections::BTreeMap::new()),
+        }
+    }
+
     pub(crate) async fn list_users_by_ids(
         &self,
         user_ids: &[String],

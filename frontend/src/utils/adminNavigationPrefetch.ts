@@ -71,6 +71,12 @@ const adminRouteWarmers: Record<string, () => Promise<void>> = {
       { cacheTtlMs: NAV_DATA_CACHE_TTL_MS },
     )
   },
+  '/admin/quota-countdown': async () => {
+    await Promise.allSettled([
+      import('@/views/admin/QuotaCountdown.vue'),
+      getPoolOverview({ cacheTtlMs: NAV_DATA_CACHE_TTL_MS }),
+    ])
+  },
 }
 
 export function prefetchAdminNavigationTarget(href: string): void {

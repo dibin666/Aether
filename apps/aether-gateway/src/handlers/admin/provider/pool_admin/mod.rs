@@ -16,6 +16,8 @@ mod batch_shared;
 #[path = "batch_routes/task_status.rs"]
 mod batch_task_status;
 pub(crate) mod payloads;
+#[path = "read_routes/consumption.rs"]
+mod read_consumption;
 #[path = "read_routes/keys.rs"]
 mod read_keys;
 #[path = "read_routes/overview.rs"]
@@ -34,11 +36,13 @@ pub(crate) use self::batch_shared::{
     AdminPoolBatchImportRequest,
 };
 pub(crate) use self::support::{
-    admin_pool_provider_id_from_path, parse_admin_pool_page, parse_admin_pool_page_size,
-    parse_admin_pool_quick_selectors, parse_admin_pool_search, parse_admin_pool_status_filter,
-    AdminPoolResolveSelectionRequest, ADMIN_POOL_BANNED_KEY_CLEANUP_EMPTY_MESSAGE,
+    admin_pool_provider_id_from_consumption_path, admin_pool_provider_id_from_path,
+    parse_admin_pool_page, parse_admin_pool_page_size, parse_admin_pool_quick_selectors,
+    parse_admin_pool_search, parse_admin_pool_status_filter, AdminPoolResolveSelectionRequest,
+    ADMIN_POOL_BANNED_KEY_CLEANUP_EMPTY_MESSAGE,
     ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL,
     ADMIN_POOL_PROVIDER_CATALOG_WRITER_UNAVAILABLE_DETAIL,
+    ADMIN_POOL_USAGE_READER_UNAVAILABLE_DETAIL,
 };
 use self::support::{build_admin_pool_error_response, is_admin_pool_route};
 pub(crate) use self::{payloads as pool_payloads, selection as pool_selection};
@@ -94,6 +98,15 @@ pub(crate) async fn maybe_build_local_admin_pool_response(
         {
             return Ok(Some(
                 read_presets::build_admin_pool_scheduling_presets_response(),
+            ));
+        }
+        Some("consumption_stats") => {
+            return Ok(Some(
+                read_consumption::build_admin_pool_consumption_stats_response(
+                    state,
+                    request_context,
+                )
+                .await?,
             ));
         }
         Some("list_keys") => {
