@@ -355,11 +355,11 @@ impl LocalOAuthRefreshCoordinator {
             _ => None,
         };
 
-        let refresh_entry = if force_refresh {
-            None
-        } else {
-            cached_entry.as_ref()
-        };
+        // Forced refresh still needs the latest rotated refresh_token as input.
+        // Otherwise a second overlapping refresh can acquire the lock after the
+        // first one completes, then immediately retry with the stale token that
+        // came from the original transport snapshot.
+        let refresh_entry = cached_entry.as_ref();
         let refresh_result = adapter.refresh(executor, transport, refresh_entry).await;
         if let (Some(lock), Some(lease)) = (distributed_lock, distributed_lease.as_ref()) {
             if let Err(err) = lock.release(lease).await {
