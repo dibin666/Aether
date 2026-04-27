@@ -57,9 +57,15 @@ const localBuildSteps = [
     icon: Key
   },
   {
-    title: '构建',
-    note: '自动构建、启动、迁移',
-    code: './deploy.sh',
+    title: '构建镜像',
+    note: '仅构建镜像，不启动容器；可选追加 --tag <tag>',
+    code: './deploy.sh\n# 可选：./deploy.sh --tag v20260427',
+    icon: Container
+  },
+  {
+    title: '启动服务',
+    note: '基于本地镜像启动并自动迁移',
+    code: 'docker compose -f docker-compose.build.yml up -d --no-build',
     icon: Container
   },
   {

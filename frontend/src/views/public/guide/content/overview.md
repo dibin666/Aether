@@ -30,10 +30,15 @@ cd Aether
 cp .env.example .env
 python generate_keys.py  # 生成密钥, 并将生成的密钥填入 .env
 
-# 3. 构建（自动构建、启动、迁移）
+# 3. 构建镜像（仅构建，不启动容器）
 ./deploy.sh
+# 可选：额外打自定义 tag（同时保留 aether-app:latest）
+# ./deploy.sh --tag v20260427
 
-# 4. 更新需要拉取最新代码
+# 4. 启动服务（自动执行数据库迁移）
+docker compose -f docker-compose.build.yml up -d --no-build
+
+# 5. 更新需要拉取最新代码
 git pull origin master
 ```
 

@@ -1,41 +1,59 @@
 #!/bin/bash
-# 智能部署脚本 - 自动检测代码变化并重建
+# 智能构建脚本 - 自动检测代码变化并重建镜像
 #
 # 用法:
-#   部署/更新:     ./deploy.sh
+#   构建/更新镜像:  ./deploy.sh
 #   强制全部重建:  ./deploy.sh --force
+#   追加自定义 tag: ./deploy.sh --tag v20260427
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# 兼容 docker-compose 和 docker compose
-if command -v docker-compose &> /dev/null; then
-    DC="docker-compose -f docker-compose.build.yml"
-    USE_LEGACY_COMPOSE=true
-else
-    DC="docker compose -f docker-compose.build.yml"
-    USE_LEGACY_COMPOSE=false
-fi
-
-compose_up() {
-    if [ "$USE_LEGACY_COMPOSE" = true ]; then
-        $DC up -d --no-build "$@"
-    else
-        $DC up -d --no-build --pull never "$@"
-    fi
-}
-
 # 缓存文件
 CODE_HASH_FILE=".code-hash"
+IMAGE_NAME="aether-app"
+DEFAULT_IMAGE_TAG="latest"
+PRIMARY_IMAGE_REF="${IMAGE_NAME}:${DEFAULT_IMAGE_TAG}"
+CUSTOM_IMAGE_TAG=""
 
 usage() {
     cat <<'EOF'
 Usage: ./deploy.sh [options]
 
 Options:
-  --force, -f             强制重建并重启
+  --force, -f             强制重建镜像
+  --tag, -t TAG           额外打自定义 tag（始终保留 latest）
   -h, --help              显示帮助
 EOF
+}
+
+validate_tag() {
+    local tag="$1"
+    if [[ ! "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+        echo "Invalid tag: ${tag}"
+        echo "Tag must match ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
+        exit 1
+    fi
+}
+
+apply_custom_tag() {
+    if [ -z "$CUSTOM_IMAGE_TAG" ] || [ "$CUSTOM_IMAGE_TAG" = "$DEFAULT_IMAGE_TAG" ]; then
+        return
+    fi
+
+    local custom_image_ref="${IMAGE_NAME}:${CUSTOM_IMAGE_TAG}"
+    echo ">>> Tagging image as ${custom_image_ref}..."
+    docker tag "$PRIMARY_IMAGE_REF" "$custom_image_ref"
+}
+
+print_result() {
+    echo ">>> Done!"
+    echo ">>> Built image: ${PRIMARY_IMAGE_REF}"
+    if [ -n "$CUSTOM_IMAGE_TAG" ] && [ "$CUSTOM_IMAGE_TAG" != "$DEFAULT_IMAGE_TAG" ]; then
+        echo ">>> Additional tag: ${IMAGE_NAME}:${CUSTOM_IMAGE_TAG}"
+    fi
+    echo ">>> To start containers, run: docker compose -f docker-compose.build.yml up -d --no-build"
+    docker image ls "$IMAGE_NAME"
 }
 
 FORCE_REBUILD_ALL=false
@@ -45,6 +63,16 @@ while [ $# -gt 0 ]; do
         --force|-f)
             FORCE_REBUILD_ALL=true
             shift
+            ;;
+        --tag|-t)
+            if [ $# -lt 2 ]; then
+                echo "Missing value for $1"
+                usage
+                exit 1
+            fi
+            CUSTOM_IMAGE_TAG="$2"
+            validate_tag "$CUSTOM_IMAGE_TAG"
+            shift 2
             ;;
         -h|--help)
             usage
@@ -85,60 +113,31 @@ save_code_hash() { calc_code_hash > "$CODE_HASH_FILE"; }
 
 # 构建应用镜像
 build_app() {
-    echo ">>> Building app image (rust gateway + frontend)..."
-    docker build --pull=false -f Dockerfile.app.local -t aether-app:latest .
+    echo ">>> Building app image (${PRIMARY_IMAGE_REF})..."
+    docker build --pull=false -f Dockerfile.app.local -t "$PRIMARY_IMAGE_REF" .
+    apply_custom_tag
     save_code_hash
 }
 
-# 强制全部重建
 if [ "$FORCE_REBUILD_ALL" = true ]; then
-    echo ">>> Force rebuilding everything..."
+    echo ">>> Force rebuilding app image..."
     build_app
-    compose_up --force-recreate
-    docker image prune -f
-    echo ">>> Done!"
-    $DC ps
+    docker image prune -f >/dev/null 2>&1 || true
+    print_result
     exit 0
 fi
 
-# 标记是否需要重启
-NEED_RESTART=false
-
-# 检查代码是否变化
-if ! docker image inspect aether-app:latest >/dev/null 2>&1; then
+if ! docker image inspect "$PRIMARY_IMAGE_REF" >/dev/null 2>&1; then
     echo ">>> App image not found, building..."
     build_app
-    NEED_RESTART=true
 elif check_code_changed; then
     echo ">>> Code changed, rebuilding app image..."
     build_app
-    NEED_RESTART=true
 else
-    echo ">>> Code unchanged."
+    echo ">>> Code unchanged. Existing image is up to date."
+    apply_custom_tag
 fi
 
-# 检查容器是否在运行
-CONTAINERS_RUNNING=true
-if [ -z "$($DC ps -q 2>/dev/null)" ]; then
-    CONTAINERS_RUNNING=false
-fi
-
-# 有变化时重启，或容器未运行时启动
-if [ "$NEED_RESTART" = true ]; then
-    echo ">>> Restarting services..."
-    compose_up
-elif [ "$CONTAINERS_RUNNING" = false ]; then
-    echo ">>> Containers not running, starting services..."
-    compose_up
-else
-    echo ">>> No changes detected, skipping restart."
-fi
-
-# 清理
 docker image prune -f >/dev/null 2>&1 || true
 
-echo ">>> Done!"
-echo ">>> Note: empty databases auto-bootstrap on first start."
-echo ">>> Note: docker compose now defaults to auto-running pending migrations/backfills on app startup."
-echo ">>> Note: set AETHER_GATEWAY_AUTO_PREPARE_DATABASE=false if you want to keep manual rollout."
-$DC ps
+print_result

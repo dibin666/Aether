@@ -69,9 +69,14 @@ cd Aether
 cp .env.example .env
 ./generate_keys.sh  # 生成密钥, 并将生成的密钥填入 .env
 
-# 3. 部署 / 更新（自动构建并启动）
+# 3. 构建 / 更新镜像（仅构建，不启动容器）
 git pull
 ./deploy.sh
+# 可选：额外打自定义 tag（同时保留 aether-app:latest）
+# ./deploy.sh --tag v20260427
+
+# 4. 启动容器（自动执行数据库迁移）
+docker compose -f docker-compose.build.yml up -d --no-build
 ```
 
 ### 本地开发
@@ -113,7 +118,8 @@ client -> rust frontdoor (aether-gateway) -> execution_runtime/provider transpor
 - `./dev.sh` 默认把 `AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE` 设为 `rust-authoritative`，避免本地还依赖 Python sync report 语义。
 - 空库首次启动会自动初始化到当前 baseline。
 - `aether-gateway` 默认启动不会自动应用后续 schema migration；如果数据库版本落后，服务会拒绝启动，并提示先执行 `aether-gateway --migrate`。
-- 仓库自带的 `docker-compose.yml` 和 `docker-compose.build.yml` 都已把 `AETHER_GATEWAY_AUTO_PREPARE_DATABASE` 设为默认开启，因此无论是预构建镜像部署还是 `./deploy.sh` / 本地构建 compose，常规启动都会在监听端口前自动执行挂起的 migration 和 backfill。
+- 仓库自带的 `docker-compose.yml` 和 `docker-compose.build.yml` 都已把 `AETHER_GATEWAY_AUTO_PREPARE_DATABASE` 设为默认开启，因此无论是预构建镜像部署，还是先 `./deploy.sh` 构建本地镜像再执行 `docker compose -f docker-compose.build.yml up -d --no-build`，常规启动都会在监听端口前自动执行挂起的 migration 和 backfill。
+- `./deploy.sh --tag <tag>` 会在保留 `aether-app:latest` 的同时额外打一个 `aether-app:<tag>`，方便手工发布或留档；`docker-compose.build.yml` 默认仍使用 `aether-app:latest`。
 
 ## Aether Proxy (可选)
 

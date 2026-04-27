@@ -1,7 +1,7 @@
 # Aether 部署配置 - 本地构建
 # 使用方法:
-#   启动服务: docker compose -f docker-compose.build.yml up -d --build
-#   或使用:    ./deploy.sh
+#   启动服务:   docker compose -f docker-compose.build.yml up -d --build
+#   仅构建镜像: ./deploy.sh [--tag <tag>]
 
 services:
   postgres:
