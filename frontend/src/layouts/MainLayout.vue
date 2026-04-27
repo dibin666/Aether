@@ -597,6 +597,7 @@ const navigation = computed(() => {
         { name: '模型管理', href: '/admin/models', icon: Layers },
         { name: '号池管理', href: '/admin/pool', icon: Database },
         { name: '额度倒计时', href: '/admin/quota-countdown', icon: Timer },
+        { name: '账号消耗统计', href: '/admin/pool-consumption', icon: BarChart3 },
         { name: '独立密钥', href: '/admin/keys', icon: Key },
         { name: '钱包管理', href: '/admin/wallets', icon: Wallet },
         { name: '异步任务', href: '/admin/async-tasks', icon: Zap },

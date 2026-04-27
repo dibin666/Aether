@@ -77,6 +77,12 @@ const adminRouteWarmers: Record<string, () => Promise<void>> = {
       getPoolOverview({ cacheTtlMs: NAV_DATA_CACHE_TTL_MS }),
     ])
   },
+  '/admin/pool-consumption': async () => {
+    await Promise.allSettled([
+      import('@/views/admin/PoolConsumptionStats.vue'),
+      getPoolOverview({ cacheTtlMs: NAV_DATA_CACHE_TTL_MS }),
+    ])
+  },
 }
 
 export function prefetchAdminNavigationTarget(href: string): void {

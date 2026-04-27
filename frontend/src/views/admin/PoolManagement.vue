@@ -308,33 +308,6 @@
         </div>
       </div>
 
-      <div
-        v-if="showCodexConsumptionStats"
-        class="border-b border-border/50 px-4 py-4 sm:px-6"
-      >
-        <div class="grid grid-cols-1 gap-3 xl:max-w-sm">
-          <div class="rounded-xl border border-sky-500/20 bg-sky-500/[0.05] p-3">
-            <div class="text-[11px] text-sky-700/80 dark:text-sky-300/80">
-              今日消耗账号
-            </div>
-            <div class="mt-1 text-2xl font-semibold tracking-tight text-foreground">
-              {{ selectedProviderTodayConsumedAccountsLabel }}
-            </div>
-            <p class="mt-2 text-[11px] leading-5 text-muted-foreground">
-              仅统计当前额度窗口内产生过消耗的 Codex 账号。
-            </p>
-            <Button
-              variant="ghost"
-              size="sm"
-              class="mt-3 h-7 px-2 text-xs"
-              :disabled="!selectedProviderId"
-              @click="showConsumptionStatsDialog = true"
-            >
-              查看详情
-            </Button>
-          </div>
-        </div>
-      </div>
 
       <!-- Loading (initial) -->
       <div
@@ -1076,12 +1049,6 @@
       :batch-concurrency="selectedProviderConfig?.batch_concurrency"
       @changed="handleAccountBatchChanged"
     />
-    <PoolConsumptionStatsDialog
-      v-if="selectedProviderId && showCodexConsumptionStats"
-      v-model="showConsumptionStatsDialog"
-      :provider-id="selectedProviderId"
-      :provider-name="selectedProviderData?.name || selectedProviderOverview?.provider_name || ''"
-    />
     <KeyFormDialog
       v-if="selectedProviderId"
       :open="keyFormDialogOpen"
@@ -1164,7 +1131,6 @@ import {
   getPoolSchedulingPresets,
   listPoolKeys,
   clearPoolCooldown,
-  getPoolConsumptionStats,
 } from '@/api/endpoints/pool'
 import {
   revealEndpointKey,
@@ -1191,7 +1157,6 @@ import { useProxyNodesStore } from '@/stores/proxy-nodes'
 import PoolSchedulingDialog from '@/features/pool/components/PoolSchedulingDialog.vue'
 import PoolAdvancedDialog from '@/features/pool/components/PoolAdvancedDialog.vue'
 import PoolAccountBatchDialog from '@/features/pool/components/PoolAccountBatchDialog.vue'
-import PoolConsumptionStatsDialog from '@/features/pool/components/PoolConsumptionStatsDialog.vue'
 import ProviderProxyPopover from '@/features/pool/components/ProviderProxyPopover.vue'
 import KeyAllowedModelsEditDialog from '@/features/providers/components/KeyAllowedModelsEditDialog.vue'
 import KeyFormDialog from '@/features/providers/components/KeyFormDialog.vue'
@@ -1492,49 +1457,6 @@ const showAccountQuotaColumn = computed(() => {
     || selectedProviderType.value === 'antigravity'
 })
 
-const showCodexConsumptionStats = computed(() => (
-  Boolean(selectedProviderId.value) && selectedProviderType.value === 'codex'
-))
-const selectedProviderTodayConsumedAccounts = ref<number | null>(null)
-const selectedProviderTodayConsumedAccountsLabel = computed(() => (
-  selectedProviderTodayConsumedAccounts.value === null
-    ? '--'
-    : formatStatInteger(selectedProviderTodayConsumedAccounts.value)
-))
-let selectedProviderTodayConsumedRequestId = 0
-
-function getBrowserTimezoneParams() {
-  return {
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    tz_offset_minutes: -new Date().getTimezoneOffset(),
-  }
-}
-
-async function loadSelectedProviderTodayConsumedAccounts(
-  providerId: string | null,
-  providerType: string,
-  options: { cacheTtlMs?: number } = {},
-): Promise<void> {
-  const requestId = ++selectedProviderTodayConsumedRequestId
-  if (!providerId || providerType !== 'codex') {
-    selectedProviderTodayConsumedAccounts.value = null
-    return
-  }
-
-  try {
-    const response = await getPoolConsumptionStats(
-      providerId,
-      getBrowserTimezoneParams(),
-      { cacheTtlMs: options.cacheTtlMs ?? 30_000 },
-    )
-    if (requestId !== selectedProviderTodayConsumedRequestId) return
-    const todayPeriod = response.periods.find(period => period.key === 'today')
-    selectedProviderTodayConsumedAccounts.value = todayPeriod?.summary.account_count ?? 0
-  } catch {
-    if (requestId !== selectedProviderTodayConsumedRequestId) return
-    selectedProviderTodayConsumedAccounts.value = null
-  }
-}
 
 const desktopColumnWidths = computed(() => {
   if (showAccountQuotaColumn.value) {
@@ -1572,7 +1494,6 @@ async function selectProvider(
   selectedProviderData.value = null
   editingKeyDetail.value = null
   showAccountBatchDialog.value = false
-  showConsumptionStatsDialog.value = false
   keyPermissionsDialogOpen.value = false
   keyFormDialogOpen.value = false
   oauthKeyEditDialogOpen.value = false
@@ -1698,15 +1619,6 @@ watch(
   { immediate: true },
 )
 
-watch(
-  [selectedProviderId, selectedProviderType],
-  ([providerId, providerType]) => {
-    void loadSelectedProviderTodayConsumedAccounts(providerId, providerType, {
-      cacheTtlMs: POOL_KEYS_CACHE_TTL_MS,
-    })
-  },
-  { immediate: true },
-)
 
 
 type PoolKeyUiState = {
@@ -2353,7 +2265,6 @@ const showImportDialog = ref(false)
 const showSchedulingDialog = ref(false)
 const showAdvancedDialog = ref(false)
 const showAccountBatchDialog = ref(false)
-const showConsumptionStatsDialog = ref(false)
 const providerProxyMobilePopoverOpen = ref(false)
 const providerProxyDesktopPopoverOpen = ref(false)
 const savingProviderProxy = ref(false)
