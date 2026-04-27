@@ -51,14 +51,14 @@ pub(crate) async fn read_requested_model_rows(
     Ok(Some((resolved_global_model_name, rows)))
 }
 
-pub(crate) async fn read_minimal_candidate_selection(
+pub(crate) async fn read_ranked_minimal_candidate_selection(
     state: &(impl MinimalCandidateSelectionRowSource + Sync),
     api_format: &str,
     requested_model_name: &str,
     require_streaming: bool,
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
 ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
-    read_minimal_candidate_selection_with_priority_mode(
+    read_ranked_minimal_candidate_selection_with_priority_mode(
         state,
         api_format,
         requested_model_name,
@@ -69,7 +69,7 @@ pub(crate) async fn read_minimal_candidate_selection(
     .await
 }
 
-pub(crate) async fn read_minimal_candidate_selection_with_priority_mode(
+pub(crate) async fn read_ranked_minimal_candidate_selection_with_priority_mode(
     state: &(impl MinimalCandidateSelectionRowSource + Sync),
     api_format: &str,
     requested_model_name: &str,
@@ -77,7 +77,7 @@ pub(crate) async fn read_minimal_candidate_selection_with_priority_mode(
     auth_snapshot: Option<&GatewayAuthApiKeySnapshot>,
     priority_mode: SchedulerPriorityMode,
 ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
-    read_minimal_candidate_selection_with_priority_mode_and_affinity_key(
+    read_ranked_minimal_candidate_selection_with_priority_mode_and_affinity_key(
         state,
         api_format,
         requested_model_name,
@@ -89,7 +89,7 @@ pub(crate) async fn read_minimal_candidate_selection_with_priority_mode(
     .await
 }
 
-pub(crate) async fn read_minimal_candidate_selection_with_priority_mode_and_required_capabilities(
+pub(crate) async fn read_ranked_minimal_candidate_selection_with_priority_mode_and_required_capabilities(
     state: &(impl MinimalCandidateSelectionRowSource + Sync),
     api_format: &str,
     requested_model_name: &str,
@@ -98,7 +98,7 @@ pub(crate) async fn read_minimal_candidate_selection_with_priority_mode_and_requ
     priority_mode: SchedulerPriorityMode,
     required_capabilities: Option<&serde_json::Value>,
 ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
-    read_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
+    read_ranked_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
         state,
         api_format,
         requested_model_name,
@@ -111,7 +111,7 @@ pub(crate) async fn read_minimal_candidate_selection_with_priority_mode_and_requ
     .await
 }
 
-pub(crate) async fn read_minimal_candidate_selection_with_priority_mode_and_affinity_key(
+pub(crate) async fn read_ranked_minimal_candidate_selection_with_priority_mode_and_affinity_key(
     state: &(impl MinimalCandidateSelectionRowSource + Sync),
     api_format: &str,
     requested_model_name: &str,
@@ -120,7 +120,7 @@ pub(crate) async fn read_minimal_candidate_selection_with_priority_mode_and_affi
     priority_mode: SchedulerPriorityMode,
     affinity_key: Option<&str>,
 ) -> Result<Vec<SchedulerMinimalCandidateSelectionCandidate>, DataLayerError> {
-    read_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
+    read_ranked_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
         state,
         api_format,
         requested_model_name,
@@ -133,7 +133,7 @@ pub(crate) async fn read_minimal_candidate_selection_with_priority_mode_and_affi
     .await
 }
 
-pub(crate) async fn read_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
+pub(crate) async fn read_ranked_minimal_candidate_selection_with_priority_mode_and_affinity_key_and_required_capabilities(
     state: &(impl MinimalCandidateSelectionRowSource + Sync),
     api_format: &str,
     requested_model_name: &str,

@@ -14,7 +14,7 @@ use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
 use crate::cache::SchedulerAffinityTarget;
 use crate::data::auth::GatewayAuthApiKeySnapshot;
 use crate::data::candidate_selection::{
-    read_minimal_candidate_selection, MinimalCandidateSelectionRowSource,
+    read_ranked_minimal_candidate_selection, MinimalCandidateSelectionRowSource,
 };
 use crate::data::GatewayDataState;
 use crate::{AppState, GatewayError};
@@ -86,7 +86,7 @@ async fn same_priority_candidates_are_distributed_by_affinity_key() {
     let state = GatewayDataState::with_candidate_selection_and_quota_for_tests(candidates, quotas);
     let auth_snapshot = sample_auth_snapshot("affinity-key-1");
 
-    let selection = read_minimal_candidate_selection(
+    let selection = read_ranked_minimal_candidate_selection(
         &state,
         "openai:chat",
         "gpt-4.1",

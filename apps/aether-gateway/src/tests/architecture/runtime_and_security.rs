@@ -169,7 +169,7 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "provider_key_rpm_allows_request_since",
         "PROVIDER_KEY_RPM_WINDOW_SECS",
         "SchedulerMinimalCandidateSelectionCandidate",
-        "read_minimal_candidate_selection",
+        "read_ranked_minimal_candidate_selection",
         "read_cached_scheduler_affinity_target",
         "list_selectable_candidates",
         "list_selectable_candidates_for_required_capability_without_requested_model",
@@ -187,7 +187,7 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
     );
     assert!(
         !candidate_mod.contains("build_ranked_minimal_candidate_selection"),
-        "candidate/mod.rs should not own the core minimal candidate builder anymore"
+        "candidate/mod.rs should not own the core ranked minimal candidate builder anymore"
     );
     assert!(
         !candidate_mod.contains("collect_global_model_names_for_required_capability"),
@@ -206,7 +206,7 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "candidate/mod.rs should not own the minimal candidate DTO"
     );
     for pattern in [
-        "pub(crate) async fn read_minimal_candidate_selection(",
+        "pub(crate) async fn read_ranked_minimal_candidate_selection(",
         "pub(crate) async fn select_minimal_candidate(",
         "pub(crate) fn read_cached_scheduler_affinity_target(",
         "async fn collect_selectable_candidates(",
@@ -539,7 +539,7 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "impl MinimalCandidateSelectionRowSource for GatewayDataState",
         "impl MinimalCandidateSelectionRowSource for AppState",
         "impl SchedulerRuntimeState for AppState",
-        "async fn read_minimal_candidate_selection(",
+        "async fn read_ranked_minimal_candidate_selection(",
     ] {
         assert!(
             !candidate_state.contains(pattern),
@@ -558,8 +558,9 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "data/candidate_selection.rs should host requested-model row lookup"
     );
     assert!(
-        candidate_selection.contains("pub(crate) async fn read_minimal_candidate_selection("),
-        "data/candidate_selection.rs should host minimal candidate selection builder"
+        candidate_selection
+            .contains("pub(crate) async fn read_ranked_minimal_candidate_selection("),
+        "data/candidate_selection.rs should host ranked minimal candidate selection builder"
     );
     assert!(
         candidate_selection
@@ -572,7 +573,7 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
     );
     assert!(
         candidate_selection.contains("build_ranked_minimal_candidate_selection"),
-        "data/candidate_selection.rs should depend on core minimal candidate builder"
+        "data/candidate_selection.rs should depend on core ranked minimal candidate builder"
     );
     assert!(
         candidate_selection.contains("collect_global_model_names_for_required_capability"),
@@ -653,7 +654,7 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "state/integrations.rs should host SchedulerRuntimeState for AppState"
     );
     assert!(
-        !state_integrations.contains("async fn read_minimal_candidate_selection("),
+        !state_integrations.contains("async fn read_ranked_minimal_candidate_selection("),
         "state/integrations.rs should not re-host scheduler minimal candidate bridge anymore"
     );
 
@@ -806,15 +807,15 @@ fn gateway_data_state_does_not_depend_on_scheduler_candidate_selection() {
         read_workspace_file("apps/aether-gateway/src/state/runtime/auth/api_keys.rs");
 
     assert!(
-        !state_mod.contains("read_minimal_candidate_selection"),
+        !state_mod.contains("read_ranked_minimal_candidate_selection"),
         "data/state/mod.rs should not import scheduler candidate selection entrypoints"
     );
     assert!(
-        !state_runtime.contains("pub(crate) async fn read_minimal_candidate_selection("),
+        !state_runtime.contains("pub(crate) async fn read_ranked_minimal_candidate_selection("),
         "data/state/runtime.rs should not own scheduler minimal candidate derived read"
     );
     assert!(
-        !auth_api_keys.contains("read_minimal_candidate_selection("),
+        !auth_api_keys.contains("read_ranked_minimal_candidate_selection("),
         "state/runtime/auth/api_keys.rs should not keep scheduler minimal candidate wrapper anymore"
     );
     for pattern in [
