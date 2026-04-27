@@ -105,6 +105,16 @@ RUN set -eux; \
     fi; \
     if [ -f /etc/nsswitch.conf ]; then \
         cp /etc/nsswitch.conf /runtime-root/etc/nsswitch.conf; \
+    fi; \
+    if [ -f /etc/passwd ]; then \
+        cp /etc/passwd /runtime-root/etc/passwd; \
+    else \
+        printf 'root:x:0:0:root:/root:/bin/sh\n' > /runtime-root/etc/passwd; \
+    fi; \
+    if [ -f /etc/group ]; then \
+        cp /etc/group /runtime-root/etc/group; \
+    else \
+        printf 'root:x:0:\n' > /runtime-root/etc/group; \
     fi
 
 # ==================== 运行时镜像 ====================
@@ -128,4 +138,5 @@ EXPOSE 8084
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD ["/usr/local/bin/aether-gateway", "--healthcheck"]
 
+USER 0:0
 ENTRYPOINT ["/usr/local/bin/aether-gateway"]
