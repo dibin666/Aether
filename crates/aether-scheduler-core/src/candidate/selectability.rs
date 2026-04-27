@@ -1,12 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use aether_data_contracts::repository::candidates::StoredRequestCandidate;
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 
-use super::capability::{
-    enabled_required_capabilities, requested_capability_priority_for_candidate_descriptors,
-};
-use super::types::{SchedulerMinimalCandidateSelectionCandidate, SchedulerPriorityMode};
+use super::types::SchedulerMinimalCandidateSelectionCandidate;
 
 pub fn auth_api_key_concurrency_limit_reached(
     recent_candidates: &[StoredRequestCandidate],
@@ -20,82 +17,6 @@ pub fn auth_api_key_concurrency_limit_reached(
 
     crate::count_recent_active_requests_for_api_key(recent_candidates, api_key_id, now_unix_secs)
         >= concurrent_limit
-}
-
-pub fn collect_selectable_candidates_from_keys(
-    candidates: Vec<SchedulerMinimalCandidateSelectionCandidate>,
-    selectable_keys: &BTreeSet<(String, String, String)>,
-    cached_affinity_target: Option<&crate::SchedulerAffinityTarget>,
-) -> Vec<SchedulerMinimalCandidateSelectionCandidate> {
-    let mut promoted = None;
-    let mut selected = Vec::with_capacity(candidates.len());
-    let mut emitted_keys = BTreeSet::new();
-
-    for candidate in candidates {
-        let key = crate::candidate_key(&candidate);
-        if !selectable_keys.contains(&key) || !emitted_keys.insert(key) {
-            continue;
-        }
-        if promoted.is_none()
-            && cached_affinity_target
-                .is_some_and(|target| crate::matches_affinity_target(&candidate, target))
-        {
-            promoted = Some(candidate);
-        } else {
-            selected.push(candidate);
-        }
-    }
-
-    if let Some(candidate) = promoted {
-        selected.insert(0, candidate);
-    }
-
-    selected
-}
-
-pub fn reorder_candidates_by_scheduler_health(
-    candidates: &mut [SchedulerMinimalCandidateSelectionCandidate],
-    provider_key_rpm_states: &BTreeMap<String, StoredProviderCatalogKey>,
-    required_capabilities: Option<&serde_json::Value>,
-    affinity_key: Option<&str>,
-    priority_mode: SchedulerPriorityMode,
-) {
-    let required_capabilities = enabled_required_capabilities(required_capabilities);
-    let rankables = candidates
-        .iter()
-        .enumerate()
-        .map(|(index, candidate)| {
-            crate::SchedulerRankableCandidate::from_candidate(candidate, index)
-                .with_capability_priority(requested_capability_priority_for_candidate_descriptors(
-                    required_capabilities.iter().copied(),
-                    candidate,
-                ))
-                .with_affinity_hash(
-                    affinity_key.map(|key| crate::candidate_affinity_hash(key, candidate)),
-                )
-                .with_health(
-                    provider_key_rpm_states
-                        .get(&candidate.key_id)
-                        .and_then(|key| {
-                            crate::provider_key_health_bucket(
-                                key,
-                                candidate.endpoint_api_format.as_str(),
-                            )
-                        }),
-                    candidate_provider_key_health_score(candidate, Some(provider_key_rpm_states)),
-                )
-        })
-        .collect::<Vec<_>>();
-    crate::apply_scheduler_candidate_ranking(
-        candidates,
-        &rankables,
-        crate::SchedulerRankingContext {
-            priority_mode,
-            ranking_mode: crate::SchedulerRankingMode::CacheAffinity,
-            include_health: true,
-            load_balance_seed: 0,
-        },
-    );
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -189,16 +110,4 @@ pub fn candidate_runtime_skip_reason_with_state(
     }
 
     None
-}
-
-fn candidate_provider_key_health_score(
-    candidate: &SchedulerMinimalCandidateSelectionCandidate,
-    provider_key_rpm_states: Option<&BTreeMap<String, StoredProviderCatalogKey>>,
-) -> f64 {
-    provider_key_rpm_states
-        .and_then(|states| states.get(&candidate.key_id))
-        .and_then(|key| {
-            crate::effective_provider_key_health_score(key, candidate.endpoint_api_format.as_str())
-        })
-        .unwrap_or(1.0)
 }

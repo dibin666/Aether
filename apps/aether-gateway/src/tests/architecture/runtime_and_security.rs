@@ -453,6 +453,52 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "candidate/mod.rs should depend directly on core model helper namespace"
     );
 
+    let core_candidate_enumeration =
+        read_workspace_file("crates/aether-scheduler-core/src/candidate/enumeration.rs");
+    for forbidden in [
+        "apply_scheduler_candidate_ranking",
+        "SchedulerRankableCandidate",
+        "candidate_affinity_hash",
+        "requested_capability_priority_for_candidate_descriptors",
+    ] {
+        assert!(
+            !core_candidate_enumeration.contains(forbidden),
+            "core candidate/enumeration.rs should only enumerate theoretical candidates, not rank with {forbidden}"
+        );
+    }
+
+    let core_candidate_selectability =
+        read_workspace_file("crates/aether-scheduler-core/src/candidate/selectability.rs");
+    for forbidden in [
+        "apply_scheduler_candidate_ranking",
+        "with_affinity_hash",
+        "collect_selectable_candidates_from_keys",
+        "reorder_candidates_by_scheduler_health",
+    ] {
+        assert!(
+            !core_candidate_selectability.contains(forbidden),
+            "core candidate/selectability.rs should only decide selectability, not rank with {forbidden}"
+        );
+    }
+
+    assert!(
+        workspace_file_exists("crates/aether-scheduler-core/src/candidate/selection.rs"),
+        "core candidate/selection.rs should host legacy selection compatibility helpers"
+    );
+    let core_candidate_selection =
+        read_workspace_file("crates/aether-scheduler-core/src/candidate/selection.rs");
+    for expected in [
+        "build_minimal_candidate_selection",
+        "collect_selectable_candidates_from_keys",
+        "reorder_candidates_by_scheduler_health",
+        "apply_scheduler_candidate_ranking",
+    ] {
+        assert!(
+            core_candidate_selection.contains(expected),
+            "core candidate/selection.rs should host compatibility helper {expected}"
+        );
+    }
+
     let affinity_cache = read_workspace_file("apps/aether-gateway/src/cache/scheduler_affinity.rs");
     assert!(
         affinity_cache.contains("aether_scheduler_core::SchedulerAffinityTarget"),

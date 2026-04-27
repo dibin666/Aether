@@ -2,20 +2,23 @@ pub mod capability;
 pub mod enumeration;
 pub mod identity;
 pub mod selectability;
+pub mod selection;
 pub mod types;
 
 pub use capability::{
     candidate_supports_required_capability, requested_capability_priority_for_candidate,
 };
 pub use enumeration::{
-    build_minimal_candidate_selection, collect_global_model_names_for_required_capability,
-    enumerate_minimal_candidate_selection,
+    collect_global_model_names_for_required_capability, enumerate_minimal_candidate_selection,
 };
 pub use identity::compare_candidates_by_priority_mode;
 pub use selectability::{
     auth_api_key_concurrency_limit_reached, candidate_is_selectable_with_runtime_state,
-    candidate_runtime_skip_reason_with_state, collect_selectable_candidates_from_keys,
-    reorder_candidates_by_scheduler_health, CandidateRuntimeSelectabilityInput,
+    candidate_runtime_skip_reason_with_state, CandidateRuntimeSelectabilityInput,
+};
+pub use selection::{
+    build_minimal_candidate_selection, collect_selectable_candidates_from_keys,
+    reorder_candidates_by_scheduler_health,
 };
 pub use types::{
     BuildMinimalCandidateSelectionInput, SchedulerMinimalCandidateSelectionCandidate,
