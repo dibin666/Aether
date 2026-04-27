@@ -11,6 +11,7 @@ import ToastContainer from '@/components/ToastContainer.vue'
 import ConfirmContainer from '@/components/ConfirmContainer.vue'
 import apiClient, { AUTH_STATE_CHANGE_EVENT } from '@/api/client'
 import { NETWORK_CONFIG, AUTH_CONFIG } from '@/config/constants'
+import { isModuleLoadFailure, reloadPageBypassingCache } from '@/utils/importRetry'
 import router from '@/router'
 import { hasAuthIdentityChanged } from '@/utils/authToken'
 import { log } from '@/utils/logger'
@@ -39,13 +40,13 @@ if (typeof window !== 'undefined') {
     const error = event.reason
 
     // 只处理模块加载失败的情况
-    if (error?.message?.includes('Failed to fetch dynamically imported module')) {
+    if (isModuleLoadFailure(error)) {
       event.preventDefault() // 阻止控制台显示这个特定错误
 
       if (moduleLoadFailureCount < NETWORK_CONFIG.MODULE_LOAD_RETRY_LIMIT) {
         moduleLoadFailureCount++
         log.info(`模块加载失败,尝试刷新页面 (${moduleLoadFailureCount}/${NETWORK_CONFIG.MODULE_LOAD_RETRY_LIMIT})`)
-        window.location.reload()
+        reloadPageBypassingCache()
       } else {
         // 超过最大重试次数,显示友好提示
         alert('页面加载失败,请手动刷新浏览器。如问题持续,请清除浏览器缓存后重试。')

@@ -6,6 +6,15 @@ const MAX_RETRIES = 3
 const RETRY_DELAY = 1000 // 1秒
 const CACHE_BUSTER_DELAY = 2000 // 2秒后尝试缓存清除
 
+const MODULE_LOAD_ERROR_FRAGMENTS = [
+  'failed to fetch',
+  'loading chunk',
+  'dynamically imported module',
+  'networkerror',
+  'importing a module script failed',
+  'failed to load module script',
+]
+
 // 模块缓存
 const moduleCache = new Map<string, Promise<unknown>>()
 
@@ -26,18 +35,25 @@ function clearBrowserCache() {
 }
 
 /**
- * 检查错误是否是网络/缓存相关
+ * 检查错误是否是动态模块加载失败（常见于部署后旧页面尝试加载已删除 chunk）
  */
-function isNetworkOrCacheError(error: unknown): boolean {
+export function isModuleLoadFailure(error: unknown): boolean {
   const err = error as { message?: string; name?: string } | null
-  const errorMessage = err?.message || ''
+  const errorMessage = String(err?.message || '').toLowerCase()
   return (
-    errorMessage.includes('Failed to fetch') ||
-    errorMessage.includes('Loading chunk') ||
-    errorMessage.includes('dynamically imported module') ||
-    errorMessage.includes('NetworkError') ||
+    MODULE_LOAD_ERROR_FRAGMENTS.some(fragment => errorMessage.includes(fragment)) ||
     err?.name === 'ChunkLoadError'
   )
+}
+
+/**
+ * 使用时间戳参数强制重新请求最新页面入口，绕过浏览器/代理缓存。
+ */
+export function reloadPageBypassingCache(): void {
+  if (typeof window === 'undefined') return
+  const url = new URL(window.location.href)
+  url.searchParams.set('_t', Date.now().toString())
+  window.location.replace(url.toString())
 }
 
 /**
@@ -73,7 +89,7 @@ export async function importWithRetry<T = unknown>(
       moduleCache.delete(cacheKey)
     }
 
-    if (retries > 0 && isNetworkOrCacheError(error)) {
+    if (retries > 0 && isModuleLoadFailure(error)) {
       // 如果是第二次重试，尝试清除浏览器缓存
       if (MAX_RETRIES - retries + 1 === 2) {
         clearBrowserCache()
@@ -83,16 +99,13 @@ export async function importWithRetry<T = unknown>(
       }
 
       return importWithRetry(importFn, retries - 1, cacheKey)
-    } else {
-      // 最后的fallback：如果是网络/缓存错误，刷新页面
-      if (isNetworkOrCacheError(error) && typeof window !== 'undefined') {
-        // 添加一个时间戳参数来强制刷新
-        const url = new URL(window.location.href)
-        url.searchParams.set('_t', Date.now().toString())
-        window.location.href = url.toString()
-      }
-      throw error
     }
+
+    // 最后的 fallback：如果是模块加载错误，刷新页面拉取最新入口
+    if (isModuleLoadFailure(error)) {
+      reloadPageBypassingCache()
+    }
+    throw error
   }
 }
 
