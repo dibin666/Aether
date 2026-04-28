@@ -16,8 +16,8 @@ function buildItems(): TestPresetItem[] {
     { preset: 'load_balance', mutexGroup: 'distribution_mode', enabled: false },
     { preset: 'recent_refresh', mutexGroup: null, enabled: true },
     { preset: 'quota_balanced', mutexGroup: null, enabled: false },
-    { preset: 'free_first', mutexGroup: 'plan_priority', enabled: false },
-    { preset: 'team_first', mutexGroup: 'plan_priority', enabled: false },
+    { preset: 'free_first', mutexGroup: null, enabled: false },
+    { preset: 'team_first', mutexGroup: null, enabled: false },
     { preset: 'priority_first', mutexGroup: null, enabled: true },
   ]
 }

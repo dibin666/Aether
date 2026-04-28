@@ -26,6 +26,7 @@ use crate::provider_key_auth::provider_key_auth_semantics;
 
 const POOL_ACCOUNT_BLOCKED_SKIP_REASON: &str = "pool_account_blocked";
 const POOL_ACCOUNT_EXHAUSTED_SKIP_REASON: &str = "pool_account_exhausted";
+const POOL_PLAN_NOT_SELECTED_SKIP_REASON: &str = "pool_plan_not_selected";
 const POOL_COOLDOWN_SKIP_REASON: &str = "pool_cooldown";
 const POOL_COST_LIMIT_REACHED_SKIP_REASON: &str = "pool_cost_limit_reached";
 const POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD: f64 = 0.02;
@@ -494,6 +495,7 @@ fn schedule_pool_group(
         .unwrap_or_default();
     let active_presets =
         normalize_enabled_pool_presets(&pool_config.scheduling_presets, provider_type.as_str());
+    let selected_plan_types = selected_pool_plan_types(&active_presets);
 
     let mut available = Vec::new();
     let mut skipped = Vec::new();
@@ -534,6 +536,20 @@ fn schedule_pool_group(
                 extra_data: None,
             });
             continue;
+        }
+
+        if let Some(selected_plan_types) = selected_plan_types.as_ref() {
+            let plan_type = key_context.oauth_plan_type.as_deref().unwrap_or_default();
+            if !selected_plan_types.contains(plan_type) {
+                skipped.push(SkippedLocalExecutionCandidate {
+                    candidate,
+                    skip_reason: POOL_PLAN_NOT_SELECTED_SKIP_REASON,
+                    transport: Some(transport),
+                    ranking,
+                    extra_data: None,
+                });
+                continue;
+            }
         }
 
         if runtime.cooldown_reason_by_key.contains_key(&key_id) {
@@ -658,6 +674,20 @@ struct PoolGroupCandidateOrdering {
     original_index: usize,
     lru_score: Option<f64>,
     cost_usage: u64,
+}
+
+fn selected_pool_plan_types(presets: &[NormalizedPoolPreset]) -> Option<BTreeSet<&'static str>> {
+    let selected = presets
+        .iter()
+        .filter_map(|preset| match preset.preset.as_str() {
+            "free_first" => Some("free"),
+            "team_first" => Some("team"),
+            "plus_first" => Some("plus"),
+            "pro_first" => Some("pro"),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    (!selected.is_empty()).then_some(selected)
 }
 
 fn build_pool_sort_vectors(
@@ -1006,15 +1036,16 @@ fn plan_priority_score(plan_type: Option<&str>, mode: Option<&str>) -> f64 {
             None => 0.8,
         },
         "plus_only" => match plan_type {
-            Some("plus" | "pro") => 0.0,
+            Some("plus") => 0.0,
             Some("enterprise" | "business") => 0.3,
+            Some("pro") => 0.6,
             Some("free" | "team") => 0.7,
             Some(_) => 0.7,
             None => 0.8,
         },
         "pro_only" => match plan_type {
             Some("pro") => 0.0,
-            Some("plus") => 0.3,
+            Some("plus") => 0.6,
             Some("enterprise" | "business") => 0.4,
             Some("free" | "team") => 0.7,
             Some(_) => 0.7,
@@ -1110,7 +1141,6 @@ fn pool_preset_supported_for_provider(preset: &str, provider_type: &str) -> bool
 fn pool_preset_mutex_group(preset: &str) -> Option<&'static str> {
     match preset {
         "lru" | "cache_affinity" | "load_balance" | "single_account" => Some("distribution_mode"),
-        "free_first" | "team_first" | "plus_first" | "pro_first" => Some("plan_priority"),
         _ => None,
     }
 }
@@ -1690,18 +1720,24 @@ mod tests {
             &key_context_by_id,
         );
 
-        assert!(skipped.is_empty());
         assert_eq!(
             reordered
                 .iter()
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["key-plus", "key-free"]
+            vec!["key-plus"]
+        );
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|item| (item.candidate.key_id.as_str(), item.skip_reason))
+                .collect::<Vec<_>>(),
+            vec![("key-free", "pool_plan_not_selected")]
         );
     }
 
     #[test]
-    fn pool_scheduler_plus_first_treats_plus_and_pro_as_top_tier() {
+    fn pool_scheduler_filters_unselected_plan_tiers_and_respects_selected_order() {
         let key_plus = sample_eligible_candidate(
             "provider-pool",
             "endpoint-1",
@@ -1709,7 +1745,10 @@ mod tests {
             10,
             Some(json!({
                 "pool_advanced": {
-                    "scheduling_presets": [{"preset": "plus_first", "enabled": true}]
+                    "scheduling_presets": [
+                        {"preset": "plus_first", "enabled": true},
+                        {"preset": "team_first", "enabled": true}
+                    ]
                 }
             })),
         );
@@ -1720,7 +1759,10 @@ mod tests {
             10,
             Some(json!({
                 "pool_advanced": {
-                    "scheduling_presets": [{"preset": "plus_first", "enabled": true}]
+                    "scheduling_presets": [
+                        {"preset": "plus_first", "enabled": true},
+                        {"preset": "team_first", "enabled": true}
+                    ]
                 }
             })),
         );
@@ -1731,7 +1773,10 @@ mod tests {
             10,
             Some(json!({
                 "pool_advanced": {
-                    "scheduling_presets": [{"preset": "plus_first", "enabled": true}]
+                    "scheduling_presets": [
+                        {"preset": "plus_first", "enabled": true},
+                        {"preset": "team_first", "enabled": true}
+                    ]
                 }
             })),
         );
@@ -1769,13 +1814,19 @@ mod tests {
             &key_context_by_id,
         );
 
-        assert!(skipped.is_empty());
         assert_eq!(
             reordered
                 .iter()
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["key-plus", "key-pro", "key-team"]
+            vec!["key-plus", "key-team"]
+        );
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|item| (item.candidate.key_id.as_str(), item.skip_reason))
+                .collect::<Vec<_>>(),
+            vec![("key-pro", "pool_plan_not_selected")]
         );
     }
 
@@ -1845,13 +1896,22 @@ mod tests {
             &key_context_by_id,
         );
 
-        assert!(skipped.is_empty());
         assert_eq!(
             reordered
                 .iter()
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["key-pro", "key-plus", "key-team"]
+            vec!["key-pro"]
+        );
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|item| (item.candidate.key_id.as_str(), item.skip_reason))
+                .collect::<Vec<_>>(),
+            vec![
+                ("key-plus", "pool_plan_not_selected"),
+                ("key-team", "pool_plan_not_selected"),
+            ]
         );
     }
 
@@ -1937,7 +1997,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_plan_priority_mutex_group_to_first_enabled_member() {
+    fn normalizes_plan_priority_presets_as_independent_ordered_strategies() {
         let presets = normalize_enabled_pool_presets(
             &[
                 AdminProviderPoolSchedulingPreset {
@@ -1969,7 +2029,7 @@ mod tests {
                 .iter()
                 .map(|item| item.preset.as_str())
                 .collect::<Vec<_>>(),
-            vec!["team_first", "health_first", "recent_refresh"]
+            vec!["team_first", "plus_first", "health_first", "recent_refresh"]
         );
     }
 

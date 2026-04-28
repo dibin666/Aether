@@ -1032,7 +1032,7 @@ pub fn build_admin_pool_scheduling_presets_payload() -> Value {
             "providers": ["codex", "kiro"],
             "modes": Value::Null,
             "default_mode": Value::Null,
-            "mutex_group": "plan_priority",
+            "mutex_group": Value::Null,
             "evidence_hint": "依据 plan_type（Free 账号优先调度）",
         },
         {
@@ -1072,7 +1072,7 @@ pub fn build_admin_pool_scheduling_presets_payload() -> Value {
             "providers": ["codex", "kiro"],
             "modes": Value::Null,
             "default_mode": Value::Null,
-            "mutex_group": "plan_priority",
+            "mutex_group": Value::Null,
             "evidence_hint": "依据 plan_type（Plus 账号优先调度）",
         },
         {
@@ -1082,7 +1082,7 @@ pub fn build_admin_pool_scheduling_presets_payload() -> Value {
             "providers": ["codex", "kiro"],
             "modes": Value::Null,
             "default_mode": Value::Null,
-            "mutex_group": "plan_priority",
+            "mutex_group": Value::Null,
             "evidence_hint": "依据 plan_type（Pro 账号优先调度）",
         },
         {
@@ -1132,7 +1132,7 @@ pub fn build_admin_pool_scheduling_presets_payload() -> Value {
             "providers": ["codex", "kiro"],
             "modes": Value::Null,
             "default_mode": Value::Null,
-            "mutex_group": "plan_priority",
+            "mutex_group": Value::Null,
             "evidence_hint": "依据 plan_type（Team 账号优先调度）",
         }
     ])

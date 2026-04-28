@@ -258,7 +258,6 @@ const emit = defineEmits<{
 }>()
 
 const DISTRIBUTION_GROUP = 'distribution_mode'
-const PLAN_PRIORITY_GROUP = 'plan_priority'
 
 const FALLBACK_PRESET_DEFS: PoolPresetMeta[] = [
   {
@@ -306,7 +305,7 @@ const FALLBACK_PRESET_DEFS: PoolPresetMeta[] = [
     label: 'Free 优先',
     description: '优先消耗 Free 账号（依赖 plan_type）',
     evidence_hint: '依据 plan_type（Free 账号优先调度）',
-    mutex_group: PLAN_PRIORITY_GROUP,
+    mutex_group: null,
     providers: ['codex', 'kiro'],
     modes: null,
     default_mode: null,
@@ -316,7 +315,7 @@ const FALLBACK_PRESET_DEFS: PoolPresetMeta[] = [
     label: 'Team 优先',
     description: '优先消耗 Team 账号（依赖 plan_type）',
     evidence_hint: '依据 plan_type（Team 账号优先调度）',
-    mutex_group: PLAN_PRIORITY_GROUP,
+    mutex_group: null,
     providers: ['codex', 'kiro'],
     modes: null,
     default_mode: null,
@@ -326,7 +325,7 @@ const FALLBACK_PRESET_DEFS: PoolPresetMeta[] = [
     label: 'Plus 优先',
     description: '优先消耗 Plus 账号（依赖 plan_type）',
     evidence_hint: '依据 plan_type（Plus 账号优先调度）',
-    mutex_group: PLAN_PRIORITY_GROUP,
+    mutex_group: null,
     providers: ['codex', 'kiro'],
     modes: null,
     default_mode: null,
@@ -336,7 +335,7 @@ const FALLBACK_PRESET_DEFS: PoolPresetMeta[] = [
     label: 'Pro 优先',
     description: '优先消耗 Pro 账号（依赖 plan_type）',
     evidence_hint: '依据 plan_type（Pro 账号优先调度）',
-    mutex_group: PLAN_PRIORITY_GROUP,
+    mutex_group: null,
     providers: ['codex', 'kiro'],
     modes: null,
     default_mode: null,
