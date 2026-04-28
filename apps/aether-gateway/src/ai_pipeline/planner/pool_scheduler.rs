@@ -231,20 +231,14 @@ fn pool_quota_snapshot_exhausted(
 ) -> Option<bool> {
     let provider_type = provider_type.trim().to_ascii_lowercase();
     if provider_type == "codex" {
-        let credits = quota_snapshot.get("credits").and_then(Value::as_object);
-        if credits
+        if quota_snapshot
+            .get("credits")
+            .and_then(Value::as_object)
             .and_then(|credits| credits.get("unlimited"))
             .and_then(Value::as_bool)
             == Some(true)
         {
             return Some(false);
-        }
-        if credits
-            .and_then(|credits| credits.get("has_credits"))
-            .and_then(Value::as_bool)
-            == Some(false)
-        {
-            return Some(true);
         }
 
         return quota_snapshot

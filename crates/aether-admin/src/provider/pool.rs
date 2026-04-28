@@ -206,20 +206,14 @@ fn admin_pool_quota_windows_below_skip_threshold(windows: &[Value]) -> Option<bo
 fn admin_pool_codex_quota_snapshot_exhausted(
     quota_snapshot: &serde_json::Map<String, Value>,
 ) -> Option<bool> {
-    let credits = quota_snapshot.get("credits").and_then(Value::as_object);
-    if credits
+    if quota_snapshot
+        .get("credits")
+        .and_then(Value::as_object)
         .and_then(|credits| credits.get("unlimited"))
         .and_then(|value| admin_pool_json_bool(Some(value)))
         == Some(true)
     {
         return Some(false);
-    }
-    if credits
-        .and_then(|credits| credits.get("has_credits"))
-        .and_then(|value| admin_pool_json_bool(Some(value)))
-        == Some(false)
-    {
-        return Some(true);
     }
 
     quota_snapshot
@@ -256,9 +250,6 @@ pub fn admin_pool_key_account_quota_exhausted(
         "codex" => {
             if admin_pool_json_bool(bucket.get("credits_unlimited")) == Some(true) {
                 return false;
-            }
-            if admin_pool_json_bool(bucket.get("has_credits")) == Some(false) {
-                return true;
             }
             let window_remaining_ratios = [
                 admin_pool_json_f64(bucket.get("primary_used_percent")),
@@ -713,7 +704,7 @@ mod tests {
 
     #[test]
     fn detects_codex_exhaustion_from_metadata() {
-        assert!(admin_pool_key_account_quota_exhausted(
+        assert!(!admin_pool_key_account_quota_exhausted(
             &sample_key(Some(json!({
                 "codex": {
                     "has_credits": false,
