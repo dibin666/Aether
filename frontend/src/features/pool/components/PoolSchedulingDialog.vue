@@ -682,16 +682,17 @@ function normalizeMutexSelection(items: PresetListItem[]): PresetListItem[] {
     groups.get(item.mutexGroup)?.push(index)
   })
 
-  for (const indexes of groups.values()) {
+  for (const [group, indexes] of groups.entries()) {
     if (indexes.length <= 1) continue
     const enabledApplicable = indexes.find(index => {
       const item = next[index]
       return item.enabled && item.applicable
     })
     const firstApplicable = indexes.find(index => next[index].applicable)
-    const winner = enabledApplicable ?? firstApplicable ?? indexes[0]
+    const winner =
+      enabledApplicable ?? (group === DISTRIBUTION_GROUP ? firstApplicable ?? indexes[0] : null)
     indexes.forEach((index) => {
-      next[index].enabled = index === winner && next[index].applicable
+      next[index].enabled = winner !== null && index === winner && next[index].applicable
     })
   }
 
@@ -699,6 +700,9 @@ function normalizeMutexSelection(items: PresetListItem[]): PresetListItem[] {
 }
 
 function togglePreset(index: number, enabled: boolean) {
+  const item = presetList.value[index]
+  if (!item) return
+
   if (enabled && item.mutexGroup) {
     presetList.value.forEach((peer, peerIndex) => {
       if (peerIndex !== index && peer.mutexGroup === item.mutexGroup) {
@@ -751,7 +755,7 @@ const activeDistributionLabel = computed(() => {
 const strategyItems = computed(() => {
   const items: { index: number; item: PresetListItem }[] = []
   presetList.value.forEach((item, index) => {
-    if (!item.mutexGroup) {
+    if (item.mutexGroup !== DISTRIBUTION_GROUP) {
       items.push({ index, item })
     }
   })

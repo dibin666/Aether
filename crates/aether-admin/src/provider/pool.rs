@@ -203,10 +203,15 @@ pub fn admin_pool_key_account_quota_exhausted(
             if admin_pool_json_bool(bucket.get("has_credits")) == Some(false) {
                 return true;
             }
-            admin_pool_json_f64(bucket.get("primary_used_percent"))
-                .is_some_and(|value| value >= 100.0)
-                || admin_pool_json_f64(bucket.get("secondary_used_percent"))
-                    .is_some_and(|value| value >= 100.0)
+            let window_used_percents = [
+                admin_pool_json_f64(bucket.get("primary_used_percent")),
+                admin_pool_json_f64(bucket.get("secondary_used_percent")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+            !window_used_percents.is_empty()
+                && window_used_percents.iter().all(|value| *value >= 100.0)
         }
         "kiro" => {
             if admin_pool_json_f64(bucket.get("remaining")).is_some_and(|value| value <= 0.0) {
@@ -655,6 +660,26 @@ mod tests {
         assert!(admin_pool_key_account_quota_exhausted(
             &sample_key(Some(json!({
                 "codex": {
+                    "secondary_used_percent": 100.0
+                }
+            }))),
+            "codex",
+        ));
+        assert!(!admin_pool_key_account_quota_exhausted(
+            &sample_key(Some(json!({
+                "codex": {
+                    "has_credits": true,
+                    "primary_used_percent": 100.0,
+                    "secondary_used_percent": 25.0
+                }
+            }))),
+            "codex",
+        ));
+        assert!(admin_pool_key_account_quota_exhausted(
+            &sample_key(Some(json!({
+                "codex": {
+                    "has_credits": true,
+                    "primary_used_percent": 100.0,
                     "secondary_used_percent": 100.0
                 }
             }))),

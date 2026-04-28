@@ -1,5 +1,11 @@
+const DISTRIBUTION_MUTEX_GROUP = 'distribution_mode'
+
 export interface SchedulingDialogPresetLike {
   mutexGroup: string | null
+}
+
+function isStrategyPreset(item: SchedulingDialogPresetLike): boolean {
+  return item.mutexGroup !== DISTRIBUTION_MUTEX_GROUP
 }
 
 export function moveStrategyItem<T extends SchedulingDialogPresetLike>(
@@ -10,11 +16,10 @@ export function moveStrategyItem<T extends SchedulingDialogPresetLike>(
   const strategyIndexes: number[] = []
 
   items.forEach((item, index) => {
-    if (!item.mutexGroup) {
+    if (isStrategyPreset(item)) {
       strategyIndexes.push(index)
     }
   })
-
   const currentPosition = strategyIndexes.indexOf(itemIndex)
   if (currentPosition === -1) {
     return [...items]
