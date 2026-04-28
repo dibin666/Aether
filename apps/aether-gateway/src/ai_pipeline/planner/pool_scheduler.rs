@@ -250,15 +250,13 @@ fn pool_quota_snapshot_exhausted(
         return quota_snapshot
             .get("windows")
             .and_then(Value::as_array)
-            .and_then(|windows| pool_quota_windows_below_skip_threshold(windows))
-            .or_else(|| quota_snapshot.get("exhausted").and_then(Value::as_bool));
+            .and_then(|windows| pool_quota_windows_below_skip_threshold(windows));
     }
 
     quota_snapshot
         .get("windows")
         .and_then(Value::as_array)
         .and_then(|windows| pool_quota_windows_below_skip_threshold(windows))
-        .or_else(|| quota_snapshot.get("exhausted").and_then(Value::as_bool))
 }
 
 fn pool_quota_window_remaining_ratio(window: &Map<String, Value>) -> Option<f64> {

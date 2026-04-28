@@ -226,7 +226,6 @@ fn admin_pool_codex_quota_snapshot_exhausted(
         .get("windows")
         .and_then(Value::as_array)
         .and_then(|windows| admin_pool_quota_windows_below_skip_threshold(windows))
-        .or_else(|| admin_pool_json_bool(quota_snapshot.get("exhausted")))
 }
 
 pub fn admin_pool_key_account_quota_exhausted(
@@ -238,8 +237,11 @@ pub fn admin_pool_key_account_quota_exhausted(
             if let Some(exhausted) = admin_pool_codex_quota_snapshot_exhausted(quota_snapshot) {
                 return exhausted;
             }
-        }
-        if let Some(exhausted) = admin_pool_json_bool(quota_snapshot.get("exhausted")) {
+        } else if let Some(exhausted) = quota_snapshot
+            .get("windows")
+            .and_then(Value::as_array)
+            .and_then(|windows| admin_pool_quota_windows_below_skip_threshold(windows))
+        {
             return exhausted;
         }
     }
@@ -841,6 +843,28 @@ mod tests {
                         "remaining_ratio": 0.75
                     }
                 ]
+            }
+        }));
+
+        assert!(!admin_pool_key_account_quota_exhausted(&key, "codex"));
+    }
+
+    #[test]
+    fn codex_ignores_stale_exhausted_snapshot_without_remaining_data() {
+        let mut key = sample_key(Some(json!({
+            "codex": {
+                "has_credits": true,
+                "primary_used_percent": 0.0,
+                "secondary_used_percent": 0.0
+            }
+        })));
+        key.status_snapshot = Some(json!({
+            "quota": {
+                "version": 2,
+                "provider_type": "codex",
+                "code": "exhausted",
+                "exhausted": true,
+                "updated_at": 1_776_395_200u64
             }
         }));
 
