@@ -28,6 +28,7 @@ const POOL_ACCOUNT_BLOCKED_SKIP_REASON: &str = "pool_account_blocked";
 const POOL_ACCOUNT_EXHAUSTED_SKIP_REASON: &str = "pool_account_exhausted";
 const POOL_COOLDOWN_SKIP_REASON: &str = "pool_cooldown";
 const POOL_COST_LIMIT_REACHED_SKIP_REASON: &str = "pool_cost_limit_reached";
+const POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD: f64 = 0.02;
 static LOAD_BALANCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -246,36 +247,48 @@ fn pool_quota_snapshot_exhausted(
             return Some(true);
         }
 
-        if let Some(windows) = quota_snapshot.get("windows").and_then(Value::as_array) {
-            if !windows.is_empty() {
-                return Some(pool_quota_windows_all_exhausted(windows));
-            }
-        }
+        return quota_snapshot
+            .get("windows")
+            .and_then(Value::as_array)
+            .and_then(|windows| pool_quota_windows_below_skip_threshold(windows))
+            .or_else(|| quota_snapshot.get("exhausted").and_then(Value::as_bool));
     }
 
-    quota_snapshot.get("exhausted").and_then(Value::as_bool)
+    quota_snapshot
+        .get("windows")
+        .and_then(Value::as_array)
+        .and_then(|windows| pool_quota_windows_below_skip_threshold(windows))
+        .or_else(|| quota_snapshot.get("exhausted").and_then(Value::as_bool))
 }
 
-fn pool_quota_windows_all_exhausted(windows: &[Value]) -> bool {
-    let mut total = 0usize;
-    let mut exhausted = 0usize;
-    for window in windows.iter().filter_map(Value::as_object) {
-        total += 1;
-        let is_exhausted = window
-            .get("is_exhausted")
-            .and_then(Value::as_bool)
-            .or_else(|| {
-                window
-                    .get("used_ratio")
-                    .and_then(Value::as_f64)
-                    .map(|value| value >= 1.0 - 1e-6)
-            })
-            .unwrap_or(false);
-        if is_exhausted {
-            exhausted += 1;
-        }
-    }
-    total > 0 && exhausted == total
+fn pool_quota_window_remaining_ratio(window: &Map<String, Value>) -> Option<f64> {
+    window
+        .get("remaining_ratio")
+        .and_then(Value::as_f64)
+        .map(|value| value.clamp(0.0, 1.0))
+        .or_else(|| {
+            window
+                .get("used_ratio")
+                .and_then(Value::as_f64)
+                .map(|value| (1.0 - value.clamp(0.0, 1.0)).max(0.0))
+        })
+        .or_else(|| {
+            (window.get("is_exhausted").and_then(Value::as_bool) == Some(true)).then_some(0.0)
+        })
+}
+
+fn pool_quota_windows_below_skip_threshold(windows: &[Value]) -> Option<bool> {
+    let remaining_ratios = windows
+        .iter()
+        .filter_map(Value::as_object)
+        .filter_map(pool_quota_window_remaining_ratio)
+        .collect::<Vec<_>>();
+
+    (!remaining_ratios.is_empty()).then(|| {
+        remaining_ratios
+            .iter()
+            .any(|remaining| *remaining < POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD)
+    })
 }
 
 fn derive_pool_oauth_plan_type(
@@ -1522,7 +1535,7 @@ mod tests {
                             "provider_type": "codex",
                             "exhausted": true,
                             "windows": [
-                                { "code": "weekly", "used_ratio": 1.0 },
+                                { "code": "weekly", "used_ratio": 0.97 },
                                 { "code": "5h", "used_ratio": 0.25 }
                             ]
                         })
@@ -1542,8 +1555,8 @@ mod tests {
                             "provider_type": "codex",
                             "exhausted": true,
                             "windows": [
-                                { "code": "weekly", "used_ratio": 1.0 },
-                                { "code": "5h", "used_ratio": 1.0 }
+                                { "code": "weekly", "used_ratio": 0.99 },
+                                { "code": "5h", "used_ratio": 0.25 }
                             ]
                         })
                         .as_object()

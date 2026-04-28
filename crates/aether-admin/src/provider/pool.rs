@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::status as provider_status;
+const ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD: f64 = 0.02;
 
 #[derive(Debug, Default, Clone, serde::Deserialize)]
 pub struct AdminPoolResolveSelectionRequest {
@@ -178,6 +179,30 @@ fn admin_pool_key_quota_snapshot<'a>(
     admin_pool_quota_snapshot_matches_provider(quota_snapshot, provider_type)
         .then_some(quota_snapshot)
 }
+fn admin_pool_quota_window_remaining_ratio(window: &serde_json::Map<String, Value>) -> Option<f64> {
+    admin_pool_json_f64(window.get("remaining_ratio"))
+        .map(|value| value.clamp(0.0, 1.0))
+        .or_else(|| {
+            admin_pool_json_f64(window.get("used_ratio"))
+                .map(|value| (1.0 - value.clamp(0.0, 1.0)).max(0.0))
+        })
+        .or_else(|| (admin_pool_json_bool(window.get("is_exhausted")) == Some(true)).then_some(0.0))
+}
+
+fn admin_pool_quota_windows_below_skip_threshold(windows: &[Value]) -> Option<bool> {
+    let remaining_ratios = windows
+        .iter()
+        .filter_map(Value::as_object)
+        .filter_map(admin_pool_quota_window_remaining_ratio)
+        .collect::<Vec<_>>();
+
+    (!remaining_ratios.is_empty()).then(|| {
+        remaining_ratios
+            .iter()
+            .any(|remaining| *remaining < ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD)
+    })
+}
+
 fn admin_pool_codex_quota_snapshot_exhausted(
     quota_snapshot: &serde_json::Map<String, Value>,
 ) -> Option<bool> {
@@ -197,30 +222,11 @@ fn admin_pool_codex_quota_snapshot_exhausted(
         return Some(true);
     }
 
-    let windows = quota_snapshot.get("windows").and_then(Value::as_array);
-    if let Some(windows) = windows.filter(|windows| !windows.is_empty()) {
-        let mut observed_windows = 0usize;
-        let mut exhausted_windows = 0usize;
-        for window in windows.iter().filter_map(Value::as_object) {
-            observed_windows += 1;
-            let exhausted = window
-                .get("is_exhausted")
-                .and_then(|value| admin_pool_json_bool(Some(value)))
-                .or_else(|| {
-                    admin_pool_json_f64(window.get("used_ratio")).map(|value| value >= 1.0 - 1e-6)
-                })
-                .or_else(|| {
-                    admin_pool_json_f64(window.get("remaining_ratio")).map(|value| value <= 1e-6)
-                })
-                .unwrap_or(false);
-            if exhausted {
-                exhausted_windows += 1;
-            }
-        }
-        return Some(observed_windows > 0 && exhausted_windows == observed_windows);
-    }
-
-    admin_pool_json_bool(quota_snapshot.get("exhausted"))
+    quota_snapshot
+        .get("windows")
+        .and_then(Value::as_array)
+        .and_then(|windows| admin_pool_quota_windows_below_skip_threshold(windows))
+        .or_else(|| admin_pool_json_bool(quota_snapshot.get("exhausted")))
 }
 
 pub fn admin_pool_key_account_quota_exhausted(
@@ -252,30 +258,46 @@ pub fn admin_pool_key_account_quota_exhausted(
             if admin_pool_json_bool(bucket.get("has_credits")) == Some(false) {
                 return true;
             }
-            let window_used_percents = [
+            let window_remaining_ratios = [
                 admin_pool_json_f64(bucket.get("primary_used_percent")),
                 admin_pool_json_f64(bucket.get("secondary_used_percent")),
             ]
             .into_iter()
             .flatten()
+            .map(|used_percent| (1.0 - (used_percent / 100.0).clamp(0.0, 1.0)).max(0.0))
             .collect::<Vec<_>>();
-            !window_used_percents.is_empty()
-                && window_used_percents.iter().all(|value| *value >= 100.0)
+            !window_remaining_ratios.is_empty()
+                && window_remaining_ratios
+                    .iter()
+                    .any(|remaining| *remaining < ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD)
         }
         "kiro" => {
+            if let (Some(limit), Some(remaining)) = (
+                admin_pool_json_f64(bucket.get("usage_limit")),
+                admin_pool_json_f64(bucket.get("remaining")),
+            ) {
+                if limit > 0.0 {
+                    return (remaining / limit).clamp(0.0, 1.0)
+                        < ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD;
+                }
+            }
             if admin_pool_json_f64(bucket.get("remaining")).is_some_and(|value| value <= 0.0) {
                 return true;
             }
-            if admin_pool_json_f64(bucket.get("usage_percentage"))
-                .is_some_and(|value| value >= 100.0)
-            {
+            if admin_pool_json_f64(bucket.get("usage_percentage")).is_some_and(|value| {
+                (1.0 - (value / 100.0).clamp(0.0, 1.0))
+                    < ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD
+            }) {
                 return true;
             }
             match (
                 admin_pool_json_f64(bucket.get("usage_limit")),
                 admin_pool_json_f64(bucket.get("current_usage")),
             ) {
-                (Some(limit), Some(current)) if limit > 0.0 => current >= limit,
+                (Some(limit), Some(current)) if limit > 0.0 => {
+                    ((limit - current).max(0.0) / limit).clamp(0.0, 1.0)
+                        < ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD
+                }
                 _ => false,
             }
         }
@@ -718,7 +740,17 @@ mod tests {
             &sample_key(Some(json!({
                 "codex": {
                     "has_credits": true,
-                    "primary_used_percent": 100.0,
+                    "primary_used_percent": 98.0,
+                    "secondary_used_percent": 25.0
+                }
+            }))),
+            "codex",
+        ));
+        assert!(admin_pool_key_account_quota_exhausted(
+            &sample_key(Some(json!({
+                "codex": {
+                    "has_credits": true,
+                    "primary_used_percent": 99.0,
                     "secondary_used_percent": 25.0
                 }
             }))),
@@ -800,8 +832,8 @@ mod tests {
                 "windows": [
                     {
                         "code": "weekly",
-                        "used_ratio": 0.0,
-                        "remaining_ratio": 1.0
+                        "used_ratio": 0.97,
+                        "remaining_ratio": 0.03
                     },
                     {
                         "code": "5h",
@@ -829,6 +861,14 @@ mod tests {
             &sample_key(Some(json!({
                 "kiro": {
                     "usage_percentage": 100.0
+                }
+            }))),
+            "kiro",
+        ));
+        assert!(!admin_pool_key_account_quota_exhausted(
+            &sample_key(Some(json!({
+                "kiro": {
+                    "usage_percentage": 98.0
                 }
             }))),
             "kiro",
