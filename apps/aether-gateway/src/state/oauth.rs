@@ -1279,17 +1279,10 @@ impl AppState {
             .await;
         let proxy_is_tunnel = local_oauth_proxy_is_tunnel(proxy_snapshot.as_ref());
         let mut headers = request.headers.clone();
-        if !proxy_is_tunnel {
-            headers.insert(
-                EXECUTION_REQUEST_FOLLOW_REDIRECTS_HEADER.to_string(),
-                "true".to_string(),
-            );
-        } else {
-            headers.insert(
-                EXECUTION_REQUEST_HTTP1_ONLY_HEADER.to_string(),
-                "true".to_string(),
-            );
-        }
+        headers.insert(
+            EXECUTION_REQUEST_FOLLOW_REDIRECTS_HEADER.to_string(),
+            "true".to_string(),
+        );
         let plan = ExecutionPlan {
             request_id: request.request_id.to_string(),
             candidate_id: None,

@@ -4571,8 +4571,7 @@ async fn gateway_refreshes_admin_provider_oauth_key_locally_via_execution_runtim
 }
 
 #[tokio::test]
-async fn gateway_refreshes_admin_provider_oauth_key_tunnel_proxy_without_follow_redirects_like_master(
-) {
+async fn gateway_refreshes_admin_provider_oauth_key_tunnel_proxy_with_direct_refresh_controls() {
     let execution_plans = Arc::new(Mutex::new(Vec::<ExecutionPlan>::new()));
     let execution_plans_clone = Arc::clone(&execution_plans);
     let execution_runtime = Router::new().route(
@@ -4706,15 +4705,15 @@ async fn gateway_refreshes_admin_provider_oauth_key_tunnel_proxy_without_follow_
     assert_eq!(
         refresh_plan
             .headers
-            .get(EXECUTION_REQUEST_FOLLOW_REDIRECTS_HEADER),
-        None
+            .get(EXECUTION_REQUEST_FOLLOW_REDIRECTS_HEADER)
+            .map(String::as_str),
+        Some("true")
     );
     assert_eq!(
         refresh_plan
             .headers
-            .get(EXECUTION_REQUEST_HTTP1_ONLY_HEADER)
-            .map(String::as_str),
-        Some("true")
+            .get(EXECUTION_REQUEST_HTTP1_ONLY_HEADER),
+        None
     );
 
     gateway_handle.abort();
