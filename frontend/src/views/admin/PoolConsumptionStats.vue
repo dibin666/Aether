@@ -87,7 +87,7 @@
               {{ selectedProvider?.provider_type || 'codex' }}
             </Badge>
             <span class="text-xs text-muted-foreground">
-              仅统计当前额度窗口内的账号消耗记录。
+              按所选时段汇总账号消耗记录。
             </span>
           </div>
           <p
@@ -99,7 +99,7 @@
         </div>
 
         <p class="text-[11px] text-muted-foreground/80">
-          统计口径与旧弹窗一致：按当前浏览器时区汇总今天、近 3 天、近 7 天、近 30 天及全部消耗账号数据。
+          按当前浏览器时区汇总今天、近 3 天、近 7 天、近 30 天及全部可用历史账号消耗数据。
         </p>
 
         <Tabs

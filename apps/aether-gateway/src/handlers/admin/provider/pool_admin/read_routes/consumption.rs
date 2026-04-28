@@ -130,13 +130,11 @@ pub(super) async fn build_admin_pool_consumption_stats_response(
             .then_with(|| left.id.cmp(&right.id))
     });
 
-    let window_starts = resolve_pool_consumption_window_starts(&keys, &provider_type);
     let periods = build_pool_consumption_periods(
         state,
         &provider.id,
         &provider_type,
         &keys,
-        &window_starts,
         tz_offset_minutes,
     )
     .await?;
@@ -154,14 +152,12 @@ async fn build_pool_consumption_periods(
     provider_id: &str,
     provider_type: &str,
     keys: &[StoredProviderCatalogKey],
-    window_starts: &BTreeMap<String, u64>,
     tz_offset_minutes: i32,
 ) -> Result<Vec<Value>, GatewayError> {
     let mut periods = Vec::new();
     for period in resolve_pool_consumption_period_defs(tz_offset_minutes) {
         let bounds = build_pool_consumption_unix_bounds(&period, tz_offset_minutes);
-        let query =
-            build_provider_api_key_consumption_query(provider_id, keys, window_starts, bounds);
+        let query = build_provider_api_key_consumption_query(provider_id, keys, bounds);
         let aggregates = if let Some(query) = query.as_ref() {
             state.summarize_provider_api_key_consumption(query).await?
         } else {
@@ -183,22 +179,16 @@ async fn build_pool_consumption_periods(
 fn build_provider_api_key_consumption_query(
     provider_id: &str,
     keys: &[StoredProviderCatalogKey],
-    window_starts: &BTreeMap<String, u64>,
     bounds: Option<(u64, u64)>,
 ) -> Option<ProviderApiKeyConsumptionSummaryQuery> {
     let global_start = bounds.map(|(start, _)| start).unwrap_or(0);
     let created_until_unix_secs = bounds.map(|(_, end)| end);
     let mut starts = BTreeMap::new();
     for key in keys {
-        let created_from_unix_secs = window_starts
-            .get(&key.id)
-            .copied()
-            .map(|window_start| window_start.max(global_start))
-            .unwrap_or(global_start);
-        if created_until_unix_secs.is_some_and(|value| created_from_unix_secs >= value) {
+        if created_until_unix_secs.is_some_and(|value| global_start >= value) {
             continue;
         }
-        starts.insert(key.id.clone(), created_from_unix_secs);
+        starts.insert(key.id.clone(), global_start);
     }
     if starts.is_empty() {
         return None;
@@ -388,82 +378,4 @@ fn format_pool_cost_usd(value: f64) -> String {
         0.0
     };
     format!("{safe:.8}")
-}
-
-fn resolve_pool_consumption_window_starts(
-    keys: &[StoredProviderCatalogKey],
-    provider_type: &str,
-) -> BTreeMap<String, u64> {
-    keys.iter()
-        .filter_map(|key| {
-            resolve_pool_consumption_window_start_ts(provider_type, key.upstream_metadata.as_ref())
-                .map(|created_from_unix_secs| (key.id.clone(), created_from_unix_secs))
-        })
-        .collect()
-}
-
-fn resolve_pool_consumption_window_start_ts(
-    provider_type: &str,
-    upstream_metadata: Option<&Value>,
-) -> Option<u64> {
-    if !provider_type.trim().eq_ignore_ascii_case("codex") {
-        return None;
-    }
-    let codex_metadata = upstream_metadata
-        .and_then(Value::as_object)
-        .and_then(|metadata| metadata.get("codex"))
-        .and_then(Value::as_object)?;
-    resolve_codex_consumption_window_start_ts(codex_metadata)
-}
-
-fn resolve_codex_consumption_window_start_ts(
-    codex_metadata: &serde_json::Map<String, Value>,
-) -> Option<u64> {
-    let mut starts = Vec::new();
-    for prefix in ["primary", "secondary"] {
-        let Some(window_minutes) =
-            json_f64(codex_metadata.get(&format!("{prefix}_window_minutes")))
-        else {
-            continue;
-        };
-        if window_minutes <= 0.0 {
-            continue;
-        }
-        let window_seconds = (window_minutes * 60.0) as u64;
-        if let Some(reset_at) =
-            normalize_unix_timestamp_seconds(codex_metadata.get(&format!("{prefix}_reset_at")))
-        {
-            starts.push(reset_at.saturating_sub(window_seconds));
-            continue;
-        }
-        let reset_seconds = json_f64(codex_metadata.get(&format!("{prefix}_reset_seconds")));
-        let updated_at = normalize_unix_timestamp_seconds(codex_metadata.get("updated_at"));
-        if let (Some(reset_seconds), Some(updated_at)) = (reset_seconds, updated_at) {
-            if reset_seconds >= 0.0 {
-                let window_end = updated_at.saturating_add(reset_seconds as u64);
-                starts.push(window_end.saturating_sub(window_seconds));
-            }
-        }
-    }
-    starts.into_iter().max()
-}
-
-fn normalize_unix_timestamp_seconds(value: Option<&Value>) -> Option<u64> {
-    let mut parsed = json_f64(value)?;
-    if parsed <= 0.0 {
-        return None;
-    }
-    if parsed > 1_000_000_000_000.0 {
-        parsed /= 1000.0;
-    }
-    Some(parsed as u64)
-}
-
-fn json_f64(value: Option<&Value>) -> Option<f64> {
-    match value {
-        Some(Value::Number(number)) => number.as_f64(),
-        Some(Value::String(value)) => value.trim().parse::<f64>().ok(),
-        _ => None,
-    }
-    .filter(|value| value.is_finite())
 }

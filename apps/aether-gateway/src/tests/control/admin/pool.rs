@@ -531,7 +531,7 @@ async fn gateway_pool_list_includes_usage_totals_and_nullable_lru_score() {
 }
 
 #[tokio::test]
-async fn gateway_filters_codex_consumption_stats_to_current_quota_window() {
+async fn gateway_pool_consumption_stats_keep_history_across_codex_quota_window() {
     let now_unix_secs = chrono::Utc::now().timestamp().max(0) as u64;
     let primary_window_minutes = 60u64;
     let primary_reset_at = now_unix_secs.saturating_add(1_800);
@@ -637,20 +637,20 @@ async fn gateway_filters_codex_consumption_stats_to_current_quota_window() {
         .find(|item| item["key"] == json!("all"))
         .expect("all period should exist");
     assert_eq!(all_period["summary"]["account_count"], json!(1));
-    assert_eq!(all_period["summary"]["request_count"], json!(1));
-    assert_eq!(all_period["summary"]["input_tokens"], json!(100u64));
-    assert_eq!(all_period["summary"]["output_tokens"], json!(30u64));
+    assert_eq!(all_period["summary"]["request_count"], json!(2));
+    assert_eq!(all_period["summary"]["input_tokens"], json!(140u64));
+    assert_eq!(all_period["summary"]["output_tokens"], json!(50u64));
     assert_eq!(all_period["summary"]["cache_tokens"], json!(30u64));
-    assert_eq!(all_period["summary"]["total_tokens"], json!(160u64));
-    assert_eq!(all_period["summary"]["total_cost_usd"], json!("3.50000000"));
+    assert_eq!(all_period["summary"]["total_tokens"], json!(220u64));
+    assert_eq!(all_period["summary"]["total_cost_usd"], json!("4.75000000"));
     let accounts = all_period["accounts"]
         .as_array()
         .expect("accounts should be array");
     assert_eq!(accounts.len(), 1);
     assert_eq!(accounts[0]["key_id"], json!("key-codex-1"));
-    assert_eq!(accounts[0]["request_count"], json!(1));
+    assert_eq!(accounts[0]["request_count"], json!(2));
     assert_eq!(accounts[0]["cache_tokens"], json!(30u64));
-    assert_eq!(accounts[0]["total_cost_usd"], json!("3.50000000"));
+    assert_eq!(accounts[0]["total_cost_usd"], json!("4.75000000"));
 }
 
 #[tokio::test]

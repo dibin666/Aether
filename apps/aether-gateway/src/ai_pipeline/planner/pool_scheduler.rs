@@ -299,7 +299,20 @@ fn normalize_pool_plan_type(value: &str, provider_type: &str) -> Option<String> 
     }
 
     let normalized = normalized.trim().to_ascii_lowercase();
-    (!normalized.is_empty()).then_some(normalized)
+    let canonical = if normalized.contains("enterprise") || normalized.contains("business") {
+        "enterprise"
+    } else if normalized.contains("team") {
+        "team"
+    } else if normalized.contains("pro") {
+        "pro"
+    } else if normalized.contains("plus") {
+        "plus"
+    } else if normalized.contains("free") {
+        "free"
+    } else {
+        normalized.as_str()
+    };
+    (!canonical.is_empty()).then_some(canonical.to_string())
 }
 
 fn json_f64(value: &Value) -> Option<f64> {
@@ -606,10 +619,26 @@ fn build_pool_sort_vectors(
             "cache_affinity" => cache_affinity_ranks.clone(),
             "priority_first" => priority_first_ranks(items, &lru_ranks),
             "single_account" => single_account_ranks(items),
-            "plus_first" => plan_ranks(items, &lru_ranks, Some("plus_only")),
-            "pro_first" => plan_ranks(items, &lru_ranks, Some("pro_only")),
-            "free_first" => plan_ranks(items, &lru_ranks, Some("free_only")),
-            "team_first" => plan_ranks(items, &lru_ranks, Some("team_only")),
+            "plus_first" => plan_ranks(
+                items,
+                &lru_ranks,
+                preset.mode.as_deref().or(Some("plus_only")),
+            ),
+            "pro_first" => plan_ranks(
+                items,
+                &lru_ranks,
+                preset.mode.as_deref().or(Some("pro_only")),
+            ),
+            "free_first" => plan_ranks(
+                items,
+                &lru_ranks,
+                preset.mode.as_deref().or(Some("free_only")),
+            ),
+            "team_first" => plan_ranks(
+                items,
+                &lru_ranks,
+                preset.mode.as_deref().or(Some("team_only")),
+            ),
             "health_first" => health_first_ranks(items, &lru_ranks),
             "latency_first" => latency_first_ranks(items, &lru_ranks),
             "cost_first" => cost_first_ranks(items, &lru_ranks, cost_limit_per_key_tokens),
@@ -1024,6 +1053,7 @@ fn pool_preset_supported_for_provider(preset: &str, provider_type: &str) -> bool
 fn pool_preset_mutex_group(preset: &str) -> Option<&'static str> {
     match preset {
         "lru" | "cache_affinity" | "load_balance" | "single_account" => Some("distribution_mode"),
+        "free_first" | "team_first" | "plus_first" | "pro_first" => Some("plan_priority"),
         _ => None,
     }
 }
@@ -1044,7 +1074,8 @@ fn runtime_cost_usage(runtime: &AdminProviderPoolRuntimeState, key_id: &str) -> 
 mod tests {
     use super::{
         apply_local_execution_pool_scheduler_with_runtime_map, build_pool_catalog_key_context,
-        normalize_enabled_pool_presets, PoolCatalogKeyContext,
+        normalize_enabled_pool_presets, normalize_pool_plan_type, plan_priority_score,
+        PoolCatalogKeyContext,
     };
     use crate::ai_pipeline::planner::candidate_resolution::EligibleLocalExecutionCandidate;
     use crate::ai_pipeline::PlannerAppState;
@@ -1755,6 +1786,66 @@ mod tests {
                 .map(|item| item.preset.as_str())
                 .collect::<Vec<_>>(),
             vec!["single_account", "priority_first"]
+        );
+    }
+
+    #[test]
+    fn normalizes_plan_priority_mutex_group_to_first_enabled_member() {
+        let presets = normalize_enabled_pool_presets(
+            &[
+                AdminProviderPoolSchedulingPreset {
+                    preset: "free_first".to_string(),
+                    enabled: false,
+                    mode: None,
+                },
+                AdminProviderPoolSchedulingPreset {
+                    preset: "team_first".to_string(),
+                    enabled: true,
+                    mode: None,
+                },
+                AdminProviderPoolSchedulingPreset {
+                    preset: "plus_first".to_string(),
+                    enabled: true,
+                    mode: None,
+                },
+                AdminProviderPoolSchedulingPreset {
+                    preset: "health_first".to_string(),
+                    enabled: true,
+                    mode: None,
+                },
+            ],
+            "codex",
+        );
+
+        assert_eq!(
+            presets
+                .iter()
+                .map(|item| item.preset.as_str())
+                .collect::<Vec<_>>(),
+            vec!["team_first", "health_first", "recent_refresh"]
+        );
+    }
+
+    #[test]
+    fn canonicalizes_marketing_plan_names_for_plan_priority() {
+        assert_eq!(
+            normalize_pool_plan_type("ChatGPT Plus", "codex").as_deref(),
+            Some("plus")
+        );
+        assert_eq!(
+            normalize_pool_plan_type("Codex Team", "codex").as_deref(),
+            Some("team")
+        );
+        assert_eq!(
+            normalize_pool_plan_type("chatgpt_free", "codex").as_deref(),
+            Some("free")
+        );
+        assert_eq!(
+            plan_priority_score(
+                normalize_pool_plan_type("ChatGPT Plus", "codex").as_deref(),
+                Some("plus_only"),
+            ),
+            0.0
         );
     }
 
