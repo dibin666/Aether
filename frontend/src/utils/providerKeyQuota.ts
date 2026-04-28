@@ -26,7 +26,7 @@ function formatPercent(value: number): string {
   return `${clampPercent(value).toFixed(1)}%`
 }
 
-function getQuotaSnapshot(
+export function getQuotaSnapshot(
   input: ProviderKeyQuotaCarrier,
 ): QuotaStatusSnapshot | null {
   return input.status_snapshot?.quota ?? null
