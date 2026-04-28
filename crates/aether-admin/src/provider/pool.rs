@@ -178,15 +178,64 @@ fn admin_pool_key_quota_snapshot<'a>(
     admin_pool_quota_snapshot_matches_provider(quota_snapshot, provider_type)
         .then_some(quota_snapshot)
 }
+fn admin_pool_codex_quota_snapshot_exhausted(
+    quota_snapshot: &serde_json::Map<String, Value>,
+) -> Option<bool> {
+    let credits = quota_snapshot.get("credits").and_then(Value::as_object);
+    if credits
+        .and_then(|credits| credits.get("unlimited"))
+        .and_then(|value| admin_pool_json_bool(Some(value)))
+        == Some(true)
+    {
+        return Some(false);
+    }
+    if credits
+        .and_then(|credits| credits.get("has_credits"))
+        .and_then(|value| admin_pool_json_bool(Some(value)))
+        == Some(false)
+    {
+        return Some(true);
+    }
+
+    let windows = quota_snapshot.get("windows").and_then(Value::as_array);
+    if let Some(windows) = windows.filter(|windows| !windows.is_empty()) {
+        let mut observed_windows = 0usize;
+        let mut exhausted_windows = 0usize;
+        for window in windows.iter().filter_map(Value::as_object) {
+            observed_windows += 1;
+            let exhausted = window
+                .get("is_exhausted")
+                .and_then(|value| admin_pool_json_bool(Some(value)))
+                .or_else(|| {
+                    admin_pool_json_f64(window.get("used_ratio")).map(|value| value >= 1.0 - 1e-6)
+                })
+                .or_else(|| {
+                    admin_pool_json_f64(window.get("remaining_ratio")).map(|value| value <= 1e-6)
+                })
+                .unwrap_or(false);
+            if exhausted {
+                exhausted_windows += 1;
+            }
+        }
+        return Some(observed_windows > 0 && exhausted_windows == observed_windows);
+    }
+
+    admin_pool_json_bool(quota_snapshot.get("exhausted"))
+}
 
 pub fn admin_pool_key_account_quota_exhausted(
     key: &StoredProviderCatalogKey,
     provider_type: &str,
 ) -> bool {
-    if let Some(exhausted) = admin_pool_key_quota_snapshot(key, provider_type)
-        .and_then(|quota_snapshot| admin_pool_json_bool(quota_snapshot.get("exhausted")))
-    {
-        return exhausted;
+    if let Some(quota_snapshot) = admin_pool_key_quota_snapshot(key, provider_type) {
+        if provider_type.trim().eq_ignore_ascii_case("codex") {
+            if let Some(exhausted) = admin_pool_codex_quota_snapshot_exhausted(quota_snapshot) {
+                return exhausted;
+            }
+        }
+        if let Some(exhausted) = admin_pool_json_bool(quota_snapshot.get("exhausted")) {
+            return exhausted;
+        }
     }
 
     let provider_type = provider_type.trim().to_ascii_lowercase();
@@ -725,6 +774,39 @@ mod tests {
                         "code": "5h",
                         "used_ratio": 0.0,
                         "remaining_ratio": 1.0
+                    }
+                ]
+            }
+        }));
+
+        assert!(!admin_pool_key_account_quota_exhausted(&key, "codex"));
+    }
+
+    #[test]
+    fn codex_snapshot_windows_override_stale_exhausted_flag() {
+        let mut key = sample_key(Some(json!({
+            "codex": {
+                "primary_used_percent": 100.0,
+                "secondary_used_percent": 100.0
+            }
+        })));
+        key.status_snapshot = Some(json!({
+            "quota": {
+                "version": 2,
+                "provider_type": "codex",
+                "code": "exhausted",
+                "exhausted": true,
+                "updated_at": 1_776_395_200u64,
+                "windows": [
+                    {
+                        "code": "weekly",
+                        "used_ratio": 0.0,
+                        "remaining_ratio": 1.0
+                    },
+                    {
+                        "code": "5h",
+                        "used_ratio": 0.25,
+                        "remaining_ratio": 0.75
                     }
                 ]
             }
