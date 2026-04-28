@@ -1582,6 +1582,20 @@ async fn gateway_formats_codex_quota_countdown_from_reset_after_seconds() {
         keys[0]["account_quota"],
         "周剩余 90.0% (3天2小时后重置) | 5H剩余 67.0% (3小时50分钟后重置)"
     );
+    assert_eq!(
+        payload["quota_summary"],
+        json!({
+            "total": 1,
+            "with_quota": 1,
+            "without_quota": 0,
+            "plans": [{
+                "plan_type": "plus",
+                "total": 1,
+                "with_quota": 1,
+                "without_quota": 0
+            }]
+        })
+    );
 }
 
 #[tokio::test]
@@ -1665,6 +1679,20 @@ async fn gateway_marks_exhausted_codex_pool_key_as_blocked_when_flag_enabled() {
         })
     );
     assert_eq!(keys[0]["account_quota"], json!("5H剩余 0.0%"));
+    assert_eq!(
+        payload["quota_summary"],
+        json!({
+            "total": 1,
+            "with_quota": 0,
+            "without_quota": 1,
+            "plans": [{
+                "plan_type": "plus",
+                "total": 1,
+                "with_quota": 0,
+                "without_quota": 1
+            }]
+        })
+    );
 }
 
 #[tokio::test]

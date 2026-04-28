@@ -10,6 +10,7 @@ use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
 };
 use serde_json::json;
+use std::collections::BTreeMap;
 
 fn admin_pool_string_list(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
     let values = value
@@ -750,6 +751,59 @@ fn admin_pool_scheduling_payload(
         Vec::new(),
     )
 }
+pub(super) fn build_admin_pool_quota_summary(
+    state: &AdminAppState<'_>,
+    provider_type: &str,
+    keys: &[StoredProviderCatalogKey],
+) -> serde_json::Value {
+    #[derive(Default)]
+    struct PlanCounts {
+        total: usize,
+        with_quota: usize,
+        without_quota: usize,
+    }
+
+    let mut total_with_quota = 0usize;
+    let mut total_without_quota = 0usize;
+    let mut by_plan = BTreeMap::<String, PlanCounts>::new();
+
+    for key in keys {
+        let auth_config = state.parse_catalog_auth_config_json(key);
+        let plan_type = admin_pool_derive_oauth_plan_type(key, provider_type, auth_config.as_ref())
+            .unwrap_or_else(|| "unknown".to_string());
+        let has_quota =
+            !admin_provider_pool_pure::admin_pool_key_account_quota_exhausted(key, provider_type);
+        let counts = by_plan.entry(plan_type).or_default();
+        counts.total += 1;
+        if has_quota {
+            counts.with_quota += 1;
+            total_with_quota += 1;
+        } else {
+            counts.without_quota += 1;
+            total_without_quota += 1;
+        }
+    }
+
+    let plans = by_plan
+        .into_iter()
+        .map(|(plan_type, counts)| {
+            json!({
+                "plan_type": plan_type,
+                "total": counts.total,
+                "with_quota": counts.with_quota,
+                "without_quota": counts.without_quota,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "total": keys.len(),
+        "with_quota": total_with_quota,
+        "without_quota": total_without_quota,
+        "plans": plans,
+    })
+}
+
 pub(super) fn build_admin_pool_key_payload(
     state: &AdminAppState<'_>,
     provider_type: &str,

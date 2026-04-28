@@ -182,11 +182,26 @@ export interface PoolSchedulingReason {
   detail?: string | null
 }
 
+export interface PoolQuotaPlanSummary {
+  plan_type: string
+  total: number
+  with_quota: number
+  without_quota: number
+}
+
+export interface PoolQuotaSummary {
+  total: number
+  with_quota: number
+  without_quota: number
+  plans: PoolQuotaPlanSummary[]
+}
+
 export interface PoolKeysPageResponse {
   total: number
   page: number
   page_size: number
   keys: PoolKeyDetail[]
+  quota_summary?: PoolQuotaSummary | null
 }
 
 export interface PoolConsumptionAccount {

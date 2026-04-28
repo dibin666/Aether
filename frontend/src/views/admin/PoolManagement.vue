@@ -307,6 +307,41 @@
           </div>
         </div>
       </div>
+      <div
+        v-if="selectedProviderId && poolQuotaSummary && poolQuotaSummary.total > 0"
+        class="border-b border-border/60 bg-muted/10 px-4 py-3 sm:px-6"
+      >
+        <div class="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <span class="font-medium text-foreground">额度概览</span>
+            <span class="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-emerald-700 dark:text-emerald-400">
+              有额度 {{ poolQuotaSummary.with_quota }}
+            </span>
+            <span class="rounded-md border border-destructive/25 bg-destructive/10 px-2 py-1 text-destructive">
+              无额度 {{ poolQuotaSummary.without_quota }}
+            </span>
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+            <span
+              v-for="item in poolQuotaPlanSummaryItems"
+              :key="item.planType"
+              class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/70 px-2 py-1"
+            >
+              <Badge
+                variant="outline"
+                class="h-4 px-1 py-0 text-[10px]"
+                :class="item.planClass"
+              >
+                {{ item.planLabel }}
+              </Badge>
+              <span>有 {{ item.withQuota }}</span>
+              <span class="text-muted-foreground/60">/</span>
+              <span>无 {{ item.withoutQuota }}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
 
 
       <!-- Loading (initial) -->
@@ -1545,6 +1580,29 @@ function createEmptyKeyPage(page = 1, pageSizeValue = 50): PoolKeysPageResponse 
 }
 
 const keyPage = ref<PoolKeysPageResponse>(createEmptyKeyPage())
+const poolQuotaSummary = computed(() => keyPage.value.quota_summary ?? null)
+const PLAN_SUMMARY_ORDER = ['plus', 'pro', 'team', 'free', 'enterprise', 'business', 'paid', 'unknown']
+
+const poolQuotaPlanSummaryItems = computed(() => {
+  const plans = poolQuotaSummary.value?.plans ?? []
+  return [...plans]
+    .filter(item => item.total > 0)
+    .sort((a, b) => {
+      const ai = PLAN_SUMMARY_ORDER.indexOf(a.plan_type.toLowerCase())
+      const bi = PLAN_SUMMARY_ORDER.indexOf(b.plan_type.toLowerCase())
+      const ar = ai === -1 ? 999 : ai
+      const br = bi === -1 ? 999 : bi
+      return ar - br || a.plan_type.localeCompare(b.plan_type)
+    })
+    .map(item => ({
+      planType: item.plan_type,
+      planLabel: formatPoolQuotaPlanLabel(item.plan_type),
+      planClass: getOAuthPlanTypeClass(item.plan_type),
+      withQuota: item.with_quota,
+      withoutQuota: item.without_quota,
+      total: item.total,
+    }))
+})
 const keysLoading = ref(false)
 const refreshingCurrentPageQuota = ref(false)
 const searchQuery = ref(restoredViewState.search)
@@ -2589,6 +2647,13 @@ function getMobileTagClass(item: PoolMobileTagItem): string {
     return 'border-border/60 bg-background/70 text-muted-foreground'
   }
   return 'border-border/60 bg-background/80 text-foreground/80'
+}
+
+function formatPoolQuotaPlanLabel(planType: string): string {
+  const normalized = planType.trim().toLowerCase()
+  if (!normalized || normalized === 'unknown') return '未知订阅'
+  if (normalized === 'business') return 'Business'
+  return formatOAuthPlanType(normalized)
 }
 
 function formatOAuthPlanType(planType: string): string {

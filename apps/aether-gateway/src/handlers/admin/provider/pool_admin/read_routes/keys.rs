@@ -82,7 +82,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
     let pool_config = admin_provider_pool_config(&provider);
     let page_offset = page.saturating_sub(1).saturating_mul(page_size);
 
-    let (keys, total) = if status == "cooldown" {
+    let (keys, total, quota_summary_keys) = if status == "cooldown" {
         let cooldown_key_ids = if let Some(runner) = state.redis_kv_runner() {
             read_admin_provider_pool_cooldown_key_ids(&runner, &provider.id).await
         } else {
@@ -119,12 +119,13 @@ pub(super) async fn build_admin_pool_list_keys_response(
         }
         pool_selection::admin_pool_sort_keys(&mut keys);
         let total = keys.len();
+        let quota_summary_keys = keys.clone();
         let keys = keys
             .into_iter()
             .skip(page_offset)
             .take(page_size)
             .collect::<Vec<_>>();
-        (keys, total)
+        (keys, total, quota_summary_keys)
     } else if !quick_selectors.is_empty() {
         let mut keys = state
             .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
@@ -156,12 +157,13 @@ pub(super) async fn build_admin_pool_list_keys_response(
             .collect::<Vec<_>>();
         pool_selection::admin_pool_sort_keys(&mut keys);
         let total = keys.len();
+        let quota_summary_keys = keys.clone();
         let keys = keys
             .into_iter()
             .skip(page_offset)
             .take(page_size)
             .collect::<Vec<_>>();
-        (keys, total)
+        (keys, total, quota_summary_keys)
     } else {
         let key_page = state
             .list_provider_catalog_key_page(&ProviderCatalogKeyListQuery {
@@ -177,7 +179,25 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 order: ProviderCatalogKeyListOrder::Name,
             })
             .await?;
-        (key_page.items, key_page.total)
+        let quota_summary_keys = state
+            .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
+            .await?
+            .into_iter()
+            .filter(|key| match status.as_str() {
+                "active" => key.is_active,
+                "inactive" => !key.is_active,
+                _ => true,
+            })
+            .filter(|key| {
+                pool_selection::admin_pool_matches_search(
+                    state,
+                    key,
+                    &provider.provider_type,
+                    search.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        (key_page.items, key_page.total, quota_summary_keys)
     };
 
     let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
@@ -211,11 +231,18 @@ pub(super) async fn build_admin_pool_list_keys_response(
         })
         .collect::<Vec<_>>();
 
+    let quota_summary = pool_payloads::build_admin_pool_quota_summary(
+        state,
+        &provider.provider_type,
+        &quota_summary_keys,
+    );
+
     Ok(Json(json!({
         "total": total,
         "page": page,
         "page_size": page_size,
         "keys": items,
+        "quota_summary": quota_summary,
     }))
     .into_response())
 }
