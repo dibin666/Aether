@@ -5,6 +5,10 @@ use serde_json::Value;
 use crate::data::GatewayDataState;
 
 use super::{UsageCleanupSettings, UsageCleanupWindow};
+const MIN_DETAIL_RETENTION_DAYS: u64 = 1;
+const MIN_COMPRESSED_RETENTION_DAYS: u64 = 1;
+const MIN_HEADER_RETENTION_DAYS: u64 = 1;
+const MIN_LOG_RETENTION_DAYS: u64 = 30;
 
 pub(super) async fn system_config_bool(
     data: &GatewayDataState,
@@ -94,12 +98,28 @@ pub(super) async fn pending_cleanup_batch_size(
 pub(super) async fn usage_cleanup_settings(
     data: &GatewayDataState,
 ) -> Result<UsageCleanupSettings, DataLayerError> {
+    let detail_retention_days = system_config_u64(data, "detail_log_retention_days", 7)
+        .await?
+        .max(MIN_DETAIL_RETENTION_DAYS);
+    let compressed_retention_days = system_config_u64(data, "compressed_log_retention_days", 30)
+        .await?
+        .max(MIN_COMPRESSED_RETENTION_DAYS)
+        .max(detail_retention_days);
+    let header_retention_days = system_config_u64(data, "header_retention_days", 90)
+        .await?
+        .max(MIN_HEADER_RETENTION_DAYS);
+    let log_retention_days = system_config_u64(data, "log_retention_days", 365)
+        .await?
+        .max(MIN_LOG_RETENTION_DAYS)
+        .max(detail_retention_days)
+        .max(compressed_retention_days)
+        .max(header_retention_days);
+
     Ok(UsageCleanupSettings {
-        detail_retention_days: system_config_u64(data, "detail_log_retention_days", 7).await?,
-        compressed_retention_days: system_config_u64(data, "compressed_log_retention_days", 30)
-            .await?,
-        header_retention_days: system_config_u64(data, "header_retention_days", 90).await?,
-        log_retention_days: system_config_u64(data, "log_retention_days", 365).await?,
+        detail_retention_days,
+        compressed_retention_days,
+        header_retention_days,
+        log_retention_days,
         batch_size: system_config_usize(data, "cleanup_batch_size", 1_000)
             .await?
             .max(1),
@@ -112,11 +132,11 @@ pub(super) fn usage_cleanup_window(
     now_utc: DateTime<Utc>,
     settings: UsageCleanupSettings,
 ) -> UsageCleanupWindow {
-    let minutes = |days: u64| chrono::Duration::days(i64::try_from(days).unwrap_or(i64::MAX));
+    let days = |days: u64| chrono::Duration::days(i64::try_from(days).unwrap_or(i64::MAX));
     UsageCleanupWindow {
-        detail_cutoff: now_utc - minutes(settings.detail_retention_days),
-        compressed_cutoff: now_utc - minutes(settings.compressed_retention_days),
-        header_cutoff: now_utc - minutes(settings.header_retention_days),
-        log_cutoff: now_utc - minutes(settings.log_retention_days),
+        detail_cutoff: now_utc - days(settings.detail_retention_days),
+        compressed_cutoff: now_utc - days(settings.compressed_retention_days),
+        header_cutoff: now_utc - days(settings.header_retention_days),
+        log_cutoff: now_utc - days(settings.log_retention_days),
     }
 }

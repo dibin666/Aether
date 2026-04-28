@@ -217,13 +217,65 @@ fn build_pool_catalog_key_context(
             .and_then(Value::as_bool)
             .unwrap_or(false),
         quota_exhausted: quota_snapshot
-            .and_then(|quota| quota.get("exhausted"))
-            .and_then(Value::as_bool)
+            .and_then(|quota| pool_quota_snapshot_exhausted(quota, provider_type))
             .unwrap_or(false),
         health_score,
         latency_avg_ms,
         catalog_lru_score: Some(key.last_used_at_unix_secs.unwrap_or(0) as f64),
     }
+}
+fn pool_quota_snapshot_exhausted(
+    quota_snapshot: &Map<String, Value>,
+    provider_type: &str,
+) -> Option<bool> {
+    let provider_type = provider_type.trim().to_ascii_lowercase();
+    if provider_type == "codex" {
+        let credits = quota_snapshot.get("credits").and_then(Value::as_object);
+        if credits
+            .and_then(|credits| credits.get("unlimited"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            return Some(false);
+        }
+        if credits
+            .and_then(|credits| credits.get("has_credits"))
+            .and_then(Value::as_bool)
+            == Some(false)
+        {
+            return Some(true);
+        }
+
+        if let Some(windows) = quota_snapshot.get("windows").and_then(Value::as_array) {
+            if !windows.is_empty() {
+                return Some(pool_quota_windows_all_exhausted(windows));
+            }
+        }
+    }
+
+    quota_snapshot.get("exhausted").and_then(Value::as_bool)
+}
+
+fn pool_quota_windows_all_exhausted(windows: &[Value]) -> bool {
+    let mut total = 0usize;
+    let mut exhausted = 0usize;
+    for window in windows.iter().filter_map(Value::as_object) {
+        total += 1;
+        let is_exhausted = window
+            .get("is_exhausted")
+            .and_then(Value::as_bool)
+            .or_else(|| {
+                window
+                    .get("used_ratio")
+                    .and_then(Value::as_f64)
+                    .map(|value| value >= 1.0 - 1e-6)
+            })
+            .unwrap_or(false);
+        if is_exhausted {
+            exhausted += 1;
+        }
+    }
+    total > 0 && exhausted == total
 }
 
 fn derive_pool_oauth_plan_type(
@@ -1075,7 +1127,7 @@ mod tests {
     use super::{
         apply_local_execution_pool_scheduler_with_runtime_map, build_pool_catalog_key_context,
         normalize_enabled_pool_presets, normalize_pool_plan_type, plan_priority_score,
-        PoolCatalogKeyContext,
+        pool_quota_snapshot_exhausted, PoolCatalogKeyContext,
     };
     use crate::ai_pipeline::planner::candidate_resolution::EligibleLocalExecutionCandidate;
     use crate::ai_pipeline::PlannerAppState;
@@ -1433,6 +1485,96 @@ mod tests {
                 ("key-cooldown", "pool_cooldown"),
                 ("key-cost", "pool_cost_limit_reached"),
             ]
+        );
+    }
+
+    #[test]
+    fn pool_scheduler_skip_exhausted_uses_all_codex_windows() {
+        let key_available = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-available",
+            10,
+            Some(json!({
+                "pool_advanced": {
+                    "skip_exhausted_accounts": true
+                }
+            })),
+        );
+        let key_exhausted = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-exhausted",
+            10,
+            Some(json!({
+                "pool_advanced": {
+                    "skip_exhausted_accounts": true
+                }
+            })),
+        );
+
+        let key_context_by_id = BTreeMap::from([
+            (
+                "key-available".to_string(),
+                PoolCatalogKeyContext {
+                    quota_exhausted: pool_quota_snapshot_exhausted(
+                        json!({
+                            "provider_type": "codex",
+                            "exhausted": true,
+                            "windows": [
+                                { "code": "weekly", "used_ratio": 1.0 },
+                                { "code": "5h", "used_ratio": 0.25 }
+                            ]
+                        })
+                        .as_object()
+                        .expect("quota snapshot should be object"),
+                        "codex",
+                    )
+                    .unwrap_or(false),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+            (
+                "key-exhausted".to_string(),
+                PoolCatalogKeyContext {
+                    quota_exhausted: pool_quota_snapshot_exhausted(
+                        json!({
+                            "provider_type": "codex",
+                            "exhausted": true,
+                            "windows": [
+                                { "code": "weekly", "used_ratio": 1.0 },
+                                { "code": "5h", "used_ratio": 1.0 }
+                            ]
+                        })
+                        .as_object()
+                        .expect("quota snapshot should be object"),
+                        "codex",
+                    )
+                    .unwrap_or(false),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+        ]);
+
+        let (reordered, skipped) = apply_local_execution_pool_scheduler_with_runtime_map(
+            vec![key_available, key_exhausted],
+            &BTreeMap::new(),
+            &key_context_by_id,
+        );
+
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|item| item.candidate.key_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-available"]
+        );
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|item| (item.candidate.key_id.as_str(), item.skip_reason))
+                .collect::<Vec<_>>(),
+            vec![("key-exhausted", "pool_account_exhausted")]
         );
     }
 

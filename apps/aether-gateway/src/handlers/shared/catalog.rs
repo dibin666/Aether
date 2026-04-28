@@ -603,7 +603,7 @@ fn build_codex_quota_status_snapshot(
         .min();
     let exhausted_by_credits =
         credits_unlimited != Some(true) && credits_has_credits == Some(false);
-    let exhausted_by_window = usage_ratio.is_some_and(|value| value >= 1.0 - 1e-6);
+    let exhausted_by_window = quota_windows_all_exhausted(&windows);
     let exhausted = exhausted_by_credits || exhausted_by_window;
 
     let mut credits = Map::new();
@@ -1606,6 +1606,31 @@ mod tests {
             quota.get("windows").and_then(Value::as_array).map(Vec::len),
             Some(2usize)
         );
+    }
+
+    #[test]
+    fn codex_quota_snapshot_requires_all_windows_exhausted() {
+        let mut key = sample_catalog_key();
+        key.upstream_metadata = Some(json!({
+            "codex": {
+                "updated_at": 1_775_553_285u64,
+                "plan_type": "plus",
+                "primary_used_percent": 100.0,
+                "primary_reset_at": 1_900_000_000u64,
+                "secondary_used_percent": 25.0,
+                "secondary_reset_at": 1_900_500_000u64,
+                "has_credits": true
+            }
+        }));
+
+        let payload = provider_key_status_snapshot_payload(&key, "codex");
+        let quota = payload
+            .get("quota")
+            .and_then(Value::as_object)
+            .expect("quota snapshot should be object");
+
+        assert_eq!(quota.get("exhausted"), Some(&json!(false)));
+        assert_eq!(quota.get("code"), Some(&json!("ok")));
     }
 
     #[test]

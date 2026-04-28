@@ -240,8 +240,6 @@ impl<'a> AdminAppState<'a> {
                 affected += 1;
             }
         }
-        self.cleanup_deleted_provider_catalog_refs(&provider.id, &[], &deleted_key_ids)
-            .await?;
 
         Ok(
             Json(admin_provider_pool_pure::build_admin_pool_cleanup_result_payload(affected))
@@ -304,8 +302,6 @@ impl<'a> AdminAppState<'a> {
                     affected = affected.saturating_add(1);
                 }
             }
-            self.cleanup_deleted_provider_catalog_refs(&provider.id, &[], &deleted_key_ids)
-                .await?;
 
             return Ok(Json(
                 admin_provider_pool_pure::build_admin_pool_batch_action_result_payload(

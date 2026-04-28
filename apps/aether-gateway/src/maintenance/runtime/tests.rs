@@ -745,6 +745,40 @@ async fn usage_cleanup_settings_resolve_batch_and_delete_toggle() {
     );
 }
 
+#[tokio::test]
+async fn usage_cleanup_settings_clamp_destructive_retention_windows() {
+    let data = GatewayDataState::disabled().with_system_config_values_for_tests([
+        ("detail_log_retention_days".to_string(), json!(0)),
+        ("compressed_log_retention_days".to_string(), json!(0)),
+        ("header_retention_days".to_string(), json!(0)),
+        ("log_retention_days".to_string(), json!(0)),
+    ]);
+
+    let settings = usage_cleanup_settings(&data)
+        .await
+        .expect("usage cleanup settings should resolve");
+
+    assert_eq!(settings.detail_retention_days, 1);
+    assert_eq!(settings.compressed_retention_days, 1);
+    assert_eq!(settings.header_retention_days, 1);
+    assert_eq!(settings.log_retention_days, 30);
+}
+
+#[tokio::test]
+async fn usage_cleanup_settings_keep_log_retention_after_redaction_windows() {
+    let data = GatewayDataState::disabled().with_system_config_values_for_tests([
+        ("detail_log_retention_days".to_string(), json!(7)),
+        ("compressed_log_retention_days".to_string(), json!(30)),
+        ("header_retention_days".to_string(), json!(90)),
+        ("log_retention_days".to_string(), json!(7)),
+    ]);
+    let settings = usage_cleanup_settings(&data)
+        .await
+        .expect("usage cleanup settings should resolve");
+
+    assert_eq!(settings.log_retention_days, 90);
+}
+
 #[test]
 fn usage_cleanup_window_uses_non_overlapping_ranges() {
     let now_utc = "2026-03-18T03:00:00Z"

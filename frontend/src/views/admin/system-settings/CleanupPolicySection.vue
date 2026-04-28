@@ -44,6 +44,7 @@
           id="detail-log-retention-days"
           :model-value="detailLogRetentionDays"
           type="number"
+          min="1"
           placeholder="7"
           class="mt-1"
           @update:model-value="$emit('update:detailLogRetentionDays', Number($event))"
@@ -64,6 +65,7 @@
           id="compressed-log-retention-days"
           :model-value="compressedLogRetentionDays"
           type="number"
+          min="1"
           placeholder="30"
           class="mt-1"
           @update:model-value="$emit('update:compressedLogRetentionDays', Number($event))"
@@ -84,6 +86,7 @@
           id="header-retention-days"
           :model-value="headerRetentionDays"
           type="number"
+          min="1"
           placeholder="90"
           class="mt-1"
           @update:model-value="$emit('update:headerRetentionDays', Number($event))"
@@ -104,12 +107,13 @@
           id="log-retention-days"
           :model-value="logRetentionDays"
           type="number"
+          min="30"
           placeholder="365"
           class="mt-1"
           @update:model-value="$emit('update:logRetentionDays', Number($event))"
         />
         <p class="mt-1 text-xs text-muted-foreground">
-          超过后删除整条记录
+          超过后删除整条记录（最少 30 天，避免统计数据被过早清空）
         </p>
       </div>
 
@@ -124,6 +128,7 @@
           id="cleanup-batch-size"
           :model-value="cleanupBatchSize"
           type="number"
+          min="1"
           placeholder="1000"
           class="mt-1"
           @update:model-value="$emit('update:cleanupBatchSize', Number($event))"
@@ -144,6 +149,7 @@
           id="audit-log-retention-days"
           :model-value="auditLogRetentionDays"
           type="number"
+          min="7"
           placeholder="30"
           class="mt-1"
           @update:model-value="$emit('update:auditLogRetentionDays', Number($event))"
@@ -164,6 +170,7 @@
           id="request-candidates-retention-days"
           :model-value="requestCandidatesRetentionDays"
           type="number"
+          min="3"
           placeholder="30"
           class="mt-1"
           @update:model-value="$emit('update:requestCandidatesRetentionDays', Number($event))"
@@ -184,6 +191,7 @@
           id="request-candidates-cleanup-batch-size"
           :model-value="requestCandidatesCleanupBatchSize"
           type="number"
+          min="1"
           placeholder="5000"
           class="mt-1"
           @update:model-value="$emit('update:requestCandidatesCleanupBatchSize', Number($event))"
