@@ -5,7 +5,7 @@ use super::keys::{
 use crate::handlers::admin::provider::shared::support::{
     AdminProviderPoolConfig, AdminProviderPoolUnschedulableRule,
 };
-use aether_data::redis::RedisKvRunner;
+use aether_data::redis::{RedisKeyspace, RedisKvRunner};
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -53,6 +53,43 @@ fn should_touch_lru(pool_config: &AdminProviderPoolConfig) -> bool {
 
 fn should_record_latency(pool_config: &AdminProviderPoolConfig) -> bool {
     enabled_pool_presets(pool_config).any(|preset| !preset.eq_ignore_ascii_case("lru"))
+}
+fn append_pool_affinity_touch_commands(
+    pipeline: &mut redis::Pipeline,
+    keyspace: &RedisKeyspace,
+    provider_id: &str,
+    key_id: &str,
+    pool_config: &AdminProviderPoolConfig,
+    sticky_session_token: Option<&str>,
+    now: f64,
+) -> bool {
+    let mut has_commands = false;
+
+    if let Some(sticky_session_token) = sticky_session_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|_| pool_config.sticky_session_ttl_seconds > 0)
+    {
+        pipeline
+            .cmd("SETEX")
+            .arg(pool_sticky_key(keyspace, provider_id, sticky_session_token))
+            .arg(pool_config.sticky_session_ttl_seconds)
+            .arg(key_id)
+            .ignore();
+        has_commands = true;
+    }
+
+    if should_touch_lru(pool_config) {
+        pipeline
+            .cmd("ZADD")
+            .arg(pool_lru_key(keyspace, provider_id))
+            .arg(now)
+            .arg(key_id)
+            .ignore();
+        has_commands = true;
+    }
+
+    has_commands
 }
 
 fn oauth_cache_key(key_id: &str) -> String {
@@ -264,6 +301,45 @@ fn matching_unschedulable_rule<'a>(
     })
 }
 
+pub(crate) async fn record_admin_provider_pool_selection(
+    runner: &RedisKvRunner,
+    provider_id: &str,
+    key_id: &str,
+    pool_config: &AdminProviderPoolConfig,
+    sticky_session_token: Option<&str>,
+) {
+    let Ok(mut connection) = runner.client().get_multiplexed_async_connection().await else {
+        warn!(
+            "gateway admin provider pool: failed to connect redis to record selection for key {key_id}"
+        );
+        return;
+    };
+    let keyspace = runner.keyspace().clone();
+    let now = current_unix_secs_f64();
+    let mut pipeline = redis::pipe();
+    let has_commands = append_pool_affinity_touch_commands(
+        &mut pipeline,
+        &keyspace,
+        provider_id,
+        key_id,
+        pool_config,
+        sticky_session_token,
+        now,
+    );
+
+    if !has_commands {
+        return;
+    }
+
+    let result: Result<(), _> = pipeline.query_async(&mut connection).await;
+    if let Err(err) = result {
+        warn!(
+            "gateway admin provider pool: failed to record selection feedback for provider {provider_id} key {key_id}: {:?}",
+            err
+        );
+    }
+}
+
 pub(crate) async fn record_admin_provider_pool_success(
     runner: &RedisKvRunner,
     provider_id: &str,
@@ -280,35 +356,15 @@ pub(crate) async fn record_admin_provider_pool_success(
     let keyspace = runner.keyspace().clone();
     let now = current_unix_secs_f64();
     let mut pipeline = redis::pipe();
-    let mut has_commands = false;
-
-    if let Some(sticky_session_token) = sticky_session_token
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .filter(|_| pool_config.sticky_session_ttl_seconds > 0)
-    {
-        pipeline
-            .cmd("SETEX")
-            .arg(pool_sticky_key(
-                &keyspace,
-                provider_id,
-                sticky_session_token,
-            ))
-            .arg(pool_config.sticky_session_ttl_seconds)
-            .arg(key_id)
-            .ignore();
-        has_commands = true;
-    }
-
-    if should_touch_lru(pool_config) {
-        pipeline
-            .cmd("ZADD")
-            .arg(pool_lru_key(&keyspace, provider_id))
-            .arg(now)
-            .arg(key_id)
-            .ignore();
-        has_commands = true;
-    }
+    let mut has_commands = append_pool_affinity_touch_commands(
+        &mut pipeline,
+        &keyspace,
+        provider_id,
+        key_id,
+        pool_config,
+        sticky_session_token,
+        now,
+    );
 
     if tokens_used > 0 && pool_config.cost_limit_per_key_tokens.is_some() {
         let cost_key = pool_cost_key(&keyspace, provider_id, key_id);
@@ -564,7 +620,8 @@ pub(crate) async fn record_admin_provider_pool_stream_timeout(
 mod tests {
     use super::{
         parse_google_quota_cooldown_seconds_at, record_admin_provider_pool_error,
-        record_admin_provider_pool_stream_timeout, record_admin_provider_pool_success,
+        record_admin_provider_pool_selection, record_admin_provider_pool_stream_timeout,
+        record_admin_provider_pool_success,
     };
     use crate::data::{GatewayDataConfig, GatewayDataState};
     use crate::handlers::admin::provider::pool::runtime::reads::read_admin_provider_pool_runtime_state;
@@ -689,6 +746,41 @@ mod tests {
 
         assert_eq!(delay_cooldown, Some(5_415));
         assert_eq!(message_cooldown, Some(2_700));
+    }
+
+    #[tokio::test]
+    async fn selection_feedback_writes_sticky_and_lru_before_success() {
+        let Some(redis) = start_managed_redis_or_skip().await else {
+            return;
+        };
+        let app = build_runner_app(redis.redis_url(), "pool_runtime_selection_feedback");
+        let runner = app.redis_kv_runner().expect("redis runner should exist");
+        let pool_config = sample_pool_config();
+        let key_ids = vec!["key-1".to_string()];
+
+        record_admin_provider_pool_selection(
+            &runner,
+            "provider-1",
+            "key-1",
+            &pool_config,
+            Some("session-1"),
+        )
+        .await;
+
+        let runtime = read_admin_provider_pool_runtime_state(
+            &runner,
+            "provider-1",
+            &key_ids,
+            &pool_config,
+            Some("session-1"),
+        )
+        .await;
+
+        assert_eq!(runtime.total_sticky_sessions, 1);
+        assert_eq!(runtime.sticky_bound_key_id.as_deref(), Some("key-1"));
+        assert!(runtime.lru_score_by_key.contains_key("key-1"));
+        assert_eq!(runtime.cost_window_usage_by_key.get("key-1"), None);
+        assert_eq!(runtime.latency_avg_ms_by_key.get("key-1"), None);
     }
 
     #[tokio::test]
