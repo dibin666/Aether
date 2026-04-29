@@ -623,7 +623,7 @@ fn schedule_pool_group(
             &mut available,
             runtime.sticky_bound_key_id.as_deref(),
             Some(&sort_vectors),
-            pool_primary_strategy_component_count(&active_presets),
+            pool_plan_guard_component_count(&active_presets),
         );
     } else {
         if pool_config.lru_enabled {
@@ -1188,31 +1188,22 @@ fn pool_preset_mutex_group(preset: &str) -> Option<&'static str> {
 }
 fn pool_preset_order_tier(preset: &str, auto_added: bool) -> usize {
     if auto_added {
-        2
+        3
+    } else if pool_plan_type_for_priority_preset(preset).is_some() {
+        0
     } else if pool_preset_mutex_group(preset).is_some() {
         1
     } else {
-        0
+        2
     }
 }
 
-fn pool_primary_strategy_component_count(presets: &[NormalizedPoolPreset]) -> usize {
-    let mut count = 0;
-    let mut plan_order_counted = false;
-    for preset in presets {
-        if preset.auto_added || pool_preset_mutex_group(&preset.preset).is_some() {
-            continue;
-        }
-        if pool_plan_type_for_priority_preset(&preset.preset).is_some() {
-            if !plan_order_counted {
-                count += 1;
-                plan_order_counted = true;
-            }
-        } else {
-            count += 1;
-        }
-    }
-    count
+fn pool_plan_guard_component_count(presets: &[NormalizedPoolPreset]) -> usize {
+    usize::from(
+        presets
+            .iter()
+            .any(|preset| pool_plan_type_for_priority_preset(&preset.preset).is_some()),
+    )
 }
 
 fn promote_sticky_candidate(
@@ -1791,66 +1782,65 @@ mod tests {
     }
 
     #[test]
-    fn pool_scheduler_uses_later_preset_to_break_equal_metric_scores() {
+    fn pool_scheduler_uses_later_soft_preset_to_break_equal_metric_scores() {
+        let scheduling_config = Some(json!({
+            "pool_advanced": {
+                "scheduling_presets": [
+                    {"preset": "health_first", "enabled": true},
+                    {"preset": "priority_first", "enabled": true}
+                ]
+            }
+        }));
         let key_b = sample_eligible_candidate(
             "provider-pool",
             "endpoint-1",
             "key-b",
-            10,
-            Some(json!({
-                "pool_advanced": {
-                    "scheduling_presets": [
-                        {"preset": "priority_first", "enabled": true},
-                        {"preset": "cache_affinity", "enabled": true}
-                    ]
-                }
-            })),
+            20,
+            scheduling_config.clone(),
         );
         let key_a = sample_eligible_candidate(
             "provider-pool",
             "endpoint-1",
             "key-a",
             10,
-            Some(json!({
-                "pool_advanced": {
-                    "scheduling_presets": [
-                        {"preset": "priority_first", "enabled": true},
-                        {"preset": "cache_affinity", "enabled": true}
-                    ]
-                }
-            })),
+            scheduling_config.clone(),
         );
         let key_c = sample_eligible_candidate(
             "provider-pool",
             "endpoint-1",
             "key-c",
             20,
-            Some(json!({
-                "pool_advanced": {
-                    "scheduling_presets": [
-                        {"preset": "priority_first", "enabled": true},
-                        {"preset": "cache_affinity", "enabled": true}
-                    ]
-                }
-            })),
+            scheduling_config,
         );
 
-        let runtime_by_provider = BTreeMap::from([(
-            "provider-pool".to_string(),
-            AdminProviderPoolRuntimeState {
-                lru_score_by_key: BTreeMap::from([
-                    ("key-a".to_string(), 100.0),
-                    ("key-b".to_string(), 10.0),
-                    ("key-c".to_string(), 300.0),
-                ]),
-                ..AdminProviderPoolRuntimeState::default()
-            },
-        )]);
+        let key_context_by_id = BTreeMap::from([
+            (
+                "key-a".to_string(),
+                PoolCatalogKeyContext {
+                    health_score: Some(1.0),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+            (
+                "key-b".to_string(),
+                PoolCatalogKeyContext {
+                    health_score: Some(1.0),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+            (
+                "key-c".to_string(),
+                PoolCatalogKeyContext {
+                    health_score: Some(0.5),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+        ]);
 
         let (reordered, skipped) = apply_local_execution_pool_scheduler_with_runtime_map(
             vec![key_b, key_a, key_c],
-            &runtime_by_provider,
             &BTreeMap::new(),
+            &key_context_by_id,
         );
 
         assert!(skipped.is_empty());
@@ -1860,6 +1850,73 @@ mod tests {
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
             vec!["key-a", "key-b", "key-c"]
+        );
+    }
+
+    #[test]
+    fn pool_scheduler_cache_affinity_precedes_soft_quota_strategy() {
+        let scheduling_config = Some(json!({
+            "pool_advanced": {
+                "scheduling_presets": [
+                    {"preset": "quota_balanced", "enabled": true},
+                    {"preset": "cache_affinity", "enabled": true}
+                ]
+            }
+        }));
+        let key_recent = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-recent",
+            10,
+            scheduling_config.clone(),
+        );
+        let key_less_used = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-less-used",
+            10,
+            scheduling_config,
+        );
+        let runtime_by_provider = BTreeMap::from([(
+            "provider-pool".to_string(),
+            AdminProviderPoolRuntimeState {
+                lru_score_by_key: BTreeMap::from([
+                    ("key-recent".to_string(), 300.0),
+                    ("key-less-used".to_string(), 10.0),
+                ]),
+                ..AdminProviderPoolRuntimeState::default()
+            },
+        )]);
+        let key_context_by_id = BTreeMap::from([
+            (
+                "key-recent".to_string(),
+                PoolCatalogKeyContext {
+                    quota_usage_ratio: Some(0.95),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+            (
+                "key-less-used".to_string(),
+                PoolCatalogKeyContext {
+                    quota_usage_ratio: Some(0.10),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+        ]);
+
+        let (reordered, skipped) = apply_local_execution_pool_scheduler_with_runtime_map(
+            vec![key_less_used, key_recent],
+            &runtime_by_provider,
+            &key_context_by_id,
+        );
+
+        assert!(skipped.is_empty());
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|item| item.candidate.key_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-recent", "key-less-used"]
         );
     }
 
@@ -2237,7 +2294,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_strategy_presets_before_distribution_fallback() {
+    fn normalizes_distribution_after_plan_and_before_soft_strategies() {
         let presets = normalize_enabled_pool_presets(
             &[
                 AdminProviderPoolSchedulingPreset {
@@ -2269,7 +2326,7 @@ mod tests {
                 .iter()
                 .map(|item| item.preset.as_str())
                 .collect::<Vec<_>>(),
-            vec!["priority_first", "single_account"]
+            vec!["single_account", "priority_first"]
         );
     }
 
