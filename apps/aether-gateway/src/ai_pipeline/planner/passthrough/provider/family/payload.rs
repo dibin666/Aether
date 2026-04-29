@@ -5,7 +5,6 @@ use crate::ai_pipeline::planner::candidate_materialization::{
     mark_skipped_local_execution_candidate_with_failure_diagnostic,
 };
 use crate::ai_pipeline::planner::candidate_metadata::build_request_trace_proxy_value;
-use crate::ai_pipeline::planner::candidate_resolution::extract_pool_sticky_session_token;
 use crate::ai_pipeline::planner::materialization_policy::{
     build_local_candidate_persistence_policy, LocalCandidatePersistencePolicyKind,
 };
@@ -21,9 +20,6 @@ use crate::ai_pipeline::transport::{
     resolve_transport_execution_timeouts, resolve_transport_tls_profile,
 };
 use crate::ai_pipeline::{ConversionMode, ExecutionStrategy};
-use crate::handlers::shared::provider_pool::{
-    admin_provider_pool_config_from_config_value, record_admin_provider_pool_selection,
-};
 use crate::{
     append_execution_contract_fields_to_value, append_local_failover_policy_to_value, AppState,
     GatewayControlSyncDecisionResponse,
@@ -144,21 +140,6 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         provider_request_headers,
         provider_request_body,
     } = resolved;
-
-    if let (Some(runner), Some(pool_config)) = (
-        state.redis_kv_runner(),
-        admin_provider_pool_config_from_config_value(transport.provider.config.as_ref()),
-    ) {
-        let sticky_session_token = extract_pool_sticky_session_token(body_json);
-        record_admin_provider_pool_selection(
-            &runner,
-            &candidate.provider_id,
-            &candidate.key_id,
-            &pool_config,
-            sticky_session_token.as_deref(),
-        )
-        .await;
-    }
 
     Some(build_local_execution_decision_response(
         LocalExecutionDecisionResponseParts {

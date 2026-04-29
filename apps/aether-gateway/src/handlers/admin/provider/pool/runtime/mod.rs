@@ -13,6 +13,6 @@ pub(crate) use self::reads::{
 };
 pub(crate) use self::status::build_admin_provider_pool_status_payload;
 pub(crate) use self::writes::{
-    record_admin_provider_pool_error, record_admin_provider_pool_selection,
-    record_admin_provider_pool_stream_timeout, record_admin_provider_pool_success,
+    record_admin_provider_pool_error, record_admin_provider_pool_stream_timeout,
+    record_admin_provider_pool_success,
 };
