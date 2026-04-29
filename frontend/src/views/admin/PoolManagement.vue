@@ -346,7 +346,7 @@
               <Badge
                 variant="outline"
                 class="h-4 px-1 py-0 text-[10px]"
-                :class="item.planClass"
+                :class="selectedPlanFilter === item.selector ? 'border-primary-foreground/30 bg-primary-foreground/15 text-primary-foreground' : item.planClass"
               >
                 {{ item.planLabel }}
               </Badge>
@@ -1950,17 +1950,15 @@ function togglePlanFilter(selector: string): void {
 function getQuotaFilterChipClass(filter: PoolQuotaFilter): string {
   if (selectedQuotaFilter.value === filter) {
     return filter === 'quota_available'
-      ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-700 ring-1 ring-emerald-500/30 dark:text-emerald-300'
-      : 'border-destructive/50 bg-destructive/15 text-destructive ring-1 ring-destructive/25'
+      ? 'border-emerald-600 bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 dark:border-emerald-500 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400'
+      : 'border-destructive bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90'
   }
-  return filter === 'quota_available'
-    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-400'
-    : 'border-destructive/25 bg-destructive/10 text-destructive hover:bg-destructive/15'
+  return 'border-border/60 bg-background/70 text-muted-foreground hover:bg-muted/40 hover:text-foreground'
 }
 
 function getPlanFilterChipClass(selector: string): string {
   if (selectedPlanFilter.value === selector) {
-    return 'border-primary/50 bg-primary/10 text-foreground ring-1 ring-primary/25'
+    return 'border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/90'
   }
   return 'border-border/60 bg-background/70 text-muted-foreground hover:bg-muted/40 hover:text-foreground'
 }

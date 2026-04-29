@@ -189,6 +189,10 @@ fn admin_pool_quota_window_remaining_ratio(window: &serde_json::Map<String, Valu
         .or_else(|| (admin_pool_json_bool(window.get("is_exhausted")) == Some(true)).then_some(0.0))
 }
 
+fn admin_pool_remaining_ratio_below_skip_threshold(remaining: f64) -> bool {
+    remaining <= ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD + f64::EPSILON
+}
+
 fn admin_pool_quota_windows_below_skip_threshold(windows: &[Value]) -> Option<bool> {
     let remaining_ratios = windows
         .iter()
@@ -199,7 +203,7 @@ fn admin_pool_quota_windows_below_skip_threshold(windows: &[Value]) -> Option<bo
     (!remaining_ratios.is_empty()).then(|| {
         remaining_ratios
             .iter()
-            .any(|remaining| *remaining < ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD)
+            .any(|remaining| admin_pool_remaining_ratio_below_skip_threshold(*remaining))
     })
 }
 
@@ -262,7 +266,7 @@ pub fn admin_pool_key_account_quota_exhausted(
             !window_remaining_ratios.is_empty()
                 && window_remaining_ratios
                     .iter()
-                    .any(|remaining| *remaining < ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD)
+                    .any(|remaining| admin_pool_remaining_ratio_below_skip_threshold(*remaining))
         }
         "kiro" => {
             if let (Some(limit), Some(remaining)) = (
@@ -270,16 +274,18 @@ pub fn admin_pool_key_account_quota_exhausted(
                 admin_pool_json_f64(bucket.get("remaining")),
             ) {
                 if limit > 0.0 {
-                    return (remaining / limit).clamp(0.0, 1.0)
-                        < ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD;
+                    return admin_pool_remaining_ratio_below_skip_threshold(
+                        (remaining / limit).clamp(0.0, 1.0),
+                    );
                 }
             }
             if admin_pool_json_f64(bucket.get("remaining")).is_some_and(|value| value <= 0.0) {
                 return true;
             }
             if admin_pool_json_f64(bucket.get("usage_percentage")).is_some_and(|value| {
-                (1.0 - (value / 100.0).clamp(0.0, 1.0))
-                    < ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD
+                admin_pool_remaining_ratio_below_skip_threshold(
+                    (1.0 - (value / 100.0).clamp(0.0, 1.0)).max(0.0),
+                )
             }) {
                 return true;
             }
@@ -288,8 +294,9 @@ pub fn admin_pool_key_account_quota_exhausted(
                 admin_pool_json_f64(bucket.get("current_usage")),
             ) {
                 (Some(limit), Some(current)) if limit > 0.0 => {
-                    ((limit - current).max(0.0) / limit).clamp(0.0, 1.0)
-                        < ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD
+                    admin_pool_remaining_ratio_below_skip_threshold(
+                        ((limit - current).max(0.0) / limit).clamp(0.0, 1.0),
+                    )
                 }
                 _ => false,
             }
@@ -833,7 +840,7 @@ mod tests {
             }))),
             "codex",
         ));
-        assert!(!admin_pool_key_account_quota_exhausted(
+        assert!(admin_pool_key_account_quota_exhausted(
             &sample_key(Some(json!({
                 "codex": {
                     "has_credits": true,
@@ -945,6 +952,26 @@ mod tests {
     }
 
     #[test]
+    fn treats_two_percent_snapshot_remaining_as_exhausted() {
+        let mut key = sample_key(None);
+        key.status_snapshot = Some(json!({
+            "quota": {
+                "provider_type": "codex",
+                "code": "ok",
+                "exhausted": false,
+                "windows": [
+                    {
+                        "code": "weekly",
+                        "remaining_ratio": 0.02
+                    }
+                ]
+            }
+        }));
+
+        assert!(admin_pool_key_account_quota_exhausted(&key, "codex"));
+    }
+
+    #[test]
     fn codex_ignores_stale_exhausted_snapshot_without_remaining_data() {
         let mut key = sample_key(Some(json!({
             "codex": {
@@ -984,7 +1011,7 @@ mod tests {
             }))),
             "kiro",
         ));
-        assert!(!admin_pool_key_account_quota_exhausted(
+        assert!(admin_pool_key_account_quota_exhausted(
             &sample_key(Some(json!({
                 "kiro": {
                     "usage_percentage": 98.0
