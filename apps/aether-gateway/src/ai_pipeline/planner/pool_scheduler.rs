@@ -623,7 +623,7 @@ fn schedule_pool_group(
             &mut available,
             runtime.sticky_bound_key_id.as_deref(),
             Some(&sort_vectors),
-            pool_plan_guard_component_count(&active_presets),
+            0,
         );
     } else {
         if pool_config.lru_enabled {
@@ -1189,21 +1189,13 @@ fn pool_preset_mutex_group(preset: &str) -> Option<&'static str> {
 fn pool_preset_order_tier(preset: &str, auto_added: bool) -> usize {
     if auto_added {
         3
-    } else if pool_plan_type_for_priority_preset(preset).is_some() {
-        0
     } else if pool_preset_mutex_group(preset).is_some() {
+        0
+    } else if pool_plan_type_for_priority_preset(preset).is_some() {
         1
     } else {
         2
     }
-}
-
-fn pool_plan_guard_component_count(presets: &[NormalizedPoolPreset]) -> usize {
-    usize::from(
-        presets
-            .iter()
-            .any(|preset| pool_plan_type_for_priority_preset(&preset.preset).is_some()),
-    )
 }
 
 fn promote_sticky_candidate(
@@ -1921,7 +1913,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_scheduler_applies_plan_strategy_before_cache_affinity_and_sticky() {
+    fn pool_scheduler_cache_affinity_reuses_selected_key_before_plan_order() {
         let scheduling_config = Some(json!({
             "pool_advanced": {
                 "scheduling_presets": [
@@ -2002,7 +1994,7 @@ mod tests {
                 .iter()
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["key-plus", "key-team", "key-free"]
+            vec!["key-free", "key-team", "key-plus"]
         );
     }
 
