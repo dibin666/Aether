@@ -436,11 +436,28 @@ pub fn admin_pool_is_oauth_invalid(key: &StoredProviderCatalogKey, now_unix_secs
         .is_some_and(|value| value > 0 && value <= now_unix_secs)
 }
 
+fn admin_pool_matches_plan_selector(selector: &str, oauth_plan_type: Option<&str>) -> bool {
+    let Some(expected_plan) = selector.strip_prefix("plan_") else {
+        return false;
+    };
+    if expected_plan.is_empty() {
+        return false;
+    }
+    let Some(actual_plan) = oauth_plan_type.map(admin_pool_normalize_text) else {
+        return expected_plan == "unknown";
+    };
+    if expected_plan == "unknown" {
+        return actual_plan.is_empty() || actual_plan == "unknown";
+    }
+    actual_plan.contains(expected_plan)
+}
+
 pub fn admin_pool_matches_quick_selector(
     key: &StoredProviderCatalogKey,
     selector: &str,
     oauth_plan_type: Option<&str>,
     now_unix_secs: u64,
+    provider_type: &str,
 ) -> bool {
     match selector {
         "banned" => admin_pool_key_is_known_banned(key),
@@ -449,9 +466,12 @@ pub fn admin_pool_matches_quick_selector(
         "proxy_set" => admin_pool_has_proxy(key),
         "disabled" => !key.is_active,
         "enabled" => key.is_active,
-        "plan_free" => oauth_plan_type.is_some_and(|value| value.contains("free")),
-        "plan_team" => oauth_plan_type.is_some_and(|value| value.contains("team")),
+        "quota_available" => !admin_pool_key_account_quota_exhausted(key, provider_type),
+        "quota_exhausted" => admin_pool_key_account_quota_exhausted(key, provider_type),
         "no_5h_limit" | "no_weekly_limit" => false,
+        _ if selector.starts_with("plan_") => {
+            admin_pool_matches_plan_selector(selector, oauth_plan_type)
+        }
         _ => false,
     }
 }
@@ -636,25 +656,45 @@ pub fn admin_pool_resolved_api_formats(
     formats
 }
 
+fn admin_pool_quick_selector_allowed(selector: &str) -> bool {
+    if matches!(
+        selector,
+        "banned"
+            | "no_5h_limit"
+            | "no_weekly_limit"
+            | "oauth_invalid"
+            | "proxy_unset"
+            | "proxy_set"
+            | "disabled"
+            | "enabled"
+            | "quota_available"
+            | "quota_exhausted"
+    ) {
+        return true;
+    }
+
+    matches!(
+        selector.strip_prefix("plan_"),
+        Some(
+            "free"
+                | "team"
+                | "plus"
+                | "pro"
+                | "paid"
+                | "enterprise"
+                | "business"
+                | "ultra"
+                | "power"
+                | "unknown"
+        )
+    )
+}
+
 pub fn admin_pool_sanitize_quick_selectors(selectors: Vec<String>) -> Vec<String> {
     let mut selectors = selectors
         .into_iter()
         .map(admin_pool_normalize_text)
-        .filter(|value| {
-            matches!(
-                value.as_str(),
-                "banned"
-                    | "no_5h_limit"
-                    | "no_weekly_limit"
-                    | "plan_free"
-                    | "plan_team"
-                    | "oauth_invalid"
-                    | "proxy_unset"
-                    | "proxy_set"
-                    | "disabled"
-                    | "enabled"
-            )
-        })
+        .filter(|value| admin_pool_quick_selector_allowed(value))
         .collect::<Vec<_>>();
     selectors.sort();
     selectors.dedup();
@@ -683,6 +723,7 @@ pub fn build_admin_pool_selection_payload(keys: &[StoredProviderCatalogKey]) -> 
 mod tests {
     use super::{
         admin_pool_key_account_quota_exhausted, admin_pool_key_is_known_banned,
+        admin_pool_matches_quick_selector, admin_pool_sanitize_quick_selectors,
         build_admin_pool_key_payload, AdminPoolKeyPayloadContext,
     };
     use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
@@ -700,6 +741,69 @@ mod tests {
         .expect("key should build");
         key.upstream_metadata = upstream_metadata;
         key
+    }
+
+    #[test]
+    fn quick_selectors_match_plan_and_quota_filters() {
+        let with_quota = sample_key(Some(json!({
+            "codex": {
+                "has_credits": true,
+                "primary_used_percent": 10.0,
+                "secondary_used_percent": 20.0
+            }
+        })));
+        let without_quota = sample_key(Some(json!({
+            "codex": {
+                "primary_used_percent": 100.0
+            }
+        })));
+
+        assert!(admin_pool_matches_quick_selector(
+            &with_quota,
+            "plan_plus",
+            Some("plus"),
+            0,
+            "codex",
+        ));
+        assert!(!admin_pool_matches_quick_selector(
+            &with_quota,
+            "plan_free",
+            Some("plus"),
+            0,
+            "codex",
+        ));
+        assert!(admin_pool_matches_quick_selector(
+            &with_quota,
+            "quota_available",
+            Some("plus"),
+            0,
+            "codex",
+        ));
+        assert!(admin_pool_matches_quick_selector(
+            &without_quota,
+            "quota_exhausted",
+            Some("free"),
+            0,
+            "codex",
+        ));
+    }
+
+    #[test]
+    fn sanitizes_pool_quota_and_plan_selectors() {
+        assert_eq!(
+            admin_pool_sanitize_quick_selectors(vec![
+                "quota_available".to_string(),
+                "plan_plus".to_string(),
+                "plan_free".to_string(),
+                "plan_bad".to_string(),
+                "quota_available".to_string(),
+            ]),
+            vec![
+                "plan_free".to_string(),
+                "plan_plus".to_string(),
+                "quota_available".to_string(),
+            ]
+        );
     }
 
     #[test]

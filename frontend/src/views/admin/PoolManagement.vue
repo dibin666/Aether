@@ -314,18 +314,34 @@
         <div class="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
           <div class="flex flex-wrap items-center gap-2 text-xs">
             <span class="font-medium text-foreground">额度概览</span>
-            <span class="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-emerald-700 dark:text-emerald-400">
+            <button
+              type="button"
+              class="rounded-md border px-2 py-1 transition-colors"
+              :class="getQuotaFilterChipClass('quota_available')"
+              :aria-pressed="selectedQuotaFilter === 'quota_available'"
+              @click="toggleQuotaFilter('quota_available')"
+            >
               有额度 {{ poolQuotaSummary.with_quota }}
-            </span>
-            <span class="rounded-md border border-destructive/25 bg-destructive/10 px-2 py-1 text-destructive">
+            </button>
+            <button
+              type="button"
+              class="rounded-md border px-2 py-1 transition-colors"
+              :class="getQuotaFilterChipClass('quota_exhausted')"
+              :aria-pressed="selectedQuotaFilter === 'quota_exhausted'"
+              @click="toggleQuotaFilter('quota_exhausted')"
+            >
               无额度 {{ poolQuotaSummary.without_quota }}
-            </span>
+            </button>
           </div>
           <div class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <span
+            <button
               v-for="item in poolQuotaPlanSummaryItems"
               :key="item.planType"
-              class="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/70 px-2 py-1"
+              type="button"
+              class="inline-flex items-center gap-1 rounded-md border px-2 py-1 transition-colors"
+              :class="getPlanFilterChipClass(item.selector)"
+              :aria-pressed="selectedPlanFilter === item.selector"
+              @click="togglePlanFilter(item.selector)"
             >
               <Badge
                 variant="outline"
@@ -337,7 +353,7 @@
               <span>有 {{ item.withQuota }}</span>
               <span class="text-muted-foreground/60">/</span>
               <span>无 {{ item.withoutQuota }}</span>
-            </span>
+            </button>
           </div>
         </div>
       </div>
@@ -1545,6 +1561,8 @@ async function selectProvider(
   if (!options.preserveStatus) {
     statusFilter.value = 'all'
   }
+  selectedQuotaFilter.value = null
+  selectedPlanFilter.value = null
   suppressFiltersWatch = false
   if (keysSearchDebounceTimer !== null) {
     clearTimeout(keysSearchDebounceTimer)
@@ -1582,6 +1600,9 @@ function createEmptyKeyPage(page = 1, pageSizeValue = 50): PoolKeysPageResponse 
 const keyPage = ref<PoolKeysPageResponse>(createEmptyKeyPage())
 const poolQuotaSummary = computed(() => keyPage.value.quota_summary ?? null)
 const PLAN_SUMMARY_ORDER = ['plus', 'pro', 'team', 'free', 'enterprise', 'business', 'paid', 'unknown']
+const POOL_KEY_FREE_PLAN_DISPLAY_RANK = 8
+const POOL_KEY_UNKNOWN_PLAN_DISPLAY_RANK = 9
+type PoolQuotaFilter = 'quota_available' | 'quota_exhausted'
 
 const poolQuotaPlanSummaryItems = computed(() => {
   const plans = poolQuotaSummary.value?.plans ?? []
@@ -1596,6 +1617,7 @@ const poolQuotaPlanSummaryItems = computed(() => {
     })
     .map(item => ({
       planType: item.plan_type,
+      selector: getPoolPlanQuickSelector(item.plan_type),
       planLabel: formatPoolQuotaPlanLabel(item.plan_type),
       planClass: getOAuthPlanTypeClass(item.plan_type),
       withQuota: item.with_quota,
@@ -1619,6 +1641,8 @@ const togglingKeyId = ref<string | null>(null)
 const editingPriorityKeyId = ref<string | null>(null)
 const editingPriorityValue = ref<number>(0)
 const prioritySavingKeyId = ref<string | null>(null)
+const selectedQuotaFilter = ref<PoolQuotaFilter | null>(null)
+const selectedPlanFilter = ref<string | null>(null)
 
 const keyPermissionsDialogOpen = ref(false)
 const keyFormDialogOpen = ref(false)
@@ -1881,6 +1905,68 @@ async function refreshCurrentPage() {
     await refresh()
   }
 }
+const activePoolQuickSelectors = computed(() => {
+  const selectors: string[] = []
+  if (selectedQuotaFilter.value) {
+    selectors.push(selectedQuotaFilter.value)
+  }
+  if (selectedPlanFilter.value) {
+    selectors.push(selectedPlanFilter.value)
+  }
+  return selectors
+})
+
+function getPoolPlanQuickSelector(planType: string | null | undefined): string {
+  const normalized = (planType || '').trim().toLowerCase()
+  if (normalized.includes('plus')) return 'plan_plus'
+  if (normalized.includes('team')) return 'plan_team'
+  if (normalized.includes('pro')) return 'plan_pro'
+  if (normalized.includes('paid')) return 'plan_paid'
+  if (normalized.includes('enterprise')) return 'plan_enterprise'
+  if (normalized.includes('business')) return 'plan_business'
+  if (normalized.includes('ultra')) return 'plan_ultra'
+  if (normalized.includes('power')) return 'plan_power'
+  if (normalized.includes('free')) return 'plan_free'
+  return 'plan_unknown'
+}
+
+function reloadKeysForSummaryFilterChange(): void {
+  if (suppressFiltersWatch || !selectedProviderId.value) return
+  if (currentPage.value !== 1) {
+    currentPage.value = 1
+    return
+  }
+  void loadKeys()
+}
+
+function toggleQuotaFilter(filter: PoolQuotaFilter): void {
+  selectedQuotaFilter.value = selectedQuotaFilter.value === filter ? null : filter
+}
+
+function togglePlanFilter(selector: string): void {
+  selectedPlanFilter.value = selectedPlanFilter.value === selector ? null : selector
+}
+
+function getQuotaFilterChipClass(filter: PoolQuotaFilter): string {
+  if (selectedQuotaFilter.value === filter) {
+    return filter === 'quota_available'
+      ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-700 ring-1 ring-emerald-500/30 dark:text-emerald-300'
+      : 'border-destructive/50 bg-destructive/15 text-destructive ring-1 ring-destructive/25'
+  }
+  return filter === 'quota_available'
+    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-400'
+    : 'border-destructive/25 bg-destructive/10 text-destructive hover:bg-destructive/15'
+}
+
+function getPlanFilterChipClass(selector: string): string {
+  if (selectedPlanFilter.value === selector) {
+    return 'border-primary/50 bg-primary/10 text-foreground ring-1 ring-primary/25'
+  }
+  return 'border-border/60 bg-background/70 text-muted-foreground hover:bg-muted/40 hover:text-foreground'
+}
+
+watch([selectedQuotaFilter, selectedPlanFilter], reloadKeysForSummaryFilterChange, { flush: 'sync' })
+
 
 async function loadKeys(options: { cacheTtlMs?: number } = {}) {
   if (!selectedProviderId.value) return
@@ -1890,6 +1976,7 @@ async function loadKeys(options: { cacheTtlMs?: number } = {}) {
   const pageSizeValue = pageSize.value
   const search = searchQuery.value || undefined
   const status = statusFilter.value as 'all' | 'active' | 'cooldown' | 'inactive'
+  const quickSelectors = activePoolQuickSelectors.value
   keysLoading.value = true
   try {
     const nextPage = await listPoolKeys(providerId, {
@@ -1897,6 +1984,7 @@ async function loadKeys(options: { cacheTtlMs?: number } = {}) {
       page_size: pageSizeValue,
       search,
       status,
+      quick_selectors: quickSelectors,
     }, {
       cacheTtlMs: options.cacheTtlMs ?? 0,
     })
@@ -1910,7 +1998,10 @@ async function loadKeys(options: { cacheTtlMs?: number } = {}) {
       currentPage.value = resolvedPage
       return
     }
-    keyPage.value = nextPage
+    keyPage.value = {
+      ...nextPage,
+      keys: sortPoolKeysByDisplayOrder(nextPage.keys),
+    }
   } catch (err) {
     if (requestId !== keysRequestId || selectedProviderId.value !== providerId) return
     resetKeyPage(page, pageSizeValue)
@@ -2008,13 +2099,49 @@ const editingKey = computed<EndpointAPIKey | null>(() => {
   return toEndpointApiKey(editingKeyDetail.value)
 })
 
-function sortCurrentPageKeysByPriority() {
-  keyPage.value.keys = [...keyPage.value.keys].sort((a, b) => {
-    const pa = Number(a.internal_priority ?? 50)
-    const pb = Number(b.internal_priority ?? 50)
-    if (pa !== pb) return pa - pb
-    return (a.created_at || '').localeCompare(b.created_at || '')
-  })
+function getPoolKeyPlanDisplayRank(planType: string | null | undefined): number {
+  const normalized = (planType || '').trim().toLowerCase()
+  if (normalized.includes('plus')) return 0
+  if (normalized.includes('team')) return 1
+  if (normalized.includes('pro')) return 2
+  if (normalized.includes('paid')) return 3
+  if (normalized.includes('enterprise')) return 4
+  if (normalized.includes('business')) return 5
+  if (normalized.includes('ultra')) return 6
+  if (normalized.includes('power')) return 7
+  if (normalized.includes('free')) return POOL_KEY_FREE_PLAN_DISPLAY_RANK
+  return POOL_KEY_UNKNOWN_PLAN_DISPLAY_RANK
+}
+
+function comparePoolKeysByDisplayOrder(a: PoolKeyDetail, b: PoolKeyDetail): number {
+  const planRankA = getPoolKeyPlanDisplayRank(a.oauth_plan_type)
+  const planRankB = getPoolKeyPlanDisplayRank(b.oauth_plan_type)
+  if (planRankA !== planRankB) return planRankA - planRankB
+
+  if (planRankA === POOL_KEY_FREE_PLAN_DISPLAY_RANK) {
+    const createdOrder = (a.created_at || '').localeCompare(b.created_at || '')
+    if (createdOrder !== 0) return createdOrder
+  }
+
+  const priorityA = Number(a.internal_priority ?? 50)
+  const priorityB = Number(b.internal_priority ?? 50)
+  if (priorityA !== priorityB) return priorityA - priorityB
+
+  const nameOrder = (a.key_name || '').localeCompare(b.key_name || '')
+  if (nameOrder !== 0) return nameOrder
+
+  const createdOrder = (a.created_at || '').localeCompare(b.created_at || '')
+  if (createdOrder !== 0) return createdOrder
+
+  return a.key_id.localeCompare(b.key_id)
+}
+
+function sortPoolKeysByDisplayOrder(keys: PoolKeyDetail[]): PoolKeyDetail[] {
+  return [...keys].sort(comparePoolKeysByDisplayOrder)
+}
+
+function sortCurrentPageKeysByDisplayOrder() {
+  keyPage.value.keys = sortPoolKeysByDisplayOrder(keyPage.value.keys)
 }
 
 function startEditInternalPriority(key: PoolKeyDetail) {
@@ -2035,7 +2162,7 @@ async function applyInternalPriority(key: PoolKeyDetail, nextPriority: number) {
   try {
     await updateProviderKey(key.key_id, { internal_priority: normalized })
     key.internal_priority = normalized
-    sortCurrentPageKeysByPriority()
+    sortCurrentPageKeysByDisplayOrder()
     success('账号优先级已更新')
   } catch (err) {
     showError(parseApiError(err, '更新优先级失败'))

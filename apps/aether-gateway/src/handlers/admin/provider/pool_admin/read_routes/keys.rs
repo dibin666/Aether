@@ -3,8 +3,7 @@ use super::{
     parse_admin_pool_page, parse_admin_pool_page_size, parse_admin_pool_quick_selectors,
     parse_admin_pool_search, parse_admin_pool_status_filter, pool_payloads, pool_selection,
     read_admin_provider_pool_cooldown_key_ids, read_admin_provider_pool_runtime_state,
-    AdminProviderPoolRuntimeState, ProviderCatalogKeyListOrder, ProviderCatalogKeyListQuery,
-    ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL,
+    AdminProviderPoolRuntimeState, ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL,
 };
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::GatewayError;
@@ -82,7 +81,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
     let pool_config = admin_provider_pool_config(&provider);
     let page_offset = page.saturating_sub(1).saturating_mul(page_size);
 
-    let (keys, total, quota_summary_keys) = if status == "cooldown" {
+    let mut keys = if status == "cooldown" {
         let cooldown_key_ids = if let Some(runner) = state.redis_kv_runner() {
             read_admin_provider_pool_cooldown_key_ids(&runner, &provider.id).await
         } else {
@@ -105,81 +104,9 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 )
             });
         }
-        if !quick_selectors.is_empty() {
-            keys.retain(|key| {
-                quick_selectors.iter().all(|selector| {
-                    pool_selection::admin_pool_matches_quick_selector(
-                        state,
-                        key,
-                        &provider.provider_type,
-                        selector,
-                    )
-                })
-            });
-        }
-        pool_selection::admin_pool_sort_keys(&mut keys);
-        let total = keys.len();
-        let quota_summary_keys = keys.clone();
-        let keys = keys
-            .into_iter()
-            .skip(page_offset)
-            .take(page_size)
-            .collect::<Vec<_>>();
-        (keys, total, quota_summary_keys)
-    } else if !quick_selectors.is_empty() {
-        let mut keys = state
-            .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
-            .await?
-            .into_iter()
-            .filter(|key| match status.as_str() {
-                "active" => key.is_active,
-                "inactive" => !key.is_active,
-                _ => true,
-            })
-            .filter(|key| {
-                pool_selection::admin_pool_matches_search(
-                    state,
-                    key,
-                    &provider.provider_type,
-                    search.as_deref(),
-                )
-            })
-            .filter(|key| {
-                quick_selectors.iter().all(|selector| {
-                    pool_selection::admin_pool_matches_quick_selector(
-                        state,
-                        key,
-                        &provider.provider_type,
-                        selector,
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-        pool_selection::admin_pool_sort_keys(&mut keys);
-        let total = keys.len();
-        let quota_summary_keys = keys.clone();
-        let keys = keys
-            .into_iter()
-            .skip(page_offset)
-            .take(page_size)
-            .collect::<Vec<_>>();
-        (keys, total, quota_summary_keys)
+        keys
     } else {
-        let key_page = state
-            .list_provider_catalog_key_page(&ProviderCatalogKeyListQuery {
-                provider_id: provider.id.clone(),
-                search: search.clone(),
-                is_active: match status.as_str() {
-                    "active" => Some(true),
-                    "inactive" => Some(false),
-                    _ => None,
-                },
-                offset: page_offset,
-                limit: page_size,
-                order: ProviderCatalogKeyListOrder::Name,
-            })
-            .await?;
-        let quota_summary_keys = state
+        state
             .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
             .await?
             .into_iter()
@@ -196,9 +123,29 @@ pub(super) async fn build_admin_pool_list_keys_response(
                     search.as_deref(),
                 )
             })
-            .collect::<Vec<_>>();
-        (key_page.items, key_page.total, quota_summary_keys)
+            .collect::<Vec<_>>()
     };
+
+    let quota_summary_keys = keys.clone();
+    if !quick_selectors.is_empty() {
+        keys.retain(|key| {
+            quick_selectors.iter().all(|selector| {
+                pool_selection::admin_pool_matches_quick_selector(
+                    state,
+                    key,
+                    &provider.provider_type,
+                    selector,
+                )
+            })
+        });
+    }
+    pool_selection::admin_pool_sort_keys(state, &provider.provider_type, &mut keys);
+    let total = keys.len();
+    let keys = keys
+        .into_iter()
+        .skip(page_offset)
+        .take(page_size)
+        .collect::<Vec<_>>();
 
     let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
     let endpoints = state
