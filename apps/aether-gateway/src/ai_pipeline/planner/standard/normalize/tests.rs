@@ -59,6 +59,8 @@ fn sample_transport(base_url: &str, api_format: &str) -> GatewayProviderTranspor
             auth_type: "oauth".to_string(),
             is_active: true,
             api_formats: Some(vec![api_format.to_string()]),
+            auth_type_by_format: None,
+
             allowed_models: None,
             capabilities: None,
             rate_multipliers: None,
@@ -197,7 +199,7 @@ fn strips_metadata_for_codex_openai_responses_requests() {
     let provider_request_body = build_cross_format_openai_responses_request_body(
         &body_json,
         "gpt-5-upstream",
-        "claude:cli",
+        "claude:messages",
         "openai:responses",
         true,
         "codex",
@@ -229,7 +231,7 @@ fn applies_codex_defaults_unless_body_rules_handle_the_field() {
     let provider_request_body = build_cross_format_openai_responses_request_body(
         &body_json,
         "gpt-5-upstream",
-        "claude:cli",
+        "claude:messages",
         "openai:responses",
         true,
         "codex",
@@ -256,7 +258,7 @@ fn injects_codex_prompt_cache_key_for_openai_responses_cross_format_requests() {
     let provider_request_body = build_cross_format_openai_responses_request_body(
         &body_json,
         "gpt-5-upstream",
-        "claude:cli",
+        "claude:messages",
         "openai:responses",
         true,
         "codex",

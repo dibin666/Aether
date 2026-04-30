@@ -94,8 +94,8 @@ fn build_kiro_claude_cli_sync_finalize_payload(body_bytes: Vec<u8>) -> GatewaySy
         trace_id: "trace-kiro-cli-sync-local-finalize-123".to_string(),
         report_kind: "claude_cli_sync_finalize".to_string(),
         report_context: Some(json!({
-            "client_api_format": "claude:cli",
-            "provider_api_format": "claude:cli",
+            "client_api_format": "claude:messages",
+            "provider_api_format": "claude:messages",
             "model": "claude-sonnet-4",
             "mapped_model": "claude-sonnet-4-upstream",
             "needs_conversion": false,
@@ -332,7 +332,7 @@ fn converts_claude_chat_response_to_openai_chat_response() {
         }),
         &json!({
             "client_api_format": "openai:chat",
-            "provider_api_format": "claude:chat",
+            "provider_api_format": "claude:messages",
             "model": "gpt-5"
         }),
     )
@@ -386,7 +386,7 @@ fn converts_claude_chat_tool_use_to_openai_chat_tool_calls() {
         }),
         &json!({
             "client_api_format": "openai:chat",
-            "provider_api_format": "claude:chat",
+            "provider_api_format": "claude:messages",
             "model": "gpt-5"
         }),
     )
@@ -443,7 +443,7 @@ fn converts_claude_chat_thinking_block_to_openai_reasoning_content() {
         }),
         &json!({
             "client_api_format": "openai:chat",
-            "provider_api_format": "claude:chat",
+            "provider_api_format": "claude:messages",
             "model": "gpt-5"
         }),
     )
@@ -478,7 +478,7 @@ fn converts_gemini_chat_response_to_openai_chat_response() {
         }),
         &json!({
             "client_api_format": "openai:chat",
-            "provider_api_format": "gemini:chat",
+            "provider_api_format": "gemini:generate_content",
             "model": "gpt-5"
         }),
     )
@@ -532,7 +532,7 @@ fn converts_gemini_chat_function_call_to_openai_chat_tool_calls() {
         }),
         &json!({
             "client_api_format": "openai:chat",
-            "provider_api_format": "gemini:chat",
+            "provider_api_format": "gemini:generate_content",
             "model": "gpt-5"
         }),
     )
@@ -594,7 +594,7 @@ fn converts_gemini_chat_thought_part_to_openai_reasoning_content() {
         }),
         &json!({
             "client_api_format": "openai:chat",
-            "provider_api_format": "gemini:chat",
+            "provider_api_format": "gemini:generate_content",
             "model": "gpt-5"
         }),
     )
@@ -634,7 +634,7 @@ fn converts_gemini_chat_inline_data_to_openai_chat_image_part() {
         }),
         &json!({
             "client_api_format": "openai:chat",
-            "provider_api_format": "gemini:chat",
+            "provider_api_format": "gemini:generate_content",
             "model": "gpt-5"
         }),
     )
@@ -805,7 +805,7 @@ fn converts_claude_cli_response_to_openai_responses_response() {
         }),
         &json!({
             "client_api_format": "openai:responses",
-            "provider_api_format": "claude:cli",
+            "provider_api_format": "claude:messages",
             "model": "gpt-5"
         }),
     )
@@ -862,7 +862,7 @@ fn converts_claude_cli_tool_use_to_openai_responses_function_call() {
         }),
         &json!({
             "client_api_format": "openai:responses",
-            "provider_api_format": "claude:cli",
+            "provider_api_format": "claude:messages",
             "model": "gpt-5"
         }),
     )
@@ -927,7 +927,7 @@ fn converts_gemini_cli_response_to_openai_responses_response() {
         }),
         &json!({
             "client_api_format": "openai:responses",
-            "provider_api_format": "gemini:cli",
+            "provider_api_format": "gemini:generate_content",
             "model": "gpt-5"
         }),
     )
@@ -989,7 +989,7 @@ fn converts_gemini_cli_function_call_to_openai_responses_function_call() {
         }),
         &json!({
             "client_api_format": "openai:responses",
-            "provider_api_format": "gemini:cli",
+            "provider_api_format": "gemini:generate_content",
             "model": "gpt-5"
         }),
     )
@@ -1062,7 +1062,7 @@ fn converts_gemini_cli_inline_data_to_openai_responses_output_image() {
         }),
         &json!({
             "client_api_format": "openai:responses",
-            "provider_api_format": "gemini:cli",
+            "provider_api_format": "gemini:generate_content",
             "model": "gpt-5"
         }),
     )
@@ -1084,7 +1084,7 @@ fn local_finalize_handles_openai_responses_compact_cross_format_sync_response() 
         report_kind: "openai_responses_compact_sync_finalize".to_string(),
         report_context: Some(json!({
             "client_api_format": "openai:responses:compact",
-            "provider_api_format": "gemini:cli",
+            "provider_api_format": "gemini:generate_content",
             "model": "gpt-5",
             "needs_conversion": true,
             "has_envelope": false,
@@ -1140,7 +1140,7 @@ fn local_finalize_handles_openai_responses_compact_cross_format_function_call_re
         report_kind: "openai_responses_compact_sync_finalize".to_string(),
         report_context: Some(json!({
             "client_api_format": "openai:responses:compact",
-            "provider_api_format": "gemini:cli",
+            "provider_api_format": "gemini:generate_content",
             "model": "gpt-5",
             "needs_conversion": true,
             "has_envelope": false,
@@ -1250,6 +1250,63 @@ fn local_finalize_handles_openai_responses_openai_family_sync_response_even_when
     );
 }
 
+#[tokio::test]
+async fn local_finalize_converts_openai_responses_null_error_to_claude_cli() {
+    let payload = GatewaySyncReportRequest {
+        trace_id: "trace-openai-responses-to-claude-cli-success".to_string(),
+        report_kind: "claude_cli_sync_finalize".to_string(),
+        report_context: Some(json!({
+            "client_api_format": "claude:messages",
+            "provider_api_format": "openai:responses",
+            "model": "claude-sonnet-4-5",
+            "mapped_model": "gpt-5",
+            "needs_conversion": true,
+            "has_envelope": false,
+        })),
+        status_code: 200,
+        headers: BTreeMap::from([("content-type".to_string(), "application/json".to_string())]),
+        body_json: Some(json!({
+            "id": "resp_completed_cli_123",
+            "object": "response",
+            "model": "gpt-5",
+            "status": "completed",
+            "error": null,
+            "output": [{
+                "type": "message",
+                "id": "msg_completed_cli_123",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{
+                    "type": "output_text",
+                    "text": "Done",
+                    "annotations": []
+                }]
+            }]
+        })),
+        client_body_json: None,
+        body_base64: None,
+        telemetry: None,
+    };
+
+    let outcome = maybe_build_local_core_sync_finalize_response(
+        "trace-openai-responses-to-claude-cli-success",
+        &test_decision(),
+        &payload,
+    )
+    .expect("local finalize should succeed")
+    .expect("local finalize should convert the response");
+
+    assert_eq!(outcome.response.status(), 200);
+    let response_body = to_bytes(outcome.response.into_body(), usize::MAX)
+        .await
+        .expect("response body should read");
+    let body: serde_json::Value =
+        serde_json::from_slice(&response_body).expect("response should be json");
+    assert_eq!(body["type"], "message");
+    assert_eq!(body["content"][0]["text"], "Done");
+    assert_eq!(body["stop_reason"], "end_turn");
+}
+
 #[test]
 fn local_finalize_handles_openai_chat_stream_response_from_openai_chat() {
     let body = concat!(
@@ -1311,7 +1368,7 @@ fn local_finalize_handles_openai_responses_cross_format_stream_response_from_gem
         report_kind: "openai_responses_sync_finalize".to_string(),
         report_context: Some(json!({
             "client_api_format": "openai:responses",
-            "provider_api_format": "gemini:cli",
+            "provider_api_format": "gemini:generate_content",
             "model": "gpt-5",
             "mapped_model": "gemini-2.5-pro-upstream",
             "needs_conversion": true,
@@ -1445,7 +1502,7 @@ fn local_finalize_handles_openai_chat_cross_format_sync_response_from_claude() {
         report_kind: "openai_chat_sync_finalize".to_string(),
         report_context: Some(json!({
             "client_api_format": "openai:chat",
-            "provider_api_format": "claude:chat",
+            "provider_api_format": "claude:messages",
             "model": "gpt-5",
             "mapped_model": "claude-sonnet-4",
             "needs_conversion": true,
@@ -1501,7 +1558,7 @@ fn local_finalize_handles_openai_chat_cross_format_sync_response_from_gemini() {
         report_kind: "openai_chat_sync_finalize".to_string(),
         report_context: Some(json!({
             "client_api_format": "openai:chat",
-            "provider_api_format": "gemini:chat",
+            "provider_api_format": "gemini:generate_content",
             "model": "gpt-5",
             "mapped_model": "gemini-2.5-pro",
             "needs_conversion": true,
@@ -1650,7 +1707,7 @@ fn local_finalize_handles_claude_chat_cross_format_sync_response_from_openai_cha
         trace_id: "trace-claude-chat-xfmt-openai-sync-123".to_string(),
         report_kind: "claude_chat_sync_finalize".to_string(),
         report_context: Some(json!({
-            "client_api_format": "claude:chat",
+            "client_api_format": "claude:messages",
             "provider_api_format": "openai:chat",
             "model": "claude-sonnet-4-5",
             "mapped_model": "gpt-5",
@@ -1690,7 +1747,7 @@ fn local_finalize_handles_claude_chat_cross_format_sync_response_from_openai_cha
             route_class: Some("ai_public".to_string()),
             route_family: Some("claude".to_string()),
             route_kind: Some("chat".to_string()),
-            auth_endpoint_signature: Some("claude:chat".to_string()),
+            auth_endpoint_signature: Some("claude:messages".to_string()),
             execution_runtime_candidate: true,
             auth_context: None,
             admin_principal: None,
@@ -1719,8 +1776,8 @@ fn local_finalize_handles_gemini_cli_cross_format_sync_response_from_claude_cli(
         trace_id: "trace-gemini-cli-xfmt-claude-sync-123".to_string(),
         report_kind: "gemini_cli_sync_finalize".to_string(),
         report_context: Some(json!({
-            "client_api_format": "gemini:cli",
-            "provider_api_format": "claude:cli",
+            "client_api_format": "gemini:generate_content",
+            "provider_api_format": "claude:messages",
             "model": "gemini-cli",
             "mapped_model": "claude-code",
             "needs_conversion": true,
@@ -1756,7 +1813,7 @@ fn local_finalize_handles_gemini_cli_cross_format_sync_response_from_claude_cli(
             route_class: Some("ai_public".to_string()),
             route_family: Some("gemini".to_string()),
             route_kind: Some("cli".to_string()),
-            auth_endpoint_signature: Some("gemini:cli".to_string()),
+            auth_endpoint_signature: Some("gemini:generate_content".to_string()),
             execution_runtime_candidate: true,
             auth_context: None,
             admin_principal: None,
