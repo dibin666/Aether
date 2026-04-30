@@ -236,6 +236,11 @@ pub fn admin_pool_key_account_quota_exhausted(
                 return exhausted;
             }
         } else if let Some(exhausted) = quota_snapshot
+            .get("exhausted")
+            .and_then(|value| admin_pool_json_bool(Some(value)))
+        {
+            return exhausted;
+        } else if let Some(exhausted) = quota_snapshot
             .get("windows")
             .and_then(Value::as_array)
             .and_then(|windows| admin_pool_quota_windows_below_skip_threshold(windows))
@@ -991,6 +996,54 @@ mod tests {
         }));
 
         assert!(!admin_pool_key_account_quota_exhausted(&key, "codex"));
+    }
+
+    #[test]
+    fn non_codex_snapshot_exhausted_flag_controls_model_window_cooldowns() {
+        let mut key = sample_key(Some(json!({
+            "gemini_cli": {
+                "quota_by_model": {
+                    "gemini-2.5-pro": {
+                        "is_exhausted": false
+                    }
+                }
+            }
+        })));
+        key.status_snapshot = Some(json!({
+            "quota": {
+                "version": 2,
+                "provider_type": "gemini_cli",
+                "code": "cooldown",
+                "exhausted": false,
+                "windows": [
+                    {
+                        "code": "model:gemini-2.5-pro",
+                        "is_exhausted": true,
+                        "remaining_ratio": 0.0
+                    }
+                ]
+            }
+        }));
+
+        assert!(!admin_pool_key_account_quota_exhausted(&key, "gemini_cli"));
+
+        key.status_snapshot = Some(json!({
+            "quota": {
+                "version": 2,
+                "provider_type": "gemini_cli",
+                "code": "exhausted",
+                "exhausted": true,
+                "windows": [
+                    {
+                        "code": "model:gemini-2.5-pro",
+                        "is_exhausted": false,
+                        "remaining_ratio": 1.0
+                    }
+                ]
+            }
+        }));
+
+        assert!(admin_pool_key_account_quota_exhausted(&key, "gemini_cli"));
     }
 
     #[test]

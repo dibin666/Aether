@@ -477,22 +477,32 @@ fn quota_windows_min_reset_seconds(windows: &[Value]) -> Option<u64> {
         .min()
 }
 
+fn quota_window_is_exhausted(window: &Map<String, Value>) -> bool {
+    window
+        .get("is_exhausted")
+        .and_then(admin_provider_quota_pure::coerce_json_bool)
+        .or_else(|| {
+            window
+                .get("used_ratio")
+                .and_then(Value::as_f64)
+                .map(|value| value >= 1.0 - 1e-6)
+        })
+        .unwrap_or(false)
+}
+
+fn quota_windows_any_exhausted(windows: &[Value]) -> bool {
+    windows
+        .iter()
+        .filter_map(Value::as_object)
+        .any(quota_window_is_exhausted)
+}
+
 fn quota_windows_all_exhausted(windows: &[Value]) -> bool {
     let mut total = 0usize;
     let mut exhausted = 0usize;
     for window in windows.iter().filter_map(Value::as_object) {
         total += 1;
-        let is_exhausted = window
-            .get("is_exhausted")
-            .and_then(admin_provider_quota_pure::coerce_json_bool)
-            .or_else(|| {
-                window
-                    .get("used_ratio")
-                    .and_then(Value::as_f64)
-                    .map(|value| value >= 1.0 - 1e-6)
-            })
-            .unwrap_or(false);
-        if is_exhausted {
+        if quota_window_is_exhausted(window) {
             exhausted += 1;
         }
     }
@@ -613,7 +623,7 @@ fn build_codex_quota_status_snapshot(
         .min();
     let exhausted_by_credits =
         credits_unlimited != Some(true) && credits_has_credits == Some(false);
-    let exhausted_by_window = quota_windows_all_exhausted(&windows);
+    let exhausted_by_window = quota_windows_any_exhausted(&windows);
     let exhausted = exhausted_by_credits || exhausted_by_window;
 
     let mut credits = Map::new();
@@ -1623,7 +1633,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_quota_snapshot_requires_all_windows_exhausted() {
+    fn codex_quota_snapshot_marks_any_window_exhausted() {
         let mut key = sample_catalog_key();
         key.upstream_metadata = Some(json!({
             "codex": {
@@ -1643,8 +1653,8 @@ mod tests {
             .and_then(Value::as_object)
             .expect("quota snapshot should be object");
 
-        assert_eq!(quota.get("exhausted"), Some(&json!(false)));
-        assert_eq!(quota.get("code"), Some(&json!("ok")));
+        assert_eq!(quota.get("exhausted"), Some(&json!(true)));
+        assert_eq!(quota.get("code"), Some(&json!("exhausted")));
     }
 
     #[test]

@@ -424,7 +424,8 @@ async fn gateway_saves_admin_provider_ops_config_locally_with_trusted_admin_prin
             .with_data_state_for_tests(
                 GatewayDataState::with_provider_catalog_repository_for_tests(Arc::clone(
                     &provider_catalog_repository,
-                )),
+                ))
+                .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
             ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
