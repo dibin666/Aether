@@ -1269,57 +1269,58 @@ INSERT INTO provider_api_keys (
   $23,
   $24,
   $25,
-  CASE
-    WHEN $26::double precision IS NULL THEN NULL
-    ELSE TO_TIMESTAMP($26::double precision)
-  END,
+  $26,
   CASE
     WHEN $27::double precision IS NULL THEN NULL
     ELSE TO_TIMESTAMP($27::double precision)
   END,
-  $28,
-  $29,
-  COALESCE($30, 0),
-  COALESCE($31, 0),
   CASE
-    WHEN $32::double precision IS NULL THEN NULL
-    ELSE TO_TIMESTAMP($32::double precision)
+    WHEN $28::double precision IS NULL THEN NULL
+    ELSE TO_TIMESTAMP($28::double precision)
   END,
-  $33,
+  $29,
+  $30,
+  COALESCE($31, 0),
+  COALESCE($32, 0),
+  CASE
+    WHEN $33::double precision IS NULL THEN NULL
+    ELSE TO_TIMESTAMP($33::double precision)
+  END,
   $34,
   $35,
+  $36,
   CASE
-    WHEN $36::double precision IS NULL THEN NULL
-    ELSE TO_TIMESTAMP($36::double precision)
+    WHEN $37::double precision IS NULL THEN NULL
+    ELSE TO_TIMESTAMP($37::double precision)
   END,
-  $37,
-  COALESCE($38, 0),
+  $38,
   COALESCE($39, 0),
   COALESCE($40, 0),
   COALESCE($41, 0),
   COALESCE($42, 0),
   COALESCE($43, 0),
-  CASE
-    WHEN $44::double precision IS NULL THEN NULL
-    ELSE TO_TIMESTAMP($44::double precision)
-  END,
+  COALESCE($44, 0),
   CASE
     WHEN $45::double precision IS NULL THEN NULL
     ELSE TO_TIMESTAMP($45::double precision)
   END,
-  $46,
+  CASE
+    WHEN $46::double precision IS NULL THEN NULL
+    ELSE TO_TIMESTAMP($46::double precision)
+  END,
   $47,
   $48,
   $49,
-  CASE
-    WHEN $50::double precision IS NULL THEN NOW()
-    ELSE TO_TIMESTAMP($50::double precision)
-  END,
+  $50,
   CASE
     WHEN $51::double precision IS NULL THEN NOW()
     ELSE TO_TIMESTAMP($51::double precision)
   END,
-  $52
+  CASE
+    WHEN $52::double precision IS NULL THEN NOW()
+    ELSE TO_TIMESTAMP($52::double precision)
+  END,
+  $53
 )
 "#,
         )
@@ -2571,6 +2572,49 @@ mod tests {
         assert!(source.contains("concurrent_limit = $13"));
         assert!(source.contains(".bind(key.concurrent_limit)"));
         assert!(source.contains("row_get::<Option<i32>>(row, \"concurrent_limit\")"));
+    }
+
+    #[test]
+    fn provider_api_keys_insert_values_match_bind_order() {
+        let source = include_str!("sql.rs");
+        let query_start = source
+            .find("INSERT INTO provider_api_keys (\n")
+            .expect("provider_api_keys insert should exist");
+        let query_suffix = &source[query_start..];
+        let query_end = query_suffix
+            .find("\n\"#,\n        )\n        .bind(&key.id)")
+            .expect("provider_api_keys insert query should end before key binds");
+        let query = &query_suffix[..query_end];
+
+        for param in 1..=53 {
+            assert!(
+                query.contains(&format!("${}", param)),
+                "provider_api_keys insert SQL missing ${}",
+                param
+            );
+        }
+        assert!(
+            !query.contains("WHEN $36::double precision IS NULL"),
+            "utilization_samples must be bound as JSON, not treated as a timestamp"
+        );
+        assert!(
+            query.contains(
+                "  $25,\n  $26,\n  CASE\n    WHEN $27::double precision IS NULL THEN NULL\n    ELSE TO_TIMESTAMP($27::double precision)\n  END"
+            ),
+            "upstream_metadata must occupy $26 before expires_at $27"
+        );
+        assert!(
+            query.contains(
+                "  $35,\n  $36,\n  CASE\n    WHEN $37::double precision IS NULL THEN NULL"
+            ),
+            "utilization_samples must occupy $36 before last_probe_increase_at $37"
+        );
+        assert!(
+            query.contains(
+                "  $49,\n  $50,\n  CASE\n    WHEN $51::double precision IS NULL THEN NOW()"
+            ),
+            "is_active must occupy $50 before created_at $51"
+        );
     }
 
     #[test]
