@@ -14,6 +14,8 @@ pub(crate) struct AdminProviderKeyCreateRequest {
     #[serde(default)]
     pub(crate) auth_type_by_format: Option<serde_json::Value>,
     #[serde(default)]
+    pub(crate) allow_auth_channel_mismatch_formats: Option<Option<Vec<String>>>,
+    #[serde(default)]
     pub(crate) auth_config: Option<serde_json::Value>,
     pub(crate) name: String,
     #[serde(default)]
@@ -22,6 +24,8 @@ pub(crate) struct AdminProviderKeyCreateRequest {
     pub(crate) internal_priority: Option<i32>,
     #[serde(default)]
     pub(crate) rpm_limit: Option<u32>,
+    #[serde(default)]
+    pub(crate) concurrent_limit: Option<i32>,
     #[serde(default)]
     pub(crate) allowed_models: Option<Vec<String>>,
     #[serde(default)]
@@ -53,6 +57,8 @@ pub(crate) struct AdminProviderKeyUpdateRequest {
     #[serde(default)]
     pub(crate) auth_type_by_format: Option<serde_json::Value>,
     #[serde(default)]
+    pub(crate) allow_auth_channel_mismatch_formats: Option<Vec<String>>,
+    #[serde(default)]
     pub(crate) auth_config: Option<serde_json::Value>,
     #[serde(default)]
     pub(crate) name: Option<String>,
@@ -64,6 +70,8 @@ pub(crate) struct AdminProviderKeyUpdateRequest {
     pub(crate) global_priority_by_format: Option<serde_json::Value>,
     #[serde(default)]
     pub(crate) rpm_limit: Option<u32>,
+    #[serde(default)]
+    pub(crate) concurrent_limit: Option<i32>,
     #[serde(default)]
     pub(crate) allowed_models: Option<Vec<String>>,
     #[serde(default)]

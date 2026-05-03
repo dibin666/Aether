@@ -1,13 +1,15 @@
 use crate::handlers::admin::provider::shared::payloads::AdminProviderKeyUpdatePatch;
 use crate::handlers::admin::provider::write::normalize::{
-    normalize_api_format_json_object_keys, normalize_api_format_list, normalize_auth_type,
-    normalize_auth_type_by_format, validate_vertex_api_formats,
+    normalize_allow_auth_channel_mismatch_formats, normalize_api_format_json_object_keys,
+    normalize_api_format_list, normalize_auth_type, normalize_auth_type_by_format,
+    validate_vertex_api_formats,
 };
 use crate::handlers::admin::request::AdminAppState;
 use crate::handlers::admin::shared::{
     decrypt_catalog_secret_with_fallbacks, encrypt_catalog_secret_with_fallbacks, json_string_list,
     normalize_json_object, normalize_string_list, parse_catalog_auth_config_json,
 };
+use crate::handlers::shared::normalize_optional_api_key_concurrent_limit;
 use crate::provider_key_auth::provider_key_is_oauth_managed;
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogKey, StoredProviderCatalogProvider,
@@ -221,6 +223,32 @@ pub(crate) async fn build_admin_update_provider_key_record(
     } else {
         updated.auth_type_by_format = None;
     }
+    if fields.contains("allow_auth_channel_mismatch_formats") {
+        updated.allow_auth_channel_mismatch_formats =
+            normalize_allow_auth_channel_mismatch_formats(
+                payload.allow_auth_channel_mismatch_formats,
+                "allow_auth_channel_mismatch_formats",
+                &effective_api_formats,
+            )?;
+    } else if fields.contains("api_formats") {
+        let existing = updated
+            .allow_auth_channel_mismatch_formats
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .collect::<Vec<_>>()
+            });
+        updated.allow_auth_channel_mismatch_formats =
+            normalize_allow_auth_channel_mismatch_formats(
+                existing,
+                "allow_auth_channel_mismatch_formats",
+                &effective_api_formats,
+            )?;
+    }
 
     updated.auth_type = target_auth_type;
 
@@ -249,6 +277,10 @@ pub(crate) async fn build_admin_update_provider_key_record(
         if payload.rpm_limit.is_none() {
             updated.learned_rpm_limit = None;
         }
+    }
+    if fields.contains("concurrent_limit") {
+        updated.concurrent_limit =
+            normalize_optional_api_key_concurrent_limit(payload.concurrent_limit)?;
     }
     if fields.contains("allowed_models") {
         updated.allowed_models =

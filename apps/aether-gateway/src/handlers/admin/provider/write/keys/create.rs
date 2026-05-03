@@ -1,13 +1,15 @@
 use crate::handlers::admin::provider::shared::payloads::AdminProviderKeyCreateRequest;
 use crate::handlers::admin::provider::write::normalize::{
-    normalize_api_format_json_object_keys, normalize_api_format_list, normalize_auth_type,
-    normalize_auth_type_by_format, validate_vertex_api_formats,
+    normalize_allow_auth_channel_mismatch_formats, normalize_api_format_json_object_keys,
+    normalize_api_format_list, normalize_auth_type, normalize_auth_type_by_format,
+    validate_vertex_api_formats,
 };
 use crate::handlers::admin::request::AdminAppState;
 use crate::handlers::admin::shared::{
     decrypt_catalog_secret_with_fallbacks, encrypt_catalog_secret_with_fallbacks,
     normalize_json_object, normalize_string_list, parse_catalog_auth_config_json,
 };
+use crate::handlers::shared::normalize_optional_api_key_concurrent_limit;
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
@@ -177,6 +179,7 @@ pub(crate) async fn build_admin_create_provider_key_record(
         .filter(|value| !value.is_empty());
     key.internal_priority = payload.internal_priority.unwrap_or(50);
     key.rpm_limit = payload.rpm_limit;
+    key.concurrent_limit = normalize_optional_api_key_concurrent_limit(payload.concurrent_limit)?;
     key.cache_ttl_minutes = payload.cache_ttl_minutes.unwrap_or(5);
     key.max_probe_interval_minutes = payload.max_probe_interval_minutes.unwrap_or(32);
     key.request_count = Some(0);
@@ -192,6 +195,14 @@ pub(crate) async fn build_admin_create_provider_key_record(
     key.health_by_format = Some(json!({}));
     key.circuit_breaker_by_format = Some(json!({}));
     key.auth_type_by_format = auth_type_by_format;
+    let allow_auth_channel_mismatch_formats = payload
+        .allow_auth_channel_mismatch_formats
+        .unwrap_or_else(|| Some(api_formats.clone()));
+    key.allow_auth_channel_mismatch_formats = normalize_allow_auth_channel_mismatch_formats(
+        allow_auth_channel_mismatch_formats,
+        "allow_auth_channel_mismatch_formats",
+        &api_formats,
+    )?;
     key.created_at_unix_ms = Some(now_unix_secs);
     key.updated_at_unix_secs = Some(now_unix_secs);
     Ok(key)

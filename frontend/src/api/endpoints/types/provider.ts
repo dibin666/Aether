@@ -231,6 +231,7 @@ export interface EndpointAPIKey {
   api_key_plain?: string | null
   auth_type: 'api_key' | 'service_account' | 'oauth' | 'bearer'  // 认证类型（必返回）
   auth_type_by_format?: Record<string, 'api_key' | 'bearer'> | null
+  allow_auth_channel_mismatch_formats?: string[] | null
   credential_kind?: 'raw_secret' | 'oauth_session' | 'service_account' | string | null
   runtime_auth_kind?: 'api_key' | 'bearer' | 'service_account' | 'mixed' | 'unknown' | string | null
   oauth_managed?: boolean
@@ -242,6 +243,7 @@ export interface EndpointAPIKey {
   internal_priority: number  // Key 内部优先级
   global_priority_by_format?: Record<string, number> | null  // 按 endpoint signature 的全局优先级
   rpm_limit?: number | null  // RPM 速率限制 (1-10000)，null 表示自适应模式
+  concurrent_limit?: number | null  // 并发请求上限，null/0 表示不限制
   allowed_models?: AllowedModels  // 允许使用的模型列表（null=不限制）
   capabilities?: Record<string, boolean> | null  // 能力标签配置（如 cache_1h, context_1m）
   // 缓存与熔断配置
@@ -299,6 +301,7 @@ export interface EndpointAPIKey {
   oauth_account_user_id?: string | null  // Codex ChatGPT account-user 联合 ID
   oauth_account_name?: string | null
   oauth_organizations?: OAuthOrganizationInfo[] | null  // OAuth 关联组织/工作区摘要
+  oauth_temporary?: boolean | null  // 是否为仅 Access Token 导入的临时 OAuth 账号
   oauth_invalid_at?: number | null  // 兼容字段；优先使用 status_snapshot.oauth
   oauth_invalid_reason?: string | null  // 兼容字段；优先使用 status_snapshot.oauth
   status_snapshot?: ProviderKeyStatusSnapshot | null
@@ -387,11 +390,13 @@ export interface EndpointAPIKeyUpdate {
   api_key?: string  // 仅在需要更新时提供
   auth_type?: 'api_key' | 'service_account' | 'oauth' | 'bearer'  // 认证类型
   auth_type_by_format?: Record<string, 'api_key' | 'bearer'> | null
+  allow_auth_channel_mismatch_formats?: string[] | null
   auth_config?: Record<string, unknown>  // 认证配置（Vertex AI Service Account JSON）
   rate_multipliers?: Record<string, number> | null  // 按 API 格式的成本倍率
   internal_priority?: number
   global_priority_by_format?: Record<string, number> | null  // 按 API 格式的全局优先级
   rpm_limit?: number | null  // RPM 速率限制 (1-10000)，null 表示切换为自适应模式
+  concurrent_limit?: number | null  // 并发请求上限，null/0 表示不限制
   allowed_models?: AllowedModels
   capabilities?: Record<string, boolean> | null
   cache_ttl_minutes?: number

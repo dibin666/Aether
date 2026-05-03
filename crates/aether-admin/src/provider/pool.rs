@@ -230,8 +230,9 @@ pub fn admin_pool_key_account_quota_exhausted(
     key: &StoredProviderCatalogKey,
     provider_type: &str,
 ) -> bool {
-    if let Some(quota_snapshot) = admin_pool_key_quota_snapshot(key, provider_type) {
-        if provider_type.trim().eq_ignore_ascii_case("codex") {
+    let provider_type = provider_type.trim().to_ascii_lowercase();
+    if let Some(quota_snapshot) = admin_pool_key_quota_snapshot(key, &provider_type) {
+        if provider_type == "codex" {
             if let Some(exhausted) = admin_pool_codex_quota_snapshot_exhausted(quota_snapshot) {
                 return exhausted;
             }
@@ -249,7 +250,6 @@ pub fn admin_pool_key_account_quota_exhausted(
         }
     }
 
-    let provider_type = provider_type.trim().to_ascii_lowercase();
     let Some(bucket) = admin_pool_metadata_bucket(key.upstream_metadata.as_ref(), &provider_type)
     else {
         return false;
@@ -309,7 +309,6 @@ pub fn admin_pool_key_account_quota_exhausted(
         _ => false,
     }
 }
-
 fn admin_pool_has_proxy(key: &StoredProviderCatalogKey) -> bool {
     match key.proxy.as_ref() {
         Some(Value::Object(values)) => !values.is_empty(),
@@ -871,6 +870,17 @@ mod tests {
                     "has_credits": true,
                     "primary_used_percent": 100.0,
                     "secondary_used_percent": 100.0
+                }
+            }))),
+            "codex",
+        ));
+        assert!(!admin_pool_key_account_quota_exhausted(
+            &sample_key(Some(json!({
+                "codex": {
+                    "has_credits": false,
+                    "credits_unlimited": false,
+                    "primary_used_percent": 64.0,
+                    "secondary_used_percent": 3.0
                 }
             }))),
             "codex",

@@ -16,7 +16,7 @@ pub(crate) fn normalize_api_format_list(values: Vec<String>) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut normalized = Vec::new();
     for value in values {
-        let canonical = crate::ai_pipeline::normalize_api_format_alias(&value);
+        let canonical = crate::ai_serving::normalize_api_format_alias(&value);
         if seen.insert(canonical.clone()) {
             normalized.push(canonical);
         }
@@ -36,7 +36,7 @@ pub(crate) fn normalize_api_format_json_object_keys(
     };
     let mut normalized = serde_json::Map::new();
     for (key, value) in map {
-        let canonical = crate::ai_pipeline::normalize_api_format_alias(&key);
+        let canonical = crate::ai_serving::normalize_api_format_alias(&key);
         normalized.insert(canonical, value);
     }
     Ok(Some(serde_json::Value::Object(normalized)))
@@ -56,7 +56,7 @@ pub(crate) fn normalize_auth_type_by_format(
     let allowed = api_formats.iter().cloned().collect::<BTreeSet<_>>();
     let mut normalized = serde_json::Map::new();
     for (key, value) in map {
-        let canonical = crate::ai_pipeline::normalize_api_format_alias(&key);
+        let canonical = crate::ai_serving::normalize_api_format_alias(&key);
         if !allowed.is_empty() && !allowed.contains(&canonical) {
             return Err(format!("{field_name} 包含未选择的 API 格式: {canonical}"));
         }
@@ -78,6 +78,36 @@ pub(crate) fn normalize_auth_type_by_format(
         Ok(None)
     } else {
         Ok(Some(serde_json::Value::Object(normalized)))
+    }
+}
+
+pub(crate) fn normalize_allow_auth_channel_mismatch_formats(
+    values: Option<Vec<String>>,
+    field_name: &str,
+    api_formats: &[String],
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(values) = values else {
+        return Ok(None);
+    };
+    let allowed = api_formats.iter().cloned().collect::<BTreeSet<_>>();
+    let mut seen = BTreeSet::new();
+    let mut normalized = Vec::new();
+    for value in values {
+        let canonical = crate::ai_serving::normalize_api_format_alias(&value);
+        if canonical.is_empty() {
+            continue;
+        }
+        if !allowed.is_empty() && !allowed.contains(&canonical) {
+            return Err(format!("{field_name} 包含未选择的 API 格式: {canonical}"));
+        }
+        if seen.insert(canonical.clone()) {
+            normalized.push(serde_json::Value::String(canonical));
+        }
+    }
+    if normalized.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(serde_json::Value::Array(normalized)))
     }
 }
 

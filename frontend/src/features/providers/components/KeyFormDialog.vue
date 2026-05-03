@@ -164,21 +164,16 @@
                 </button>
               </div>
               <div
-                class="flex items-center text-xs text-muted-foreground gap-1"
+                v-if="canToggleAuthChannelMismatch(format)"
+                class="flex items-center gap-1"
+                title="允许客户端认证方式不一致时使用"
                 @click.stop
               >
-                <span>×</span>
-                <input
-                  :value="form.rate_multipliers[format] ?? ''"
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  placeholder="1"
-                  class="w-9 bg-transparent text-right outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                  :class="form.api_formats.includes(format) ? 'text-primary' : 'text-muted-foreground'"
-                  title="成本倍率"
-                  @input="(e) => updateRateMultiplier(format, (e.target as HTMLInputElement).value)"
-                >
+                <Switch
+                  :model-value="isAuthChannelMismatchAllowed(format)"
+                  class="scale-75"
+                  @update:model-value="(value) => setAuthChannelMismatchAllowed(format, value)"
+                />
               </div>
             </div>
           </div>
@@ -220,6 +215,24 @@
           />
           <p class="text-xs text-muted-foreground mt-0.5">
             留空自适应
+          </p>
+        </div>
+        <div>
+          <Label
+            for="concurrent_limit"
+            class="text-xs"
+          >并发请求上限</Label>
+          <Input
+            id="concurrent_limit"
+            :model-value="form.concurrent_limit ?? ''"
+            type="number"
+            min="0"
+            placeholder="不限制"
+            class="h-8"
+            @update:model-value="(v) => form.concurrent_limit = parseNullableNumberInput(v, { min: 0 })"
+          />
+          <p class="text-xs text-muted-foreground mt-0.5">
+            同一时间允许使用该 Key 的最大请求数，留空或 0 表示不限制
           </p>
         </div>
         <div>
@@ -478,6 +491,25 @@ function sanitizeAuthTypeByFormat(
   return sanitized
 }
 
+function sanitizeAllowAuthChannelMismatchFormats(
+  formats: string[] | null | undefined,
+  selectedFormats = form.value.api_formats
+): string[] {
+  if (!formats) return []
+  const selected = new Set(selectedFormats.map(normalizeApiFormat))
+  const seen = new Set<string>()
+  const sanitized: string[] = []
+  for (const format of formats) {
+    const normalizedFormat = normalizeApiFormat(format)
+    if (!normalizedFormat || !selected.has(normalizedFormat) || seen.has(normalizedFormat)) {
+      continue
+    }
+    seen.add(normalizedFormat)
+    sanitized.push(normalizedFormat)
+  }
+  return sanitized
+}
+
 function getDefaultApiFormats(): string[] {
   const endpointFormat = props.endpoint?.api_format
   if (endpointFormat) {
@@ -549,10 +581,33 @@ function setFormatAuthType(format: string, authType: RawSecretAuthType) {
   form.value.auth_type_by_format = sanitizeAuthTypeByFormat(next)
 }
 
+function canToggleAuthChannelMismatch(format: string): boolean {
+  return canOverrideFormatAuth(format)
+}
+
+function isAuthChannelMismatchAllowed(format: string): boolean {
+  return form.value.allow_auth_channel_mismatch_formats.includes(normalizeApiFormat(format))
+}
+
+function setAuthChannelMismatchAllowed(format: string, allowed: boolean) {
+  const normalizedFormat = normalizeApiFormat(format)
+  const next = new Set(form.value.allow_auth_channel_mismatch_formats.map(normalizeApiFormat))
+  if (allowed) {
+    next.add(normalizedFormat)
+  } else {
+    next.delete(normalizedFormat)
+  }
+  form.value.allow_auth_channel_mismatch_formats = sanitizeAllowAuthChannelMismatchFormats([...next])
+}
 
 function buildAuthTypeByFormatPayload(): Record<string, RawSecretAuthType> | null {
   const sanitized = sanitizeAuthTypeByFormat(form.value.auth_type_by_format)
   return Object.keys(sanitized).length > 0 ? sanitized : null
+}
+
+function buildAllowAuthChannelMismatchFormatsPayload(): string[] {
+  const sanitized = sanitizeAllowAuthChannelMismatchFormats(form.value.allow_auth_channel_mismatch_formats)
+  return sanitized
 }
 
 const serviceAccountDescription = computed(() => (
@@ -564,6 +619,10 @@ const serviceAccountDescription = computed(() => (
 // 默认认证类型
 function getDefaultAuthType(): ProviderKeyFormAuthType {
   return authTypeOptions.value[0]?.value || 'api_key'
+}
+
+function getDefaultAllowAuthChannelMismatchFormats(formats = getDefaultApiFormats()): string[] {
+  return sanitizeAllowAuthChannelMismatchFormats(formats, formats)
 }
 
 // 显示自动获取模型警告：编辑模式下，原本未启用但现在启用，且已有 allowed_models
@@ -632,11 +691,13 @@ const form = ref({
   api_key: '',  // 标准 API Key
   auth_type: 'api_key' as ProviderKeyFormAuthType,  // 认证类型
   auth_type_by_format: {} as Record<string, RawSecretAuthType>,
+  allow_auth_channel_mismatch_formats: [] as string[],
   auth_config_text: '',  // Service Account JSON 文本（用于表单输入）
   api_formats: [] as string[],  // 支持的 API 格式列表
   rate_multipliers: {} as Record<string, number>,  // 按 API 格式的成本倍率
   internal_priority: 10,
   rpm_limit: undefined as number | null | undefined,  // RPM 限制（null=自适应，undefined=保持原值）
+  concurrent_limit: undefined as number | null | undefined,  // 并发请求上限（null/0=不限制，undefined=保持原值）
   cache_ttl_minutes: 5,
   max_probe_interval_minutes: 32,
   note: '',
@@ -661,6 +722,9 @@ watch(
       form.value.api_formats = [...filtered]
     }
     form.value.auth_type_by_format = sanitizeAuthTypeByFormat(form.value.auth_type_by_format)
+    form.value.allow_auth_channel_mismatch_formats = sanitizeAllowAuthChannelMismatchFormats(
+      form.value.allow_auth_channel_mismatch_formats
+    )
   },
   { immediate: true }
 )
@@ -676,6 +740,10 @@ watch(
     if (filtered.length !== form.value.api_formats.length) {
       form.value.api_formats = [...filtered]
       form.value.auth_type_by_format = sanitizeAuthTypeByFormat(form.value.auth_type_by_format, filtered)
+      form.value.allow_auth_channel_mismatch_formats = sanitizeAllowAuthChannelMismatchFormats(
+        form.value.allow_auth_channel_mismatch_formats,
+        filtered
+      )
       return
     }
 
@@ -683,6 +751,8 @@ watch(
       const defaults = getDefaultApiFormats()
       if (defaults.length > 0) {
         form.value.api_formats = defaults
+        form.value.allow_auth_channel_mismatch_formats =
+          getDefaultAllowAuthChannelMismatchFormats(defaults)
       }
     }
   },
@@ -708,46 +778,34 @@ function toggleApiFormat(format: string) {
   if (index === -1) {
     // 添加格式
     form.value.api_formats.push(format)
+    setAuthChannelMismatchAllowed(format, true)
   } else {
-    // 移除格式，但保留倍率配置（用户可能只是临时取消）
+    // 移除格式，但保留隐藏配置（用户可能只是临时取消）
     form.value.api_formats.splice(index, 1)
   }
-}
-
-// 更新指定格式的成本倍率
-function updateRateMultiplier(format: string, value: string | number) {
-  // 使用对象替换以确保 Vue 3 响应性
-  const newMultipliers = { ...form.value.rate_multipliers }
-
-  if (value === '' || value === null || value === undefined) {
-    // 清空时删除该格式的配置（使用默认倍率）
-    delete newMultipliers[format]
-  } else {
-    const numValue = typeof value === 'string' ? parseFloat(value) : value
-    // 限制倍率范围：0.01 - 100
-    if (!isNaN(numValue) && numValue >= 0.01 && numValue <= 100) {
-      newMultipliers[format] = numValue
-    }
-  }
-
-  // 替换整个对象以触发响应式更新
-  form.value.rate_multipliers = newMultipliers
+  form.value.allow_auth_channel_mismatch_formats = sanitizeAllowAuthChannelMismatchFormats(
+    form.value.allow_auth_channel_mismatch_formats
+  )
 }
 
 
 // 重置表单
 function resetForm() {
   formNonce.value = createFieldNonce()
+  const defaultApiFormats = getDefaultApiFormats()
   form.value = {
     name: '',
     api_key: '',
     auth_type: getDefaultAuthType(),
     auth_type_by_format: {},
+    allow_auth_channel_mismatch_formats:
+      getDefaultAllowAuthChannelMismatchFormats(defaultApiFormats),
     auth_config_text: '',
-    api_formats: getDefaultApiFormats(),
+    api_formats: defaultApiFormats,
     rate_multipliers: {},
     internal_priority: 10,
     rpm_limit: undefined,
+    concurrent_limit: undefined,
     cache_ttl_minutes: 5,
     max_probe_interval_minutes: 32,
     note: '',
@@ -766,6 +824,9 @@ function clearForNextAdd() {
   form.value.api_key = ''
   form.value.auth_config_text = ''
   form.value.auth_type_by_format = sanitizeAuthTypeByFormat(form.value.auth_type_by_format)
+  form.value.allow_auth_channel_mismatch_formats = sanitizeAllowAuthChannelMismatchFormats(
+    form.value.allow_auth_channel_mismatch_formats
+  )
 }
 
 // 加载密钥数据（编辑模式）
@@ -781,6 +842,10 @@ function loadKeyData() {
       props.editingKey.api_formats || [],
       normalizeFormAuthType(props.editingKey.auth_type)
     ),
+    allow_auth_channel_mismatch_formats: sanitizeAllowAuthChannelMismatchFormats(
+      props.editingKey.allow_auth_channel_mismatch_formats || [],
+      props.editingKey.api_formats || []
+    ),
     auth_config_text: '',  // auth_config 不返回给前端，编辑时需要重新输入
     api_formats: props.editingKey.api_formats?.length > 0
       ? sanitizeApiFormats(
@@ -792,6 +857,7 @@ function loadKeyData() {
     internal_priority: props.editingKey.internal_priority ?? 10,
     // 保留原始的 null/undefined 状态，null 表示自适应模式
     rpm_limit: props.editingKey.rpm_limit ?? undefined,
+    concurrent_limit: props.editingKey.concurrent_limit ?? undefined,
     cache_ttl_minutes: props.editingKey.cache_ttl_minutes ?? 5,
     max_probe_interval_minutes: props.editingKey.max_probe_interval_minutes ?? 32,
     note: props.editingKey.note || '',
@@ -873,6 +939,9 @@ async function handleSave() {
   }
 
   form.value.api_formats = sanitizeApiFormats(form.value.api_formats)
+  form.value.allow_auth_channel_mismatch_formats = sanitizeAllowAuthChannelMismatchFormats(
+    form.value.allow_auth_channel_mismatch_formats
+  )
 
   // 验证至少选择一个 API 格式
   if (form.value.api_formats.length === 0) {
@@ -905,6 +974,7 @@ async function handleSave() {
     // 准备认证相关数据
     const authConfig = parseAuthConfig()
     const authTypeByFormat = buildAuthTypeByFormatPayload()
+    const allowAuthChannelMismatchFormats = buildAllowAuthChannelMismatchFormatsPayload()
 
     if (props.editingKey) {
       const shouldClearAllowedModels = !!props.editingKey.auto_fetch_models && !form.value.auto_fetch_models
@@ -916,9 +986,11 @@ async function handleSave() {
         name: form.value.name,
         auth_type: form.value.auth_type,
         auth_type_by_format: authTypeByFormat,
+        allow_auth_channel_mismatch_formats: allowAuthChannelMismatchFormats,
         rate_multipliers: rateMultipliersData,
         internal_priority: form.value.internal_priority,
         rpm_limit: form.value.rpm_limit,
+        concurrent_limit: form.value.concurrent_limit,
         cache_ttl_minutes: form.value.cache_ttl_minutes,
         max_probe_interval_minutes: form.value.max_probe_interval_minutes,
         note: form.value.note,
@@ -947,11 +1019,13 @@ async function handleSave() {
         api_key: form.value.api_key,
         auth_type: form.value.auth_type,
         auth_type_by_format: authTypeByFormat,
+        allow_auth_channel_mismatch_formats: allowAuthChannelMismatchFormats,
         auth_config: authConfig || undefined,
         name: form.value.name,
         rate_multipliers: rateMultipliersData,
         internal_priority: form.value.internal_priority,
         rpm_limit: form.value.rpm_limit,
+        concurrent_limit: form.value.concurrent_limit,
         cache_ttl_minutes: form.value.cache_ttl_minutes,
         max_probe_interval_minutes: form.value.max_probe_interval_minutes,
         note: form.value.note,
