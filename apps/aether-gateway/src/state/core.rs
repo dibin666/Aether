@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use aether_data::repository::proxy_nodes::{
     ProxyNodeHeartbeatMutation, ProxyNodeManualCreateMutation, ProxyNodeManualUpdateMutation,
-    ProxyNodeTunnelStatusMutation, StoredProxyNode, StoredProxyNodeEvent,
+    ProxyNodeTrafficMutation, ProxyNodeTunnelStatusMutation, StoredProxyNode, StoredProxyNodeEvent,
 };
 use aether_http::{build_http_client, HttpClientConfig};
 use aether_runtime::{
@@ -253,52 +253,39 @@ impl AppState {
         Ok(self)
     }
 
-    pub async fn run_postgres_migrations(&self) -> Result<bool, sqlx::migrate::MigrateError> {
-        let Some(pool) = self.postgres_pool() else {
-            return Ok(false);
-        };
-        aether_data::migrate::run_migrations(&pool).await?;
-        Ok(true)
+    pub async fn run_database_migrations(&self) -> Result<bool, sqlx::migrate::MigrateError> {
+        self.data.run_database_migrations().await
     }
 
-    pub async fn run_postgres_backfills(&self) -> Result<bool, sqlx::migrate::MigrateError> {
-        let Some(pool) = self.postgres_pool() else {
-            return Ok(false);
-        };
-        aether_data::backfill::run_backfills(&pool).await?;
-        Ok(true)
+    pub async fn run_database_backfills(&self) -> Result<bool, sqlx::migrate::MigrateError> {
+        self.data.run_database_backfills().await
     }
 
-    pub async fn pending_postgres_migrations(
+    pub async fn pending_database_migrations(
         &self,
-    ) -> Result<Option<Vec<aether_data::migrate::PendingMigrationInfo>>, sqlx::migrate::MigrateError>
-    {
-        let Some(pool) = self.postgres_pool() else {
-            return Ok(None);
-        };
-        Ok(Some(aether_data::migrate::pending_migrations(&pool).await?))
+    ) -> Result<
+        Option<Vec<aether_data::lifecycle::migrate::PendingMigrationInfo>>,
+        sqlx::migrate::MigrateError,
+    > {
+        self.data.pending_database_migrations().await
     }
 
-    pub async fn prepare_postgres_for_startup(
+    pub async fn prepare_database_for_startup(
         &self,
-    ) -> Result<Option<Vec<aether_data::migrate::PendingMigrationInfo>>, sqlx::migrate::MigrateError>
-    {
-        let Some(pool) = self.postgres_pool() else {
-            return Ok(None);
-        };
-        Ok(Some(
-            aether_data::migrate::prepare_database_for_startup(&pool).await?,
-        ))
+    ) -> Result<
+        Option<Vec<aether_data::lifecycle::migrate::PendingMigrationInfo>>,
+        sqlx::migrate::MigrateError,
+    > {
+        self.data.prepare_database_for_startup().await
     }
 
-    pub async fn pending_postgres_backfills(
+    pub async fn pending_database_backfills(
         &self,
-    ) -> Result<Option<Vec<aether_data::backfill::PendingBackfillInfo>>, sqlx::migrate::MigrateError>
-    {
-        let Some(pool) = self.postgres_pool() else {
-            return Ok(None);
-        };
-        Ok(Some(aether_data::backfill::pending_backfills(&pool).await?))
+    ) -> Result<
+        Option<Vec<aether_data::lifecycle::backfill::PendingBackfillInfo>>,
+        sqlx::migrate::MigrateError,
+    > {
+        self.data.pending_database_backfills().await
     }
 
     pub fn with_video_task_poller_config(mut self, interval: Duration, batch_size: usize) -> Self {
@@ -551,6 +538,16 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn record_proxy_node_traffic(
+        &self,
+        mutation: &ProxyNodeTrafficMutation,
+    ) -> Result<bool, GatewayError> {
+        self.data
+            .record_proxy_node_traffic(mutation)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
     pub(crate) async fn unregister_proxy_node(
         &self,
         node_id: &str,
@@ -743,12 +740,8 @@ impl AppState {
         self.data.has_redis_backend()
     }
 
-    pub(crate) fn redis_kv_runner(&self) -> Option<aether_data::redis::RedisKvRunner> {
+    pub(crate) fn redis_kv_runner(&self) -> Option<aether_data::driver::redis::RedisKvRunner> {
         self.data.kv_runner()
-    }
-
-    pub(crate) fn postgres_pool(&self) -> Option<aether_data::postgres::PostgresPool> {
-        self.data.postgres_pool()
     }
 
     pub(crate) fn remove_scheduler_affinity_cache_entry(&self, cache_key: &str) -> bool {

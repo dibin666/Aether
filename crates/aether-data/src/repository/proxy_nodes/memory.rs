@@ -9,8 +9,8 @@ use uuid::Uuid;
 use super::types::{
     normalize_proxy_metadata, reconcile_remote_config_after_heartbeat, ProxyNodeHeartbeatMutation,
     ProxyNodeManualCreateMutation, ProxyNodeManualUpdateMutation, ProxyNodeReadRepository,
-    ProxyNodeRegistrationMutation, ProxyNodeRemoteConfigMutation, ProxyNodeTunnelStatusMutation,
-    ProxyNodeWriteRepository, StoredProxyNode, StoredProxyNodeEvent,
+    ProxyNodeRegistrationMutation, ProxyNodeRemoteConfigMutation, ProxyNodeTrafficMutation,
+    ProxyNodeTunnelStatusMutation, ProxyNodeWriteRepository, StoredProxyNode, StoredProxyNodeEvent,
 };
 use crate::DataLayerError;
 
@@ -437,6 +437,26 @@ impl ProxyNodeWriteRepository for InMemoryProxyNodeRepository {
         Ok(Some(node.clone()))
     }
 
+    async fn record_traffic(
+        &self,
+        mutation: &ProxyNodeTrafficMutation,
+    ) -> Result<bool, DataLayerError> {
+        let mut nodes = self.nodes.write().expect("proxy node repository lock");
+        let Some(node) = nodes.get_mut(&mutation.node_id) else {
+            return Ok(false);
+        };
+        if !node.is_manual {
+            return Ok(false);
+        }
+
+        node.total_requests += mutation.total_requests_delta.max(0);
+        node.failed_requests += mutation.failed_requests_delta.max(0);
+        node.dns_failures += mutation.dns_failures_delta.max(0);
+        node.stream_errors += mutation.stream_errors_delta.max(0);
+        node.updated_at_unix_secs = Self::now_unix_secs();
+        Ok(true)
+    }
+
     async fn update_tunnel_status(
         &self,
         mutation: &ProxyNodeTunnelStatusMutation,
@@ -551,6 +571,32 @@ impl ProxyNodeWriteRepository for InMemoryProxyNodeRepository {
         node.config_version = node.config_version.saturating_add(1);
         node.updated_at_unix_secs = Self::now_unix_secs();
         Ok(Some(node.clone()))
+    }
+
+    async fn increment_manual_node_requests(
+        &self,
+        node_id: &str,
+        total_delta: i64,
+        failed_delta: i64,
+        latency_ms: Option<i64>,
+    ) -> Result<(), DataLayerError> {
+        let mut nodes = self.nodes.write().expect("proxy node repository lock");
+        let Some(node) = nodes.get_mut(node_id) else {
+            return Ok(());
+        };
+        if !node.is_manual {
+            return Ok(());
+        }
+        if total_delta > 0 {
+            node.total_requests += total_delta;
+        }
+        if failed_delta > 0 {
+            node.failed_requests += failed_delta;
+        }
+        if let Some(ms) = latency_ms {
+            node.avg_latency_ms = Some(ms as f64);
+        }
+        Ok(())
     }
 }
 

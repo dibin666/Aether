@@ -23,9 +23,10 @@ pub use crate::contracts::{
     OPENAI_CHAT_STREAM_PLAN_KIND, OPENAI_CHAT_STREAM_SUCCESS_REPORT_KIND,
     OPENAI_CHAT_SYNC_ERROR_REPORT_KIND, OPENAI_CHAT_SYNC_FINALIZE_REPORT_KIND,
     OPENAI_CHAT_SYNC_PLAN_KIND, OPENAI_CHAT_SYNC_SUCCESS_REPORT_KIND,
-    OPENAI_IMAGE_STREAM_PLAN_KIND, OPENAI_IMAGE_STREAM_SUCCESS_REPORT_KIND,
-    OPENAI_IMAGE_SYNC_FINALIZE_REPORT_KIND, OPENAI_IMAGE_SYNC_PLAN_KIND,
-    OPENAI_IMAGE_SYNC_SUCCESS_REPORT_KIND, OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND,
+    OPENAI_EMBEDDING_SYNC_PLAN_KIND, OPENAI_IMAGE_STREAM_PLAN_KIND,
+    OPENAI_IMAGE_STREAM_SUCCESS_REPORT_KIND, OPENAI_IMAGE_SYNC_FINALIZE_REPORT_KIND,
+    OPENAI_IMAGE_SYNC_PLAN_KIND, OPENAI_IMAGE_SYNC_SUCCESS_REPORT_KIND,
+    OPENAI_RERANK_SYNC_PLAN_KIND, OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND,
     OPENAI_RESPONSES_COMPACT_STREAM_SUCCESS_REPORT_KIND,
     OPENAI_RESPONSES_COMPACT_SYNC_ERROR_REPORT_KIND,
     OPENAI_RESPONSES_COMPACT_SYNC_FINALIZE_REPORT_KIND, OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND,
@@ -61,7 +62,17 @@ pub use crate::provider_compat::surfaces::{
 pub use crate::request::common::{
     force_upstream_streaming_for_provider, parse_direct_request_body,
 };
-pub use crate::request::matrix::build_standard_request_body_from_canonical;
+pub use crate::request::matrix::{
+    build_standard_request_body_from_canonical,
+    build_standard_request_body_from_canonical_with_model_directives,
+};
+pub use crate::request::model_directives::{
+    apply_model_directive_mapping_patch, apply_model_directive_overrides_from_model,
+    apply_model_directive_overrides_from_request, claude_model_uses_adaptive_effort,
+    extract_gemini_model_from_path, gemini_model_uses_thinking_level, model_directive_base_model,
+    normalize_model_directive_model, parse_model_directive, ModelDirective, ModelOverride,
+    ReasoningEffort,
+};
 pub use crate::request::openai::{
     copy_request_number_field, copy_request_number_field_as,
     map_openai_reasoning_effort_to_claude_output, map_openai_reasoning_effort_to_gemini_budget,
@@ -98,8 +109,14 @@ pub use crate::request::specialized::{
 pub use crate::request::standard::{
     apply_codex_openai_responses_special_body_edits, apply_codex_openai_responses_special_headers,
     apply_openai_responses_compact_special_body_edits, build_cross_format_openai_chat_request_body,
-    build_cross_format_openai_responses_request_body, build_local_openai_chat_request_body,
-    build_local_openai_responses_request_body, build_standard_request_body,
+    build_cross_format_openai_chat_request_body_with_model_directives,
+    build_cross_format_openai_responses_request_body,
+    build_cross_format_openai_responses_request_body_with_model_directives,
+    build_local_openai_chat_request_body,
+    build_local_openai_chat_request_body_with_model_directives,
+    build_local_openai_responses_request_body,
+    build_local_openai_responses_request_body_with_model_directives, build_standard_request_body,
+    build_standard_request_body_with_model_directives,
     claude::{
         resolve_stream_spec as resolve_claude_stream_spec,
         resolve_sync_spec as resolve_claude_sync_spec,

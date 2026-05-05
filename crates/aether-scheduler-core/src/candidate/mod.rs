@@ -8,6 +8,7 @@ pub use capability::{
 };
 pub use enumeration::{
     collect_global_model_names_for_required_capability, enumerate_minimal_candidate_selection,
+    enumerate_minimal_candidate_selection_with_model_directives,
 };
 pub use selectability::{
     auth_api_key_concurrency_limit_reached, candidate_is_selectable_with_runtime_state,
@@ -502,6 +503,49 @@ mod tests {
                 rpm_reset_at: None,
             }),
             Some("key_rpm_exhausted")
+        );
+    }
+
+    #[test]
+    fn key_circuit_allows_probe_after_next_probe_time() {
+        let mut circuit_open_key = sample_key_with_concurrent_limit("1", Some(2));
+        circuit_open_key.circuit_breaker_by_format = Some(serde_json::json!({
+            "openai:chat": {
+                "open": true,
+                "next_probe_at_unix_secs": 100
+            }
+        }));
+        let provider_key_rpm_states = BTreeMap::from([("key-1".to_string(), circuit_open_key)]);
+
+        assert_eq!(
+            candidate_runtime_skip_reason_with_state(CandidateRuntimeSelectabilityInput {
+                candidate: &sample_candidate("1", None),
+                recent_candidates: &[],
+                provider_concurrent_limits: &BTreeMap::new(),
+                provider_key_rpm_states: &provider_key_rpm_states,
+                now_unix_secs: 99,
+                cached_affinity_target: None,
+                provider_quota_blocks_requests: false,
+                account_quota_exhausted: false,
+                oauth_invalid: false,
+                rpm_reset_at: None,
+            }),
+            Some("key_circuit_open")
+        );
+        assert_eq!(
+            candidate_runtime_skip_reason_with_state(CandidateRuntimeSelectabilityInput {
+                candidate: &sample_candidate("1", None),
+                recent_candidates: &[],
+                provider_concurrent_limits: &BTreeMap::new(),
+                provider_key_rpm_states: &provider_key_rpm_states,
+                now_unix_secs: 100,
+                cached_affinity_target: None,
+                provider_quota_blocks_requests: false,
+                account_quota_exhausted: false,
+                oauth_invalid: false,
+                rpm_reset_at: None,
+            }),
+            None
         );
     }
 

@@ -11,6 +11,7 @@
 <p align="center">
   <a href="#简介">简介</a> •
   <a href="#部署">部署</a> •
+  <a href="#api-文档">API 文档</a> •
   <a href="#环境变量">环境变量</a> •
   <a href="#qa">Q&A</a>
 </p>
@@ -128,6 +129,11 @@ Aether Proxy 是配套的正向代理节点，部署在海外 VPS 上，为墙�
 - Docker Compose 部署或下载预编译二进制直接运行
 - 通过 `aether-proxy setup` 完成交互式配置，自动注册为系统服务
 - 详细文档见 [apps/aether-proxy/README.md](apps/aether-proxy/README.md)
+
+## API 文档
+
+- Embeddings: [OpenAI compatible `POST /v1/embeddings`](docs/api/embeddings.md)
+- Rerank: [OpenAI/Jina compatible `POST /v1/rerank`](docs/api/rerank.md)
 
 ## 环境变量
 

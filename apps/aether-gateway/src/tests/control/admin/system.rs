@@ -1078,6 +1078,12 @@ async fn gateway_handles_admin_system_api_formats_locally_with_trusted_admin_pri
         .expect("formats should be an array");
     assert_eq!(formats[0]["value"], "openai:chat");
     assert_eq!(formats[0]["default_path"], "/v1/chat/completions");
+    assert!(formats
+        .iter()
+        .any(|item| item["value"] == "openai:embedding"));
+    assert!(formats.iter().any(|item| item["value"] == "openai:rerank"));
+    assert!(formats.iter().any(|item| item["value"] == "jina:embedding"));
+    assert!(formats.iter().any(|item| item["value"] == "jina:rerank"));
     assert!(formats.iter().any(|item| item["value"] == "gemini:video"));
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
@@ -1222,6 +1228,31 @@ async fn gateway_handles_admin_system_format_conversion_default_as_disabled() {
 
     gateway_handle.abort();
     upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_handles_admin_system_model_directives_default_as_disabled() {
+    let gateway = build_router_with_state(AppState::new().expect("gateway should build"));
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{gateway_url}/api/admin/system/configs/enable_model_directives"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["key"], "enable_model_directives");
+    assert_eq!(payload["value"], json!(false));
+
+    gateway_handle.abort();
 }
 
 #[tokio::test]

@@ -16,7 +16,7 @@ use crate::ai_serving::planner::{
     build_ai_execution_decision_response, AiExecutionDecisionResponseParts,
 };
 use crate::ai_serving::transport::{
-    resolve_transport_execution_timeouts, resolve_transport_tls_profile,
+    resolve_transport_execution_timeouts, resolve_transport_profile,
 };
 use crate::ai_serving::{
     ai_local_execution_contract_for_formats, api_format_alias_matches,
@@ -139,7 +139,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
         ),
         &resolved.transport,
     );
-    let tls_profile = resolve_transport_tls_profile(&resolved.transport);
+    let transport_profile = resolve_transport_profile(&resolved.transport);
     let timeouts = resolve_transport_execution_timeouts(&resolved.transport);
     let super::request::LocalStandardCandidatePayloadParts {
         auth_header,
@@ -181,7 +181,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
             provider_request_body_base64: None,
             content_type: Some("application/json".to_string()),
             proxy,
-            tls_profile,
+            transport_profile,
             timeouts,
             upstream_is_stream,
             report_kind: spec_metadata.report_kind.map(ToOwned::to_owned),
@@ -288,7 +288,9 @@ mod tests {
 
     use super::maybe_build_local_standard_decision_payload_for_candidate;
     use crate::ai_serving::planner::candidate_materialization::LocalExecutionCandidateAttempt;
-    use crate::ai_serving::planner::candidate_resolution::EligibleLocalExecutionCandidate;
+    use crate::ai_serving::planner::candidate_resolution::{
+        EligibleLocalExecutionCandidate, LocalExecutionCandidateKind,
+    };
     use crate::ai_serving::planner::decision_input::LocalRequestedModelDecisionInput;
     use crate::ai_serving::{
         ExecutionRuntimeAuthContext, GatewayAuthApiKeySnapshot, LocalStandardSourceFamily,
@@ -452,6 +454,7 @@ mod tests {
     ) -> LocalExecutionCandidateAttempt {
         LocalExecutionCandidateAttempt {
             eligible: EligibleLocalExecutionCandidate {
+                kind: LocalExecutionCandidateKind::SingleKey,
                 candidate: sample_candidate(api_format, endpoint_id),
                 transport: Arc::new(sample_transport(api_format, endpoint_id)),
                 provider_api_format: api_format.to_string(),

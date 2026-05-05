@@ -1,6 +1,6 @@
 use aether_billing::enrich_usage_event_with_billing;
 use aether_billing::BillingModelContextLookup;
-use aether_data::redis::RedisStreamRunner;
+use aether_data::driver::redis::RedisStreamRunner;
 use aether_data::repository::audit::RequestAuditReader;
 use aether_data::repository::auth::{
     AuthApiKeyLookupKey, ResolvedAuthApiKeySnapshotReader, StoredAuthApiKeySnapshot,
@@ -146,12 +146,39 @@ impl MinimalCandidateSelectionRowSource for GatewayDataState {
             .await
     }
 
+    async fn read_minimal_candidate_selection_rows_for_api_format_and_requested_model(
+        &self,
+        api_format: &str,
+        requested_model_name: &str,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        self.list_minimal_candidate_selection_rows_for_requested_model(
+            api_format,
+            requested_model_name,
+        )
+        .await
+    }
+
+    async fn read_minimal_candidate_selection_rows_for_api_format_and_requested_model_page(
+        &self,
+        query: &aether_data_contracts::repository::candidate_selection::StoredRequestedModelCandidateRowsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        self.list_minimal_candidate_selection_rows_for_requested_model_page(query)
+            .await
+    }
+
     async fn read_minimal_candidate_selection_rows_for_api_format(
         &self,
         api_format: &str,
     ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
         self.list_minimal_candidate_selection_rows_for_api_format(api_format)
             .await
+    }
+
+    async fn read_pool_key_candidate_rows_for_group(
+        &self,
+        query: &aether_data_contracts::repository::candidate_selection::StoredPoolKeyCandidateRowsQuery,
+    ) -> Result<Vec<StoredMinimalCandidateSelectionRow>, DataLayerError> {
+        self.list_pool_key_candidate_rows_for_group(query).await
     }
 }
 
@@ -245,6 +272,26 @@ impl UsageRuntimeAccess for GatewayDataState {
                 DEFAULT_USAGE_RESPONSE_BODY_CAPTURE_LIMIT_BYTES,
             ),
         })
+    }
+}
+
+#[async_trait]
+impl aether_usage_runtime::ManualProxyNodeCounter for GatewayDataState {
+    async fn increment_manual_proxy_node_requests(
+        &self,
+        node_id: &str,
+        total_delta: i64,
+        failed_delta: i64,
+        latency_ms: Option<i64>,
+    ) -> Result<(), DataLayerError> {
+        match &self.proxy_node_writer {
+            Some(repository) => {
+                repository
+                    .increment_manual_node_requests(node_id, total_delta, failed_delta, latency_ms)
+                    .await
+            }
+            None => Ok(()),
+        }
     }
 }
 

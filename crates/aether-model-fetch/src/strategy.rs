@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use aether_contracts::{ExecutionPlan, ExecutionResult, RequestBody};
 use aether_provider_transport::{
     is_vertex_api_key_transport_context, resolve_transport_execution_timeouts,
-    resolve_transport_tls_profile, GatewayProviderTransportSnapshot,
+    resolve_transport_profile, GatewayProviderTransportSnapshot,
 };
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine as _;
@@ -55,6 +55,9 @@ pub async fn fetch_models_from_transports(
         .trim()
         .to_ascii_lowercase();
     if let Some(models) = preset_models_for_provider(&provider_type) {
+        if provider_type == "codex" {
+            return fetch_standard_models(runtime, transports).await;
+        }
         if provider_type == "gemini_cli" {
             return fetch_gemini_cli_models(runtime, first_transport, models).await;
         }
@@ -496,6 +499,8 @@ async fn exchange_vertex_service_account_token(
     let body = format!(
         "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion={assertion}"
     );
+    let transport_profile = resolve_transport_profile(transport);
+
     let plan = ExecutionPlan {
         request_id: format!("req-model-fetch-{}-vertex-sa-token", transport.key.id),
         candidate_id: None,
@@ -521,7 +526,7 @@ async fn exchange_vertex_service_account_token(
         provider_api_format: "vertex_ai:service_account_token".to_string(),
         model_name: Some("token".to_string()),
         proxy: runtime.resolve_model_fetch_proxy(transport).await,
-        tls_profile: resolve_transport_tls_profile(transport),
+        transport_profile,
         timeouts: resolve_transport_execution_timeouts(transport),
     };
     let result = runtime.execute_model_fetch_execution_plan(&plan).await?;
@@ -1079,13 +1084,14 @@ mod tests {
         GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
     };
     use async_trait::async_trait;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use crate::fetch_models_from_transports;
     use crate::transport::ModelFetchTransportRuntime;
 
     struct TestRuntime {
         executed_urls: Arc<Mutex<Vec<String>>>,
+        response_body: Value,
     }
 
     #[async_trait]
@@ -1119,11 +1125,7 @@ mod tests {
                 status_code: 200,
                 headers: BTreeMap::new(),
                 body: Some(ResponseBody {
-                    json_body: Some(json!({
-                        "models": [{
-                            "name": "publishers/google/models/gemini-3.1-pro-preview"
-                        }]
-                    })),
+                    json_body: Some(self.response_body.clone()),
                     body_bytes_b64: None,
                 }),
                 telemetry: None,
@@ -1188,12 +1190,31 @@ mod tests {
         }
     }
 
+    fn sample_codex_transport() -> GatewayProviderTransportSnapshot {
+        let mut transport = sample_custom_aiplatform_transport();
+        transport.provider.provider_type = "codex".to_string();
+        transport.provider.name = "Codex".to_string();
+        transport.endpoint.api_format = "openai:responses".to_string();
+        transport.endpoint.api_family = Some("openai".to_string());
+        transport.endpoint.endpoint_kind = Some("responses".to_string());
+        transport.endpoint.base_url = "https://chatgpt.com/backend-api/codex".to_string();
+        transport.endpoint.custom_path = Some("/responses".to_string());
+        transport.key.api_formats = Some(vec!["openai:responses".to_string()]);
+        transport.key.decrypted_api_key = "access-token".to_string();
+        transport
+    }
+
     #[tokio::test]
     async fn custom_aiplatform_transport_uses_vertex_models_fetch_path_and_normalizes_chat_format()
     {
         let executed_urls = Arc::new(Mutex::new(Vec::new()));
         let runtime = TestRuntime {
             executed_urls: Arc::clone(&executed_urls),
+            response_body: json!({
+                "models": [{
+                    "name": "publishers/google/models/gemini-3.1-pro-preview"
+                }]
+            }),
         };
         let outcome =
             fetch_models_from_transports(&runtime, &[sample_custom_aiplatform_transport()])
@@ -1211,5 +1232,29 @@ mod tests {
             outcome.cached_models[0]["api_formats"][0].as_str(),
             Some("gemini:generate_content")
         );
+    }
+
+    #[tokio::test]
+    async fn codex_transport_fetches_upstream_models_instead_of_preset_catalog() {
+        let executed_urls = Arc::new(Mutex::new(Vec::new()));
+        let runtime = TestRuntime {
+            executed_urls: Arc::clone(&executed_urls),
+            response_body: json!({
+                "models": [{
+                    "id": "gpt-5.4-upstream"
+                }]
+            }),
+        };
+        let outcome = fetch_models_from_transports(&runtime, &[sample_codex_transport()])
+            .await
+            .expect("models fetch should succeed");
+
+        let urls = executed_urls.lock().expect("executed_urls lock");
+        assert_eq!(
+            urls.as_slice(),
+            &["https://chatgpt.com/backend-api/codex/models?client_version=0.128.0-alpha.1"]
+        );
+        assert_eq!(outcome.fetched_model_ids, vec!["gpt-5.4-upstream"]);
+        assert_eq!(outcome.cached_models.len(), 1);
     }
 }

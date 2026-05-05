@@ -5,9 +5,11 @@ use std::io::Write;
 use std::time::{Duration, Instant};
 
 use aether_contracts::{
-    ExecutionPlan, ExecutionResult, ExecutionTelemetry, ProxySnapshot, ResponseBody,
-    EXECUTION_REQUEST_FOLLOW_REDIRECTS_HEADER, EXECUTION_REQUEST_HTTP1_ONLY_HEADER,
+    ExecutionPlan, ExecutionResult, ExecutionTelemetry, ProxySnapshot, ResolvedTransportProfile,
+    ResponseBody, EXECUTION_REQUEST_FOLLOW_REDIRECTS_HEADER, EXECUTION_REQUEST_HTTP1_ONLY_HEADER,
+    TRANSPORT_BACKEND_REQWEST_RUSTLS, TRANSPORT_HTTP_MODE_HTTP1_ONLY,
 };
+use aether_data::repository::proxy_nodes::ProxyNodeTrafficMutation;
 use aether_http::{apply_http_client_config, HttpClientConfig};
 use axum::body::Bytes;
 use base64::Engine as _;
@@ -101,6 +103,8 @@ pub(crate) enum ExecutionRuntimeTransportError {
     InvalidHeaderValue(String),
     #[error("invalid proxy configuration: {0}")]
     InvalidProxy(reqwest::Error),
+    #[error("unsupported transport profile backend: {0}")]
+    UnsupportedTransportProfile(String),
     #[error("failed to encode request body: {0}")]
     BodyEncode(serde_json::Error),
     #[error("failed to build HTTP client: {0}")]
@@ -115,6 +119,9 @@ pub(crate) enum ExecutionRuntimeTransportError {
 
 #[derive(Debug, Serialize)]
 struct RelayRequestMeta {
+    provider_id: String,
+    endpoint_id: String,
+    key_id: String,
     method: String,
     url: String,
     headers: BTreeMap<String, String>,
@@ -123,6 +130,8 @@ struct RelayRequestMeta {
     follow_redirects: Option<bool>,
     #[serde(default, skip_serializing_if = "is_false")]
     http1_only: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transport_profile: Option<ResolvedTransportProfile>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -267,12 +276,17 @@ pub(crate) async fn execute_sync_plan(
             .map_err(|err| GatewayError::Internal(err.to_string()));
     }
 
-    let _ = state;
     let _ = trace_id;
-    DirectSyncExecutionRuntime::new()
-        .execute_sync(plan)
-        .await
-        .map_err(|err| GatewayError::Internal(err.to_string()))
+    match DirectSyncExecutionRuntime::new().execute_sync(plan).await {
+        Ok(result) => {
+            record_manual_proxy_request_outcome(state, plan, result.status_code).await;
+            Ok(result)
+        }
+        Err(err) => {
+            record_manual_proxy_request_failure(state, plan).await;
+            Err(GatewayError::Internal(err.to_string()))
+        }
+    }
 }
 
 pub(crate) async fn execute_stream_plan_via_local_tunnel(
@@ -325,6 +339,68 @@ fn build_stream_summary_report_context(plan: &ExecutionPlan) -> Value {
         "client_api_format": plan.client_api_format,
         "model": plan.model_name,
     })
+}
+
+pub(crate) async fn record_manual_proxy_request_success(state: &AppState, plan: &ExecutionPlan) {
+    record_manual_proxy_traffic(state, plan, 1, 0, 0, 0).await;
+}
+
+pub(crate) async fn record_manual_proxy_request_outcome(
+    state: &AppState,
+    plan: &ExecutionPlan,
+    status_code: u16,
+) {
+    let failed_requests_delta = i64::from(status_code >= 400);
+    record_manual_proxy_traffic(state, plan, 1, failed_requests_delta, 0, 0).await;
+}
+
+pub(crate) async fn record_manual_proxy_request_failure(state: &AppState, plan: &ExecutionPlan) {
+    record_manual_proxy_traffic(state, plan, 1, 1, 0, 0).await;
+}
+
+pub(crate) async fn record_manual_proxy_stream_error(state: &AppState, plan: &ExecutionPlan) {
+    record_manual_proxy_traffic(state, plan, 0, 0, 0, 1).await;
+}
+
+async fn record_manual_proxy_traffic(
+    state: &AppState,
+    plan: &ExecutionPlan,
+    total_requests_delta: i64,
+    failed_requests_delta: i64,
+    dns_failures_delta: i64,
+    stream_errors_delta: i64,
+) {
+    let Some(node_id) = manual_proxy_node_id(plan.proxy.as_ref()) else {
+        return;
+    };
+    let mutation = ProxyNodeTrafficMutation {
+        node_id: node_id.clone(),
+        total_requests_delta,
+        failed_requests_delta,
+        dns_failures_delta,
+        stream_errors_delta,
+    };
+
+    if let Err(error) = state.record_proxy_node_traffic(&mutation).await {
+        tracing::warn!(
+            node_id = %node_id,
+            error = ?error,
+            "failed to record manual proxy node traffic"
+        );
+    }
+}
+
+fn manual_proxy_node_id(proxy: Option<&ProxySnapshot>) -> Option<String> {
+    let proxy = proxy?;
+    if proxy.enabled == Some(false) || resolve_tunnel_node_id(Some(proxy)).is_some() {
+        return None;
+    }
+    proxy
+        .node_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 async fn execute_sync_plan_via_local_tunnel(
@@ -463,12 +539,16 @@ fn build_direct_tunnel_request_meta(
     transport_controls: ExecutionTransportControls,
 ) -> tunnel_protocol::RequestMeta {
     tunnel_protocol::RequestMeta {
+        provider_id: Some(plan.provider_id.clone()),
+        endpoint_id: Some(plan.endpoint_id.clone()),
+        key_id: Some(plan.key_id.clone()),
         method: plan.method.clone(),
         url: plan.url.clone(),
         headers: header_map_to_string_map(headers).into_iter().collect(),
         timeout: resolve_relay_timeout_seconds(plan),
         follow_redirects: transport_controls.follow_redirects,
         http1_only: transport_controls.http1_only,
+        transport_profile: plan.transport_profile.clone(),
     }
 }
 
@@ -509,7 +589,7 @@ async fn send_request(
     let client = build_client(
         plan.timeouts.as_ref(),
         plan.proxy.as_ref(),
-        plan.tls_profile.as_deref(),
+        plan.transport_profile.as_ref(),
         transport_controls,
     )?;
     let mut request = client.request(method, &plan.url);
@@ -536,12 +616,16 @@ async fn send_via_tunnel_relay(
     let timeout_secs = resolve_relay_timeout_seconds(plan);
     let envelope = build_relay_envelope(
         RelayRequestMeta {
+            provider_id: plan.provider_id.clone(),
+            endpoint_id: plan.endpoint_id.clone(),
+            key_id: plan.key_id.clone(),
             method: method.as_str().to_string(),
             url: plan.url.clone(),
             headers: header_map_to_string_map(&headers),
             timeout: timeout_secs,
             follow_redirects: transport_controls.follow_redirects,
             http1_only: transport_controls.http1_only,
+            transport_profile: plan.transport_profile.clone(),
         },
         &body_bytes,
     )?;
@@ -788,14 +872,15 @@ fn resolve_local_tunnel_node_id(state: &AppState, proxy: Option<&ProxySnapshot>)
 fn build_client(
     timeouts: Option<&aether_contracts::ExecutionTimeouts>,
     proxy: Option<&ProxySnapshot>,
-    tls_profile: Option<&str>,
+    transport_profile: Option<&ResolvedTransportProfile>,
     transport_controls: ExecutionTransportControls,
 ) -> Result<reqwest::Client, ExecutionRuntimeTransportError> {
+    validate_reqwest_transport_profile(transport_profile)?;
     let mut builder = reqwest::Client::builder();
     if transport_controls.follow_redirects != Some(true) {
         builder = builder.redirect(Policy::none());
     }
-    if transport_controls.http1_only {
+    if transport_controls.http1_only || transport_profile_http1_only(transport_profile) {
         builder = builder.http1_only();
     }
     let mut builder = apply_http_client_config(
@@ -805,7 +890,10 @@ fn build_client(
             ..HttpClientConfig::default()
         },
     );
-    builder = apply_tls_profile(builder, tls_profile);
+    builder = apply_tls_profile(
+        builder,
+        transport_profile.map(|profile| profile.profile_id.as_str()),
+    );
     if let Some(proxy_url) = resolve_proxy_url(proxy)? {
         let proxy = reqwest::Proxy::all(&proxy_url)
             .map_err(ExecutionRuntimeTransportError::InvalidProxy)?;
@@ -816,11 +904,40 @@ fn build_client(
         .map_err(ExecutionRuntimeTransportError::ClientBuild)
 }
 
+fn validate_reqwest_transport_profile(
+    transport_profile: Option<&ResolvedTransportProfile>,
+) -> Result<(), ExecutionRuntimeTransportError> {
+    let Some(profile) = transport_profile else {
+        return Ok(());
+    };
+    if profile
+        .backend
+        .trim()
+        .eq_ignore_ascii_case(TRANSPORT_BACKEND_REQWEST_RUSTLS)
+    {
+        return Ok(());
+    }
+    Err(ExecutionRuntimeTransportError::UnsupportedTransportProfile(
+        profile.backend.clone(),
+    ))
+}
+
+fn transport_profile_http1_only(transport_profile: Option<&ResolvedTransportProfile>) -> bool {
+    transport_profile
+        .map(|profile| {
+            profile
+                .http_mode
+                .trim()
+                .eq_ignore_ascii_case(TRANSPORT_HTTP_MODE_HTTP1_ONLY)
+        })
+        .unwrap_or(false)
+}
+
 fn apply_tls_profile(
     builder: reqwest::ClientBuilder,
-    tls_profile: Option<&str>,
+    profile_id: Option<&str>,
 ) -> reqwest::ClientBuilder {
-    let profile = normalize_tls_profile(tls_profile);
+    let profile = normalize_tls_profile(profile_id);
     if profile.is_none() {
         return builder;
     }
@@ -1068,8 +1185,11 @@ mod tests {
     use std::sync::Arc;
 
     use aether_contracts::{
-        ExecutionPlan, ExecutionTimeouts, RequestBody, EXECUTION_REQUEST_FOLLOW_REDIRECTS_HEADER,
-        EXECUTION_REQUEST_HTTP1_ONLY_HEADER,
+        ExecutionPlan, ExecutionTimeouts, ProxySnapshot, RequestBody, ResolvedTransportProfile,
+        EXECUTION_REQUEST_FOLLOW_REDIRECTS_HEADER, EXECUTION_REQUEST_HTTP1_ONLY_HEADER,
+    };
+    use aether_data::repository::proxy_nodes::{
+        InMemoryProxyNodeRepository, ProxyNodeReadRepository, StoredProxyNode,
     };
     use axum::body::Bytes;
     use axum::extract::ws::Message;
@@ -1081,7 +1201,10 @@ mod tests {
     use tokio::sync::watch;
 
     use super::{
-        build_client, execute_sync_plan, DirectSyncExecutionRuntime, ExecutionTransportControls,
+        build_client, execute_sync_plan, record_manual_proxy_request_failure,
+        record_manual_proxy_request_outcome, record_manual_proxy_request_success,
+        record_manual_proxy_stream_error, DirectSyncExecutionRuntime,
+        ExecutionRuntimeTransportError, ExecutionTransportControls,
     };
     use crate::constants::{
         EXECUTION_RUNTIME_LOOP_GUARD_HEADER, EXECUTION_RUNTIME_LOOP_GUARD_VIA_TOKEN,
@@ -1162,8 +1285,8 @@ mod tests {
         }
     }
 
-    fn tunnel_proxy_snapshot(base_url: String) -> aether_contracts::ProxySnapshot {
-        aether_contracts::ProxySnapshot {
+    fn tunnel_proxy_snapshot(base_url: String) -> ProxySnapshot {
+        ProxySnapshot {
             enabled: Some(true),
             mode: Some("tunnel".into()),
             node_id: Some("node-1".into()),
@@ -1171,6 +1294,39 @@ mod tests {
             url: None,
             extra: Some(json!({"tunnel_base_url": base_url})),
         }
+    }
+
+    fn manual_proxy_snapshot(node_id: &str) -> ProxySnapshot {
+        ProxySnapshot {
+            enabled: Some(true),
+            mode: Some("http".into()),
+            node_id: Some(node_id.to_string()),
+            label: Some("manual-proxy".into()),
+            url: Some("http://127.0.0.1:1".into()),
+            extra: None,
+        }
+    }
+
+    fn sample_manual_proxy_node(node_id: &str) -> StoredProxyNode {
+        StoredProxyNode::new(
+            node_id.to_string(),
+            "manual-proxy".to_string(),
+            "127.0.0.1".to_string(),
+            1,
+            true,
+            "online".to_string(),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            false,
+            false,
+            0,
+        )
+        .expect("manual proxy node should build")
+        .with_manual_proxy_fields(Some("http://127.0.0.1:1".into()), None, None)
     }
 
     fn decode_relay_envelope(body: &[u8]) -> (serde_json::Value, Vec<u8>) {
@@ -1240,7 +1396,7 @@ mod tests {
                 provider_api_format: "openai:chat".into(),
                 model_name: Some("gpt-4.1".into()),
                 proxy: None,
-                tls_profile: None,
+                transport_profile: None,
                 timeouts: Some(ExecutionTimeouts {
                     connect_ms: Some(5_000),
                     total_ms: Some(5_000),
@@ -1257,6 +1413,273 @@ mod tests {
             result.body.and_then(|body| body.json_body),
             Some(json!({"error": {"message": "slow down"}}))
         );
+    }
+
+    #[tokio::test]
+    async fn execute_sync_plan_records_manual_proxy_success() {
+        let repository = Arc::new(InMemoryProxyNodeRepository::seed(vec![
+            sample_manual_proxy_node("manual-node-1"),
+        ]));
+        let data = crate::data::GatewayDataState::with_proxy_node_repository_for_tests(Arc::clone(
+            &repository,
+        ));
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(data);
+        let plan = ExecutionPlan {
+            request_id: "req-manual-proxy-success".into(),
+            candidate_id: None,
+            provider_name: None,
+            provider_id: "prov-1".into(),
+            endpoint_id: "ep-1".into(),
+            key_id: "key-1".into(),
+            method: "POST".into(),
+            url: "https://example.com/chat".into(),
+            headers: BTreeMap::new(),
+            content_type: None,
+            content_encoding: None,
+            body: RequestBody::from_json(json!({})),
+            stream: false,
+            client_api_format: "openai:chat".into(),
+            provider_api_format: "openai:chat".into(),
+            model_name: None,
+            proxy: Some(manual_proxy_snapshot("manual-node-1")),
+            transport_profile: None,
+            timeouts: None,
+        };
+
+        record_manual_proxy_request_success(&state, &plan).await;
+
+        let node = repository
+            .find_proxy_node("manual-node-1")
+            .await
+            .expect("proxy node lookup should succeed")
+            .expect("manual proxy node should exist");
+        assert_eq!(node.total_requests, 1);
+        assert_eq!(node.failed_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn execute_sync_plan_records_manual_proxy_failure() {
+        let repository = Arc::new(InMemoryProxyNodeRepository::seed(vec![
+            sample_manual_proxy_node("manual-node-1"),
+        ]));
+        let data = crate::data::GatewayDataState::with_proxy_node_repository_for_tests(Arc::clone(
+            &repository,
+        ));
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(data);
+        let plan = ExecutionPlan {
+            request_id: "req-manual-proxy-failure".into(),
+            candidate_id: None,
+            provider_name: None,
+            provider_id: "prov-1".into(),
+            endpoint_id: "ep-1".into(),
+            key_id: "key-1".into(),
+            method: "POST".into(),
+            url: "https://example.com/chat".into(),
+            headers: BTreeMap::new(),
+            content_type: None,
+            content_encoding: None,
+            body: RequestBody::from_json(json!({})),
+            stream: false,
+            client_api_format: "openai:chat".into(),
+            provider_api_format: "openai:chat".into(),
+            model_name: None,
+            proxy: Some(manual_proxy_snapshot("manual-node-1")),
+            transport_profile: None,
+            timeouts: None,
+        };
+
+        record_manual_proxy_request_failure(&state, &plan).await;
+
+        let node = repository
+            .find_proxy_node("manual-node-1")
+            .await
+            .expect("proxy node lookup should succeed")
+            .expect("manual proxy node should exist");
+        assert_eq!(node.total_requests, 1);
+        assert_eq!(node.failed_requests, 1);
+    }
+
+    #[tokio::test]
+    async fn execute_sync_plan_records_manual_proxy_http_error_as_failure() {
+        let repository = Arc::new(InMemoryProxyNodeRepository::seed(vec![
+            sample_manual_proxy_node("manual-node-1"),
+        ]));
+        let data = crate::data::GatewayDataState::with_proxy_node_repository_for_tests(Arc::clone(
+            &repository,
+        ));
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(data);
+        let plan = ExecutionPlan {
+            request_id: "req-manual-proxy-http-error".into(),
+            candidate_id: None,
+            provider_name: None,
+            provider_id: "prov-1".into(),
+            endpoint_id: "ep-1".into(),
+            key_id: "key-1".into(),
+            method: "POST".into(),
+            url: "https://example.com/chat".into(),
+            headers: BTreeMap::new(),
+            content_type: None,
+            content_encoding: None,
+            body: RequestBody::from_json(json!({})),
+            stream: false,
+            client_api_format: "openai:chat".into(),
+            provider_api_format: "openai:chat".into(),
+            model_name: None,
+            proxy: Some(manual_proxy_snapshot("manual-node-1")),
+            transport_profile: None,
+            timeouts: None,
+        };
+
+        record_manual_proxy_request_outcome(&state, &plan, 429).await;
+
+        let node = repository
+            .find_proxy_node("manual-node-1")
+            .await
+            .expect("proxy node lookup should succeed")
+            .expect("manual proxy node should exist");
+        assert_eq!(node.total_requests, 1);
+        assert_eq!(node.failed_requests, 1);
+    }
+
+    #[tokio::test]
+    async fn execute_sync_plan_records_manual_proxy_http_success_without_failure() {
+        let repository = Arc::new(InMemoryProxyNodeRepository::seed(vec![
+            sample_manual_proxy_node("manual-node-1"),
+        ]));
+        let data = crate::data::GatewayDataState::with_proxy_node_repository_for_tests(Arc::clone(
+            &repository,
+        ));
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(data);
+        let plan = ExecutionPlan {
+            request_id: "req-manual-proxy-http-success".into(),
+            candidate_id: None,
+            provider_name: None,
+            provider_id: "prov-1".into(),
+            endpoint_id: "ep-1".into(),
+            key_id: "key-1".into(),
+            method: "POST".into(),
+            url: "https://example.com/chat".into(),
+            headers: BTreeMap::new(),
+            content_type: None,
+            content_encoding: None,
+            body: RequestBody::from_json(json!({})),
+            stream: false,
+            client_api_format: "openai:chat".into(),
+            provider_api_format: "openai:chat".into(),
+            model_name: None,
+            proxy: Some(manual_proxy_snapshot("manual-node-1")),
+            transport_profile: None,
+            timeouts: None,
+        };
+
+        record_manual_proxy_request_outcome(&state, &plan, 200).await;
+
+        let node = repository
+            .find_proxy_node("manual-node-1")
+            .await
+            .expect("proxy node lookup should succeed")
+            .expect("manual proxy node should exist");
+        assert_eq!(node.total_requests, 1);
+        assert_eq!(node.failed_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn execute_sync_plan_records_manual_proxy_stream_error_without_extra_request_count() {
+        let repository = Arc::new(InMemoryProxyNodeRepository::seed(vec![
+            sample_manual_proxy_node("manual-node-1"),
+        ]));
+        let data = crate::data::GatewayDataState::with_proxy_node_repository_for_tests(Arc::clone(
+            &repository,
+        ));
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(data);
+        let plan = ExecutionPlan {
+            request_id: "req-manual-proxy-stream-error".into(),
+            candidate_id: None,
+            provider_name: None,
+            provider_id: "prov-1".into(),
+            endpoint_id: "ep-1".into(),
+            key_id: "key-1".into(),
+            method: "POST".into(),
+            url: "https://example.com/chat".into(),
+            headers: BTreeMap::new(),
+            content_type: None,
+            content_encoding: None,
+            body: RequestBody::from_json(json!({})),
+            stream: true,
+            client_api_format: "openai:chat".into(),
+            provider_api_format: "openai:chat".into(),
+            model_name: None,
+            proxy: Some(manual_proxy_snapshot("manual-node-1")),
+            transport_profile: None,
+            timeouts: None,
+        };
+
+        record_manual_proxy_request_success(&state, &plan).await;
+        record_manual_proxy_stream_error(&state, &plan).await;
+
+        let node = repository
+            .find_proxy_node("manual-node-1")
+            .await
+            .expect("proxy node lookup should succeed")
+            .expect("manual proxy node should exist");
+        assert_eq!(node.total_requests, 1);
+        assert_eq!(node.failed_requests, 0);
+        assert_eq!(node.stream_errors, 1);
+    }
+
+    #[tokio::test]
+    async fn execute_sync_plan_ignores_stream_error_for_tunnel_proxy() {
+        let repository = Arc::new(InMemoryProxyNodeRepository::seed(vec![
+            sample_manual_proxy_node("manual-node-1"),
+        ]));
+        let data = crate::data::GatewayDataState::with_proxy_node_repository_for_tests(Arc::clone(
+            &repository,
+        ));
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(data);
+        let plan = ExecutionPlan {
+            request_id: "req-tunnel-proxy-stream-error".into(),
+            candidate_id: None,
+            provider_name: None,
+            provider_id: "prov-1".into(),
+            endpoint_id: "ep-1".into(),
+            key_id: "key-1".into(),
+            method: "POST".into(),
+            url: "https://example.com/chat".into(),
+            headers: BTreeMap::new(),
+            content_type: None,
+            content_encoding: None,
+            body: RequestBody::from_json(json!({})),
+            stream: true,
+            client_api_format: "openai:chat".into(),
+            provider_api_format: "openai:chat".into(),
+            model_name: None,
+            proxy: Some(tunnel_proxy_snapshot("http://127.0.0.1:1".to_string())),
+            transport_profile: None,
+            timeouts: None,
+        };
+
+        record_manual_proxy_stream_error(&state, &plan).await;
+
+        let node = repository
+            .find_proxy_node("manual-node-1")
+            .await
+            .expect("proxy node lookup should succeed")
+            .expect("manual proxy node should exist");
+        assert_eq!(node.total_requests, 0);
+        assert_eq!(node.failed_requests, 0);
+        assert_eq!(node.stream_errors, 0);
     }
 
     #[tokio::test]
@@ -1323,7 +1746,7 @@ mod tests {
                 provider_api_format: "openai:chat".into(),
                 model_name: Some("gpt-4.1".into()),
                 proxy: Some(tunnel_proxy_snapshot(format!("http://{addr}"))),
-                tls_profile: None,
+                transport_profile: None,
                 timeouts: Some(ExecutionTimeouts {
                     connect_ms: Some(5_000),
                     total_ms: Some(5_000),
@@ -1375,7 +1798,7 @@ mod tests {
             provider_api_format: "openai:chat".into(),
             model_name: Some("gpt-4.1".into()),
             proxy: Some(tunnel_proxy_snapshot("http://127.0.0.1:1".to_string())),
-            tls_profile: None,
+            transport_profile: None,
             timeouts: Some(ExecutionTimeouts {
                 connect_ms: Some(5_000),
                 total_ms: Some(5_000),
@@ -1524,7 +1947,7 @@ mod tests {
                 provider_api_format: "provider_ops:verify".into(),
                 model_name: Some("verify-auth".into()),
                 proxy: None,
-                tls_profile: None,
+                transport_profile: None,
                 timeouts: Some(ExecutionTimeouts {
                     connect_ms: Some(5_000),
                     total_ms: Some(5_000),
@@ -1603,7 +2026,7 @@ mod tests {
                 provider_api_format: "provider_oauth:exchange".into(),
                 model_name: Some("oauth-exchange".into()),
                 proxy: None,
-                tls_profile: None,
+                transport_profile: None,
                 timeouts: Some(ExecutionTimeouts {
                     connect_ms: Some(5_000),
                     total_ms: Some(5_000),
@@ -1633,8 +2056,12 @@ mod tests {
             post(|Path(node_id): Path<String>, body: Bytes| async move {
                 let (meta, request_body) = decode_relay_envelope(&body);
                 assert_eq!(node_id, "node-1");
+                assert_eq!(meta["provider_id"], "prov-1");
+                assert_eq!(meta["endpoint_id"], "ep-1");
+                assert_eq!(meta["key_id"], "key-1");
                 assert_eq!(meta["http1_only"], true);
                 assert_eq!(meta["follow_redirects"], json!(false));
+                assert_eq!(meta["transport_profile"]["profile_id"], "relay-profile");
                 let request_json: serde_json::Value =
                     serde_json::from_slice(&request_body).expect("request body should be json");
                 assert_eq!(request_json["model"], "gpt-4.1");
@@ -1674,7 +2101,9 @@ mod tests {
                 provider_api_format: "provider_ops:verify".into(),
                 model_name: Some("verify-auth".into()),
                 proxy: Some(tunnel_proxy_snapshot(format!("http://{addr}"))),
-                tls_profile: None,
+                transport_profile: Some(ResolvedTransportProfile::from_legacy_tls_profile(
+                    "relay-profile",
+                )),
                 timeouts: Some(ExecutionTimeouts {
                     connect_ms: Some(5_000),
                     total_ms: Some(5_000),
@@ -1734,7 +2163,7 @@ mod tests {
                 provider_api_format: "claude:messages".into(),
                 model_name: Some("claude-3.7-sonnet".into()),
                 proxy: None,
-                tls_profile: Some("claude_code_nodejs".into()),
+                transport_profile: None,
                 timeouts: Some(ExecutionTimeouts {
                     connect_ms: Some(5_000),
                     total_ms: Some(5_000),
@@ -1751,6 +2180,33 @@ mod tests {
             result.body.and_then(|body| body.json_body),
             Some(json!({"tls_profile": true}))
         );
+    }
+
+    #[test]
+    fn direct_sync_execution_runtime_rejects_unsupported_transport_backend() {
+        let profile = ResolvedTransportProfile {
+            profile_id: "chrome-120".into(),
+            backend: "utls".into(),
+            http_mode: "auto".into(),
+            pool_scope: "key".into(),
+            extra: None,
+        };
+
+        let error = match build_client(
+            None,
+            None,
+            Some(&profile),
+            ExecutionTransportControls::default(),
+        ) {
+            Ok(_) => panic!("unsupported backend should fail"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            ExecutionRuntimeTransportError::UnsupportedTransportProfile(backend)
+                if backend == "utls"
+        ));
     }
 
     #[tokio::test]
@@ -1809,7 +2265,7 @@ mod tests {
                 provider_api_format: "openai:chat".into(),
                 model_name: Some("gpt-4.1".into()),
                 proxy: None,
-                tls_profile: None,
+                transport_profile: None,
                 timeouts: Some(ExecutionTimeouts {
                     connect_ms: Some(5_000),
                     total_ms: Some(5_000),
@@ -1870,7 +2326,7 @@ mod tests {
                 provider_api_format: "openai:chat".into(),
                 model_name: Some("gpt-4.1".into()),
                 proxy: None,
-                tls_profile: None,
+                transport_profile: None,
                 timeouts: Some(ExecutionTimeouts {
                     connect_ms: Some(5_000),
                     total_ms: Some(5_000),

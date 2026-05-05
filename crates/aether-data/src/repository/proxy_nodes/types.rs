@@ -163,6 +163,15 @@ pub struct ProxyNodeHeartbeatMutation {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ProxyNodeTrafficMutation {
+    pub node_id: String,
+    pub total_requests_delta: i64,
+    pub failed_requests_delta: i64,
+    pub dns_failures_delta: i64,
+    pub stream_errors_delta: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ProxyNodeRegistrationMutation {
     pub name: String,
     pub ip: String,
@@ -392,6 +401,11 @@ pub trait ProxyNodeWriteRepository: Send + Sync {
         mutation: &ProxyNodeHeartbeatMutation,
     ) -> Result<Option<StoredProxyNode>, crate::DataLayerError>;
 
+    async fn record_traffic(
+        &self,
+        mutation: &ProxyNodeTrafficMutation,
+    ) -> Result<bool, crate::DataLayerError>;
+
     async fn update_tunnel_status(
         &self,
         mutation: &ProxyNodeTunnelStatusMutation,
@@ -411,6 +425,14 @@ pub trait ProxyNodeWriteRepository: Send + Sync {
         &self,
         mutation: &ProxyNodeRemoteConfigMutation,
     ) -> Result<Option<StoredProxyNode>, crate::DataLayerError>;
+
+    async fn increment_manual_node_requests(
+        &self,
+        node_id: &str,
+        total_delta: i64,
+        failed_delta: i64,
+        latency_ms: Option<i64>,
+    ) -> Result<(), crate::DataLayerError>;
 }
 
 #[cfg(test)]

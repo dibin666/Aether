@@ -18,7 +18,7 @@ use crate::ai_serving::planner::{
     build_ai_execution_decision_response, AiExecutionDecisionResponseParts,
 };
 use crate::ai_serving::transport::{
-    resolve_transport_execution_timeouts, resolve_transport_tls_profile,
+    resolve_transport_execution_timeouts, resolve_transport_profile,
 };
 use crate::{
     append_execution_contract_fields_to_value, append_local_failover_policy_to_value,
@@ -66,7 +66,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
     let proxy = state
         .resolve_transport_proxy_snapshot_with_tunnel_affinity(&resolved.transport)
         .await;
-    let tls_profile = resolve_transport_tls_profile(&resolved.transport);
+    let transport_profile = resolve_transport_profile(&resolved.transport);
     let mut extra_fields = serde_json::Map::new();
     if let Some(proxy_value) =
         build_request_trace_proxy_value(Some(&resolved.transport), proxy.as_ref())
@@ -84,6 +84,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
             json!(super::super::ANTIGRAVITY_ENVELOPE_NAME),
         );
     }
+    let provider_api_format = resolved.provider_api_format.clone();
     let report_context = append_local_failover_policy_to_value(
         append_execution_contract_fields_to_value(
             build_local_execution_report_context(LocalExecutionReportContextParts {
@@ -100,7 +101,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
                 model_id: Some(&candidate.model_id),
                 global_model_id: Some(&candidate.global_model_id),
                 global_model_name: Some(&candidate.global_model_name),
-                provider_api_format: spec_metadata.api_format,
+                provider_api_format: provider_api_format.as_str(),
                 client_api_format: spec_metadata.api_format,
                 mapped_model: Some(&resolved.mapped_model),
                 candidate_group_id: eligible.orchestration.candidate_group_id.as_deref(),
@@ -126,7 +127,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
             execution_strategy,
             conversion_mode,
             spec_metadata.api_format,
-            spec_metadata.api_format,
+            provider_api_format.as_str(),
         ),
         &resolved.transport,
     );
@@ -136,6 +137,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         is_kiro: _,
         auth_header,
         auth_value,
+        provider_api_format,
         mapped_model,
         report_kind,
         upstream_is_stream,
@@ -161,7 +163,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
             provider_request_method: None,
             auth_header,
             auth_value,
-            provider_api_format: spec_metadata.api_format.to_string(),
+            provider_api_format,
             client_api_format: spec_metadata.api_format.to_string(),
             model_name: input.requested_model.clone(),
             mapped_model,
@@ -171,7 +173,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
             provider_request_body_base64: None,
             content_type: Some("application/json".to_string()),
             proxy,
-            tls_profile,
+            transport_profile,
             timeouts: resolve_transport_execution_timeouts(&transport),
             upstream_is_stream,
             report_kind: Some(report_kind.to_string()),
