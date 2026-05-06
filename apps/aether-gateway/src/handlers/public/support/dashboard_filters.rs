@@ -780,6 +780,7 @@ async fn dashboard_load_user_counts(
             created_until_unix_secs,
             group_by: UsageAuditAggregationGroupBy::User,
             limit: 10_000,
+            exclude_reserved_provider_labels: false,
         })
         .await?;
     let count = fallback.len() as u64;
@@ -950,7 +951,18 @@ pub(super) async fn handle_dashboard_stats_get(
                 / today_totals.requests as f64
                 * 100.0
         };
-        let cost_savings =
+        let today_cost_savings =
+            match dashboard_load_cache_savings(state, today_range, user_filter).await {
+                Ok(value) => value,
+                Err(err) => {
+                    return build_auth_error_response(
+                        http::StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("dashboard today cache savings lookup failed: {err:?}"),
+                        false,
+                    );
+                }
+            };
+        let period_cost_savings =
             match dashboard_load_cache_savings(state, summary_range, user_filter).await {
                 Ok(value) => value,
                 Err(err) => {
@@ -977,7 +989,7 @@ pub(super) async fn handle_dashboard_stats_get(
             {
                 "name": "今日费用",
                 "value": dashboard_format_usd(today_totals.total_cost_usd),
-                "subValue": format!("节省 {}", dashboard_format_usd(cost_savings.max(0.0))),
+                "subValue": format!("节省 {}", dashboard_format_usd(today_cost_savings.max(0.0))),
                 "icon": "DollarSign",
             },
             {
@@ -1007,7 +1019,7 @@ pub(super) async fn handle_dashboard_stats_get(
             "cost_stats": {
                 "total_cost": dashboard_round_f64(period_totals.total_cost_usd, 4),
                 "total_actual_cost": dashboard_round_f64(period_totals.actual_total_cost_usd, 4),
-                "cost_savings": cost_savings,
+                "cost_savings": period_cost_savings,
             },
             "cache_stats": cache_stats,
             "users": {

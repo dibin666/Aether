@@ -59,6 +59,26 @@ pub(super) async fn maybe_build_local_openai_image_decision_payload_for_candidat
         extra_fields.insert("proxy".to_string(), proxy_value);
     }
     extra_fields.insert("image_request".to_string(), resolved.input_summary.clone());
+    if transport
+        .provider
+        .provider_type
+        .trim()
+        .eq_ignore_ascii_case("chatgpt_web")
+    {
+        extra_fields.insert(
+            "chatgpt_web_image".to_string(),
+            serde_json::Value::Bool(true),
+        );
+        extra_fields.insert(
+            "local_failover_policy".to_string(),
+            serde_json::json!({
+                "stop_status_codes": [400, 401, 403, 429, 500, 502, 503, 504],
+                "error_stop_patterns": [
+                    { "pattern": ".*" }
+                ]
+            }),
+        );
+    }
     let upstream_is_stream = resolved
         .provider_request_body
         .get("stream")
@@ -92,6 +112,7 @@ pub(super) async fn maybe_build_local_openai_image_decision_payload_for_candidat
         request_origin: Some(crate::ai_serving::request_origin_from_parts(parts)),
         original_request_body_json: Some(body_json),
         original_request_body_base64: body_base64,
+        client_session_affinity: input.client_session_affinity.as_ref(),
         client_requested_stream: spec_metadata.require_streaming,
         upstream_is_stream,
         has_envelope: false,

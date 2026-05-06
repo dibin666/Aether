@@ -299,9 +299,17 @@ async fn maybe_forward_public_request_to_tunnel_owner(
     ) else {
         return Ok(None);
     };
+    let body_json =
+        buffered_body.and_then(|body| serde_json::from_slice::<serde_json::Value>(body).ok());
+    let client_session_affinity =
+        crate::client_session_affinity::client_session_affinity_from_parts(
+            parts,
+            body_json.as_ref(),
+        );
     let Some(target) = crate::scheduler::affinity::read_cached_scheduler_affinity_target(
         state,
         &auth_context.api_key_id,
+        client_session_affinity.as_ref(),
         api_format,
         &requested_model,
     ) else {
@@ -1638,10 +1646,10 @@ fn local_execution_runtime_miss_skip_reason_label(reason: &str) -> &str {
         "transport_header_rules_apply_failed" => "Header 规则应用失败",
         "transport_oauth_resolution_unsupported" => "OAuth 认证解析不支持本地执行",
         "transport_provider_type_unsupported" => "提供商类型不支持本地执行",
-        "transport_proxy_or_tls_unsupported" => "代理或 TLS 配置不支持本地执行",
+        "transport_proxy_or_profile_unsupported" => "代理或传输指纹配置不支持本地执行",
         "transport_proxy_unsupported" => "代理配置不支持本地执行",
         "transport_snapshot_missing" => "提供商传输配置缺失",
-        "transport_tls_profile_unsupported" => "TLS 指纹配置不支持本地执行",
+        "transport_profile_unsupported" => "传输指纹配置不支持本地执行",
         "transport_unsupported" => "传输配置不支持本地执行",
         "upstream_url_missing" => "无法构建上游请求地址",
         other => other,

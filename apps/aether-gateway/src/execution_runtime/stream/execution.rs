@@ -51,6 +51,7 @@ use crate::clock::current_unix_ms as current_request_candidate_unix_ms;
 use crate::constants::{CONTROL_CANDIDATE_ID_HEADER, CONTROL_REQUEST_ID_HEADER};
 use crate::control::GatewayControlDecision;
 use crate::execution_runtime::build_direct_execution_frame_stream;
+use crate::execution_runtime::chatgpt_web_image::maybe_execute_chatgpt_web_image_stream;
 use crate::execution_runtime::kiro_web_search::maybe_execute_kiro_web_search_stream;
 use crate::execution_runtime::oauth_retry::refresh_oauth_plan_auth_for_retry;
 #[cfg(test)]
@@ -65,6 +66,7 @@ use crate::execution_runtime::transport::{
     DirectSyncExecutionRuntime, DirectUpstreamStreamExecution, ExecutionRuntimeTransportError,
 };
 use crate::execution_runtime::{
+    apply_endpoint_response_header_rules, attach_provider_response_headers_to_report_context,
     local_failover_response_text, resolve_core_stream_direct_finalize_report_kind,
     resolve_core_stream_error_finalize_report_kind,
     resolve_local_candidate_failover_analysis_stream, should_fallback_to_control_stream,
@@ -436,6 +438,57 @@ pub(crate) async fn execute_execution_runtime_stream(
                     status: RequestCandidateStatus::Failed,
                     status_code: None,
                     error_type: Some("kiro_web_search_mcp_unavailable".to_string()),
+                    error_message: Some(format!("{err:?}")),
+                    latency_ms: None,
+                    started_at_unix_ms: Some(candidate_started_unix_secs),
+                    finished_at_unix_ms: Some(terminal_unix_secs),
+                },
+            )
+            .await;
+            return Ok(None);
+        }
+    }
+    match maybe_execute_chatgpt_web_image_stream(state, &plan, report_context.as_ref()).await {
+        Ok(Some(chatgpt_web_image)) => {
+            return execute_stream_from_frame_stream(
+                state,
+                plan,
+                trace_id,
+                decision,
+                plan_kind,
+                report_kind,
+                chatgpt_web_image.report_context.or(report_context),
+                candidate_started_unix_secs,
+                stream_started_at,
+                chatgpt_web_image.frame_stream,
+            )
+            .await;
+        }
+        Ok(None) => {}
+        Err(err) => {
+            info!(
+                event_name = "chatgpt_web_image_execution_unavailable",
+                log_type = "ops",
+                trace_id = %trace_id,
+                request_id = %plan_request_id_for_log,
+                candidate_id = ?plan.candidate_id,
+                provider_name = provider_name.as_str(),
+                endpoint_id = %endpoint_id,
+                key_id = %key_id,
+                model_name = model_name.as_str(),
+                candidate_index = candidate_index.as_str(),
+                error = %err,
+                "gateway ChatGPT-Web image stream execution unavailable"
+            );
+            let terminal_unix_secs = current_request_candidate_unix_ms();
+            record_local_request_candidate_status(
+                state,
+                &plan,
+                report_context.as_ref(),
+                SchedulerRequestCandidateStatusUpdate {
+                    status: RequestCandidateStatus::Failed,
+                    status_code: None,
+                    error_type: Some("chatgpt_web_image_execution_unavailable".to_string()),
                     error_message: Some(format!("{err:?}")),
                     latency_ms: None,
                     started_at_unix_ms: Some(candidate_started_unix_secs),
@@ -839,6 +892,8 @@ async fn execute_stream_from_frame_stream(
             "execution runtime stream must start with headers frame".to_string(),
         ));
     };
+    let report_context =
+        attach_provider_response_headers_to_report_context(report_context, &headers);
     let mut buffered_frames = VecDeque::new();
     let mut stream_terminal_summary: Option<ExecutionStreamTerminalSummary> = None;
     if status_code == 200 && should_probe_success_failover_before_stream(&headers) {
@@ -1069,6 +1124,10 @@ async fn execute_stream_from_frame_stream(
             return Ok(None);
         }
 
+        let mut client_headers = headers.clone();
+        apply_endpoint_response_header_rules(state, &plan, &mut client_headers, body_json.as_ref())
+            .await?;
+
         let payload = build_stream_sync_payload(
             trace_id,
             stream_error_finalize_kind
@@ -1078,7 +1137,7 @@ async fn execute_stream_from_frame_stream(
                 .to_string(),
             report_context,
             status_code,
-            headers,
+            client_headers,
             body_json,
             body_base64,
             None,
@@ -1509,6 +1568,8 @@ async fn execute_stream_from_frame_stream(
             .await;
         });
     }
+
+    apply_endpoint_response_header_rules(state, &plan, &mut headers, None).await?;
 
     let request_id = request_id.to_string();
     let candidate_id = candidate_id.map(ToOwned::to_owned);

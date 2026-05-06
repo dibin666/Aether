@@ -60,9 +60,15 @@ fn admin_usage_aggregation_by_provider_json(
             } else {
                 round_to(success_count as f64 / row.request_count as f64 * 100.0, 2)
             };
+            let provider_name = row
+                .display_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(row.group_key.as_str());
             json!({
                 "provider_id": row.group_key,
-                "provider": row.display_name.clone().unwrap_or_else(|| "Unknown".to_string()),
+                "provider": provider_name,
                 "request_count": row.request_count,
                 "total_tokens": row.total_tokens,
                 "effective_input_tokens": row.effective_input_tokens,
@@ -157,12 +163,19 @@ pub(super) async fn build_admin_usage_aggregation_stats_response(
         "api_format" => UsageAuditAggregationGroupBy::ApiFormat,
         _ => unreachable!(),
     };
+    let exclude_reserved_provider_labels = matches!(
+        group_by_query,
+        UsageAuditAggregationGroupBy::Model
+            | UsageAuditAggregationGroupBy::Provider
+            | UsageAuditAggregationGroupBy::ApiFormat
+    );
     let usage = state
         .aggregate_usage_audits(&UsageAuditAggregationQuery {
             created_from_unix_secs,
             created_until_unix_secs,
             group_by: group_by_query,
             limit,
+            exclude_reserved_provider_labels,
         })
         .await?;
 

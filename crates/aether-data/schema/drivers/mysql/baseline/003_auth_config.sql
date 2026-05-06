@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS ldap_configs (
     bind_dn TEXT NOT NULL,
     bind_password_encrypted TEXT,
     base_dn TEXT NOT NULL,
-    user_search_filter TEXT NOT NULL DEFAULT '(uid={username})',
+    user_search_filter VARCHAR(512) NOT NULL DEFAULT '(uid={username})',
     username_attr VARCHAR(50) NOT NULL DEFAULT 'uid',
     email_attr VARCHAR(50) NOT NULL DEFAULT 'mail',
     display_name_attr VARCHAR(50) NOT NULL DEFAULT 'cn',
@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS user_oauth_links (
     extra_data TEXT,
     linked_at BIGINT NOT NULL,
     last_login_at BIGINT,
+    UNIQUE KEY uq_user_oauth_links_provider_user (provider_type, provider_user_id),
+    UNIQUE KEY uq_user_oauth_links_user_provider (user_id, provider_type),
     KEY user_oauth_links_provider_type_idx (provider_type),
     KEY user_oauth_links_user_id_idx (user_id)
 );
-

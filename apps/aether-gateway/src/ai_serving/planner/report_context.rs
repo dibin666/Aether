@@ -6,10 +6,13 @@ use aether_ai_serving::{
     provider_stream_event_api_format_for_provider_type as ai_provider_stream_event_api_format_for_provider_type,
     AiExecutionReportContextParts, AiRequestOrigin,
 };
-use aether_scheduler_core::SchedulerRankingOutcome;
+use aether_scheduler_core::{ClientSessionAffinity, SchedulerRankingOutcome};
 use serde_json::{Map, Value};
 
 use crate::ai_serving::{request_origin_from_headers, ExecutionRuntimeAuthContext, RequestOrigin};
+use crate::client_session_affinity::{
+    client_session_affinity_report_context_value, CLIENT_SESSION_AFFINITY_REPORT_CONTEXT_FIELD,
+};
 use crate::orchestration::ExecutionAttemptIdentity;
 
 pub(crate) struct LocalExecutionReportContextParts<'a> {
@@ -40,6 +43,7 @@ pub(crate) struct LocalExecutionReportContextParts<'a> {
     pub(crate) request_origin: Option<RequestOrigin>,
     pub(crate) original_request_body_json: Option<&'a Value>,
     pub(crate) original_request_body_base64: Option<&'a str>,
+    pub(crate) client_session_affinity: Option<&'a ClientSessionAffinity>,
     pub(crate) client_requested_stream: bool,
     pub(crate) upstream_is_stream: bool,
     pub(crate) has_envelope: bool,
@@ -61,6 +65,21 @@ pub(crate) fn build_local_execution_report_context(
         parts.original_request_body_json,
         parts.original_request_body_base64,
     );
+    let mut extra_fields = parts.extra_fields;
+    if let Some(value) = parts
+        .client_session_affinity
+        .and_then(client_session_affinity_report_context_value)
+    {
+        extra_fields.insert(
+            CLIENT_SESSION_AFFINITY_REPORT_CONTEXT_FIELD.to_string(),
+            value,
+        );
+    }
+    if let Some(incoming_tls) =
+        crate::ai_serving::tls_fingerprint_from_headers(parts.original_headers)
+    {
+        merge_incoming_tls_fingerprint(&mut extra_fields, incoming_tls);
+    }
 
     build_ai_execution_report_context(AiExecutionReportContextParts {
         auth_context: parts.auth_context,
@@ -98,7 +117,7 @@ pub(crate) fn build_local_execution_report_context(
         upstream_is_stream: parts.upstream_is_stream,
         has_envelope: parts.has_envelope,
         needs_conversion: parts.needs_conversion,
-        extra_fields: parts.extra_fields,
+        extra_fields,
     })
 }
 
@@ -115,10 +134,20 @@ pub(crate) fn insert_provider_stream_event_api_format(
     insert_ai_provider_stream_event_api_format(extra_fields, provider_type);
 }
 
+fn merge_incoming_tls_fingerprint(extra_fields: &mut Map<String, Value>, incoming_tls: Value) {
+    let entry = extra_fields
+        .entry("tls_fingerprint".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if let Value::Object(object) = entry {
+        object.insert("incoming".to_string(), incoming_tls);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
+    use aether_scheduler_core::ClientSessionAffinity;
     use serde_json::{json, Map, Value};
 
     use super::{
@@ -154,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn local_execution_report_context_records_request_origin() {
+    fn local_execution_report_context_records_request_origin_and_session_affinity() {
         let auth_context = ExecutionRuntimeAuthContext {
             user_id: "user-1".to_string(),
             api_key_id: "api-key-1".to_string(),
@@ -166,6 +195,10 @@ mod tests {
         };
         let original_headers = http::HeaderMap::new();
         let provider_request_headers = BTreeMap::new();
+        let client_session_affinity = ClientSessionAffinity::new(
+            Some("codex".to_string()),
+            Some("account=account-1;session=session-1".to_string()),
+        );
 
         let report_context =
             build_local_execution_report_context(LocalExecutionReportContextParts {
@@ -199,6 +232,7 @@ mod tests {
                 }),
                 original_request_body_json: Some(&json!({"model": "gpt-5"})),
                 original_request_body_base64: None,
+                client_session_affinity: Some(&client_session_affinity),
                 client_requested_stream: false,
                 upstream_is_stream: false,
                 has_envelope: false,
@@ -213,6 +247,78 @@ mod tests {
         assert_eq!(
             report_context["user_agent"],
             Value::String("Claude-Code/1.0".to_string())
+        );
+        assert_eq!(
+            report_context["client_session_affinity"],
+            json!({
+                "client_family": "codex",
+                "session_key": "account=account-1;session=session-1"
+            })
+        );
+    }
+
+    #[test]
+    fn local_execution_report_context_records_forwarded_tls_fingerprint() {
+        let auth_context = ExecutionRuntimeAuthContext {
+            user_id: "user-1".to_string(),
+            api_key_id: "api-key-1".to_string(),
+            username: None,
+            api_key_name: None,
+            balance_remaining: None,
+            access_allowed: true,
+            api_key_is_standalone: false,
+        };
+        let mut original_headers = http::HeaderMap::new();
+        original_headers.insert("x-aether-tls-ja3", "ja3-value".parse().unwrap());
+        original_headers.insert("x-aether-tls-ja4", "ja4-value".parse().unwrap());
+        original_headers.insert("x-aether-tls-protocol", "TLSv1.3".parse().unwrap());
+        let provider_request_headers = BTreeMap::new();
+
+        let report_context =
+            build_local_execution_report_context(LocalExecutionReportContextParts {
+                auth_context: &auth_context,
+                request_id: "trace-1",
+                candidate_id: "candidate-1",
+                attempt_identity: ExecutionAttemptIdentity::new(0, 0),
+                model: "gpt-5",
+                provider_name: "OpenAI",
+                provider_id: "provider-1",
+                endpoint_id: "endpoint-1",
+                key_id: "key-1",
+                key_name: None,
+                model_id: None,
+                global_model_id: None,
+                global_model_name: None,
+                provider_api_format: "openai:chat",
+                client_api_format: "openai:chat",
+                mapped_model: None,
+                candidate_group_id: None,
+                ranking: None,
+                upstream_url: None,
+                header_rules: None,
+                body_rules: None,
+                provider_request_method: None,
+                provider_request_headers: Some(&provider_request_headers),
+                original_headers: &original_headers,
+                request_origin: None,
+                original_request_body_json: Some(&json!({"model": "gpt-5"})),
+                original_request_body_base64: None,
+                client_session_affinity: None,
+                client_requested_stream: false,
+                upstream_is_stream: false,
+                has_envelope: false,
+                needs_conversion: false,
+                extra_fields: Map::new(),
+            });
+
+        assert_eq!(
+            report_context["tls_fingerprint"]["incoming"],
+            json!({
+                "source": "forwarded_header",
+                "ja3": "ja3-value",
+                "ja4": "ja4-value",
+                "protocol": "TLSv1.3"
+            })
         );
     }
 }
