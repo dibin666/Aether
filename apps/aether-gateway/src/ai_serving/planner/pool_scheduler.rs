@@ -33,6 +33,7 @@ use crate::handlers::shared::{
 use crate::orchestration::LocalExecutionCandidateMetadata;
 use crate::provider_key_auth::provider_key_auth_semantics;
 
+const POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD: f64 = 0.02;
 static LOAD_BALANCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const DEFAULT_POOL_KEY_PAGE_SIZE: u32 = 128;
 const DEFAULT_POOL_MAX_SCANNED_KEYS: u32 = 1024;
@@ -477,13 +478,69 @@ fn build_pool_catalog_key_context(
             .and_then(Value::as_bool)
             .unwrap_or(false),
         quota_exhausted: quota_snapshot
-            .and_then(|quota| quota.get("exhausted"))
-            .and_then(Value::as_bool)
+            .and_then(|quota| pool_quota_snapshot_exhausted(quota, provider_type))
             .unwrap_or(false),
         health_score,
         latency_avg_ms,
         catalog_lru_score: Some(key.last_used_at_unix_secs.unwrap_or(0) as f64),
     }
+}
+fn pool_quota_snapshot_exhausted(
+    quota_snapshot: &Map<String, Value>,
+    provider_type: &str,
+) -> Option<bool> {
+    let provider_type = provider_type.trim().to_ascii_lowercase();
+    if provider_type == "codex" {
+        if quota_snapshot
+            .get("credits")
+            .and_then(Value::as_object)
+            .and_then(|credits| credits.get("unlimited"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            return Some(false);
+        }
+
+        return quota_snapshot
+            .get("windows")
+            .and_then(Value::as_array)
+            .and_then(|windows| pool_quota_windows_below_skip_threshold(windows));
+    }
+
+    quota_snapshot
+        .get("windows")
+        .and_then(Value::as_array)
+        .and_then(|windows| pool_quota_windows_below_skip_threshold(windows))
+}
+
+fn pool_quota_window_remaining_ratio(window: &Map<String, Value>) -> Option<f64> {
+    window
+        .get("remaining_ratio")
+        .and_then(Value::as_f64)
+        .map(|value| value.clamp(0.0, 1.0))
+        .or_else(|| {
+            window
+                .get("used_ratio")
+                .and_then(Value::as_f64)
+                .map(|value| (1.0 - value.clamp(0.0, 1.0)).max(0.0))
+        })
+        .or_else(|| {
+            (window.get("is_exhausted").and_then(Value::as_bool) == Some(true)).then_some(0.0)
+        })
+}
+
+fn pool_quota_windows_below_skip_threshold(windows: &[Value]) -> Option<bool> {
+    let remaining_ratios = windows
+        .iter()
+        .filter_map(Value::as_object)
+        .filter_map(pool_quota_window_remaining_ratio)
+        .collect::<Vec<_>>();
+
+    (!remaining_ratios.is_empty()).then(|| {
+        remaining_ratios
+            .iter()
+            .any(|remaining| *remaining < POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD)
+    })
 }
 
 fn derive_pool_oauth_plan_type(
@@ -559,7 +616,20 @@ fn normalize_pool_plan_type(value: &str, provider_type: &str) -> Option<String> 
     }
 
     let normalized = normalized.trim().to_ascii_lowercase();
-    (!normalized.is_empty()).then_some(normalized)
+    let canonical = if normalized.contains("enterprise") || normalized.contains("business") {
+        "enterprise"
+    } else if normalized.contains("team") {
+        "team"
+    } else if normalized.contains("pro") {
+        "pro"
+    } else if normalized.contains("plus") {
+        "plus"
+    } else if normalized.contains("free") {
+        "free"
+    } else {
+        normalized.as_str()
+    };
+    (!canonical.is_empty()).then_some(canonical.to_string())
 }
 
 fn json_f64(value: &Value) -> Option<f64> {
@@ -687,7 +757,7 @@ fn apply_ai_pool_orchestration(
 mod tests {
     use super::{
         apply_local_execution_pool_scheduler_with_runtime_map, build_pool_catalog_key_context,
-        PoolCatalogKeyContext,
+        normalize_pool_plan_type, pool_quota_snapshot_exhausted, PoolCatalogKeyContext,
     };
     use crate::ai_serving::planner::candidate_resolution::{
         EligibleLocalExecutionCandidate, LocalExecutionCandidateKind,
@@ -1050,6 +1120,96 @@ mod tests {
     }
 
     #[test]
+    fn pool_scheduler_skip_exhausted_uses_all_codex_windows() {
+        let key_available = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-available",
+            10,
+            Some(json!({
+                "pool_advanced": {
+                    "skip_exhausted_accounts": true
+                }
+            })),
+        );
+        let key_exhausted = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-exhausted",
+            10,
+            Some(json!({
+                "pool_advanced": {
+                    "skip_exhausted_accounts": true
+                }
+            })),
+        );
+
+        let key_context_by_id = BTreeMap::from([
+            (
+                "key-available".to_string(),
+                PoolCatalogKeyContext {
+                    quota_exhausted: pool_quota_snapshot_exhausted(
+                        json!({
+                            "provider_type": "codex",
+                            "exhausted": true,
+                            "windows": [
+                                { "code": "weekly", "used_ratio": 0.97 },
+                                { "code": "5h", "used_ratio": 0.25 }
+                            ]
+                        })
+                        .as_object()
+                        .expect("quota snapshot should be object"),
+                        "codex",
+                    )
+                    .unwrap_or(false),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+            (
+                "key-exhausted".to_string(),
+                PoolCatalogKeyContext {
+                    quota_exhausted: pool_quota_snapshot_exhausted(
+                        json!({
+                            "provider_type": "codex",
+                            "exhausted": true,
+                            "windows": [
+                                { "code": "weekly", "used_ratio": 0.99 },
+                                { "code": "5h", "used_ratio": 0.25 }
+                            ]
+                        })
+                        .as_object()
+                        .expect("quota snapshot should be object"),
+                        "codex",
+                    )
+                    .unwrap_or(false),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+        ]);
+
+        let (reordered, skipped) = apply_local_execution_pool_scheduler_with_runtime_map(
+            vec![key_available, key_exhausted],
+            &BTreeMap::new(),
+            &key_context_by_id,
+        );
+
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|item| item.candidate.key_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-available"]
+        );
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|item| (item.candidate.key_id.as_str(), item.skip_reason))
+                .collect::<Vec<_>>(),
+            vec![("key-exhausted", "pool_account_exhausted")]
+        );
+    }
+
+    #[test]
     fn pool_scheduler_applies_preset_hard_order_before_lru() {
         let key_a = sample_eligible_candidate(
             "provider-pool",
@@ -1109,6 +1269,231 @@ mod tests {
     }
 
     #[test]
+    fn pool_scheduler_uses_later_soft_preset_to_break_equal_metric_scores() {
+        let scheduling_config = Some(json!({
+            "pool_advanced": {
+                "scheduling_presets": [
+                    {"preset": "health_first", "enabled": true},
+                    {"preset": "priority_first", "enabled": true}
+                ]
+            }
+        }));
+        let key_b = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-b",
+            20,
+            scheduling_config.clone(),
+        );
+        let key_a = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-a",
+            10,
+            scheduling_config.clone(),
+        );
+        let key_c = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-c",
+            20,
+            scheduling_config,
+        );
+
+        let key_context_by_id = BTreeMap::from([
+            (
+                "key-a".to_string(),
+                PoolCatalogKeyContext {
+                    health_score: Some(1.0),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+            (
+                "key-b".to_string(),
+                PoolCatalogKeyContext {
+                    health_score: Some(1.0),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+            (
+                "key-c".to_string(),
+                PoolCatalogKeyContext {
+                    health_score: Some(0.5),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+        ]);
+
+        let (reordered, skipped) = apply_local_execution_pool_scheduler_with_runtime_map(
+            vec![key_b, key_a, key_c],
+            &BTreeMap::new(),
+            &key_context_by_id,
+        );
+
+        assert!(skipped.is_empty());
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|item| item.candidate.key_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-a", "key-b", "key-c"]
+        );
+    }
+
+    #[test]
+    fn pool_scheduler_cache_affinity_precedes_soft_quota_strategy() {
+        let scheduling_config = Some(json!({
+            "pool_advanced": {
+                "scheduling_presets": [
+                    {"preset": "quota_balanced", "enabled": true},
+                    {"preset": "cache_affinity", "enabled": true}
+                ]
+            }
+        }));
+        let key_recent = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-recent",
+            10,
+            scheduling_config.clone(),
+        );
+        let key_less_used = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-less-used",
+            10,
+            scheduling_config,
+        );
+        let runtime_by_provider = BTreeMap::from([(
+            "provider-pool".to_string(),
+            AdminProviderPoolRuntimeState {
+                lru_score_by_key: BTreeMap::from([
+                    ("key-recent".to_string(), 300.0),
+                    ("key-less-used".to_string(), 10.0),
+                ]),
+                ..AdminProviderPoolRuntimeState::default()
+            },
+        )]);
+        let key_context_by_id = BTreeMap::from([
+            (
+                "key-recent".to_string(),
+                PoolCatalogKeyContext {
+                    quota_usage_ratio: Some(0.95),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+            (
+                "key-less-used".to_string(),
+                PoolCatalogKeyContext {
+                    quota_usage_ratio: Some(0.10),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+        ]);
+
+        let (reordered, skipped) = apply_local_execution_pool_scheduler_with_runtime_map(
+            vec![key_less_used, key_recent],
+            &runtime_by_provider,
+            &key_context_by_id,
+        );
+
+        assert!(skipped.is_empty());
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|item| item.candidate.key_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-recent", "key-less-used"]
+        );
+    }
+
+    #[test]
+    fn pool_scheduler_cache_affinity_reuses_selected_key_before_plan_order() {
+        let scheduling_config = Some(json!({
+            "pool_advanced": {
+                "scheduling_presets": [
+                    {"preset": "cache_affinity", "enabled": true},
+                    {"preset": "plus_first", "enabled": true},
+                    {"preset": "team_first", "enabled": true},
+                    {"preset": "free_first", "enabled": true}
+                ]
+            }
+        }));
+        let key_free = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-free",
+            10,
+            scheduling_config.clone(),
+        );
+        let key_team = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-team",
+            10,
+            scheduling_config.clone(),
+        );
+        let key_plus = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "key-plus",
+            10,
+            scheduling_config,
+        );
+
+        let runtime_by_provider = BTreeMap::from([(
+            "provider-pool".to_string(),
+            AdminProviderPoolRuntimeState {
+                sticky_bound_key_id: Some("key-free".to_string()),
+                lru_score_by_key: BTreeMap::from([
+                    ("key-free".to_string(), 300.0),
+                    ("key-team".to_string(), 200.0),
+                    ("key-plus".to_string(), 10.0),
+                ]),
+                ..AdminProviderPoolRuntimeState::default()
+            },
+        )]);
+        let key_context_by_id = BTreeMap::from([
+            (
+                "key-free".to_string(),
+                PoolCatalogKeyContext {
+                    oauth_plan_type: Some("free".to_string()),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+            (
+                "key-team".to_string(),
+                PoolCatalogKeyContext {
+                    oauth_plan_type: Some("team".to_string()),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+            (
+                "key-plus".to_string(),
+                PoolCatalogKeyContext {
+                    oauth_plan_type: Some("plus".to_string()),
+                    ..PoolCatalogKeyContext::default()
+                },
+            ),
+        ]);
+
+        let (reordered, skipped) = apply_local_execution_pool_scheduler_with_runtime_map(
+            vec![key_free, key_team, key_plus],
+            &runtime_by_provider,
+            &key_context_by_id,
+        );
+
+        assert!(skipped.is_empty());
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|item| item.candidate.key_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-free", "key-team", "key-plus"]
+        );
+    }
+
+    #[test]
     fn pool_scheduler_uses_plan_preset_with_catalog_context() {
         let key_free = sample_eligible_candidate(
             "provider-pool",
@@ -1156,18 +1541,24 @@ mod tests {
             &key_context_by_id,
         );
 
-        assert!(skipped.is_empty());
         assert_eq!(
             reordered
                 .iter()
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["key-plus", "key-free"]
+            vec!["key-plus"]
+        );
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|item| (item.candidate.key_id.as_str(), item.skip_reason))
+                .collect::<Vec<_>>(),
+            vec![("key-free", "pool_plan_not_selected")]
         );
     }
 
     #[test]
-    fn pool_scheduler_plus_first_treats_plus_and_pro_as_top_tier() {
+    fn pool_scheduler_filters_unselected_plan_tiers_and_respects_selected_order() {
         let key_plus = sample_eligible_candidate(
             "provider-pool",
             "endpoint-1",
@@ -1175,7 +1566,10 @@ mod tests {
             10,
             Some(json!({
                 "pool_advanced": {
-                    "scheduling_presets": [{"preset": "plus_first", "enabled": true}]
+                    "scheduling_presets": [
+                        {"preset": "plus_first", "enabled": true},
+                        {"preset": "team_first", "enabled": true}
+                    ]
                 }
             })),
         );
@@ -1186,7 +1580,10 @@ mod tests {
             10,
             Some(json!({
                 "pool_advanced": {
-                    "scheduling_presets": [{"preset": "plus_first", "enabled": true}]
+                    "scheduling_presets": [
+                        {"preset": "plus_first", "enabled": true},
+                        {"preset": "team_first", "enabled": true}
+                    ]
                 }
             })),
         );
@@ -1197,7 +1594,10 @@ mod tests {
             10,
             Some(json!({
                 "pool_advanced": {
-                    "scheduling_presets": [{"preset": "plus_first", "enabled": true}]
+                    "scheduling_presets": [
+                        {"preset": "plus_first", "enabled": true},
+                        {"preset": "team_first", "enabled": true}
+                    ]
                 }
             })),
         );
@@ -1235,13 +1635,19 @@ mod tests {
             &key_context_by_id,
         );
 
-        assert!(skipped.is_empty());
         assert_eq!(
             reordered
                 .iter()
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["key-plus", "key-pro", "key-team"]
+            vec!["key-plus", "key-team"]
+        );
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|item| (item.candidate.key_id.as_str(), item.skip_reason))
+                .collect::<Vec<_>>(),
+            vec![("key-pro", "pool_plan_not_selected")]
         );
     }
 
@@ -1311,13 +1717,22 @@ mod tests {
             &key_context_by_id,
         );
 
-        assert!(skipped.is_empty());
         assert_eq!(
             reordered
                 .iter()
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["key-pro", "key-plus", "key-team"]
+            vec!["key-pro"]
+        );
+        assert_eq!(
+            skipped
+                .iter()
+                .map(|item| (item.candidate.key_id.as_str(), item.skip_reason))
+                .collect::<Vec<_>>(),
+            vec![
+                ("key-plus", "pool_plan_not_selected"),
+                ("key-team", "pool_plan_not_selected"),
+            ]
         );
     }
 
@@ -1394,6 +1809,56 @@ mod tests {
         );
 
         assert_eq!(presets, ["single_account", "priority_first"]);
+    }
+
+    #[test]
+    fn normalizes_plan_priority_presets_as_independent_ordered_strategies() {
+        let presets = normalize_enabled_ai_pool_presets(
+            &[
+                AiPoolSchedulingPreset {
+                    preset: "free_first".to_string(),
+                    enabled: false,
+                    mode: None,
+                },
+                AiPoolSchedulingPreset {
+                    preset: "team_first".to_string(),
+                    enabled: true,
+                    mode: None,
+                },
+                AiPoolSchedulingPreset {
+                    preset: "plus_first".to_string(),
+                    enabled: true,
+                    mode: None,
+                },
+                AiPoolSchedulingPreset {
+                    preset: "health_first".to_string(),
+                    enabled: true,
+                    mode: None,
+                },
+            ],
+            "codex",
+        );
+
+        assert_eq!(
+            presets,
+            vec!["team_first", "plus_first", "health_first", "recent_refresh"]
+        );
+    }
+
+    #[test]
+    fn canonicalizes_marketing_plan_names_for_plan_priority() {
+        assert_eq!(
+            normalize_pool_plan_type("ChatGPT Plus", "codex").as_deref(),
+            Some("plus")
+        );
+        assert_eq!(
+            normalize_pool_plan_type("Codex Team", "codex").as_deref(),
+            Some("team")
+        );
+        assert_eq!(
+            normalize_pool_plan_type("chatgpt_free", "codex").as_deref(),
+            Some("free")
+        );
     }
 
     #[test]

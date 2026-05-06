@@ -2,6 +2,10 @@ use crate::handlers::admin::request::AdminAppState;
 use crate::provider_key_auth::provider_key_is_oauth_managed;
 use aether_admin::provider::pool as admin_provider_pool_pure;
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
+use std::{cmp::Ordering, collections::BTreeMap};
+
+const ADMIN_POOL_FREE_PLAN_DISPLAY_RANK: usize = 8;
+const ADMIN_POOL_UNKNOWN_PLAN_DISPLAY_RANK: usize = 9;
 
 pub(super) fn admin_pool_normalize_text(value: impl AsRef<str>) -> String {
     admin_provider_pool_pure::admin_pool_normalize_text(value)
@@ -104,6 +108,7 @@ pub(super) fn admin_pool_matches_quick_selector(
         selector,
         oauth_plan_type.as_deref(),
         admin_provider_pool_pure::admin_pool_now_unix_secs(),
+        provider_type,
     )
 }
 
@@ -121,6 +126,130 @@ pub(super) fn admin_pool_key_is_known_banned(key: &StoredProviderCatalogKey) -> 
     admin_provider_pool_pure::admin_pool_key_is_known_banned(key)
 }
 
-pub(super) fn admin_pool_sort_keys(keys: &mut [StoredProviderCatalogKey]) {
-    admin_provider_pool_pure::admin_pool_sort_keys(keys);
+fn admin_pool_display_plan_rank(oauth_plan_type: Option<&str>) -> usize {
+    let Some(plan_type) = oauth_plan_type else {
+        return ADMIN_POOL_UNKNOWN_PLAN_DISPLAY_RANK;
+    };
+    let normalized = plan_type.trim().to_ascii_lowercase();
+    if normalized.contains("plus") {
+        0
+    } else if normalized.contains("team") {
+        1
+    } else if normalized.contains("pro") {
+        2
+    } else if normalized.contains("paid") {
+        3
+    } else if normalized.contains("enterprise") {
+        4
+    } else if normalized.contains("business") {
+        5
+    } else if normalized.contains("ultra") {
+        6
+    } else if normalized.contains("power") {
+        7
+    } else if normalized.contains("free") {
+        ADMIN_POOL_FREE_PLAN_DISPLAY_RANK
+    } else {
+        ADMIN_POOL_UNKNOWN_PLAN_DISPLAY_RANK
+    }
+}
+
+fn admin_pool_compare_keys_for_display(
+    left: &StoredProviderCatalogKey,
+    right: &StoredProviderCatalogKey,
+    left_plan_type: Option<&str>,
+    right_plan_type: Option<&str>,
+) -> Ordering {
+    let left_plan_rank = admin_pool_display_plan_rank(left_plan_type);
+    let right_plan_rank = admin_pool_display_plan_rank(right_plan_type);
+    let plan_order = left_plan_rank.cmp(&right_plan_rank);
+    if plan_order != Ordering::Equal {
+        return plan_order;
+    }
+
+    if left_plan_rank == ADMIN_POOL_FREE_PLAN_DISPLAY_RANK {
+        let created_order = left
+            .created_at_unix_ms
+            .unwrap_or_default()
+            .cmp(&right.created_at_unix_ms.unwrap_or_default());
+        if created_order != Ordering::Equal {
+            return created_order;
+        }
+    }
+
+    left.internal_priority
+        .cmp(&right.internal_priority)
+        .then(left.name.cmp(&right.name))
+        .then(
+            left.created_at_unix_ms
+                .unwrap_or_default()
+                .cmp(&right.created_at_unix_ms.unwrap_or_default()),
+        )
+        .then(left.id.cmp(&right.id))
+}
+
+pub(super) fn admin_pool_sort_keys(
+    state: &AdminAppState<'_>,
+    provider_type: &str,
+    keys: &mut [StoredProviderCatalogKey],
+) {
+    let plan_by_key_id = keys
+        .iter()
+        .map(|key| {
+            (
+                key.id.clone(),
+                admin_pool_derive_oauth_plan_type(state, key, provider_type),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    keys.sort_by(|left, right| {
+        let left_plan = plan_by_key_id
+            .get(&left.id)
+            .and_then(|value| value.as_deref());
+        let right_plan = plan_by_key_id
+            .get(&right.id)
+            .and_then(|value| value.as_deref());
+        admin_pool_compare_keys_for_display(left, right, left_plan, right_plan)
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sort_key(id: &str, name: &str, priority: i32, created_at: u64) -> StoredProviderCatalogKey {
+        let mut key = StoredProviderCatalogKey::new(
+            id.to_string(),
+            "provider-pool".to_string(),
+            name.to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .expect("key should be valid");
+        key.internal_priority = priority;
+        key.created_at_unix_ms = Some(created_at);
+        key
+    }
+
+    #[test]
+    fn display_sort_keeps_paid_plans_before_free_keys() {
+        let mut keys = vec![
+            (sort_key("free-new", "free-new", 1, 300), Some("free")),
+            (sort_key("team", "team", 50, 100), Some("team")),
+            (sort_key("free-old", "free-old", 99, 100), Some("free")),
+            (sort_key("plus", "plus", 99, 200), Some("plus")),
+        ];
+
+        keys.sort_by(|(left, left_plan), (right, right_plan)| {
+            admin_pool_compare_keys_for_display(left, right, *left_plan, *right_plan)
+        });
+
+        let ordered_ids = keys
+            .iter()
+            .map(|(key, _)| key.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ordered_ids, vec!["plus", "team", "free-old", "free-new"]);
+    }
 }
