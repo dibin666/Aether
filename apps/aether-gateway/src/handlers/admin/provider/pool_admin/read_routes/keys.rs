@@ -4,8 +4,8 @@ use super::{
     parse_admin_pool_quick_selectors, parse_admin_pool_search, parse_admin_pool_status_filter,
     pool_payloads, pool_selection, read_admin_provider_pool_cooldown_key_ids,
     read_admin_provider_pool_runtime_state, AdminPoolKeySort, AdminPoolKeySortDirection,
-    AdminPoolKeySortField, AdminProviderPoolRuntimeState,
-    ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL,
+    AdminPoolKeySortField, AdminProviderPoolRuntimeState, ProviderCatalogKeyListOrder,
+    ProviderCatalogKeyListQuery, ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL,
 };
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::GatewayError;
@@ -36,16 +36,9 @@ fn admin_pool_compare_optional_unix_secs(
     }
 }
 
-fn admin_pool_sort_keys_for_request(
-    state: &AdminAppState<'_>,
-    provider_type: &str,
-    keys: &mut [StoredProviderCatalogKey],
-    sort: AdminPoolKeySort,
-) {
+fn admin_pool_sort_keys_for_request(keys: &mut [StoredProviderCatalogKey], sort: AdminPoolKeySort) {
     match sort.field {
-        AdminPoolKeySortField::Default => {
-            pool_selection::admin_pool_sort_keys(state, provider_type, keys)
-        }
+        AdminPoolKeySortField::Default => pool_selection::admin_pool_sort_keys(keys),
         AdminPoolKeySortField::ImportedAt => {
             keys.sort_by(|left, right| {
                 admin_pool_compare_optional_unix_secs(
@@ -145,7 +138,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
     let pool_config = admin_provider_pool_config(&provider);
     let page_offset = page.saturating_sub(1).saturating_mul(page_size);
 
-    let mut keys = if status == "cooldown" {
+    let (keys, total) = if status == "cooldown" {
         let cooldown_key_ids = if let Some(runner) = state.redis_kv_runner() {
             read_admin_provider_pool_cooldown_key_ids(&runner, &provider.id).await
         } else {
@@ -168,9 +161,28 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 )
             });
         }
-        keys
-    } else {
-        state
+        if !quick_selectors.is_empty() {
+            keys.retain(|key| {
+                quick_selectors.iter().all(|selector| {
+                    pool_selection::admin_pool_matches_quick_selector(
+                        state,
+                        key,
+                        &provider.provider_type,
+                        selector,
+                    )
+                })
+            });
+        }
+        admin_pool_sort_keys_for_request(&mut keys, sort);
+        let total = keys.len();
+        let keys = keys
+            .into_iter()
+            .skip(page_offset)
+            .take(page_size)
+            .collect::<Vec<_>>();
+        (keys, total)
+    } else if !quick_selectors.is_empty() || sort.field != AdminPoolKeySortField::Default {
+        let mut keys = state
             .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
             .await?
             .into_iter()
@@ -187,29 +199,42 @@ pub(super) async fn build_admin_pool_list_keys_response(
                     search.as_deref(),
                 )
             })
-            .collect::<Vec<_>>()
-    };
-
-    let quota_summary_keys = keys.clone();
-    if !quick_selectors.is_empty() {
-        keys.retain(|key| {
-            quick_selectors.iter().all(|selector| {
-                pool_selection::admin_pool_matches_quick_selector(
-                    state,
-                    key,
-                    &provider.provider_type,
-                    selector,
-                )
+            .filter(|key| {
+                quick_selectors.iter().all(|selector| {
+                    pool_selection::admin_pool_matches_quick_selector(
+                        state,
+                        key,
+                        &provider.provider_type,
+                        selector,
+                    )
+                })
             })
-        });
-    }
-    admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
-    let total = keys.len();
-    let keys = keys
-        .into_iter()
-        .skip(page_offset)
-        .take(page_size)
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>();
+        admin_pool_sort_keys_for_request(&mut keys, sort);
+        let total = keys.len();
+        let keys = keys
+            .into_iter()
+            .skip(page_offset)
+            .take(page_size)
+            .collect::<Vec<_>>();
+        (keys, total)
+    } else {
+        let key_page = state
+            .list_provider_catalog_key_page(&ProviderCatalogKeyListQuery {
+                provider_id: provider.id.clone(),
+                search: search.clone(),
+                is_active: match status.as_str() {
+                    "active" => Some(true),
+                    "inactive" => Some(false),
+                    _ => None,
+                },
+                offset: page_offset,
+                limit: page_size,
+                order: ProviderCatalogKeyListOrder::Name,
+            })
+            .await?;
+        (key_page.items, key_page.total)
+    };
 
     let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
     let endpoints = state
@@ -242,18 +267,11 @@ pub(super) async fn build_admin_pool_list_keys_response(
         })
         .collect::<Vec<_>>();
 
-    let quota_summary = pool_payloads::build_admin_pool_quota_summary(
-        state,
-        &provider.provider_type,
-        &quota_summary_keys,
-    );
-
     Ok(Json(json!({
         "total": total,
         "page": page,
         "page_size": page_size,
         "keys": items,
-        "quota_summary": quota_summary,
     }))
     .into_response())
 }

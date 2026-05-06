@@ -16,15 +16,13 @@ function buildItems(): TestPresetItem[] {
     { preset: 'load_balance', mutexGroup: 'distribution_mode', enabled: false },
     { preset: 'recent_refresh', mutexGroup: null, enabled: true },
     { preset: 'quota_balanced', mutexGroup: null, enabled: false },
-    { preset: 'free_first', mutexGroup: null, enabled: false },
-    { preset: 'team_first', mutexGroup: null, enabled: false },
     { preset: 'priority_first', mutexGroup: null, enabled: true },
   ]
 }
 
 describe('poolSchedulingDialog', () => {
   it('moves only strategy items upward without disturbing distribution presets', () => {
-    const moved = moveStrategyItem(buildItems(), 8, -1)
+    const moved = moveStrategyItem(buildItems(), 6, -1)
 
     expect(moved.map(item => item.preset)).toEqual([
       'cache_affinity',
@@ -32,10 +30,8 @@ describe('poolSchedulingDialog', () => {
       'single_account',
       'load_balance',
       'recent_refresh',
-      'quota_balanced',
-      'free_first',
       'priority_first',
-      'team_first',
+      'quota_balanced',
     ])
   })
 
@@ -56,15 +52,13 @@ describe('poolSchedulingDialog', () => {
       'load_balance',
       'quota_balanced',
       'recent_refresh',
-      'free_first',
-      'team_first',
       'priority_first',
     ])
   })
 
   it('keeps the original order when a strategy item is already at the bottom boundary', () => {
     const original = buildItems()
-    const moved = moveStrategyItem(original, 8, 1)
+    const moved = moveStrategyItem(original, 6, 1)
 
     expect(moved.map(item => item.preset)).toEqual(original.map(item => item.preset))
   })

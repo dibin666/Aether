@@ -7,7 +7,6 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::status as provider_status;
-const ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD: f64 = 0.02;
 
 #[derive(Debug, Default, Clone, serde::Deserialize)]
 pub struct AdminPoolResolveSelectionRequest {
@@ -179,77 +178,38 @@ fn admin_pool_key_quota_snapshot<'a>(
     admin_pool_quota_snapshot_matches_provider(quota_snapshot, provider_type)
         .then_some(quota_snapshot)
 }
-fn admin_pool_quota_window_remaining_ratio(window: &serde_json::Map<String, Value>) -> Option<f64> {
-    admin_pool_json_f64(window.get("remaining_ratio"))
-        .map(|value| value.clamp(0.0, 1.0))
-        .or_else(|| {
-            admin_pool_json_f64(window.get("used_ratio"))
-                .map(|value| (1.0 - value.clamp(0.0, 1.0)).max(0.0))
-        })
-        .or_else(|| (admin_pool_json_bool(window.get("is_exhausted")) == Some(true)).then_some(0.0))
-}
-
-fn admin_pool_remaining_ratio_below_skip_threshold(remaining: f64) -> bool {
-    remaining <= ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD + f64::EPSILON
-}
-
-fn admin_pool_quota_windows_below_skip_threshold(windows: &[Value]) -> Option<bool> {
-    let remaining_ratios = windows
-        .iter()
-        .filter_map(Value::as_object)
-        .filter_map(admin_pool_quota_window_remaining_ratio)
-        .collect::<Vec<_>>();
-
-    (!remaining_ratios.is_empty()).then(|| {
-        remaining_ratios
-            .iter()
-            .any(|remaining| admin_pool_remaining_ratio_below_skip_threshold(*remaining))
-    })
-}
-
-fn admin_pool_codex_quota_snapshot_exhausted(
-    quota_snapshot: &serde_json::Map<String, Value>,
-) -> Option<bool> {
-    if quota_snapshot
-        .get("credits")
-        .and_then(Value::as_object)
-        .and_then(|credits| credits.get("unlimited"))
-        .and_then(|value| admin_pool_json_bool(Some(value)))
-        == Some(true)
-    {
-        return Some(false);
-    }
-
-    quota_snapshot
-        .get("windows")
-        .and_then(Value::as_array)
-        .and_then(|windows| admin_pool_quota_windows_below_skip_threshold(windows))
-}
 
 pub fn admin_pool_key_account_quota_exhausted(
     key: &StoredProviderCatalogKey,
     provider_type: &str,
 ) -> bool {
-    let provider_type = provider_type.trim().to_ascii_lowercase();
-    if let Some(quota_snapshot) = admin_pool_key_quota_snapshot(key, &provider_type) {
-        if provider_type == "codex" {
-            if let Some(exhausted) = admin_pool_codex_quota_snapshot_exhausted(quota_snapshot) {
-                return exhausted;
+    if let Some(exhausted) =
+        admin_pool_key_quota_snapshot(key, provider_type).and_then(|quota_snapshot| {
+            let exhausted = admin_pool_json_bool(quota_snapshot.get("exhausted"))?;
+            if exhausted {
+                let windows_max_ratio = quota_snapshot
+                    .get("windows")
+                    .and_then(Value::as_array)
+                    .filter(|w| !w.is_empty())
+                    .and_then(|windows| {
+                        windows
+                            .iter()
+                            .filter_map(Value::as_object)
+                            .filter_map(|w| w.get("used_ratio"))
+                            .filter_map(Value::as_f64)
+                            .max_by(f64::total_cmp)
+                    });
+                if windows_max_ratio.is_some_and(|ratio| ratio < 1.0 - 1e-6) {
+                    return Some(false);
+                }
             }
-        } else if let Some(exhausted) = quota_snapshot
-            .get("exhausted")
-            .and_then(|value| admin_pool_json_bool(Some(value)))
-        {
-            return exhausted;
-        } else if let Some(exhausted) = quota_snapshot
-            .get("windows")
-            .and_then(Value::as_array)
-            .and_then(|windows| admin_pool_quota_windows_below_skip_threshold(windows))
-        {
-            return exhausted;
-        }
+            Some(exhausted)
+        })
+    {
+        return exhausted;
     }
 
+    let provider_type = provider_type.trim().to_ascii_lowercase();
     let Some(bucket) = admin_pool_metadata_bucket(key.upstream_metadata.as_ref(), &provider_type)
     else {
         return false;
@@ -260,55 +220,37 @@ pub fn admin_pool_key_account_quota_exhausted(
             if admin_pool_json_bool(bucket.get("credits_unlimited")) == Some(true) {
                 return false;
             }
-            let window_remaining_ratios = [
-                admin_pool_json_f64(bucket.get("primary_used_percent")),
-                admin_pool_json_f64(bucket.get("secondary_used_percent")),
-            ]
-            .into_iter()
-            .flatten()
-            .map(|used_percent| (1.0 - (used_percent / 100.0).clamp(0.0, 1.0)).max(0.0))
-            .collect::<Vec<_>>();
-            !window_remaining_ratios.is_empty()
-                && window_remaining_ratios
-                    .iter()
-                    .any(|remaining| admin_pool_remaining_ratio_below_skip_threshold(*remaining))
+            let has_window_data = admin_pool_json_f64(bucket.get("primary_used_percent")).is_some()
+                || admin_pool_json_f64(bucket.get("secondary_used_percent")).is_some();
+            if !has_window_data && admin_pool_json_bool(bucket.get("has_credits")) == Some(false) {
+                return true;
+            }
+            admin_pool_json_f64(bucket.get("primary_used_percent"))
+                .is_some_and(|value| value >= 100.0)
+                || admin_pool_json_f64(bucket.get("secondary_used_percent"))
+                    .is_some_and(|value| value >= 100.0)
         }
         "kiro" => {
-            if let (Some(limit), Some(remaining)) = (
-                admin_pool_json_f64(bucket.get("usage_limit")),
-                admin_pool_json_f64(bucket.get("remaining")),
-            ) {
-                if limit > 0.0 {
-                    return admin_pool_remaining_ratio_below_skip_threshold(
-                        (remaining / limit).clamp(0.0, 1.0),
-                    );
-                }
-            }
             if admin_pool_json_f64(bucket.get("remaining")).is_some_and(|value| value <= 0.0) {
                 return true;
             }
-            if admin_pool_json_f64(bucket.get("usage_percentage")).is_some_and(|value| {
-                admin_pool_remaining_ratio_below_skip_threshold(
-                    (1.0 - (value / 100.0).clamp(0.0, 1.0)).max(0.0),
-                )
-            }) {
+            if admin_pool_json_f64(bucket.get("usage_percentage"))
+                .is_some_and(|value| value >= 100.0)
+            {
                 return true;
             }
             match (
                 admin_pool_json_f64(bucket.get("usage_limit")),
                 admin_pool_json_f64(bucket.get("current_usage")),
             ) {
-                (Some(limit), Some(current)) if limit > 0.0 => {
-                    admin_pool_remaining_ratio_below_skip_threshold(
-                        ((limit - current).max(0.0) / limit).clamp(0.0, 1.0),
-                    )
-                }
+                (Some(limit), Some(current)) if limit > 0.0 => current >= limit,
                 _ => false,
             }
         }
         _ => false,
     }
 }
+
 fn admin_pool_has_proxy(key: &StoredProviderCatalogKey) -> bool {
     match key.proxy.as_ref() {
         Some(Value::Object(values)) => !values.is_empty(),
@@ -447,28 +389,11 @@ pub fn admin_pool_is_oauth_invalid(key: &StoredProviderCatalogKey, now_unix_secs
         .is_some_and(|value| value > 0 && value <= now_unix_secs)
 }
 
-fn admin_pool_matches_plan_selector(selector: &str, oauth_plan_type: Option<&str>) -> bool {
-    let Some(expected_plan) = selector.strip_prefix("plan_") else {
-        return false;
-    };
-    if expected_plan.is_empty() {
-        return false;
-    }
-    let Some(actual_plan) = oauth_plan_type.map(admin_pool_normalize_text) else {
-        return expected_plan == "unknown";
-    };
-    if expected_plan == "unknown" {
-        return actual_plan.is_empty() || actual_plan == "unknown";
-    }
-    actual_plan.contains(expected_plan)
-}
-
 pub fn admin_pool_matches_quick_selector(
     key: &StoredProviderCatalogKey,
     selector: &str,
     oauth_plan_type: Option<&str>,
     now_unix_secs: u64,
-    provider_type: &str,
 ) -> bool {
     match selector {
         "banned" => admin_pool_key_is_known_banned(key),
@@ -477,12 +402,9 @@ pub fn admin_pool_matches_quick_selector(
         "proxy_set" => admin_pool_has_proxy(key),
         "disabled" => !key.is_active,
         "enabled" => key.is_active,
-        "quota_available" => !admin_pool_key_account_quota_exhausted(key, provider_type),
-        "quota_exhausted" => admin_pool_key_account_quota_exhausted(key, provider_type),
+        "plan_free" => oauth_plan_type.is_some_and(|value| value.contains("free")),
+        "plan_team" => oauth_plan_type.is_some_and(|value| value.contains("team")),
         "no_5h_limit" | "no_weekly_limit" => false,
-        _ if selector.starts_with("plan_") => {
-            admin_pool_matches_plan_selector(selector, oauth_plan_type)
-        }
         _ => false,
     }
 }
@@ -667,45 +589,25 @@ pub fn admin_pool_resolved_api_formats(
     formats
 }
 
-fn admin_pool_quick_selector_allowed(selector: &str) -> bool {
-    if matches!(
-        selector,
-        "banned"
-            | "no_5h_limit"
-            | "no_weekly_limit"
-            | "oauth_invalid"
-            | "proxy_unset"
-            | "proxy_set"
-            | "disabled"
-            | "enabled"
-            | "quota_available"
-            | "quota_exhausted"
-    ) {
-        return true;
-    }
-
-    matches!(
-        selector.strip_prefix("plan_"),
-        Some(
-            "free"
-                | "team"
-                | "plus"
-                | "pro"
-                | "paid"
-                | "enterprise"
-                | "business"
-                | "ultra"
-                | "power"
-                | "unknown"
-        )
-    )
-}
-
 pub fn admin_pool_sanitize_quick_selectors(selectors: Vec<String>) -> Vec<String> {
     let mut selectors = selectors
         .into_iter()
         .map(admin_pool_normalize_text)
-        .filter(|value| admin_pool_quick_selector_allowed(value))
+        .filter(|value| {
+            matches!(
+                value.as_str(),
+                "banned"
+                    | "no_5h_limit"
+                    | "no_weekly_limit"
+                    | "plan_free"
+                    | "plan_team"
+                    | "oauth_invalid"
+                    | "proxy_unset"
+                    | "proxy_set"
+                    | "disabled"
+                    | "enabled"
+            )
+        })
         .collect::<Vec<_>>();
     selectors.sort();
     selectors.dedup();
@@ -734,7 +636,6 @@ pub fn build_admin_pool_selection_payload(keys: &[StoredProviderCatalogKey]) -> 
 mod tests {
     use super::{
         admin_pool_key_account_quota_exhausted, admin_pool_key_is_known_banned,
-        admin_pool_matches_quick_selector, admin_pool_sanitize_quick_selectors,
         build_admin_pool_key_payload, AdminPoolKeyPayloadContext,
     };
     use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
@@ -755,71 +656,8 @@ mod tests {
     }
 
     #[test]
-    fn quick_selectors_match_plan_and_quota_filters() {
-        let with_quota = sample_key(Some(json!({
-            "codex": {
-                "has_credits": true,
-                "primary_used_percent": 10.0,
-                "secondary_used_percent": 20.0
-            }
-        })));
-        let without_quota = sample_key(Some(json!({
-            "codex": {
-                "primary_used_percent": 100.0
-            }
-        })));
-
-        assert!(admin_pool_matches_quick_selector(
-            &with_quota,
-            "plan_plus",
-            Some("plus"),
-            0,
-            "codex",
-        ));
-        assert!(!admin_pool_matches_quick_selector(
-            &with_quota,
-            "plan_free",
-            Some("plus"),
-            0,
-            "codex",
-        ));
-        assert!(admin_pool_matches_quick_selector(
-            &with_quota,
-            "quota_available",
-            Some("plus"),
-            0,
-            "codex",
-        ));
-        assert!(admin_pool_matches_quick_selector(
-            &without_quota,
-            "quota_exhausted",
-            Some("free"),
-            0,
-            "codex",
-        ));
-    }
-
-    #[test]
-    fn sanitizes_pool_quota_and_plan_selectors() {
-        assert_eq!(
-            admin_pool_sanitize_quick_selectors(vec![
-                "quota_available".to_string(),
-                "plan_plus".to_string(),
-                "plan_free".to_string(),
-                "plan_bad".to_string(),
-                "quota_available".to_string(),
-            ]),
-            vec![
-                "plan_free".to_string(),
-                "plan_plus".to_string(),
-                "quota_available".to_string(),
-            ]
-        );
-    }
-
-    #[test]
     fn detects_codex_exhaustion_from_metadata() {
-        assert!(!admin_pool_key_account_quota_exhausted(
+        assert!(admin_pool_key_account_quota_exhausted(
             &sample_key(Some(json!({
                 "codex": {
                     "has_credits": false,
@@ -839,36 +677,6 @@ mod tests {
         assert!(admin_pool_key_account_quota_exhausted(
             &sample_key(Some(json!({
                 "codex": {
-                    "secondary_used_percent": 100.0
-                }
-            }))),
-            "codex",
-        ));
-        assert!(admin_pool_key_account_quota_exhausted(
-            &sample_key(Some(json!({
-                "codex": {
-                    "has_credits": true,
-                    "primary_used_percent": 98.0,
-                    "secondary_used_percent": 25.0
-                }
-            }))),
-            "codex",
-        ));
-        assert!(admin_pool_key_account_quota_exhausted(
-            &sample_key(Some(json!({
-                "codex": {
-                    "has_credits": true,
-                    "primary_used_percent": 99.0,
-                    "secondary_used_percent": 25.0
-                }
-            }))),
-            "codex",
-        ));
-        assert!(admin_pool_key_account_quota_exhausted(
-            &sample_key(Some(json!({
-                "codex": {
-                    "has_credits": true,
-                    "primary_used_percent": 100.0,
                     "secondary_used_percent": 100.0
                 }
             }))),
@@ -934,11 +742,11 @@ mod tests {
     }
 
     #[test]
-    fn codex_snapshot_windows_override_stale_exhausted_flag() {
+    fn clears_stale_codex_exhausted_snapshot_when_windows_have_capacity() {
         let mut key = sample_key(Some(json!({
             "codex": {
-                "primary_used_percent": 100.0,
-                "secondary_used_percent": 100.0
+                "has_credits": false,
+                "primary_used_percent": 100.0
             }
         })));
         key.status_snapshot = Some(json!({
@@ -947,113 +755,24 @@ mod tests {
                 "provider_type": "codex",
                 "code": "exhausted",
                 "exhausted": true,
+                "usage_ratio": 0.0,
                 "updated_at": 1_776_395_200u64,
                 "windows": [
                     {
                         "code": "weekly",
-                        "used_ratio": 0.97,
-                        "remaining_ratio": 0.03
+                        "used_ratio": 0.0,
+                        "remaining_ratio": 1.0
                     },
                     {
                         "code": "5h",
-                        "used_ratio": 0.25,
-                        "remaining_ratio": 0.75
-                    }
-                ]
-            }
-        }));
-
-        assert!(!admin_pool_key_account_quota_exhausted(&key, "codex"));
-    }
-
-    #[test]
-    fn treats_two_percent_snapshot_remaining_as_exhausted() {
-        let mut key = sample_key(None);
-        key.status_snapshot = Some(json!({
-            "quota": {
-                "provider_type": "codex",
-                "code": "ok",
-                "exhausted": false,
-                "windows": [
-                    {
-                        "code": "weekly",
-                        "remaining_ratio": 0.02
-                    }
-                ]
-            }
-        }));
-
-        assert!(admin_pool_key_account_quota_exhausted(&key, "codex"));
-    }
-
-    #[test]
-    fn codex_ignores_stale_exhausted_snapshot_without_remaining_data() {
-        let mut key = sample_key(Some(json!({
-            "codex": {
-                "has_credits": true,
-                "primary_used_percent": 0.0,
-                "secondary_used_percent": 0.0
-            }
-        })));
-        key.status_snapshot = Some(json!({
-            "quota": {
-                "version": 2,
-                "provider_type": "codex",
-                "code": "exhausted",
-                "exhausted": true,
-                "updated_at": 1_776_395_200u64
-            }
-        }));
-
-        assert!(!admin_pool_key_account_quota_exhausted(&key, "codex"));
-    }
-
-    #[test]
-    fn non_codex_snapshot_exhausted_flag_controls_model_window_cooldowns() {
-        let mut key = sample_key(Some(json!({
-            "gemini_cli": {
-                "quota_by_model": {
-                    "gemini-2.5-pro": {
-                        "is_exhausted": false
-                    }
-                }
-            }
-        })));
-        key.status_snapshot = Some(json!({
-            "quota": {
-                "version": 2,
-                "provider_type": "gemini_cli",
-                "code": "cooldown",
-                "exhausted": false,
-                "windows": [
-                    {
-                        "code": "model:gemini-2.5-pro",
-                        "is_exhausted": true,
-                        "remaining_ratio": 0.0
-                    }
-                ]
-            }
-        }));
-
-        assert!(!admin_pool_key_account_quota_exhausted(&key, "gemini_cli"));
-
-        key.status_snapshot = Some(json!({
-            "quota": {
-                "version": 2,
-                "provider_type": "gemini_cli",
-                "code": "exhausted",
-                "exhausted": true,
-                "windows": [
-                    {
-                        "code": "model:gemini-2.5-pro",
-                        "is_exhausted": false,
+                        "used_ratio": 0.0,
                         "remaining_ratio": 1.0
                     }
                 ]
             }
         }));
 
-        assert!(admin_pool_key_account_quota_exhausted(&key, "gemini_cli"));
+        assert!(!admin_pool_key_account_quota_exhausted(&key, "codex"));
     }
 
     #[test]
@@ -1070,14 +789,6 @@ mod tests {
             &sample_key(Some(json!({
                 "kiro": {
                     "usage_percentage": 100.0
-                }
-            }))),
-            "kiro",
-        ));
-        assert!(admin_pool_key_account_quota_exhausted(
-            &sample_key(Some(json!({
-                "kiro": {
-                    "usage_percentage": 98.0
                 }
             }))),
             "kiro",

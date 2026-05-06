@@ -305,7 +305,6 @@ const FALLBACK_PRESET_DEFS: PoolPresetMeta[] = [
     label: 'Free 优先',
     description: '优先消耗 Free 账号（依赖 plan_type）',
     evidence_hint: '依据 plan_type（Free 账号优先调度）',
-    mutex_group: null,
     providers: ['codex', 'kiro'],
     modes: null,
     default_mode: null,
@@ -315,7 +314,6 @@ const FALLBACK_PRESET_DEFS: PoolPresetMeta[] = [
     label: 'Team 优先',
     description: '优先消耗 Team 账号（依赖 plan_type）',
     evidence_hint: '依据 plan_type（Team 账号优先调度）',
-    mutex_group: null,
     providers: ['codex', 'kiro'],
     modes: null,
     default_mode: null,
@@ -325,7 +323,6 @@ const FALLBACK_PRESET_DEFS: PoolPresetMeta[] = [
     label: 'Plus 优先',
     description: '优先消耗 Plus 账号（依赖 plan_type）',
     evidence_hint: '依据 plan_type（Plus 账号优先调度）',
-    mutex_group: null,
     providers: ['codex', 'kiro'],
     modes: null,
     default_mode: null,
@@ -335,7 +332,6 @@ const FALLBACK_PRESET_DEFS: PoolPresetMeta[] = [
     label: 'Pro 优先',
     description: '优先消耗 Pro 账号（依赖 plan_type）',
     evidence_hint: '依据 plan_type（Pro 账号优先调度）',
-    mutex_group: null,
     providers: ['codex', 'kiro'],
     modes: null,
     default_mode: null,
@@ -681,17 +677,16 @@ function normalizeMutexSelection(items: PresetListItem[]): PresetListItem[] {
     groups.get(item.mutexGroup)?.push(index)
   })
 
-  for (const [group, indexes] of groups.entries()) {
+  for (const indexes of groups.values()) {
     if (indexes.length <= 1) continue
     const enabledApplicable = indexes.find(index => {
       const item = next[index]
       return item.enabled && item.applicable
     })
     const firstApplicable = indexes.find(index => next[index].applicable)
-    const winner =
-      enabledApplicable ?? (group === DISTRIBUTION_GROUP ? firstApplicable ?? indexes[0] : null)
+    const winner = enabledApplicable ?? firstApplicable ?? indexes[0]
     indexes.forEach((index) => {
-      next[index].enabled = winner !== null && index === winner && next[index].applicable
+      next[index].enabled = index === winner && next[index].applicable
     })
   }
 
@@ -701,14 +696,6 @@ function normalizeMutexSelection(items: PresetListItem[]): PresetListItem[] {
 function togglePreset(index: number, enabled: boolean) {
   const item = presetList.value[index]
   if (!item) return
-
-  if (enabled && item.mutexGroup) {
-    presetList.value.forEach((peer, peerIndex) => {
-      if (peerIndex !== index && peer.mutexGroup === item.mutexGroup) {
-        peer.enabled = false
-      }
-    })
-  }
   item.enabled = enabled
 }
 
@@ -754,7 +741,7 @@ const activeDistributionLabel = computed(() => {
 const strategyItems = computed(() => {
   const items: { index: number; item: PresetListItem }[] = []
   presetList.value.forEach((item, index) => {
-    if (item.mutexGroup !== DISTRIBUTION_GROUP) {
+    if (!item.mutexGroup) {
       items.push({ index, item })
     }
   })
