@@ -8,6 +8,8 @@
 .gemini*/
 .plans
 .cursor
+.trellis
+AGENTS.md
 
 ### Python ###
 *.db
