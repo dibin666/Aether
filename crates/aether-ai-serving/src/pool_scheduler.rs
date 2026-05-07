@@ -309,11 +309,12 @@ fn schedule_pool_group<Candidate>(
                 .cmp(&sort_vectors.get(&right.item.facts.key_id))
                 .then(left.original_index.cmp(&right.original_index))
         });
+        let primary_strategy_components = usize::from(selected_plan_order.is_some());
         promote_sticky_candidate(
             &mut available,
             runtime.sticky_bound_key_id.as_deref(),
             Some(&sort_vectors),
-            0,
+            primary_strategy_components,
         );
     } else {
         if pool_config.lru_enabled {
@@ -467,13 +468,13 @@ fn lru_rank_indices<Candidate>(
 
 fn priority_first_ranks<Candidate>(
     items: &[PoolGroupCandidateOrdering<Candidate>],
-    lru_ranks: &BTreeMap<String, usize>,
+    _lru_ranks: &BTreeMap<String, usize>,
 ) -> BTreeMap<String, usize> {
     let scores = collect_metric_scores(items, |item| {
         Some(f64::from(item.item.facts.key_internal_priority))
     });
     if !score_map_has_variation(&scores) {
-        return lru_ranks.clone();
+        return neutral_pool_ranks(items);
     }
     rank_indices_from_score_map(items, &scores, false)
 }
@@ -501,7 +502,7 @@ fn single_account_ranks<Candidate>(
 
 fn plan_order_ranks<Candidate>(
     items: &[PoolGroupCandidateOrdering<Candidate>],
-    lru_ranks: &BTreeMap<String, usize>,
+    _lru_ranks: &BTreeMap<String, usize>,
     selected_plan_order: &BTreeMap<&'static str, usize>,
 ) -> BTreeMap<String, usize> {
     let fallback_rank = selected_plan_order.len() as f64;
@@ -520,14 +521,23 @@ fn plan_order_ranks<Candidate>(
         })
         .collect::<BTreeMap<_, _>>();
     if !score_map_has_variation(&scores) {
-        return lru_ranks.clone();
+        return neutral_pool_ranks(items);
     }
     rank_indices_from_score_map(items, &scores, false)
 }
 
+fn neutral_pool_ranks<Candidate>(
+    items: &[PoolGroupCandidateOrdering<Candidate>],
+) -> BTreeMap<String, usize> {
+    items
+        .iter()
+        .map(|item| (item.item.facts.key_id.clone(), 0))
+        .collect()
+}
+
 fn health_first_ranks<Candidate>(
     items: &[PoolGroupCandidateOrdering<Candidate>],
-    lru_ranks: &BTreeMap<String, usize>,
+    _lru_ranks: &BTreeMap<String, usize>,
 ) -> BTreeMap<String, usize> {
     let scores = collect_metric_scores(items, |item| {
         item.item
@@ -536,39 +546,39 @@ fn health_first_ranks<Candidate>(
             .map(|score| 1.0 - score.clamp(0.0, 1.0))
     });
     if !score_map_has_signal(&scores) {
-        return lru_ranks.clone();
+        return neutral_pool_ranks(items);
     }
     rank_indices_from_score_map(items, &scores, false)
 }
 
 fn latency_first_ranks<Candidate>(
     items: &[PoolGroupCandidateOrdering<Candidate>],
-    lru_ranks: &BTreeMap<String, usize>,
+    _lru_ranks: &BTreeMap<String, usize>,
 ) -> BTreeMap<String, usize> {
     let scores = collect_metric_scores(items, |item| item.item.key_context.latency_avg_ms);
     if !score_map_has_signal(&scores) {
-        return lru_ranks.clone();
+        return neutral_pool_ranks(items);
     }
     rank_indices_from_score_map(items, &scores, false)
 }
 
 fn cost_first_ranks<Candidate>(
     items: &[PoolGroupCandidateOrdering<Candidate>],
-    lru_ranks: &BTreeMap<String, usize>,
+    _lru_ranks: &BTreeMap<String, usize>,
     cost_limit_per_key_tokens: Option<u64>,
 ) -> BTreeMap<String, usize> {
     let scores = collect_metric_scores(items, |item| {
         cost_penalty(item, cost_limit_per_key_tokens).or(item.item.key_context.quota_usage_ratio)
     });
     if !score_map_has_signal(&scores) {
-        return lru_ranks.clone();
+        return neutral_pool_ranks(items);
     }
     rank_indices_from_score_map(items, &scores, false)
 }
 
 fn quota_balanced_ranks<Candidate>(
     items: &[PoolGroupCandidateOrdering<Candidate>],
-    lru_ranks: &BTreeMap<String, usize>,
+    _lru_ranks: &BTreeMap<String, usize>,
     cost_limit_per_key_tokens: Option<u64>,
 ) -> BTreeMap<String, usize> {
     let scores = collect_metric_scores(items, |item| {
@@ -578,18 +588,18 @@ fn quota_balanced_ranks<Candidate>(
             .or_else(|| cost_penalty(item, cost_limit_per_key_tokens))
     });
     if !score_map_has_signal(&scores) {
-        return lru_ranks.clone();
+        return neutral_pool_ranks(items);
     }
     rank_indices_from_score_map(items, &scores, false)
 }
 
 fn recent_refresh_ranks<Candidate>(
     items: &[PoolGroupCandidateOrdering<Candidate>],
-    lru_ranks: &BTreeMap<String, usize>,
+    _lru_ranks: &BTreeMap<String, usize>,
 ) -> BTreeMap<String, usize> {
     let scores = collect_metric_scores(items, |item| item.item.key_context.quota_reset_seconds);
     if !score_map_has_signal(&scores) {
-        return lru_ranks.clone();
+        return neutral_pool_ranks(items);
     }
     rank_indices_from_score_map(items, &scores, false)
 }
@@ -850,11 +860,9 @@ fn pool_preset_order_tier(preset: &str, auto_added: bool) -> usize {
     if auto_added {
         3
     } else if pool_preset_mutex_group(preset).is_some() {
-        0
-    } else if pool_plan_type_for_priority_preset(preset).is_some() {
         1
     } else {
-        2
+        0
     }
 }
 
@@ -1139,6 +1147,160 @@ mod tests {
     }
 
     #[test]
+    fn pool_scheduler_plan_order_precedes_cache_affinity_distribution() {
+        let presets = vec![
+            AiPoolSchedulingPreset {
+                preset: "cache_affinity".to_string(),
+                enabled: true,
+                mode: None,
+            },
+            AiPoolSchedulingPreset {
+                preset: "plus_first".to_string(),
+                enabled: true,
+                mode: None,
+            },
+            AiPoolSchedulingPreset {
+                preset: "free_first".to_string(),
+                enabled: true,
+                mode: None,
+            },
+        ];
+        let key_free = sample_candidate("provider-pool", "endpoint-1", "key-free", 10, true)
+            .with_presets(presets.clone())
+            .with_plan("free");
+        let key_plus = sample_candidate("provider-pool", "endpoint-1", "key-plus", 10, true)
+            .with_presets(presets)
+            .with_plan("plus");
+
+        let runtime_by_provider = BTreeMap::from([(
+            "provider-pool".to_string(),
+            AiPoolRuntimeState {
+                lru_score_by_key: BTreeMap::from([
+                    ("key-free".to_string(), 100.0),
+                    ("key-plus".to_string(), 1.0),
+                ]),
+                ..AiPoolRuntimeState::default()
+            },
+        )]);
+
+        let outcome = run_ai_pool_scheduler(
+            vec![key_free, key_plus],
+            &runtime_by_provider,
+            "seed",
+        );
+
+        assert!(outcome.skipped_candidates.is_empty());
+        assert_eq!(
+            outcome
+                .candidates
+                .iter()
+                .map(|item| item.candidate.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-plus", "key-free"]
+        );
+    }
+
+    #[test]
+    fn pool_scheduler_sticky_hit_does_not_cross_plan_priority() {
+        let presets = vec![
+            AiPoolSchedulingPreset {
+                preset: "cache_affinity".to_string(),
+                enabled: true,
+                mode: None,
+            },
+            AiPoolSchedulingPreset {
+                preset: "plus_first".to_string(),
+                enabled: true,
+                mode: None,
+            },
+            AiPoolSchedulingPreset {
+                preset: "free_first".to_string(),
+                enabled: true,
+                mode: None,
+            },
+        ];
+        let key_plus = sample_candidate("provider-pool", "endpoint-1", "key-plus", 10, true)
+            .with_presets(presets.clone())
+            .with_plan("plus");
+        let key_free = sample_candidate("provider-pool", "endpoint-1", "key-free", 10, true)
+            .with_presets(presets)
+            .with_plan("free");
+
+        let runtime_by_provider = BTreeMap::from([(
+            "provider-pool".to_string(),
+            AiPoolRuntimeState {
+                sticky_bound_key_id: Some("key-free".to_string()),
+                lru_score_by_key: BTreeMap::from([
+                    ("key-free".to_string(), 100.0),
+                    ("key-plus".to_string(), 1.0),
+                ]),
+                ..AiPoolRuntimeState::default()
+            },
+        )]);
+
+        let outcome = run_ai_pool_scheduler(
+            vec![key_plus, key_free],
+            &runtime_by_provider,
+            "seed",
+        );
+
+        assert!(outcome.skipped_candidates.is_empty());
+        assert_eq!(
+            outcome
+                .candidates
+                .iter()
+                .map(|item| item.candidate.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-plus", "key-free"]
+        );
+    }
+
+    #[test]
+    fn pool_scheduler_cache_affinity_breaks_ties_within_same_plan() {
+        let presets = vec![
+            AiPoolSchedulingPreset {
+                preset: "cache_affinity".to_string(),
+                enabled: true,
+                mode: None,
+            },
+            AiPoolSchedulingPreset {
+                preset: "plus_first".to_string(),
+                enabled: true,
+                mode: None,
+            },
+        ];
+        let key_a = sample_candidate("provider-pool", "endpoint-1", "key-plus-a", 10, true)
+            .with_presets(presets.clone())
+            .with_plan("plus");
+        let key_b = sample_candidate("provider-pool", "endpoint-1", "key-plus-b", 10, true)
+            .with_presets(presets)
+            .with_plan("plus");
+
+        let runtime_by_provider = BTreeMap::from([(
+            "provider-pool".to_string(),
+            AiPoolRuntimeState {
+                lru_score_by_key: BTreeMap::from([
+                    ("key-plus-a".to_string(), 1.0),
+                    ("key-plus-b".to_string(), 100.0),
+                ]),
+                ..AiPoolRuntimeState::default()
+            },
+        )]);
+
+        let outcome = run_ai_pool_scheduler(vec![key_a, key_b], &runtime_by_provider, "seed");
+
+        assert!(outcome.skipped_candidates.is_empty());
+        assert_eq!(
+            outcome
+                .candidates
+                .iter()
+                .map(|item| item.candidate.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-plus-b", "key-plus-a"]
+        );
+    }
+
+    #[test]
     fn normalizes_distribution_mutex_group_to_first_enabled_member() {
         let presets = normalize_enabled_ai_pool_presets(
             &[
@@ -1166,7 +1328,7 @@ mod tests {
             "openai",
         );
 
-        assert_eq!(presets, ["single_account", "priority_first"]);
+        assert_eq!(presets, ["priority_first", "single_account"]);
     }
 
     fn sample_candidate(

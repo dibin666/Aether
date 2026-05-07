@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn cache_affinity_can_promote_cached_candidate_and_reports_reason() {
         let high_priority = candidate("high", 0, 0, Some(0));
-        let mut cached = candidate("cached", 10, 0, Some(10));
+        let mut cached = candidate("cached", 0, 0, Some(0));
         cached.cached_affinity_match = true;
         let candidates = vec![high_priority, cached];
         let context = SchedulerRankingContext {
@@ -240,6 +240,46 @@ mod tests {
         assert_eq!(
             outcomes[0].promoted_by,
             Some(RANKING_REASON_CACHED_AFFINITY)
+        );
+    }
+
+    #[test]
+    fn cache_affinity_does_not_override_provider_priority_slot() {
+        let high_priority = candidate("high", 0, 0, Some(0));
+        let mut cached_lower_priority = candidate("cached", 10, 0, Some(10));
+        cached_lower_priority.cached_affinity_match = true;
+
+        assert_eq!(
+            ranked_ids(
+                &[high_priority, cached_lower_priority],
+                SchedulerRankingContext {
+                    priority_mode: SchedulerPriorityMode::Provider,
+                    ranking_mode: SchedulerRankingMode::CacheAffinity,
+                    include_health: false,
+                    load_balance_seed: 0,
+                },
+            ),
+            vec!["provider-high", "provider-cached"]
+        );
+    }
+
+    #[test]
+    fn cache_affinity_does_not_override_global_key_priority_slot() {
+        let high_priority = candidate("high", 10, 0, Some(0));
+        let mut cached_lower_priority = candidate("cached", 0, 0, Some(10));
+        cached_lower_priority.cached_affinity_match = true;
+
+        assert_eq!(
+            ranked_ids(
+                &[high_priority, cached_lower_priority],
+                SchedulerRankingContext {
+                    priority_mode: SchedulerPriorityMode::GlobalKey,
+                    ranking_mode: SchedulerRankingMode::CacheAffinity,
+                    include_health: false,
+                    load_balance_seed: 0,
+                },
+            ),
+            vec!["provider-high", "provider-cached"]
         );
     }
 
@@ -286,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn cache_affinity_promotes_cached_candidate_before_cross_format_demotion() {
+    fn cache_affinity_does_not_override_cross_format_demotion() {
         let same_format = candidate("same", 10, 0, Some(10));
         let mut cached_cross_format = candidate("cross", 0, 0, Some(0));
         cached_cross_format.cached_affinity_match = true;
@@ -302,13 +342,15 @@ mod tests {
             },
         );
 
-        assert_eq!(outcomes[0].original_index, 0);
+        assert_eq!(outcomes[0].original_index, 1);
+        assert_eq!(outcomes[0].promoted_by, None);
+        assert_eq!(outcomes[0].demoted_by, None);
+        assert_eq!(outcomes[1].original_index, 0);
         assert_eq!(
-            outcomes[0].promoted_by,
+            outcomes[1].promoted_by,
             Some(RANKING_REASON_CACHED_AFFINITY)
         );
-        assert_eq!(outcomes[0].demoted_by, Some(RANKING_REASON_CROSS_FORMAT));
-        assert_eq!(outcomes[1].original_index, 1);
+        assert_eq!(outcomes[1].demoted_by, Some(RANKING_REASON_CROSS_FORMAT));
     }
 
     #[test]
