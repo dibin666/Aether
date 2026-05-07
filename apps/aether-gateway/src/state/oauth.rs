@@ -53,6 +53,10 @@ fn tagged_reason(reason: Option<&str>, prefix: &str) -> Option<String> {
     })
 }
 
+fn oauth_access_token_expired(expires_at_unix_secs: Option<u64>, now_unix_secs: u64) -> bool {
+    expires_at_unix_secs.is_none_or(|expires_at| expires_at == 0 || expires_at <= now_unix_secs)
+}
+
 fn oauth_auth_config_refresh_token_fingerprint(auth_config: Option<&str>) -> Option<String> {
     let parsed = auth_config
         .map(str::trim)
@@ -151,8 +155,13 @@ fn oauth_invalid_reason_is_account_block(reason: Option<&str>) -> bool {
     if reason.starts_with(OAUTH_ACCOUNT_BLOCK_PREFIX) {
         return true;
     }
-    aether_admin::provider::status::resolve_account_status_snapshot(None, None, Some(reason))
-        .blocked
+    let snapshot =
+        aether_admin::provider::status::resolve_account_status_snapshot(None, None, Some(reason));
+    snapshot.blocked
+        && !matches!(
+            snapshot.code.trim().to_ascii_lowercase().as_str(),
+            "oauth_token_invalid" | "oauth_expired" | "oauth_refresh_failed"
+        )
 }
 
 fn normalize_local_oauth_refresh_error_message(
@@ -270,7 +279,7 @@ fn merge_local_oauth_refresh_failure_reason(
         return Some(refresh_reason.to_string());
     }
     if current_reason.starts_with(OAUTH_EXPIRED_PREFIX) {
-        return None;
+        return Some(current_reason.to_string());
     }
     if oauth_invalid_reason_is_account_block(Some(current_reason)) {
         return None;
@@ -340,14 +349,16 @@ fn build_oauth_status_snapshot_value(key: &StoredProviderCatalogKey) -> Value {
         });
     }
     if let Some(reason) = tagged_reason(invalid_reason.as_deref(), OAUTH_REFRESH_FAILED_PREFIX) {
+        let access_token_expired = oauth_access_token_expired(expires_at_unix_secs, now_unix_secs);
         return json!({
-            "code": "invalid",
-            "label": "已失效",
+            "code": if access_token_expired { "invalid" } else { "reauth_required" },
+            "label": if access_token_expired { "已失效" } else { "续期失败" },
             "reason": reason,
             "expires_at": expires_at_unix_secs,
             "invalid_at": invalid_at_unix_secs,
             "source": "oauth_refresh",
             "requires_reauth": true,
+            "usable_until_expiry": !access_token_expired,
             "expiring_soon": false,
         });
     }
@@ -387,11 +398,11 @@ fn build_oauth_status_snapshot_value(key: &StoredProviderCatalogKey) -> Value {
         return json!({
             "code": "expired",
             "label": "已过期",
-            "reason": "Token 已过期，请重新授权",
+            "reason": "Access Token 已过期，等待自动续期",
             "expires_at": expires_at_unix_secs,
             "invalid_at": Value::Null,
             "source": "expires_at",
-            "requires_reauth": true,
+            "requires_reauth": false,
             "expiring_soon": false,
         });
     }
@@ -1679,6 +1690,17 @@ mod tests {
         assert_eq!(
             super::normalize_local_oauth_refresh_error_message(Some(401), Some(body)),
             "refresh_token 无效、已过期或已撤销，请重新登录授权"
+        );
+    }
+
+    #[test]
+    fn local_refresh_failure_does_not_replace_access_token_expired_marker() {
+        assert_eq!(
+            super::merge_local_oauth_refresh_failure_reason(
+                Some("[OAUTH_EXPIRED] access token invalid"),
+                "[REFRESH_FAILED] Token 续期失败 (401): refresh_token 无效",
+            ),
+            Some("[OAUTH_EXPIRED] access token invalid".to_string()),
         );
     }
 }

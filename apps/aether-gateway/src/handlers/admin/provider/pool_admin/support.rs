@@ -39,7 +39,7 @@ pub(crate) struct AdminPoolKeySort {
 impl Default for AdminPoolKeySort {
     fn default() -> Self {
         Self {
-            field: AdminPoolKeySortField::Default,
+            field: AdminPoolKeySortField::ImportedAt,
             direction: AdminPoolKeySortDirection::Desc,
         }
     }
@@ -119,7 +119,8 @@ pub(crate) fn parse_admin_pool_key_sort(query: Option<&str>) -> Result<AdminPool
         .filter(|value| !value.is_empty())
         .as_deref()
     {
-        None | Some("default") | Some("name") => AdminPoolKeySortField::Default,
+        None | Some("default") => AdminPoolKeySortField::ImportedAt,
+        Some("name") => AdminPoolKeySortField::Default,
         Some("imported_at") | Some("created_at") => AdminPoolKeySortField::ImportedAt,
         Some("last_used_at") | Some("last_used") => AdminPoolKeySortField::LastUsedAt,
         Some(_) => {

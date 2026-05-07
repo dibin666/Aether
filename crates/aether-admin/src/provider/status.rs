@@ -1,11 +1,6 @@
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-const OAUTH_ACCOUNT_BLOCK_PREFIX: &str = "[ACCOUNT_BLOCK] ";
-const OAUTH_REFRESH_FAILED_PREFIX: &str = "[REFRESH_FAILED] ";
-const OAUTH_EXPIRED_PREFIX: &str = "[OAUTH_EXPIRED] ";
-const OAUTH_REQUEST_FAILED_PREFIX: &str = "[REQUEST_FAILED] ";
-
 const ACCOUNT_BLOCK_REASON_KEYWORDS: &[&str] = &[
     "suspended",
     "banned",
@@ -136,7 +131,7 @@ fn classify_block_reason(reason: &str) -> (&'static str, &'static str) {
     .iter()
     .any(|keyword| lowered.contains(keyword))
     {
-        return ("oauth_expired", "Token 失效");
+        return ("oauth_token_invalid", "Token 失效");
     }
     if looks_like_account_verification(reason) {
         return ("account_verification", "需要验证");
@@ -326,54 +321,54 @@ fn resolve_from_metadata(
 fn resolve_from_oauth_invalid_reason(reason: Option<&str>) -> Option<PoolAccountState> {
     let text = clean_text(reason)?;
 
-    if text.starts_with(OAUTH_ACCOUNT_BLOCK_PREFIX) {
-        let cleaned = clean_text(Some(text.trim_start_matches(OAUTH_ACCOUNT_BLOCK_PREFIX)))
-            .unwrap_or_else(|| "账号异常".to_string());
-        let (code, label) = classify_block_reason(&cleaned);
+    if let Some(cleaned) = tagged_reason(&text, "ACCOUNT_BLOCK") {
+        let reason = if cleaned.is_empty() {
+            "账号异常".to_string()
+        } else {
+            cleaned
+        };
+        let (code, label) = classify_block_reason(&reason);
         return Some(PoolAccountState {
             blocked: true,
             code: Some(code.to_string()),
             label: Some(label.to_string()),
-            reason: Some(cleaned),
+            reason: Some(reason),
             source: Some("oauth_invalid".to_string()),
             recoverable: false,
         });
     }
-    if text.starts_with(OAUTH_EXPIRED_PREFIX) {
-        let cleaned = clean_text(Some(text.trim_start_matches(OAUTH_EXPIRED_PREFIX)))
-            .unwrap_or_else(|| "OAuth Token 已过期且无法续期".to_string());
+    if let Some(cleaned) = tagged_reason(&text, "OAUTH_EXPIRED") {
+        let reason = if cleaned.is_empty() {
+            "OAuth Token 已过期且无法续期".to_string()
+        } else {
+            cleaned
+        };
         return Some(PoolAccountState {
             blocked: true,
-            code: Some("oauth_expired".to_string()),
+            code: Some("oauth_token_invalid".to_string()),
             label: Some("Token 失效".to_string()),
-            reason: Some(cleaned),
+            reason: Some(reason),
             source: Some("oauth_invalid".to_string()),
-            recoverable: true,
+            recoverable: false,
         });
     }
-    if text.starts_with(OAUTH_REFRESH_FAILED_PREFIX) {
-        let cleaned = clean_text(Some(text.trim_start_matches(OAUTH_REFRESH_FAILED_PREFIX)))
-            .unwrap_or_else(|| "OAuth Token 续期失败".to_string());
-        return Some(PoolAccountState {
-            blocked: false,
-            code: Some("oauth_refresh_failed".to_string()),
-            label: Some("续期失败".to_string()),
-            reason: Some(cleaned),
-            source: Some("oauth_refresh".to_string()),
-            recoverable: true,
-        });
-    }
-    if text.starts_with(OAUTH_REQUEST_FAILED_PREFIX) {
-        let cleaned = clean_text(Some(text.trim_start_matches(OAUTH_REQUEST_FAILED_PREFIX)))
-            .unwrap_or_else(|| "账号状态检查失败".to_string());
+    if let Some(cleaned) = tagged_reason(&text, "REQUEST_FAILED") {
+        let reason = if cleaned.is_empty() {
+            "账号状态检查失败".to_string()
+        } else {
+            cleaned
+        };
         return Some(PoolAccountState {
             blocked: false,
             code: Some("oauth_request_failed".to_string()),
             label: Some("请求失败".to_string()),
-            reason: Some(cleaned),
+            reason: Some(reason),
             source: Some("oauth_request".to_string()),
             recoverable: true,
         });
+    }
+    if tagged_reason(&text, "REFRESH_FAILED").is_some() {
+        return None;
     }
     if text.starts_with('[') {
         return None;
@@ -444,6 +439,26 @@ pub fn resolve_account_status_snapshot(
             source: Some("oauth_invalid".to_string()),
             recoverable: false,
         };
+    }
+
+    if let Some(cleaned) = tagged_reason(&text, "OAUTH_EXPIRED") {
+        let reason = if cleaned.is_empty() {
+            "OAuth Token 已过期且无法续期".to_string()
+        } else {
+            cleaned
+        };
+        return AccountStatusSnapshot {
+            code: "oauth_token_invalid".to_string(),
+            label: Some("Token 失效".to_string()),
+            reason: Some(reason),
+            blocked: true,
+            source: Some("oauth_invalid".to_string()),
+            recoverable: false,
+        };
+    }
+
+    if tagged_reason(&text, "REFRESH_FAILED").is_some() {
+        return AccountStatusSnapshot::default();
     }
 
     if text.starts_with('[') {
@@ -546,7 +561,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_refresh_failed_as_recoverable_pool_state() {
+    fn ignores_refresh_failed_as_pool_account_block() {
         let state = resolve_pool_account_state(
             Some("codex"),
             None,
@@ -554,13 +569,13 @@ mod tests {
         );
 
         assert!(!state.blocked);
-        assert!(state.recoverable);
-        assert_eq!(state.code.as_deref(), Some("oauth_refresh_failed"));
+        assert_eq!(state.code.as_deref(), None);
+        assert_eq!(state.label.as_deref(), None);
         assert!(!should_auto_remove_account_state(&state));
     }
 
     #[test]
-    fn account_snapshot_ignores_refresh_failed_reason() {
+    fn account_snapshot_ignores_refresh_failed_as_account_block() {
         let snapshot = resolve_account_status_snapshot(
             Some("codex"),
             None,
@@ -568,7 +583,23 @@ mod tests {
         );
 
         assert_eq!(snapshot.code, "ok");
+        assert_eq!(snapshot.label.as_deref(), None);
         assert!(!snapshot.blocked);
+        assert!(!snapshot.recoverable);
+    }
+
+    #[test]
+    fn account_snapshot_marks_oauth_expired_as_token_invalid() {
+        let snapshot = resolve_account_status_snapshot(
+            Some("codex"),
+            None,
+            Some("[OAUTH_EXPIRED] Codex Token 无效或已过期 (401)"),
+        );
+
+        assert_eq!(snapshot.code, "oauth_token_invalid");
+        assert_eq!(snapshot.label.as_deref(), Some("Token 失效"));
+        assert!(snapshot.blocked);
+        assert!(!snapshot.recoverable);
     }
 
     #[test]

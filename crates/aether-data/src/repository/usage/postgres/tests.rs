@@ -235,6 +235,44 @@ fn usage_sql_summarizes_usage_by_provider_api_key_ids_in_database() {
 }
 
 #[test]
+fn usage_sql_materializes_provider_key_window_usage_in_status_snapshot() {
+    assert!(super::APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL
+        .contains("UPDATE provider_api_keys AS keys"));
+    assert!(super::APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL.contains("jsonb_set"));
+    assert!(
+        super::APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL.contains("'{quota,windows}'")
+    );
+    assert!(super::APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL.contains("'usage'"));
+    assert!(
+        super::APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL.contains("WHEN '5h' THEN 300")
+    );
+    assert!(super::APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL
+        .contains("WHEN 'weekly' THEN 10080"));
+    assert!(
+        !super::APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL.contains("usage_billing_facts")
+    );
+}
+
+#[test]
+fn usage_sql_rebuilds_provider_key_window_usage_into_status_snapshot() {
+    assert!(super::REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL
+        .contains("UPDATE provider_api_keys AS keys"));
+    assert!(super::REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL
+        .contains("usage_billing_facts"));
+    assert!(super::REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL
+        .contains("provider_type', ''))) = 'codex'"));
+    assert!(
+        super::REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL.contains("'{quota,windows}'")
+    );
+    assert!(super::REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL.contains("'{usage}'"));
+    assert!(
+        super::REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL.contains("WHEN '5h' THEN 300")
+    );
+    assert!(super::REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL
+        .contains("WHEN 'weekly' THEN 10080"));
+}
+
+#[test]
 fn usage_sql_serializes_request_id_upserts_before_reading_previous_usage() {
     assert!(super::LOCK_USAGE_REQUEST_ID_SQL.contains("pg_advisory_xact_lock"));
     assert!(super::LOCK_USAGE_REQUEST_ID_SQL.contains("hashtext($1)::BIGINT"));
@@ -455,6 +493,8 @@ fn usage_sql_raw_aggregates_use_canonical_billing_facts() {
         .contains("FROM usage_billing_facts AS \"usage\""));
     assert!(super::SUMMARIZE_USAGE_TOTALS_BY_USER_IDS_SQL
         .contains("FROM usage_billing_facts AS \"usage\""));
+    assert!(!super::APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL
+        .contains("usage_billing_facts AS \"usage\""));
 }
 
 #[test]
@@ -481,7 +521,10 @@ fn usage_billing_facts_projects_upstream_stream_mode() {
     assert!(migration.contains("COALESCE(usage_rows.upstream_is_stream"));
     assert!(migration.contains("COALESCE(usage_rows.is_stream, FALSE)"));
     assert!(migration.contains("ADD COLUMN IF NOT EXISTS upstream_is_stream boolean"));
-    assert!(migration.contains("request_metadata->>'upstream_is_stream'"));
+    assert!(
+        !migration.contains("request_metadata->>'upstream_is_stream'"),
+        "migration should avoid backfilling historical usage rows from request metadata"
+    );
 }
 
 #[test]

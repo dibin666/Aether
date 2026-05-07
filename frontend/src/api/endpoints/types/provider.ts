@@ -140,7 +140,7 @@ export interface BodyRuleConditionLeaf {
   path: string
   op: BodyRuleConditionOp
   value?: unknown  // exists / not_exists 不需要 value
-  source?: 'original' | 'current'
+  source?: 'request_headers'  // 不填表示请求体；填 request_headers 表示请求头
 }
 
 export interface BodyRuleConditionAll {
@@ -158,22 +158,12 @@ export type BodyRuleCondition =
 
 export type HeaderRule = (HeaderRuleSet | HeaderRuleDrop | HeaderRuleRename) & {
   condition?: BodyRuleCondition
+  enabled?: boolean
 }
 
-/**
- * 请求体规则 - 转换命名风格
- *
- * - path 指向目标字符串字段，支持通配符如 "tools[*].name"
- * - style 为目标命名风格
- */
-export interface BodyRuleNameStyle {
-  action: 'name_style'
-  path: string
-  style: 'snake_case' | 'camelCase' | 'PascalCase' | 'kebab-case' | 'capitalize'
-}
-
-export type BodyRule = (BodyRuleSet | BodyRuleDrop | BodyRuleRename | BodyRuleAppend | BodyRuleInsert | BodyRuleRegexReplace | BodyRuleNameStyle) & {
+export type BodyRule = (BodyRuleSet | BodyRuleDrop | BodyRuleRename | BodyRuleAppend | BodyRuleInsert | BodyRuleRegexReplace) & {
   condition?: BodyRuleCondition
+  enabled?: boolean
 }
 
 /**
@@ -358,10 +348,30 @@ export interface KiroUpstreamMetadata {
   banned_at?: number  // 封禁时间（Unix 时间戳，秒）
 }
 
+export interface ChatGPTWebUpstreamMetadata {
+  updated_at?: number  // Unix 时间戳（秒）
+  plan_type?: string | null
+  default_model_slug?: string | null
+  blocked_features?: string[] | null
+  image_quota_feature_name?: string | null
+  image_quota_remaining?: number | null
+  image_quota_total?: number | null
+  image_quota_used?: number | null
+  image_quota_reset_at?: number | null
+  image_quota_reset_after?: string | null
+  image_quota_blocked?: boolean | null
+  limits_progress?: Array<Record<string, unknown>> | null
+  email?: string | null
+  account_id?: string | null
+  account_user_id?: string | null
+  user_id?: string | null
+}
+
 export interface UpstreamMetadata {
   codex?: CodexUpstreamMetadata
   antigravity?: AntigravityUpstreamMetadata
   kiro?: KiroUpstreamMetadata
+  chatgpt_web?: ChatGPTWebUpstreamMetadata
 }
 
 // 按格式的健康度数据
@@ -634,6 +644,7 @@ export interface ProviderModelMapping {
   name: string
   priority: number  // 优先级（数字越小优先级越高）
   api_formats?: string[]  // 作用域（适用的 API 格式），为空表示对所有格式生效
+  endpoint_ids?: string[]  // 作用域（适用的端点 ID），为空表示对所有端点生效
 }
 
 // 保留别名以保持向后兼容

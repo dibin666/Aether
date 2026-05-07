@@ -171,7 +171,10 @@
               </span>
             </h3>
           </div>
-          <div class="flex items-center gap-2">
+          <div
+            class="flex items-center gap-2"
+            data-testid="pool-header-actions"
+          >
             <Select
               v-model="selectedProviderIdProxy"
               :disabled="providerSelectDisabled"
@@ -412,7 +415,21 @@
                   class="px-2 font-semibold text-center whitespace-nowrap"
                   :style="{ width: desktopColumnWidths.stats }"
                 >
-                  统计
+                  <div class="flex items-center justify-center gap-1.5">
+                    <button
+                      v-if="showCodexStatsModeToggle"
+                      type="button"
+                      class="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                      :title="poolStatsMode === 'current_cycle' ? '切换为总计统计' : '切换为周期统计'"
+                      :aria-label="poolStatsMode === 'current_cycle' ? '切换为总计统计' : '切换为周期统计'"
+                      :aria-pressed="poolStatsMode === 'current_cycle'"
+                      data-testid="pool-stats-mode-control"
+                      @click.stop="togglePoolStatsMode"
+                    >
+                      <Repeat2 class="h-3.5 w-3.5" />
+                    </button>
+                    <span>统计</span>
+                  </div>
                 </TableHead>
                 <SortableTableHead
                   class="font-semibold text-center whitespace-nowrap"
@@ -623,23 +640,69 @@
                   >-</span>
                 </TableCell>
                 <TableCell class="py-3 px-2 align-middle">
-                  <div class="grid grid-rows-3 gap-0.5 w-[136px] mx-auto text-[10px] leading-4">
-                    <div class="flex items-center justify-between gap-2">
-                      <span class="text-muted-foreground">请求</span>
-                      <span class="tabular-nums text-foreground/90">
-                        {{ formatStatInteger(key.request_count) }}
-                      </span>
+                  <div
+                    v-if="isPoolKeyCycleStatsDisplay(key)"
+                    class="mx-auto w-[188px] text-[10px] leading-4"
+                    data-testid="pool-stats-cycle-groups"
+                  >
+                    <div
+                      class="grid min-h-16 w-[188px] grid-cols-[38px_64px_10px_64px] items-center gap-x-1"
+                      data-testid="pool-stats-cycle-grid"
+                    >
+                      <span aria-hidden="true" />
+                      <span
+                        class="text-center text-[9px] font-semibold text-muted-foreground/80"
+                        data-testid="pool-stats-cycle-group-5h"
+                      >5H</span>
+                      <span class="text-center text-muted-foreground/50">|</span>
+                      <span
+                        class="text-center text-[9px] font-semibold text-muted-foreground/80"
+                        data-testid="pool-stats-cycle-group-weekly"
+                      >周</span>
+
+                      <template
+                        v-for="row in getPoolKeyCycleStatsRows(key)"
+                        :key="`${key.key_id}-${row.key}-desktop-cycle-row`"
+                      >
+                        <span class="text-muted-foreground truncate">{{ row.label }}</span>
+                        <span
+                          class="min-w-0 truncate text-center tabular-nums text-foreground/90"
+                          :class="row.fiveH.missing ? 'text-muted-foreground/80' : ''"
+                          :data-testid="`pool-stats-5h-${row.key}`"
+                          :title="row.fiveH.value"
+                        >{{ row.fiveH.value }}</span>
+                        <span class="text-center text-muted-foreground/50">|</span>
+                        <span
+                          class="min-w-0 truncate text-center tabular-nums text-foreground/90"
+                          :class="row.weekly.missing ? 'text-muted-foreground/80' : ''"
+                          :data-testid="`pool-stats-weekly-${row.key}`"
+                          :title="row.weekly.value"
+                        >{{ row.weekly.value }}</span>
+                      </template>
                     </div>
-                    <div class="flex items-center justify-between gap-2">
-                      <span class="text-muted-foreground">Token</span>
-                      <span class="tabular-nums text-foreground/90">
-                        {{ formatTokenCount(key.total_tokens) }}
-                      </span>
+                  </div>
+                  <div
+                    v-else
+                    class="grid min-h-16 w-[188px] grid-rows-4 gap-0 mx-auto text-[10px] leading-4"
+                    data-testid="pool-stats-account-total"
+                  >
+                    <div
+                      class="invisible h-4"
+                      aria-hidden="true"
+                    >
+                      -
                     </div>
-                    <div class="flex items-center justify-between gap-2">
-                      <span class="text-muted-foreground">费用</span>
-                      <span class="tabular-nums text-foreground/90">
-                        {{ formatStatUsd(key.total_cost_usd) }}
+                    <div
+                      v-for="metric in getPoolKeyAccountStatsMetrics(key)"
+                      :key="`${key.key_id}-${metric.key}-account-total`"
+                      class="grid grid-cols-[64px_124px] items-center"
+                    >
+                      <span class="text-muted-foreground truncate">{{ metric.label }}</span>
+                      <span
+                        class="min-w-0 truncate text-center tabular-nums text-foreground/90"
+                        :title="metric.value"
+                      >
+                        {{ metric.value }}
                       </span>
                     </div>
                   </div>
@@ -674,6 +737,21 @@
                       @click="clearCooldown(key.key_id)"
                     >
                       <RefreshCw class="w-3.5 h-3.5" />
+                    </Button>
+                    <Button
+                      v-if="canResetCycleStats(key)"
+                      variant="ghost"
+                      size="icon"
+                      class="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      :disabled="resettingCycleKeyId === key.key_id"
+                      title="重置周期统计"
+                      data-testid="pool-reset-cycle-stats"
+                      @click="handleResetCycleStats(key)"
+                    >
+                      <RotateCcw
+                        class="w-3.5 h-3.5"
+                        :class="{ 'animate-spin': resettingCycleKeyId === key.key_id }"
+                      />
                     </Button>
                     <Button
                       variant="ghost"
@@ -839,16 +917,69 @@
               </div>
 
               <div class="overflow-x-auto rounded-xl border border-border/50 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-                <div class="flex min-w-max items-center justify-center whitespace-nowrap text-center">
-                  <span class="font-medium text-foreground/90">请求:{{ formatStatInteger(key.request_count) }}</span>
-                  <span class="mx-1.5 text-muted-foreground/40">|</span>
-                  <span class="font-medium text-foreground/90">Token:{{ formatTokenCount(key.total_tokens) }}</span>
-                  <span class="mx-1.5 text-muted-foreground/40">|</span>
-                  <span class="font-medium text-foreground/90">费用:{{ formatStatUsd(key.total_cost_usd) }}</span>
-                  <span class="mx-1.5 text-muted-foreground/40">|</span>
-                  <span class="font-medium text-foreground/90">导入:{{ getKeyUiState(key.key_id)?.importedAtRelative || '-' }}</span>
-                  <span class="mx-1.5 text-muted-foreground/40">|</span>
-                  <span class="font-medium text-foreground/90">最后使用:{{ getKeyUiState(key.key_id)?.lastUsedRelative || '-' }}</span>
+                <div class="space-y-1 text-center">
+                  <template v-if="isPoolKeyCycleStatsDisplay(key)">
+                    <div
+                      class="grid min-h-16 w-[188px] grid-cols-[38px_64px_10px_64px] items-center gap-x-1 text-left"
+                      data-testid="pool-mobile-stats-cycle-grid"
+                    >
+                      <span aria-hidden="true" />
+                      <span
+                        class="text-center text-[10px] font-semibold text-foreground"
+                        data-testid="pool-mobile-stats-cycle-group-5h"
+                      >5H</span>
+                      <span class="text-center text-muted-foreground/50">|</span>
+                      <span
+                        class="text-center text-[10px] font-semibold text-foreground"
+                        data-testid="pool-mobile-stats-cycle-group-weekly"
+                      >周</span>
+
+                      <template
+                        v-for="row in getPoolKeyCycleStatsRows(key)"
+                        :key="`${key.key_id}-${row.key}-mobile-cycle-row`"
+                      >
+                        <span class="text-muted-foreground truncate">{{ row.label }}</span>
+                        <span
+                          class="min-w-0 truncate text-center font-medium text-foreground/90 tabular-nums"
+                          :class="row.fiveH.missing ? 'text-muted-foreground/80' : ''"
+                          :title="row.fiveH.value"
+                        >{{ row.fiveH.value }}</span>
+                        <span class="text-center text-muted-foreground/50">|</span>
+                        <span
+                          class="min-w-0 truncate text-center font-medium text-foreground/90 tabular-nums"
+                          :class="row.weekly.missing ? 'text-muted-foreground/80' : ''"
+                          :title="row.weekly.value"
+                        >{{ row.weekly.value }}</span>
+                      </template>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div
+                      class="invisible h-4"
+                      aria-hidden="true"
+                    >
+                      -
+                    </div>
+                    <div
+                      v-for="metric in getPoolKeyAccountStatsMetrics(key)"
+                      :key="`${key.key_id}-${metric.key}-mobile-account-total`"
+                      class="grid h-4 w-[188px] grid-cols-[64px_124px] items-center text-left"
+                    >
+                      <span class="text-muted-foreground truncate">{{ metric.label }}</span>
+                      <span
+                        class="min-w-0 truncate text-center font-medium text-foreground/90"
+                        :title="metric.value"
+                      >{{ metric.value }}</span>
+                    </div>
+                  </template>
+                  <div class="flex items-center justify-between gap-2 border-t border-border/40 pt-1 mt-1">
+                    <span class="text-muted-foreground">导入</span>
+                    <span class="font-medium text-foreground/90">{{ keyUiStateMap[key.key_id]?.importedAtRelative || '-' }}</span>
+                  </div>
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-muted-foreground">最后使用</span>
+                    <span class="font-medium text-foreground/90">{{ keyUiStateMap[key.key_id]?.lastUsedRelative || '-' }}</span>
+                  </div>
                 </div>
               </div>
 
@@ -1014,6 +1145,20 @@
                     </PopoverContent>
                   </Popover>
                   <Button
+                    v-else-if="actionId === 'reset_cycle_stats'"
+                    variant="ghost"
+                    size="icon"
+                    class="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+                    :disabled="resettingCycleKeyId === key.key_id"
+                    title="重置周期统计"
+                    @click="handleResetCycleStats(key)"
+                  >
+                    <RotateCcw
+                      class="w-3.5 h-3.5"
+                      :class="{ 'animate-spin': resettingCycleKeyId === key.key_id }"
+                    />
+                  </Button>
+                  <Button
                     v-else-if="actionId === 'edit'"
                     variant="ghost"
                     size="icon"
@@ -1173,6 +1318,8 @@ import {
   Copy,
   Shield,
   Globe,
+  Repeat2,
+  RotateCcw,
   SquarePen,
   Trash2,
   Users,
@@ -1222,6 +1369,7 @@ import {
   deleteEndpointKey,
   updateProviderKey,
   refreshProviderQuota,
+  resetProviderKeyCycleStats,
 } from '@/api/endpoints/keys'
 import { refreshProviderOAuth } from '@/api/endpoints/provider_oauth'
 import type {
@@ -1260,6 +1408,7 @@ import {
   resolvePoolManagementPageAfterLoad,
   type PoolManagementSortBy,
   type PoolManagementSortOrder,
+  type PoolManagementStatsMode,
   type PoolManagementViewState,
   writePoolManagementViewState,
 } from '@/features/pool/utils/poolManagementState'
@@ -1273,6 +1422,12 @@ import {
   parsePoolQuotaProgressItems,
   type QuotaProgressItem,
 } from '@/features/pool/utils/quotaCountdown'
+import {
+  buildPoolStatsDisplay,
+  type PoolCodexCycleStatsGroup,
+  type PoolStatsDisplay,
+  type PoolStatsMetric,
+} from '@/features/pool/utils/poolStatsDisplay'
 import { getOAuthOrgBadge } from '@/utils/oauthIdentity'
 import { getOAuthRefreshFeedback } from '@/utils/oauthRefreshFeedback'
 import {
@@ -1314,6 +1469,7 @@ const restoredViewState = readPoolManagementViewState(
     pageSize: getQueryValue('pageSize'),
     sortBy: getQueryValue('sortBy'),
     sortOrder: getQueryValue('sortOrder'),
+    statsMode: getQueryValue('statsMode'),
   },
   poolManagementViewStorage,
 )
@@ -1537,6 +1693,8 @@ const selectedProviderType = computed(() => {
   return String(fromOverview || '').trim().toLowerCase()
 })
 
+const showCodexStatsModeToggle = computed(() => selectedProviderType.value === 'codex')
+
 const selectedProviderStatusText = computed(() => {
   if (!selectedProviderId.value) return ''
   const providerActive = selectedProviderData.value?.is_active
@@ -1559,15 +1717,16 @@ const showAccountQuotaColumn = computed(() => {
     || selectedProviderType.value === 'gemini_cli'
     || selectedProviderType.value === 'kiro'
     || selectedProviderType.value === 'antigravity'
+    || selectedProviderType.value === 'chatgpt_web'
 })
 
 
 const desktopColumnWidths = computed(() => {
   if (showAccountQuotaColumn.value) {
     return {
-      name: '24%',
+      name: '22%',
       quota: '21%',
-      stats: '13%',
+      stats: '15%',
       imported: '10%',
       lastUsed: '9%',
       status: '7%',
@@ -1690,9 +1849,11 @@ const currentPage = ref(restoredViewState.page)
 const pageSize = ref(restoredViewState.pageSize)
 const sortBy = ref<PoolManagementSortBy | null>(restoredViewState.sortBy)
 const sortOrder = ref<PoolManagementSortOrder>(restoredViewState.sortOrder)
+const poolStatsMode = ref<PoolManagementStatsMode>(restoredViewState.statsMode)
 const hasPoolKeyFilters = computed(() => searchQuery.value.trim().length > 0 || statusFilter.value !== 'all')
 const MANUAL_QUOTA_REFRESH_COOLDOWN_SECONDS = 5 * 60
 const refreshingOAuthKeyId = ref<string | null>(null)
+const resettingCycleKeyId = ref<string | null>(null)
 const savingProxyKeyId = ref<string | null>(null)
 const proxyDesktopPopoverOpenKeyId = ref<string | null>(null)
 const proxyMobilePopoverOpenKeyId = ref<string | null>(null)
@@ -1708,6 +1869,12 @@ const keyPermissionsDialogOpen = ref(false)
 const keyFormDialogOpen = ref(false)
 const oauthKeyEditDialogOpen = ref(false)
 const editingKeyDetail = ref<PoolKeyDetail | null>(null)
+
+function togglePoolStatsMode() {
+  poolStatsMode.value = poolStatsMode.value === 'current_cycle'
+    ? 'account_total'
+    : 'current_cycle'
+}
 
 function clearPoolKeyFilters() {
   if (!hasPoolKeyFilters.value) return
@@ -1774,6 +1941,18 @@ watch(
 )
 
 watch(
+  () => readPoolManagementViewState(
+    { statsMode: getQueryValue('statsMode') },
+    poolManagementViewStorage,
+  ).statsMode,
+  (value) => {
+    if (poolStatsMode.value === value) return
+    poolStatsMode.value = value
+  },
+  { immediate: true },
+)
+
+watch(
   () => getQueryValue('providerId'),
   (value) => {
     if (overviewLoading.value) return
@@ -1789,8 +1968,8 @@ watch(
 )
 
 watch(
-  [selectedProviderId, searchQuery, statusFilter, currentPage, pageSize, sortBy, sortOrder],
-  ([providerId, search, status, page, pageSizeValue, sortByValue, sortOrderValue]) => {
+  [selectedProviderId, searchQuery, statusFilter, currentPage, pageSize, sortBy, sortOrder, poolStatsMode],
+  ([providerId, search, status, page, pageSizeValue, sortByValue, sortOrderValue, statsMode]) => {
     const nextState: PoolManagementViewState = {
       providerId,
       search,
@@ -1799,19 +1978,25 @@ watch(
       pageSize: pageSizeValue,
       sortBy: sortByValue,
       sortOrder: sortOrderValue,
+      statsMode: statsMode as PoolManagementStatsMode,
     }
     patchQuery(buildPoolManagementQueryPatch(nextState))
     writePoolManagementViewState(nextState, poolManagementViewStorage)
   },
   { immediate: true },
 )
-interface QuotaProgressItem {
+interface PoolCodexCycleStatsRow {
+  key: PoolStatsMetric['key']
   label: string
-  remainingPercent: number
-  detail?: string
-  resetAtSeconds?: number | null
-  resetSeconds?: number | null
-  updatedAtSeconds?: number | null
+  fiveH: PoolStatsMetric
+  weekly: PoolStatsMetric
+}
+
+const CODEX_CYCLE_STAT_KEYS: Array<PoolStatsMetric['key']> = ['request_count', 'total_tokens', 'total_cost_usd']
+const CODEX_CYCLE_STAT_LABELS: Record<PoolStatsMetric['key'], string> = {
+  request_count: '请求',
+  total_tokens: 'Token',
+  total_cost_usd: '费用',
 }
 
 type PoolKeyUiState = {
@@ -1831,6 +2016,7 @@ type PoolKeyUiState = {
   quotaTextClass: string
   importedAtRelative: string
   lastUsedRelative: string
+  statsDisplay: PoolStatsDisplay
   mobileTagItems: PoolMobileTagItem[]
   mobileActionIds: PoolMobileActionId[]
 }
@@ -1870,10 +2056,12 @@ const keyUiStateMap = computed<Record<string, PoolKeyUiState>>(() => {
       quotaTextClass: quotaFallbackText ? getQuotaTextClass(quotaFallbackText) : '',
       importedAtRelative: formatPoolKeyImportedAt(key),
       lastUsedRelative: key.last_used_at ? formatRelativeTime(key.last_used_at) : '-',
+      statsDisplay: buildPoolStatsDisplay(key, selectedProviderType.value, poolStatsMode.value),
       mobileTagItems: getMobileTagItems(key),
       mobileActionIds: splitPoolMobileActions({
         canDownloadOrCopy: true,
         showRefreshToken: showOAuthRefreshControl,
+        canResetCycleStats: canResetCycleStats(key),
         canClearCooldown: Boolean(key.cooldown_reason),
         hasProxy: true,
       }).primary,
@@ -1891,11 +2079,70 @@ function getKeyUiState(keyId: string): PoolKeyUiState | null {
   return keyUiStateMap.value[keyId] ?? null
 }
 
+function getPoolKeyStatsDisplay(key: PoolKeyDetail): PoolStatsDisplay {
+  return keyUiStateMap.value[key.key_id]?.statsDisplay
+    ?? buildPoolStatsDisplay(key, selectedProviderType.value, poolStatsMode.value)
+}
+
+function isPoolKeyCycleStatsDisplay(key: PoolKeyDetail): boolean {
+  return getPoolKeyStatsDisplay(key).kind === 'codex_cycle'
+}
+
+function getPoolKeyCycleStatsGroups(key: PoolKeyDetail): PoolCodexCycleStatsGroup[] {
+  const display = getPoolKeyStatsDisplay(key)
+  return display.kind === 'codex_cycle' ? display.groups : []
+}
+
+function createMissingCycleMetric(key: PoolStatsMetric['key']): PoolStatsMetric {
+  return {
+    key,
+    label: CODEX_CYCLE_STAT_LABELS[key],
+    value: '—',
+    missing: true,
+  }
+}
+
+function findCycleMetric(
+  group: PoolCodexCycleStatsGroup | undefined,
+  key: PoolStatsMetric['key'],
+): PoolStatsMetric {
+  return group?.metrics.find(metric => metric.key === key) ?? createMissingCycleMetric(key)
+}
+
+function getPoolKeyCycleStatsRows(key: PoolKeyDetail): PoolCodexCycleStatsRow[] {
+  const groups = getPoolKeyCycleStatsGroups(key)
+  const fiveHGroup = groups.find(group => group.code === '5h')
+  const weeklyGroup = groups.find(group => group.code === 'weekly')
+
+  return CODEX_CYCLE_STAT_KEYS.map((metricKey) => {
+    const fiveH = findCycleMetric(fiveHGroup, metricKey)
+    const weekly = findCycleMetric(weeklyGroup, metricKey)
+    return {
+      key: metricKey,
+      label: CODEX_CYCLE_STAT_LABELS[metricKey],
+      fiveH,
+      weekly,
+    }
+  })
+}
+
+function getPoolKeyAccountStatsMetrics(key: PoolKeyDetail): PoolStatsMetric[] {
+  const display = getPoolKeyStatsDisplay(key)
+  return display.kind === 'account_total'
+    ? display.metrics
+    : buildPoolStatsDisplay(key, selectedProviderType.value, 'account_total').metrics
+}
+
 const quotaRefreshSupported = computed(() => {
   return selectedProviderType.value === 'codex'
     || selectedProviderType.value === 'kiro'
     || selectedProviderType.value === 'antigravity'
+    || selectedProviderType.value === 'chatgpt_web'
 })
+
+function canResetCycleStats(_key: PoolKeyDetail): boolean {
+  return selectedProviderType.value === 'codex' && Boolean(_key.key_id)
+}
 
 const refreshCurrentPageLoading = computed(() => {
   return keysLoading.value || refreshingCurrentPageQuota.value
@@ -2556,6 +2803,28 @@ async function clearCooldown(keyId: string) {
   }
 }
 
+async function handleResetCycleStats(key: PoolKeyDetail) {
+  if (resettingCycleKeyId.value || !canResetCycleStats(key)) return
+
+  const confirmed = await confirm({
+    title: '重置周期统计',
+    message: `确定要将账号 "${key.key_name || key.key_id.slice(0, 8)}" 的 5H / 周统计从当前时间重新开始计算吗？`,
+    confirmText: '重置',
+  })
+  if (!confirmed) return
+
+  resettingCycleKeyId.value = key.key_id
+  try {
+    const result = await resetProviderKeyCycleStats(key.key_id)
+    success(result.message || '周期统计已重置')
+    await loadKeys()
+  } catch (err) {
+    showError(parseApiError(err, '重置周期统计失败'))
+  } finally {
+    resettingCycleKeyId.value = null
+  }
+}
+
 async function toggleKeyActive(key: PoolKeyDetail) {
   if (togglingKeyId.value) return
   togglingKeyId.value = key.key_id
@@ -2800,9 +3069,38 @@ function getSchedulingStatus(key: PoolKeyDetail): 'available' | 'degraded' | 'bl
   return 'available'
 }
 
+function compactPoolStatusLabel(label: string | null | undefined): string | null {
+  const normalized = String(label || '').trim()
+  if (!normalized) return null
+
+  const mapped: Record<string, string> = {
+    'Token 失效': '已失效',
+    'Token 过期': '已过期',
+    Token失效: '已失效',
+    Token过期: '已过期',
+    账号已封禁: '账号封禁',
+    工作区已停用: '工作区停用',
+    账号访问受限: '访问受限',
+    健康度较低: '健康低',
+  }
+  const labelText = mapped[normalized] || normalized
+  return Array.from(labelText).slice(0, 5).join('')
+}
+
+function getOAuthStatusBadgeLabel(status: ReturnType<typeof getVisibleOAuthState>): string | null {
+  if (!status) return null
+  if (status.requiresReauth) return '续期失败'
+  if (status.isInvalid) return '已失效'
+  if (status.isExpired) return '已过期'
+  if (status.text === '未添加') return '未添加'
+  if (status.text === '有效期未知') return '未知'
+  if (status.isExpiringSoon) return '将过期'
+  return '有效'
+}
+
 function getSchedulingBadgeLabel(key: PoolKeyDetail): string {
   const accountAlert = getAccountAlertLabel(key)
-  if (accountAlert) return accountAlert
+  if (accountAlert) return compactPoolStatusLabel(accountAlert) || accountAlert
 
   const rawLabel = String(key.scheduling_label || '').trim()
   if (
@@ -2811,7 +3109,7 @@ function getSchedulingBadgeLabel(key: PoolKeyDetail): string {
     && !isHealthDerivedSchedulingLabel(rawLabel)
   ) {
     if (rawLabel === '禁用' || rawLabel === '停用') return '禁用'
-    return rawLabel
+    return compactPoolStatusLabel(rawLabel) || rawLabel
   }
 
   if (!key.is_active) return '禁用'
@@ -2888,9 +3186,9 @@ function getMobileTagItems(key: PoolKeyDetail): PoolMobileTagItem[] {
   const orgBadge = getOAuthOrgBadge(key)
 
   return buildPoolMobileTagItems({
-    accountStatusLabel: accountAlert,
+    accountStatusLabel: compactPoolStatusLabel(accountAlert),
     accountStatusTone: accountAlert ? 'danger' : null,
-    oauthStatusLabel: oauthState?.text ?? null,
+    oauthStatusLabel: getOAuthStatusBadgeLabel(oauthState),
     oauthStatusTone: getMobileOAuthTone(key),
     priorityLabel: `P${key.internal_priority ?? 50}`,
     authLabel: getAuthTypeChipLabel(key),

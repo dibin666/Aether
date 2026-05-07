@@ -228,6 +228,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
         }
         _ => AdminProviderPoolRuntimeState::default(),
     };
+
     let items = keys
         .into_iter()
         .map(|key| {

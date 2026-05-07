@@ -933,6 +933,28 @@ async fn gateway_sorts_admin_pool_keys_by_imported_and_last_used_time() {
             provider_catalog_repository,
         ));
 
+    let default_response = local_admin_pool_response(
+        &state,
+        http::Method::GET,
+        "/api/admin/pool/provider-openai/keys?page=1&page_size=50&status=all",
+        None,
+    )
+    .await;
+    assert_eq!(default_response.status(), StatusCode::OK);
+    let default_payload: serde_json::Value = serde_json::from_slice(
+        &to_bytes(default_response.into_body(), usize::MAX)
+            .await
+            .expect("body should read"),
+    )
+    .expect("json body should parse");
+    let default_names = default_payload["keys"]
+        .as_array()
+        .expect("keys should be array")
+        .iter()
+        .map(|item| item["key_name"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(default_names, vec!["fresh", "active", "old"]);
+
     let imported_response = local_admin_pool_response(
         &state,
         http::Method::GET,
@@ -976,6 +998,240 @@ async fn gateway_sorts_admin_pool_keys_by_imported_and_last_used_time() {
         .map(|item| item["key_name"].as_str().unwrap_or_default())
         .collect::<Vec<_>>();
     assert_eq!(last_used_names, vec!["active", "old", "fresh"]);
+}
+
+#[tokio::test]
+async fn gateway_pool_list_reads_materialized_codex_cycle_usage_from_quota_windows() {
+    const RESET_AT: u64 = 4_102_444_800;
+
+    let mut provider = sample_provider("provider-codex", "codex", 10).with_transport_fields(
+        true,
+        false,
+        true,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(json!({
+            "pool_advanced": {
+                "enabled": true
+            }
+        })),
+    );
+    provider.provider_type = "codex".to_string();
+
+    let mut usage_key = sample_key(
+        "key-codex-cycle",
+        "provider-codex",
+        "openai:responses",
+        "oauth-placeholder",
+    );
+    usage_key.name = "codex cycle usage".to_string();
+    usage_key.auth_type = "oauth".to_string();
+    usage_key.request_count = Some(4);
+    usage_key.total_tokens = 999;
+    usage_key.total_cost_usd = 9.99;
+    usage_key.status_snapshot = Some(json!({
+    "quota": {
+        "version": 2,
+        "provider_type": "codex",
+        "code": "ok",
+        "label": serde_json::Value::Null,
+        "reason": serde_json::Value::Null,
+        "freshness": "fresh",
+        "source": "response_headers",
+        "observed_at": RESET_AT,
+        "exhausted": false,
+        "usage_ratio": 0.0,
+        "updated_at": RESET_AT,
+        "reset_seconds": serde_json::Value::Null,
+        "plan_type": "plus",
+        "windows": [
+                {
+                    "code": "weekly",
+                    "label": "周",
+                    "scope": "account",
+                    "unit": "percent",
+                    "used_ratio": 0.0,
+                    "remaining_ratio": 1.0,
+                    "reset_at": RESET_AT,
+                    "reset_seconds": 604_800,
+                    "window_minutes": 10_080,
+                    "usage": {
+                        "request_count": 3,
+                        "total_tokens": 375,
+                        "total_cost_usd": "0.60000000"
+                    }
+                },
+                {
+                    "code": "5h",
+                    "label": "5H",
+                    "scope": "account",
+                    "unit": "percent",
+                    "used_ratio": 0.0,
+                    "remaining_ratio": 1.0,
+                    "reset_at": RESET_AT,
+                    "reset_seconds": 18_000,
+                    "window_minutes": 300,
+                    "usage": {
+                        "request_count": 2,
+                        "total_tokens": 225,
+                        "total_cost_usd": "0.30000000"
+                    }
+                }
+            ]
+        }
+    }));
+
+    let mut zero_key = sample_key(
+        "key-codex-zero",
+        "provider-codex",
+        "openai:responses",
+        "oauth-placeholder",
+    );
+    zero_key.name = "codex zero usage".to_string();
+    zero_key.auth_type = "oauth".to_string();
+    zero_key.status_snapshot = Some(json!({
+        "quota": {
+            "version": 2,
+            "provider_type": "codex",
+            "code": "ok",
+            "windows": [
+                {
+                    "code": "weekly",
+                    "label": "周",
+                    "reset_at": RESET_AT,
+                    "window_minutes": 10_080,
+                    "usage": {
+                        "request_count": 0,
+                        "total_tokens": 0,
+                        "total_cost_usd": "0.00000000"
+                    }
+                },
+                {
+                    "code": "5h",
+                    "label": "5H",
+                    "reset_at": RESET_AT,
+                    "window_minutes": 300,
+                    "usage": {
+                        "request_count": 0,
+                        "total_tokens": 0,
+                        "total_cost_usd": "0.00000000"
+                    }
+                }
+            ]
+        }
+    }));
+
+    let mut invalid_key = sample_key(
+        "key-codex-invalid",
+        "provider-codex",
+        "openai:responses",
+        "oauth-placeholder",
+    );
+    invalid_key.name = "codex invalid window".to_string();
+    invalid_key.auth_type = "oauth".to_string();
+    invalid_key.status_snapshot = Some(json!({
+        "quota": {
+            "version": 2,
+            "provider_type": "codex",
+            "code": "ok",
+            "windows": [
+                {
+                    "code": "weekly",
+                    "label": "周",
+                    "reset_at": serde_json::Value::Null,
+                    "window_minutes": 10_080
+                },
+                {
+                    "code": "5h",
+                    "label": "5H",
+                    "reset_at": RESET_AT,
+                    "window_minutes": serde_json::Value::Null
+                }
+            ]
+        }
+    }));
+
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        Vec::new(),
+        vec![usage_key, zero_key, invalid_key],
+    ));
+    let state = AppState::new()
+        .expect("gateway should build")
+        .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
+            provider_catalog_repository,
+        ));
+
+    let response = local_admin_pool_response(
+        &state,
+        http::Method::GET,
+        "/api/admin/pool/provider-codex/keys?page=1&page_size=50&status=all",
+        None,
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body should read"),
+    )
+    .expect("json body should parse");
+    let keys = payload["keys"].as_array().expect("keys should be array");
+    fn key_by_id<'a>(keys: &'a [serde_json::Value], key_id: &str) -> &'a serde_json::Value {
+        keys.iter()
+            .find(|key| key["key_id"] == json!(key_id))
+            .expect("key payload should exist")
+    }
+
+    fn window_by_code<'a>(key_payload: &'a serde_json::Value, code: &str) -> &'a serde_json::Value {
+        key_payload["status_snapshot"]["quota"]["windows"]
+            .as_array()
+            .expect("quota windows should be array")
+            .iter()
+            .find(|window| window["code"] == json!(code))
+            .expect("quota window should exist")
+    }
+
+    let usage_key_payload = key_by_id(keys, "key-codex-cycle");
+    let five_hour_window = window_by_code(usage_key_payload, "5h");
+    let weekly_window = window_by_code(usage_key_payload, "weekly");
+    assert_eq!(five_hour_window["usage"]["request_count"], json!(2));
+    assert_eq!(five_hour_window["usage"]["total_tokens"], json!(225));
+    assert_eq!(
+        five_hour_window["usage"]["total_cost_usd"],
+        json!("0.30000000")
+    );
+    assert_eq!(weekly_window["usage"]["request_count"], json!(3));
+    assert_eq!(weekly_window["usage"]["total_tokens"], json!(375));
+    assert_eq!(
+        weekly_window["usage"]["total_cost_usd"],
+        json!("0.60000000")
+    );
+    assert_eq!(usage_key_payload["request_count"], json!(4));
+    assert_eq!(usage_key_payload["total_tokens"], json!(999));
+    assert_eq!(usage_key_payload["total_cost_usd"], json!("9.99000000"));
+
+    let zero_key_payload = key_by_id(keys, "key-codex-zero");
+    assert_eq!(
+        window_by_code(zero_key_payload, "5h")["usage"]["request_count"],
+        json!(0)
+    );
+    assert_eq!(
+        window_by_code(zero_key_payload, "weekly")["usage"]["total_tokens"],
+        json!(0)
+    );
+
+    let invalid_key_payload = key_by_id(keys, "key-codex-invalid");
+    assert!(window_by_code(invalid_key_payload, "5h")
+        .get("usage")
+        .is_none());
+    assert!(window_by_code(invalid_key_payload, "weekly")
+        .get("usage")
+        .is_none());
 }
 
 #[tokio::test]
@@ -1188,11 +1444,11 @@ async fn gateway_handles_admin_pool_list_keys_with_quota_compatibility_fields() 
         "oauth": {
             "code": "expired",
             "label": "已过期",
-            "reason": "Token 已过期，请重新授权",
+            "reason": "Access Token 已过期，等待自动续期",
             "expires_at": 1775556730u64,
             "invalid_at": null,
             "source": "expires_at",
-            "requires_reauth": true,
+            "requires_reauth": false,
             "expiring_soon": false
         },
         "account": {
@@ -1327,11 +1583,11 @@ async fn gateway_includes_pool_quota_and_compat_fields_in_list_keys_response() {
         "oauth": {
             "code": "expired",
             "label": "已过期",
-            "reason": "Token 已过期，请重新授权",
+            "reason": "Access Token 已过期，等待自动续期",
             "expires_at": 1_775_556_730u64,
             "invalid_at": serde_json::Value::Null,
             "source": "expires_at",
-            "requires_reauth": true,
+            "requires_reauth": false,
             "expiring_soon": false
         },
         "account": {

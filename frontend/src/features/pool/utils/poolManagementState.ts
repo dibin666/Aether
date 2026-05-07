@@ -1,6 +1,7 @@
 export type PoolManagementStatus = 'all' | 'active' | 'cooldown' | 'inactive'
 export type PoolManagementSortBy = 'imported_at' | 'last_used_at'
 export type PoolManagementSortOrder = 'asc' | 'desc'
+export type PoolManagementStatsMode = 'current_cycle' | 'account_total'
 
 export interface PoolManagementViewState {
   providerId: string | null
@@ -10,6 +11,7 @@ export interface PoolManagementViewState {
   pageSize: number
   sortBy: PoolManagementSortBy | null
   sortOrder: PoolManagementSortOrder
+  statsMode: PoolManagementStatsMode
 }
 
 export interface PoolManagementStateSource {
@@ -20,6 +22,7 @@ export interface PoolManagementStateSource {
   pageSize?: string
   sortBy?: string
   sortOrder?: string
+  statsMode?: string
 }
 
 export interface StorageLike {
@@ -27,6 +30,10 @@ export interface StorageLike {
   setItem(key: string, value: string): void
   removeItem(key: string): void
 }
+
+type PoolManagementViewStateInput = Partial<{
+  [Key in keyof PoolManagementViewState]: unknown
+}>
 
 export const POOL_MANAGEMENT_VIEW_STORAGE_KEY = 'aether:pool-management:view-state'
 
@@ -36,8 +43,9 @@ export const DEFAULT_POOL_MANAGEMENT_VIEW_STATE: PoolManagementViewState = {
   status: 'all',
   page: 1,
   pageSize: 50,
-  sortBy: null,
+  sortBy: 'imported_at',
   sortOrder: 'desc',
+  statsMode: 'current_cycle',
 }
 
 function normalizeProviderId(value: unknown): string | null {
@@ -68,14 +76,18 @@ function normalizeSortBy(value: unknown): PoolManagementSortBy | null {
   if (value === 'imported_at' || value === 'last_used_at') {
     return value
   }
-  return null
+  return DEFAULT_POOL_MANAGEMENT_VIEW_STATE.sortBy
 }
 
 function normalizeSortOrder(value: unknown): PoolManagementSortOrder {
   return value === 'asc' ? 'asc' : 'desc'
 }
 
-function normalizeViewState(input: Partial<PoolManagementViewState>): PoolManagementViewState {
+function normalizeStatsMode(value: unknown): PoolManagementStatsMode {
+  return value === 'account_total' ? 'account_total' : 'current_cycle'
+}
+
+function normalizeViewState(input: PoolManagementViewStateInput): PoolManagementViewState {
   return {
     providerId: normalizeProviderId(input.providerId),
     search: normalizeSearch(input.search),
@@ -84,6 +96,7 @@ function normalizeViewState(input: Partial<PoolManagementViewState>): PoolManage
     pageSize: normalizePositiveInteger(input.pageSize, DEFAULT_POOL_MANAGEMENT_VIEW_STATE.pageSize),
     sortBy: normalizeSortBy(input.sortBy),
     sortOrder: normalizeSortOrder(input.sortOrder),
+    statsMode: normalizeStatsMode(input.statsMode),
   }
 }
 
@@ -106,15 +119,20 @@ export function readPoolManagementViewState(
 ): PoolManagementViewState {
   const stored = normalizeViewState(readStoredState(storage))
 
-  return normalizeViewState({
-    providerId: source.providerId ?? stored.providerId,
-    search: source.search ?? stored.search,
-    status: source.status ?? stored.status,
-    page: source.page ?? stored.page,
-    pageSize: source.pageSize ?? stored.pageSize,
-    sortBy: source.sortBy ?? stored.sortBy,
-    sortOrder: source.sortOrder ?? stored.sortOrder,
-  })
+  return {
+    providerId: source.providerId !== undefined ? normalizeProviderId(source.providerId) : stored.providerId,
+    search: source.search !== undefined ? normalizeSearch(source.search) : stored.search,
+    status: source.status !== undefined ? normalizeStatus(source.status) : stored.status,
+    page: source.page !== undefined
+      ? normalizePositiveInteger(source.page, DEFAULT_POOL_MANAGEMENT_VIEW_STATE.page)
+      : stored.page,
+    pageSize: source.pageSize !== undefined
+      ? normalizePositiveInteger(source.pageSize, DEFAULT_POOL_MANAGEMENT_VIEW_STATE.pageSize)
+      : stored.pageSize,
+    sortBy: source.sortBy !== undefined ? normalizeSortBy(source.sortBy) : stored.sortBy,
+    sortOrder: source.sortOrder !== undefined ? normalizeSortOrder(source.sortOrder) : stored.sortOrder,
+    statsMode: source.statsMode !== undefined ? normalizeStatsMode(source.statsMode) : stored.statsMode,
+  }
 }
 
 export function writePoolManagementViewState(
@@ -138,6 +156,8 @@ export function buildPoolManagementQueryPatch(
 ): Record<string, string | undefined> {
   const normalized = normalizeViewState(state)
   const search = normalized.search.trim()
+  const isDefaultSort = normalized.sortBy === DEFAULT_POOL_MANAGEMENT_VIEW_STATE.sortBy
+    && normalized.sortOrder === DEFAULT_POOL_MANAGEMENT_VIEW_STATE.sortOrder
 
   return {
     providerId: normalized.providerId || undefined,
@@ -148,8 +168,9 @@ export function buildPoolManagementQueryPatch(
       normalized.pageSize === DEFAULT_POOL_MANAGEMENT_VIEW_STATE.pageSize
         ? undefined
         : String(normalized.pageSize),
-    sortBy: normalized.sortBy || undefined,
-    sortOrder: normalized.sortBy ? normalized.sortOrder : undefined,
+    sortBy: isDefaultSort ? undefined : normalized.sortBy || undefined,
+    sortOrder: isDefaultSort ? undefined : normalized.sortBy ? normalized.sortOrder : undefined,
+    statsMode: normalized.statsMode === 'account_total' ? 'account_total' : undefined,
   }
 }
 

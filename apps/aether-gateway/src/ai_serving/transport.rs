@@ -47,11 +47,13 @@ pub(crate) mod vertex {
 }
 
 pub(crate) use aether_provider_transport::{
-    append_transport_diagnostics_to_value, apply_local_body_rules, apply_local_header_rules,
-    apply_standard_provider_request_body_rules, body_rules_are_locally_supported,
-    body_rules_handle_path, build_cross_format_openai_chat_upstream_url,
-    build_cross_format_openai_responses_upstream_url, build_gemini_files_headers,
-    build_gemini_files_request_body, build_gemini_files_upstream_url,
+    append_transport_diagnostics_to_value, apply_local_body_rules,
+    apply_local_body_rules_with_request_headers, apply_local_header_rules,
+    apply_local_header_rules_with_request_headers, apply_standard_provider_request_body_rules,
+    apply_standard_provider_request_body_rules_with_request_headers,
+    body_rules_are_locally_supported, body_rules_handle_path, body_rules_have_enabled_rules,
+    build_cross_format_openai_chat_upstream_url, build_cross_format_openai_responses_upstream_url,
+    build_gemini_files_headers, build_gemini_files_request_body, build_gemini_files_upstream_url,
     build_kiro_cross_format_upstream_url, build_local_openai_chat_upstream_url,
     build_local_openai_responses_upstream_url, build_openai_image_headers,
     build_openai_image_upstream_url, build_passthrough_headers, build_request_trace_proxy_value,
@@ -63,7 +65,8 @@ pub(crate) use aether_provider_transport::{
     build_video_create_upstream_url, candidate_common_transport_skip_reason,
     candidate_transport_pair_skip_reason, classify_same_format_provider_request_behavior,
     ensure_upstream_auth_header, gemini_files_transport_unsupported_reason,
-    header_rules_are_locally_supported, local_gemini_transport_unsupported_reason_with_network,
+    header_rules_are_locally_supported, header_rules_have_enabled_rules,
+    local_gemini_transport_unsupported_reason_with_network,
     local_openai_chat_transport_unsupported_reason,
     local_standard_transport_unsupported_reason_with_network,
     openai_image_transport_unsupported_reason, request_conversion_direct_auth,

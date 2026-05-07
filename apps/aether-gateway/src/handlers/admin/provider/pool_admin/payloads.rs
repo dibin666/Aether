@@ -11,6 +11,7 @@ use aether_data_contracts::repository::provider_catalog::{
 };
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn admin_pool_string_list(value: Option<&serde_json::Value>) -> Option<Vec<String>> {
     let values = value
@@ -403,6 +404,54 @@ fn admin_pool_build_codex_account_quota_from_snapshot(
     None
 }
 
+fn admin_pool_current_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn admin_pool_prune_expired_codex_window_usage(status_snapshot: &mut serde_json::Value) {
+    let now_unix_secs = admin_pool_current_unix_secs();
+    let Some(windows) = status_snapshot
+        .get_mut("quota")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|quota| quota.get_mut("windows"))
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+
+    for window in windows
+        .iter_mut()
+        .filter_map(serde_json::Value::as_object_mut)
+    {
+        let code = window
+            .get("code")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default();
+        if !code.eq_ignore_ascii_case("5h") && !code.eq_ignore_ascii_case("weekly") {
+            continue;
+        }
+        let Some(reset_at) = admin_pool_json_to_u64(window.get("reset_at")) else {
+            continue;
+        };
+        if now_unix_secs < reset_at {
+            continue;
+        }
+        window.insert(
+            "usage".to_string(),
+            json!({
+                "request_count": 0,
+                "total_tokens": 0,
+                "total_cost_usd": "0.00000000",
+            }),
+        );
+    }
+}
+
 fn admin_pool_quota_windows<'a>(
     quota_snapshot: &'a serde_json::Map<String, serde_json::Value>,
 ) -> Vec<&'a serde_json::Map<String, serde_json::Value>> {
@@ -480,6 +529,43 @@ fn admin_pool_build_kiro_account_quota_from_snapshot(
         )),
         _ => None,
     }
+}
+
+fn admin_pool_build_chatgpt_web_account_quota_from_snapshot(
+    quota_snapshot: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    let now_unix_secs = chrono::Utc::now().timestamp().max(0) as u64;
+    let window = admin_pool_quota_window(quota_snapshot, "image_gen")
+        .or_else(|| admin_pool_quota_windows(quota_snapshot).into_iter().next())?;
+    let remaining_value = admin_pool_json_to_f64(window.get("remaining_value"));
+    let limit_value = admin_pool_json_to_f64(window.get("limit_value"));
+    let remaining_percent = admin_pool_json_to_f64(window.get("remaining_ratio"))
+        .map(|value| (value * 100.0).clamp(0.0, 100.0))
+        .or_else(|| {
+            admin_pool_json_to_f64(window.get("used_ratio"))
+                .map(|value| ((1.0 - value) * 100.0).clamp(0.0, 100.0))
+        });
+    let reset_seconds =
+        admin_pool_quota_window_reset_seconds(quota_snapshot, window, now_unix_secs);
+
+    let mut text = match (remaining_value, limit_value, remaining_percent) {
+        (Some(remaining), Some(limit), _) if limit > 0.0 => Some(format!(
+            "生图剩余 {}/{}",
+            admin_pool_format_quota_value(remaining),
+            admin_pool_format_quota_value(limit),
+        )),
+        (Some(remaining), _, _) => Some(format!(
+            "生图剩余 {}",
+            admin_pool_format_quota_value(remaining),
+        )),
+        (_, _, Some(percent)) => Some(format!("生图剩余 {}", admin_pool_format_percent(percent))),
+        _ => None,
+    }?;
+
+    if let Some(reset_text) = reset_seconds.and_then(admin_pool_format_reset_after) {
+        text.push_str(&format!(" ({reset_text})"));
+    }
+    Some(text)
 }
 
 fn admin_pool_build_antigravity_account_quota_from_snapshot(
@@ -614,6 +700,13 @@ fn admin_pool_build_account_quota(
         "kiro" => {
             if let Some(account_quota) =
                 admin_pool_build_kiro_account_quota_from_snapshot(quota_snapshot)
+            {
+                return Some(account_quota);
+            }
+        }
+        "chatgpt_web" => {
+            if let Some(account_quota) =
+                admin_pool_build_chatgpt_web_account_quota_from_snapshot(quota_snapshot)
             {
                 return Some(account_quota);
             }
@@ -843,7 +936,10 @@ pub(super) fn build_admin_pool_key_payload(
         admin_pool_derive_oauth_expires_at(provider_type, key, auth_config.as_ref());
     let oauth_plan_type =
         admin_pool_derive_oauth_plan_type(key, provider_type, auth_config.as_ref());
-    let status_snapshot = provider_key_status_snapshot_payload(key, provider_type);
+    let mut status_snapshot = provider_key_status_snapshot_payload(key, provider_type);
+    if provider_type.trim().eq_ignore_ascii_case("codex") {
+        admin_pool_prune_expired_codex_window_usage(&mut status_snapshot);
+    }
     let account_snapshot = status_snapshot
         .get("account")
         .and_then(serde_json::Value::as_object);
@@ -1117,4 +1213,62 @@ pub(super) fn build_admin_pool_key_payload(
     payload.insert("scheduling_reasons".to_string(), json!(scheduling_reasons));
 
     serde_json::Value::Object(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn expired_codex_window_usage_is_zeroed_for_display() {
+        let mut snapshot = json!({
+            "quota": {
+                "windows": [
+                    {
+                        "code": "5h",
+                        "reset_at": 1,
+                        "usage": {
+                            "request_count": 7,
+                            "total_tokens": 700,
+                            "total_cost_usd": "7.00000000"
+                        }
+                    }
+                ]
+            }
+        });
+
+        admin_pool_prune_expired_codex_window_usage(&mut snapshot);
+
+        let usage = &snapshot["quota"]["windows"][0]["usage"];
+        assert_eq!(usage["request_count"], json!(0));
+        assert_eq!(usage["total_tokens"], json!(0));
+        assert_eq!(usage["total_cost_usd"], json!("0.00000000"));
+    }
+
+    #[test]
+    fn active_codex_window_usage_is_preserved_for_display() {
+        let mut snapshot = json!({
+            "quota": {
+                "windows": [
+                    {
+                        "code": "weekly",
+                        "reset_at": 4_102_444_800u64,
+                        "usage": {
+                            "request_count": 3,
+                            "total_tokens": 375,
+                            "total_cost_usd": "0.60000000"
+                        }
+                    }
+                ]
+            }
+        });
+
+        admin_pool_prune_expired_codex_window_usage(&mut snapshot);
+
+        let usage = &snapshot["quota"]["windows"][0]["usage"];
+        assert_eq!(usage["request_count"], json!(3));
+        assert_eq!(usage["total_tokens"], json!(375));
+        assert_eq!(usage["total_cost_usd"], json!("0.60000000"));
+    }
 }

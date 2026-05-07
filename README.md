@@ -44,7 +44,8 @@ cd Aether
 
 # 2. 配置环境变量
 cp .env.example .env
-./generate_keys.sh  # 生成密钥, 并将生成的密钥填入 .env
+./generate_keys.sh  # 生成 JWT_SECRET_KEY / ENCRYPTION_KEY, 并填入 .env
+# 编辑 .env 设置 ADMIN_PASSWORD
 
 # 3. 首次部署 / 更新
 docker compose pull && docker compose up -d
@@ -68,7 +69,8 @@ cd Aether
 
 # 2. 配置环境变量
 cp .env.example .env
-./generate_keys.sh  # 生成密钥, 并将生成的密钥填入 .env
+./generate_keys.sh  # 生成 JWT_SECRET_KEY / ENCRYPTION_KEY, 并填入 .env
+# 编辑 .env 设置 ADMIN_PASSWORD
 
 # 3. 构建 / 更新镜像（仅构建，不启动容器）
 git pull
@@ -78,6 +80,56 @@ git pull
 
 # 4. 启动容器（自动执行数据库迁移）
 docker compose -f docker-compose.build.yml up -d --no-build
+```
+
+### 一键安装（可选部署方式）
+
+安装脚本先从 `aether-rust-pioneer` 分支下载，不依赖 GitHub Release 的 `latest` 脚本地址。运行后会先选择版本，再选择部署方式。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/aether-rust-pioneer/install.sh | sudo bash
+```
+
+运行后按提示输入版本和部署方式。固定安装某个 tag 时，版本选择选 `2`，再输入类似 `v0.7.0-rc23` 的 tag。默认会安装最新预发布版本；Docker Compose 模式默认使用 `pre` 镜像通道。
+如果安装目录里已经有配置，脚本会优先复用：Docker Compose 保留已有 `.env`，systemd 保留已有 `/etc/aether/aether-gateway.env`。只有首次生成新配置时才会提示输入管理员密码。
+
+```text
+Choose Aether version:
+  1) Latest pre release
+  2) Exact tag, for example v0.7.0-rc23
+
+Enter choice [1]:
+
+Choose Aether deployment mode:
+1) Docker Compose: app + Postgres + Redis
+2) Single-node service: systemd + SQLite + in-process runtime
+3) Cluster node service: systemd + shared database + Redis
+
+Enter choice [2]:
+```
+
+安装后的常用命令：
+
+```bash
+sudo systemctl status aether-gateway --no-pager
+sudo journalctl -u aether-gateway -f
+sudo systemctl restart aether-gateway
+```
+
+默认单机数据和日志都在安装目录内：
+
+```text
+/opt/aether/data/aether.db
+/opt/aether/logs
+```
+
+多节点不能使用 SQLite 或 `AETHER_RUNTIME_BACKEND=memory`。如果先只生成了多节点模板，编辑 `/etc/aether/aether-gateway.env` 后重跑安装脚本即可：
+
+```env
+AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=multi-node
+AETHER_GATEWAY_NODE_ROLE=frontdoor
+DATABASE_URL=postgresql://...
+REDIS_URL=redis://...
 ```
 
 ### 本地开发
@@ -137,25 +189,26 @@ Aether Proxy 是配套的正向代理节点，部署在海外 VPS 上，为墙�
 
 ## 环境变量
 
-部署建议直接参考对应示例文件：
+部署建议：
 
 - Docker Compose：根目录 [`.env.example`](.env.example)
-- systemd 二进制部署：[deploy/systemd/aether-gateway.env.example](deploy/systemd/aether-gateway.env.example)
+- systemd 二进制部署：使用根目录 `install.sh` 生成 `/etc/aether/aether-gateway.env`
 
 当前主链路真正要关注的是这组变量：
 
 - `APP_PORT`：`aether-gateway` 唯一监听端口，固定绑定 `0.0.0.0:${APP_PORT}`
-- `DATABASE_URL` / `REDIS_URL`：`aether-gateway` 直接读取的共享后端连接串
+- `AETHER_DATABASE_DRIVER` / `AETHER_DATABASE_URL`：二进制单机部署可用 `sqlite`，例如 `sqlite:///opt/aether/data/aether.db`
+- `DATABASE_URL` / `REDIS_URL`：`aether-gateway` 直接读取的共享后端连接串；多节点必须配置共享数据库和 Redis
+- `AETHER_RUNTIME_BACKEND=memory|redis`：单机 SQLite 默认用 `memory`；多节点必须用 Redis
 - `AETHER_GATEWAY_AUTO_PREPARE_DATABASE`：常规启动前自动执行挂起的 schema migration 和 backfill；仓库自带的 `docker-compose.yml` 和 `docker-compose.build.yml` 默认开启
 - `JWT_SECRET_KEY` / `ENCRYPTION_KEY`：认证和敏感数据加密所需密钥
 - `API_KEY_PREFIX`：用户和管理员新建 API Key 时使用的前缀，默认 `sk`
-- `PAYMENT_CALLBACK_SECRET`：支付回调公开入口的共享密钥；未配置时相关路由保持禁用
-- `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_EMAIL`：首次启动时自举首个本地管理员
+- `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_EMAIL`：首次启动时自举首个本地管理员；`install.sh` 会提示输入管理员密码
 - `CORS_ORIGINS` / `CORS_ALLOW_CREDENTIALS`：前端跨域来源控制；如果要跨域带登录 Cookie，`CORS_ORIGINS` 不能写 `*`
 - `AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=single-node|multi-node`
 - `AETHER_GATEWAY_NODE_ROLE=all|frontdoor|background`
 - `RUST_LOG`：Rust 日志过滤，例如 `aether_gateway=info`、`aether_gateway=debug,sqlx=warn`
-- 如果使用仓库内置的数据栈 compose，再额外配置 `DB_PASSWORD` / `REDIS_PASSWORD`
+- Docker Compose 的 `DB_PASSWORD` / `REDIS_PASSWORD` 默认使用 `aether`
 
 systemd 的 `.env` 必须保持简单 `KEY=VALUE` 形式，不要写 `export`、`${VAR}` 或命令替换。
 

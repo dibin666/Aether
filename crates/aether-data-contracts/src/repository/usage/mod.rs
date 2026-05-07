@@ -2,8 +2,9 @@ mod types;
 
 pub use types::{
     parse_usage_body_ref, usage_body_ref, PendingUsageCleanupSummary,
-    ProviderApiKeyConsumptionSummaryQuery, StoredProviderApiKeyConsumptionSummary,
-    StoredProviderApiKeyUsageSummary, StoredProviderUsageSummary, StoredProviderUsageWindow,
+    ProviderApiKeyConsumptionSummaryQuery, ProviderApiKeyWindowUsageRequest,
+    StoredProviderApiKeyConsumptionSummary, StoredProviderApiKeyUsageSummary,
+    StoredProviderApiKeyWindowUsageSummary, StoredProviderUsageSummary, StoredProviderUsageWindow,
     StoredRequestUsageAudit, StoredUsageAuditAggregation, StoredUsageAuditSummary,
     StoredUsageBreakdownSummaryRow, StoredUsageCacheAffinityHitSummary,
     StoredUsageCacheAffinityIntervalRow, StoredUsageCacheHitSummary, StoredUsageCostSavingsSummary,

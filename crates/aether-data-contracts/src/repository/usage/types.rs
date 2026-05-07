@@ -632,6 +632,23 @@ pub struct StoredProviderApiKeyConsumptionSummary {
     pub total_cost_usd: f64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ProviderApiKeyWindowUsageRequest {
+    pub provider_api_key_id: String,
+    pub window_code: String,
+    pub start_unix_secs: u64,
+    pub end_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct StoredProviderApiKeyWindowUsageSummary {
+    pub provider_api_key_id: String,
+    pub window_code: String,
+    pub request_count: u64,
+    pub total_tokens: u64,
+    pub total_cost_usd: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProviderApiKeyConsumptionSummaryQuery {
     pub provider_id: String,
@@ -1506,6 +1523,11 @@ pub trait UsageReadRepository: Send + Sync {
         std::collections::BTreeMap<String, StoredProviderApiKeyConsumptionSummary>,
         crate::DataLayerError,
     >;
+
+    async fn summarize_usage_by_provider_api_key_windows(
+        &self,
+        requests: &[ProviderApiKeyWindowUsageRequest],
+    ) -> Result<Vec<StoredProviderApiKeyWindowUsageSummary>, crate::DataLayerError>;
 
     async fn summarize_provider_usage_since(
         &self,

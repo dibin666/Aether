@@ -11,9 +11,10 @@ use axum::{
     Json,
 };
 use serde_json::json;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::oauth::quota::antigravity::refresh_antigravity_provider_quota_locally;
+use super::super::oauth::quota::chatgpt_web::refresh_chatgpt_web_provider_quota_locally;
 use super::super::oauth::quota::codex::refresh_codex_provider_quota_locally;
 use super::super::oauth::quota::kiro::refresh_kiro_provider_quota_locally;
 use super::super::oauth::quota::shared::normalize_string_id_list;
@@ -64,7 +65,7 @@ pub(super) async fn maybe_handle(
 
     let normalized_provider_type = provider.provider_type.trim().to_ascii_lowercase();
 
-    let payload = if let Some(request_body) = request_body {
+    let payload = if let Some(request_body) = request_body.filter(|body| !body.is_empty()) {
         match serde_json::from_slice::<AdminProviderQuotaRefreshRequest>(request_body) {
             Ok(payload) => payload,
             Err(_) => {
@@ -110,6 +111,13 @@ pub(super) async fn maybe_handle(
             })
             .cloned()
             .or_else(|| endpoints.into_iter().find(|endpoint| endpoint.is_active)),
+        "chatgpt_web" => endpoints.into_iter().find(|endpoint| {
+            endpoint.is_active
+                && endpoint
+                    .api_format
+                    .trim()
+                    .eq_ignore_ascii_case("openai:image")
+        }),
         _ => return Ok(None),
     };
 
@@ -118,6 +126,7 @@ pub(super) async fn maybe_handle(
             "codex" => "找不到有效的 openai:responses 端点",
             "antigravity" => "找不到有效的 gemini:generate_content 端点",
             "kiro" => "找不到有效的 Kiro 端点",
+            "chatgpt_web" => "找不到有效的 openai:image 端点",
             _ => "找不到有效端点",
         };
         return Ok(Some(
@@ -129,20 +138,28 @@ pub(super) async fn maybe_handle(
         ));
     };
 
-    let mut keys = state
-        .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider_id))
-        .await?;
-    keys = if let Some(selected_key_ids) = selected_key_ids.as_ref() {
+    let keys = if let Some(selected_key_ids) = selected_key_ids.as_ref() {
         if selected_key_ids.is_empty() {
             Vec::new()
         } else {
             let selected = selected_key_ids.iter().cloned().collect::<BTreeSet<_>>();
-            keys.into_iter()
-                .filter(|key| selected.contains(&key.id))
+            let mut by_id = state
+                .read_provider_catalog_keys_by_ids(selected_key_ids)
+                .await?
+                .into_iter()
+                .filter(|key| key.provider_id == provider_id && selected.contains(&key.id))
+                .map(|key| (key.id.clone(), key))
+                .collect::<BTreeMap<_, _>>();
+            selected_key_ids
+                .iter()
+                .filter_map(|key_id| by_id.remove(key_id))
                 .collect()
         }
     } else {
-        keys.into_iter()
+        state
+            .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider_id))
+            .await?
+            .into_iter()
             .filter(|key| {
                 key.is_active
                     || key
@@ -196,6 +213,10 @@ pub(super) async fn maybe_handle(
         }
         "antigravity" => {
             refresh_antigravity_provider_quota_locally(state, &provider, &endpoint, keys, None)
+                .await?
+        }
+        "chatgpt_web" => {
+            refresh_chatgpt_web_provider_quota_locally(state, &provider, &endpoint, keys, None)
                 .await?
         }
         _ => None,

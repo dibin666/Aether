@@ -1,11 +1,12 @@
 export interface OAuthStatusSnapshot {
-  code: 'none' | 'valid' | 'expiring' | 'expired' | 'invalid' | 'check_failed'
+  code: 'none' | 'valid' | 'expiring' | 'expired' | 'invalid' | 'reauth_required' | 'check_failed'
   label?: string | null
   reason?: string | null
   expires_at?: number | null
   invalid_at?: number | null
   source?: string | null
   requires_reauth?: boolean
+  usable_until_expiry?: boolean
   expiring_soon?: boolean
 }
 
@@ -16,6 +17,12 @@ export interface AccountStatusSnapshot {
   blocked: boolean
   source?: string | null
   recoverable?: boolean
+}
+
+export interface QuotaWindowUsageSnapshot {
+  request_count?: number | null
+  total_tokens?: number | null
+  total_cost_usd?: number | string | null
 }
 
 export interface QuotaWindowSnapshot {
@@ -33,6 +40,7 @@ export interface QuotaWindowSnapshot {
   reset_seconds?: number | null
   window_minutes?: number | null
   is_exhausted?: boolean | null
+  usage?: QuotaWindowUsageSnapshot | null
 }
 
 export interface QuotaCreditsSnapshot {

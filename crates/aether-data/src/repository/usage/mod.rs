@@ -333,6 +333,17 @@ macro_rules! impl_materialized_usage_read_repository {
                 <$crate::repository::usage::InMemoryUsageReadRepository as $crate::repository::usage::UsageReadRepository>::summarize_provider_api_key_consumption(&repository, query).await
             }
 
+            async fn summarize_usage_by_provider_api_key_windows(
+                &self,
+                requests: &[$crate::repository::usage::ProviderApiKeyWindowUsageRequest],
+            ) -> Result<
+                Vec<$crate::repository::usage::StoredProviderApiKeyWindowUsageSummary>,
+                $crate::DataLayerError,
+            > {
+                let repository = self.materialize_read_model().await?;
+                <$crate::repository::usage::InMemoryUsageReadRepository as $crate::repository::usage::UsageReadRepository>::summarize_usage_by_provider_api_key_windows(&repository, requests).await
+            }
+
             async fn summarize_provider_usage_since(
                 &self,
                 provider_id: &str,
@@ -367,7 +378,8 @@ mod sqlite;
 #[allow(unused_imports)]
 pub(crate) use aether_data_contracts::repository::usage::{
     PendingUsageCleanupSummary, ProviderApiKeyConsumptionSummaryQuery,
-    StoredProviderApiKeyConsumptionSummary, StoredProviderApiKeyUsageSummary,
+    ProviderApiKeyWindowUsageRequest, StoredProviderApiKeyConsumptionSummary,
+    StoredProviderApiKeyUsageSummary, StoredProviderApiKeyWindowUsageSummary,
     StoredProviderUsageSummary, StoredProviderUsageWindow, StoredRequestUsageAudit,
     StoredUsageAuditAggregation, StoredUsageAuditSummary, StoredUsageBreakdownSummaryRow,
     StoredUsageCacheAffinityHitSummary, StoredUsageCacheAffinityIntervalRow,
@@ -504,6 +516,7 @@ pub(crate) struct ProviderApiKeyUsageContribution {
     pub total_cost_usd: f64,
     pub total_response_time_ms: i64,
     pub last_used_at_unix_secs: Option<u64>,
+    pub usage_created_at_unix_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -516,6 +529,7 @@ pub(crate) struct ProviderApiKeyUsageDelta {
     pub total_response_time_ms: i64,
     pub candidate_last_used_at_unix_secs: Option<u64>,
     pub removed_last_used_at_unix_secs: Option<u64>,
+    pub usage_created_at_unix_secs: Option<u64>,
 }
 
 impl ProviderApiKeyUsageDelta {
@@ -532,6 +546,7 @@ impl ProviderApiKeyUsageDelta {
             total_response_time_ms: after.total_response_time_ms - before.total_response_time_ms,
             candidate_last_used_at_unix_secs: after.last_used_at_unix_secs,
             removed_last_used_at_unix_secs: None,
+            usage_created_at_unix_secs: after.usage_created_at_unix_secs,
         }
     }
 
@@ -545,6 +560,7 @@ impl ProviderApiKeyUsageDelta {
             total_response_time_ms: after.total_response_time_ms,
             candidate_last_used_at_unix_secs: after.last_used_at_unix_secs,
             removed_last_used_at_unix_secs: None,
+            usage_created_at_unix_secs: after.usage_created_at_unix_secs,
         }
     }
 
@@ -558,6 +574,7 @@ impl ProviderApiKeyUsageDelta {
             total_response_time_ms: -before.total_response_time_ms,
             candidate_last_used_at_unix_secs: None,
             removed_last_used_at_unix_secs: before.last_used_at_unix_secs,
+            usage_created_at_unix_secs: before.usage_created_at_unix_secs,
         }
     }
 
@@ -667,6 +684,7 @@ pub(crate) fn provider_api_key_usage_contribution(
             0
         },
         last_used_at_unix_secs: Some(usage.created_at_unix_ms),
+        usage_created_at_unix_secs: Some(usage.created_at_unix_ms),
     })
 }
 

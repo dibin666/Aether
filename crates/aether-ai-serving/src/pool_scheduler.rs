@@ -1183,11 +1183,7 @@ mod tests {
             },
         )]);
 
-        let outcome = run_ai_pool_scheduler(
-            vec![key_free, key_plus],
-            &runtime_by_provider,
-            "seed",
-        );
+        let outcome = run_ai_pool_scheduler(vec![key_free, key_plus], &runtime_by_provider, "seed");
 
         assert!(outcome.skipped_candidates.is_empty());
         assert_eq!(
@@ -1238,11 +1234,7 @@ mod tests {
             },
         )]);
 
-        let outcome = run_ai_pool_scheduler(
-            vec![key_plus, key_free],
-            &runtime_by_provider,
-            "seed",
-        );
+        let outcome = run_ai_pool_scheduler(vec![key_plus, key_free], &runtime_by_provider, "seed");
 
         assert!(outcome.skipped_candidates.is_empty());
         assert_eq!(

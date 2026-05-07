@@ -39,7 +39,8 @@ use super::{
     model_usage_contribution, provider_api_key_usage_contribution,
     strip_deprecated_usage_display_fields, ApiKeyUsageDelta, ModelUsageDelta,
     PendingUsageCleanupSummary, ProviderApiKeyConsumptionSummaryQuery, ProviderApiKeyUsageDelta,
-    StoredProviderApiKeyConsumptionSummary, StoredProviderApiKeyUsageSummary,
+    ProviderApiKeyWindowUsageRequest, StoredProviderApiKeyConsumptionSummary,
+    StoredProviderApiKeyUsageSummary, StoredProviderApiKeyWindowUsageSummary,
     StoredProviderUsageSummary, StoredRequestUsageAudit, StoredUsageDailySummary,
     UpsertUsageRecord, UsageAuditListQuery, UsageDailyHeatmapQuery, UsageReadRepository,
     UsageWriteRepository,
@@ -1317,6 +1318,8 @@ const SUMMARIZE_USAGE_BY_PROVIDER_API_KEY_IDS_SQL: &str =
 
 const SUMMARIZE_PROVIDER_API_KEY_CONSUMPTION_SQL: &str =
     include_str!("queries/summarize_provider_api_key_consumption_sql.sql");
+const SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL: &str =
+    include_str!("queries/summarize_provider_api_key_window_usage_sql.sql");
 
 const APPLY_API_KEY_USAGE_DELTA_SQL: &str =
     include_str!("queries/apply_api_key_usage_delta_sql.sql");
@@ -1333,15 +1336,20 @@ const REBUILD_API_KEY_USAGE_STATS_SQL: &str =
 const APPLY_PROVIDER_API_KEY_USAGE_DELTA_SQL: &str =
     include_str!("queries/apply_provider_api_key_usage_delta_sql.sql");
 
+const APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL: &str =
+    include_str!("queries/apply_provider_api_key_codex_window_usage_delta_sql.sql");
+
 const RESET_PROVIDER_API_KEY_USAGE_STATS_SQL: &str =
     include_str!("queries/reset_provider_api_key_usage_stats_sql.sql");
 
 const REBUILD_PROVIDER_API_KEY_USAGE_STATS_SQL: &str =
     include_str!("queries/rebuild_provider_api_key_usage_stats_sql.sql");
 
+const REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL: &str =
+    include_str!("queries/rebuild_provider_api_key_codex_window_usage_stats_sql.sql");
+
 const LIST_USAGE_AUDITS_PREFIX: &str = include_str!("queries/list_usage_audits_prefix.sql");
-const USAGE_RESERVED_PROVIDER_LABELS_FILTER_SQL: &str =
-    " AND BTRIM(COALESCE(\"usage\".provider_name, '')) <> '' AND lower(BTRIM(COALESCE(\"usage\".provider_name, ''))) NOT IN ('unknown', 'unknow', 'pending')";
+const USAGE_RESERVED_PROVIDER_LABELS_FILTER_SQL: &str = " AND BTRIM(COALESCE(\"usage\".provider_name, '')) <> '' AND lower(BTRIM(COALESCE(\"usage\".provider_name, ''))) NOT IN ('unknown', 'unknow', 'pending')";
 
 struct UsageAuditAggregationSqlFragments {
     filtered_extra_where: &'static str,
@@ -6395,33 +6403,38 @@ WHERE stats_daily_api_key.date >=
             return Ok(Vec::new());
         }
 
-        let (table_name, group_column, display_name_expr, avg_response_time_expr, success_count_expr) =
-            match group_by {
-                UsageAuditAggregationGroupBy::Model => (
-                    "stats_user_daily_model",
-                    "model",
-                    "NULL::varchar",
-                    "NULL::DOUBLE PRECISION",
-                    "NULL::BIGINT",
-                ),
-                UsageAuditAggregationGroupBy::Provider => (
-                    "stats_user_daily_provider",
-                    "provider_name",
-                    "provider_name",
-                    "CASE WHEN COALESCE(SUM(response_time_samples), 0) > 0 THEN COALESCE(SUM(response_time_sum_ms), 0) / COALESCE(SUM(response_time_samples), 0) ELSE NULL END",
-                    "COALESCE(SUM(success_requests), 0)::BIGINT",
-                ),
-                UsageAuditAggregationGroupBy::ApiFormat => (
-                    "stats_user_daily_api_format",
-                    "api_format",
-                    "NULL::varchar",
-                    "CASE WHEN COALESCE(SUM(response_time_samples), 0) > 0 THEN COALESCE(SUM(response_time_sum_ms), 0) / COALESCE(SUM(response_time_samples), 0) ELSE NULL END",
-                    "NULL::BIGINT",
-                ),
-                UsageAuditAggregationGroupBy::User => {
-                    return Ok(Vec::new());
-                }
-            };
+        let (
+            table_name,
+            group_column,
+            display_name_expr,
+            avg_response_time_expr,
+            success_count_expr,
+        ) = match group_by {
+            UsageAuditAggregationGroupBy::Model => (
+                "stats_user_daily_model",
+                "model",
+                "NULL::varchar",
+                "NULL::DOUBLE PRECISION",
+                "NULL::BIGINT",
+            ),
+            UsageAuditAggregationGroupBy::Provider => (
+                "stats_user_daily_provider",
+                "provider_name",
+                "provider_name",
+                "CASE WHEN COALESCE(SUM(response_time_samples), 0) > 0 THEN COALESCE(SUM(response_time_sum_ms), 0) / COALESCE(SUM(response_time_samples), 0) ELSE NULL END",
+                "COALESCE(SUM(success_requests), 0)::BIGINT",
+            ),
+            UsageAuditAggregationGroupBy::ApiFormat => (
+                "stats_user_daily_api_format",
+                "api_format",
+                "NULL::varchar",
+                "CASE WHEN COALESCE(SUM(response_time_samples), 0) > 0 THEN COALESCE(SUM(response_time_sum_ms), 0) / COALESCE(SUM(response_time_samples), 0) ELSE NULL END",
+                "NULL::BIGINT",
+            ),
+            UsageAuditAggregationGroupBy::User => {
+                return Ok(Vec::new());
+            }
+        };
 
         let provider_extra_where = if matches!(group_by, UsageAuditAggregationGroupBy::Provider) {
             " AND BTRIM(COALESCE(provider_name, '')) <> '' AND lower(BTRIM(COALESCE(provider_name, ''))) NOT IN ('unknown', 'unknow', 'pending')"
@@ -7361,6 +7374,98 @@ ORDER BY "usage".user_id ASC
         Ok(summaries)
     }
 
+    pub async fn summarize_usage_by_provider_api_key_windows(
+        &self,
+        requests: &[ProviderApiKeyWindowUsageRequest],
+    ) -> Result<Vec<StoredProviderApiKeyWindowUsageSummary>, DataLayerError> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut provider_api_key_ids = Vec::with_capacity(requests.len());
+        let mut window_codes = Vec::with_capacity(requests.len());
+        let mut start_unix_secs = Vec::with_capacity(requests.len());
+        let mut end_unix_secs = Vec::with_capacity(requests.len());
+
+        for request in requests {
+            let provider_api_key_id = request.provider_api_key_id.trim();
+            if provider_api_key_id.is_empty() {
+                return Err(DataLayerError::InvalidInput(
+                    "provider api key window usage provider_api_key_id cannot be empty".to_string(),
+                ));
+            }
+            let window_code = request.window_code.trim();
+            if window_code.is_empty() {
+                return Err(DataLayerError::InvalidInput(
+                    "provider api key window usage window_code cannot be empty".to_string(),
+                ));
+            }
+            if request.start_unix_secs >= request.end_unix_secs {
+                return Err(DataLayerError::InvalidInput(
+                    "provider api key window usage range must be non-empty".to_string(),
+                ));
+            }
+
+            provider_api_key_ids.push(provider_api_key_id.to_string());
+            window_codes.push(window_code.to_string());
+            start_unix_secs.push(i64::try_from(request.start_unix_secs).map_err(|_| {
+                DataLayerError::InvalidInput(
+                    "provider api key window usage start_unix_secs is out of range".to_string(),
+                )
+            })?);
+            end_unix_secs.push(i64::try_from(request.end_unix_secs).map_err(|_| {
+                DataLayerError::InvalidInput(
+                    "provider api key window usage end_unix_secs is out of range".to_string(),
+                )
+            })?);
+        }
+
+        let mut rows = sqlx::query(SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL)
+            .bind(&provider_api_key_ids)
+            .bind(&window_codes)
+            .bind(&start_unix_secs)
+            .bind(&end_unix_secs)
+            .fetch(&self.pool);
+
+        let mut summaries = Vec::new();
+        while let Some(row) = rows.try_next().await.map_postgres_err()? {
+            let total_cost_usd = row.try_get::<f64, _>("total_cost_usd").map_postgres_err()?;
+            if !total_cost_usd.is_finite() {
+                return Err(DataLayerError::UnexpectedValue(
+                    "usage.total_cost_usd window aggregate is not finite".to_string(),
+                ));
+            }
+
+            summaries.push(StoredProviderApiKeyWindowUsageSummary {
+                provider_api_key_id: row
+                    .try_get::<String, _>("provider_api_key_id")
+                    .map_postgres_err()?,
+                window_code: row.try_get::<String, _>("window_code").map_postgres_err()?,
+                request_count: row
+                    .try_get::<i64, _>("request_count")
+                    .map_postgres_err()?
+                    .try_into()
+                    .map_err(|_| {
+                        DataLayerError::UnexpectedValue(
+                            "usage.request_count window aggregate is negative".to_string(),
+                        )
+                    })?,
+                total_tokens: row
+                    .try_get::<i64, _>("total_tokens")
+                    .map_postgres_err()?
+                    .try_into()
+                    .map_err(|_| {
+                        DataLayerError::UnexpectedValue(
+                            "usage.total_tokens window aggregate is negative".to_string(),
+                        )
+                    })?,
+                total_cost_usd,
+            });
+        }
+
+        Ok(summaries)
+    }
+
     pub async fn upsert(
         &self,
         usage: UpsertUsageRecord,
@@ -7965,6 +8070,10 @@ ORDER BY "usage".user_id ASC
                         .await
                         .map_postgres_err()?
                         .rows_affected();
+                    sqlx::query(REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL)
+                        .execute(&mut **tx)
+                        .await
+                        .map_postgres_err()?;
                     Ok(rows_affected)
                 }) as BoxFuture<'_, Result<u64, DataLayerError>>
             })
@@ -8190,6 +8299,13 @@ impl UsageReadRepository for SqlxUsageReadRepository {
         Self::summarize_provider_api_key_consumption(self, query).await
     }
 
+    async fn summarize_usage_by_provider_api_key_windows(
+        &self,
+        requests: &[ProviderApiKeyWindowUsageRequest],
+    ) -> Result<Vec<StoredProviderApiKeyWindowUsageSummary>, DataLayerError> {
+        Self::summarize_usage_by_provider_api_key_windows(self, requests).await
+    }
+
     async fn summarize_provider_usage_since(
         &self,
         provider_id: &str,
@@ -8411,6 +8527,40 @@ async fn apply_provider_api_key_usage_delta_in_tx(
                 .removed_last_used_at_unix_secs
                 .map(|value| value as f64),
         )
+        .execute(&mut **tx)
+        .await
+        .map_postgres_err()?;
+    apply_provider_api_key_codex_window_usage_delta_in_tx(tx, key_id, delta).await?;
+    Ok(())
+}
+
+async fn apply_provider_api_key_codex_window_usage_delta_in_tx(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    key_id: &str,
+    delta: &ProviderApiKeyUsageDelta,
+) -> Result<(), DataLayerError> {
+    let Some(usage_created_at_unix_secs) = delta.usage_created_at_unix_secs else {
+        return Ok(());
+    };
+    if delta.request_count == 0 && delta.total_tokens == 0 && delta.total_cost_usd == 0.0 {
+        return Ok(());
+    }
+    let total_cost_usd_delta = if delta.total_cost_usd.is_finite() {
+        delta.total_cost_usd
+    } else {
+        0.0
+    };
+
+    sqlx::query(APPLY_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_DELTA_SQL)
+        .bind(key_id)
+        .bind(i64::try_from(usage_created_at_unix_secs).map_err(|_| {
+            DataLayerError::UnexpectedValue(format!(
+                "provider api key window usage timestamp exceeds i64: {usage_created_at_unix_secs}"
+            ))
+        })?)
+        .bind(delta.request_count)
+        .bind(delta.total_tokens)
+        .bind(total_cost_usd_delta)
         .execute(&mut **tx)
         .await
         .map_postgres_err()?;
