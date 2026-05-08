@@ -329,6 +329,24 @@ impl UserReadRepository for InMemoryUserReadRepository {
         if let Some(is_active) = query.is_active {
             rows.retain(|row| row.is_active == is_active);
         }
+        if let Some(search) = query
+            .search
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let search = search.to_ascii_lowercase();
+            rows.retain(|row| {
+                row.id.to_ascii_lowercase().contains(&search)
+                    || row.username.to_ascii_lowercase().contains(&search)
+                    || row
+                        .email
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_ascii_lowercase()
+                        .contains(&search)
+            });
+        }
         Ok(rows
             .into_iter()
             .skip(query.skip)
@@ -882,6 +900,7 @@ impl UserReadRepository for InMemoryUserReadRepository {
         allowed_api_formats: Option<Vec<String>>,
         allowed_models_present: bool,
         allowed_models: Option<Vec<String>>,
+        rate_limit_present: bool,
         rate_limit: Option<i32>,
         is_active: Option<bool>,
     ) -> Result<Option<StoredUserAuthRecord>, DataLayerError> {
@@ -931,8 +950,8 @@ impl UserReadRepository for InMemoryUserReadRepository {
             row.allowed_providers = updated.allowed_providers.clone();
             row.allowed_api_formats = updated.allowed_api_formats.clone();
             row.allowed_models = updated.allowed_models.clone();
-            if let Some(rate_limit) = rate_limit {
-                row.rate_limit = Some(rate_limit);
+            if rate_limit_present {
+                row.rate_limit = rate_limit;
             }
             row.is_active = updated.is_active;
         }
@@ -1518,7 +1537,24 @@ mod tests {
             None,
         )
         .expect("auth user should build");
-        let repository = InMemoryUserReadRepository::seed_auth_users(vec![user]);
+        let export_user = StoredUserExportRow::new(
+            "user-1".to_string(),
+            Some("alice@example.com".to_string()),
+            true,
+            "alice".to_string(),
+            Some("old-hash".to_string()),
+            "user".to_string(),
+            "local".to_string(),
+            None,
+            None,
+            None,
+            Some(10),
+            None,
+            true,
+        )
+        .expect("export user should build");
+        let repository = InMemoryUserReadRepository::seed_auth_users(vec![user])
+            .with_export_users([export_user]);
 
         let updated = repository
             .update_local_auth_user_profile(
@@ -1566,6 +1602,7 @@ mod tests {
                 None,
                 true,
                 Some(vec!["gpt-4.1".to_string()]),
+                true,
                 Some(50),
                 Some(false),
             )
@@ -1583,6 +1620,31 @@ mod tests {
             Some(vec!["gpt-4.1".to_string()])
         );
         assert!(!admin_updated.is_active);
+        assert_eq!(
+            repository
+                .find_export_user_by_id("user-1")
+                .await
+                .expect("export lookup should succeed")
+                .expect("export row should exist")
+                .rate_limit,
+            Some(50)
+        );
+        repository
+            .update_local_auth_user_admin_fields(
+                "user-1", None, false, None, false, None, false, None, true, None, None,
+            )
+            .await
+            .expect("rate limit clear should succeed")
+            .expect("rate limit clear should return user");
+        assert_eq!(
+            repository
+                .find_export_user_by_id("user-1")
+                .await
+                .expect("export lookup should succeed")
+                .expect("export row should exist")
+                .rate_limit,
+            None
+        );
         assert_eq!(
             repository
                 .update_user_model_capability_settings(
@@ -2010,6 +2072,7 @@ mod tests {
                 limit: 10,
                 role: Some("user".to_string()),
                 is_active: Some(true),
+                search: None,
             })
             .await
             .expect("paged export should succeed");

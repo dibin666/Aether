@@ -31,9 +31,9 @@ use crate::constants::{
     TUNNEL_AFFINITY_OWNER_INSTANCE_HEADER,
 };
 use crate::control::{
-    allows_control_execute_emergency, maybe_execute_via_control, request_model_local_rejection,
-    should_buffer_request_for_local_auth, trusted_auth_local_rejection, GatewayControlDecision,
-    GatewayPublicRequestContext,
+    allows_control_execute_emergency, management_token_permission_keys_from_value,
+    maybe_execute_via_control, request_model_local_rejection, should_buffer_request_for_local_auth,
+    trusted_auth_local_rejection, GatewayControlDecision, GatewayPublicRequestContext,
 };
 use crate::executor::{
     beautify_local_execution_client_error_message, build_local_execution_runtime_miss_context,
@@ -229,12 +229,27 @@ async fn maybe_promote_management_token_admin_principal(
     if !user.is_active || user.is_deleted || !user.role.eq_ignore_ascii_case("admin") {
         return Ok(());
     }
+    let management_token_permissions = match management_token_permission_keys_from_value(
+        token_with_user.token.permissions.as_ref(),
+    ) {
+        Ok(value) => value,
+        Err(err) => {
+            warn!(
+                trace_id = %trace_id,
+                token_id = %token_with_user.token.id,
+                error = %err,
+                "gateway rejected management token with invalid permissions"
+            );
+            return Ok(());
+        }
+    };
 
     decision.admin_principal = Some(crate::control::GatewayAdminPrincipalContext {
         user_id: user.id.clone(),
         user_role: user.role.clone(),
         session_id: None,
         management_token_id: Some(token_with_user.token.id.clone()),
+        management_token_permissions,
     });
 
     let remote_ip = remote_addr.ip().to_string();
@@ -689,10 +704,10 @@ pub(crate) async fn proxy_request(
             )));
         }
         Err(RequestAdmissionError::Distributed(
-            aether_runtime::DistributedConcurrencyError::Saturated { gate, limit },
+            aether_runtime_state::RuntimeSemaphoreError::Saturated { gate, limit },
         ))
         | Err(RequestAdmissionError::Distributed(
-            aether_runtime::DistributedConcurrencyError::Unavailable { gate, limit, .. },
+            aether_runtime_state::RuntimeSemaphoreError::Unavailable { gate, limit, .. },
         )) => {
             let trace_id = extract_or_generate_trace_id(request.headers());
             let response = build_local_overloaded_response(&trace_id, None, gate, limit)?;
@@ -714,7 +729,7 @@ pub(crate) async fn proxy_request(
             ));
         }
         Err(RequestAdmissionError::Distributed(
-            aether_runtime::DistributedConcurrencyError::InvalidConfiguration(message),
+            aether_runtime_state::RuntimeSemaphoreError::InvalidConfiguration(message),
         )) => return Err(GatewayError::Internal(message)),
     };
     let request_admission_ms = started_at.elapsed().as_millis() as u64;

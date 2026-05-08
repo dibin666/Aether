@@ -11,6 +11,9 @@ use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::GatewayError;
 use aether_admin::provider::pool as admin_provider_pool_pure;
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
+use aether_data_contracts::repository::usage::{
+    ProviderApiKeyWindowUsageRequest, StoredProviderApiKeyWindowUsageSummary,
+};
 use axum::{
     body::Body,
     http,
@@ -18,7 +21,131 @@ use axum::{
     Json,
 };
 use serde_json::json;
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    collections::BTreeMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+type AdminPoolCodexCycleUsageByKey =
+    BTreeMap<String, BTreeMap<String, StoredProviderApiKeyWindowUsageSummary>>;
+
+fn admin_pool_json_u64(value: Option<&serde_json::Value>) -> Option<u64> {
+    match value {
+        Some(serde_json::Value::Number(number)) => number.as_u64(),
+        Some(serde_json::Value::String(text)) => text.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+}
+
+fn admin_pool_codex_default_window_minutes(code: &str) -> Option<u64> {
+    if code.eq_ignore_ascii_case("5h") {
+        Some(300)
+    } else if code.eq_ignore_ascii_case("weekly") {
+        Some(10_080)
+    } else {
+        None
+    }
+}
+
+fn admin_pool_current_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn admin_pool_codex_cycle_usage_request(
+    key: &StoredProviderCatalogKey,
+    window: &serde_json::Map<String, serde_json::Value>,
+    now_unix_secs: u64,
+) -> Option<ProviderApiKeyWindowUsageRequest> {
+    let window_code = window
+        .get("code")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|code| code.eq_ignore_ascii_case("5h") || code.eq_ignore_ascii_case("weekly"))?
+        .to_ascii_lowercase();
+    let reset_at = admin_pool_json_u64(window.get("reset_at"))?;
+    let window_seconds = admin_pool_json_u64(window.get("window_minutes"))
+        .or_else(|| admin_pool_codex_default_window_minutes(&window_code))?
+        .checked_mul(60)?;
+    if reset_at <= now_unix_secs {
+        return None;
+    }
+    let mut start_unix_secs = reset_at.checked_sub(window_seconds)?;
+    if let Some(usage_reset_at) = admin_pool_json_u64(window.get("usage_reset_at")) {
+        start_unix_secs = start_unix_secs.max(usage_reset_at);
+    }
+    if start_unix_secs >= reset_at || start_unix_secs >= now_unix_secs {
+        return None;
+    }
+
+    Some(ProviderApiKeyWindowUsageRequest {
+        provider_api_key_id: key.id.clone(),
+        window_code,
+        start_unix_secs,
+        end_unix_secs: now_unix_secs,
+    })
+}
+
+fn admin_pool_codex_cycle_usage_requests(
+    keys: &[StoredProviderCatalogKey],
+    now_unix_secs: u64,
+) -> Vec<ProviderApiKeyWindowUsageRequest> {
+    keys.iter()
+        .flat_map(|key| {
+            key.status_snapshot
+                .as_ref()
+                .and_then(serde_json::Value::as_object)
+                .and_then(|snapshot| snapshot.get("quota"))
+                .and_then(serde_json::Value::as_object)
+                .and_then(|quota| quota.get("windows"))
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_object)
+                .filter_map(|window| {
+                    admin_pool_codex_cycle_usage_request(key, window, now_unix_secs)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+async fn read_admin_pool_codex_cycle_usage_by_key(
+    state: &AdminAppState<'_>,
+    provider_type: &str,
+    keys: &[StoredProviderCatalogKey],
+    now_unix_secs: u64,
+) -> Result<AdminPoolCodexCycleUsageByKey, GatewayError> {
+    if !provider_type.trim().eq_ignore_ascii_case("codex") || keys.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let requests = admin_pool_codex_cycle_usage_requests(keys, now_unix_secs);
+    if requests.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let summaries = state
+        .app()
+        .summarize_usage_by_provider_api_key_windows(&requests)
+        .await?;
+    let mut usage_by_key = AdminPoolCodexCycleUsageByKey::new();
+    for summary in summaries {
+        let window_code = summary.window_code.trim().to_ascii_lowercase();
+        if window_code.is_empty() {
+            continue;
+        }
+        usage_by_key
+            .entry(summary.provider_api_key_id.clone())
+            .or_default()
+            .insert(window_code, summary);
+    }
+    Ok(usage_by_key)
+}
 
 fn admin_pool_compare_optional_unix_secs(
     left: Option<u64>,
@@ -146,11 +273,8 @@ pub(super) async fn build_admin_pool_list_keys_response(
     let page_offset = page.saturating_sub(1).saturating_mul(page_size);
 
     let mut keys = if status == "cooldown" {
-        let cooldown_key_ids = if let Some(runner) = state.redis_kv_runner() {
-            read_admin_provider_pool_cooldown_key_ids(&runner, &provider.id).await
-        } else {
-            Vec::new()
-        };
+        let cooldown_key_ids =
+            read_admin_provider_pool_cooldown_key_ids(state.runtime_state(), &provider.id).await;
         let mut keys = if cooldown_key_ids.is_empty() {
             Vec::new()
         } else {
@@ -215,10 +339,10 @@ pub(super) async fn build_admin_pool_list_keys_response(
     let endpoints = state
         .list_provider_catalog_endpoints_by_provider_ids(std::slice::from_ref(&provider.id))
         .await?;
-    let runtime = match (state.redis_kv_runner(), pool_config.as_ref()) {
-        (Some(runner), Some(pool_config)) if !key_ids.is_empty() => {
+    let runtime = match pool_config.as_ref() {
+        Some(pool_config) if !key_ids.is_empty() => {
             read_admin_provider_pool_runtime_state(
-                &runner,
+                state.runtime_state(),
                 &provider.id,
                 &key_ids,
                 pool_config,
@@ -228,6 +352,14 @@ pub(super) async fn build_admin_pool_list_keys_response(
         }
         _ => AdminProviderPoolRuntimeState::default(),
     };
+    let now_unix_secs = admin_pool_current_unix_secs();
+    let codex_cycle_usage_by_key = read_admin_pool_codex_cycle_usage_by_key(
+        state,
+        &provider.provider_type,
+        &keys,
+        now_unix_secs,
+    )
+    .await?;
 
     let items = keys
         .into_iter()
@@ -239,6 +371,8 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 &key,
                 &runtime,
                 pool_config.clone(),
+                codex_cycle_usage_by_key.get(&key.id),
+                now_unix_secs,
             )
         })
         .collect::<Vec<_>>();

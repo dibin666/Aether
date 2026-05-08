@@ -322,6 +322,97 @@ async fn gateway_handles_admin_provider_oauth_device_authorize_locally_with_trus
 }
 
 #[tokio::test]
+async fn gateway_handles_admin_provider_oauth_device_authorize_for_kiro_google_social() {
+    let mut provider = sample_provider("provider-kiro", "kiro", 10);
+    provider.provider_type = "kiro".to_string();
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![],
+        vec![],
+    ));
+    let state = AppState::new()
+        .expect("gateway should build")
+        .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
+            provider_catalog_repository,
+        ))
+        .with_provider_oauth_token_url_for_tests(
+            "kiro_social_portal",
+            "https://portal.example.com/signin",
+        );
+
+    let response = local_admin_provider_oauth_response(
+        &state,
+        http::Method::POST,
+        "/api/admin/provider-oauth/providers/provider-kiro/device-authorize",
+        Some(json!({
+            "auth_type": "google"
+        })),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should read");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("json body should parse");
+    let session_id = payload["session_id"]
+        .as_str()
+        .expect("session_id should exist");
+    assert_eq!(payload["auth_type"], "google");
+    assert_eq!(payload["callback_required"], true);
+    assert_eq!(payload["redirect_uri"], "http://localhost:49153");
+
+    let authorization_url = payload["verification_uri_complete"]
+        .as_str()
+        .expect("authorization url should exist");
+    let parsed = url::Url::parse(authorization_url).expect("authorization url should parse");
+    let params = parsed
+        .query_pairs()
+        .into_owned()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        parsed.as_str().split('?').next(),
+        Some("https://portal.example.com/signin")
+    );
+    assert_eq!(
+        params.get("redirect_uri").map(String::as_str),
+        Some("http://localhost:49153")
+    );
+    assert_eq!(params.get("state").map(String::as_str), Some(session_id));
+    assert_eq!(
+        params.get("code_challenge_method").map(String::as_str),
+        Some("S256")
+    );
+    assert_eq!(
+        params.get("redirect_from").map(String::as_str),
+        Some("KiroIDE")
+    );
+    assert_eq!(
+        params.get("login_option").map(String::as_str),
+        Some("google")
+    );
+    assert!(params
+        .get("code_challenge")
+        .is_some_and(|value| !value.is_empty()));
+
+    let stored = state
+        .load_provider_oauth_device_session_for_tests(&format!("device_auth_session:{session_id}"))
+        .expect("device session should be stored");
+    let stored: serde_json::Value =
+        serde_json::from_str(&stored).expect("device session json should parse");
+    assert_eq!(stored["provider_id"], "provider-kiro");
+    assert_eq!(stored["auth_type"], "social");
+    assert_eq!(stored["social_provider"], "Google");
+    assert_eq!(stored["redirect_uri"], "http://localhost:49153");
+    assert!(stored["code_verifier"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
+    assert!(stored["machine_id"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty()));
+    assert_eq!(stored["status"], "pending");
+}
+
+#[tokio::test]
 async fn gateway_handles_admin_provider_oauth_device_poll_locally_with_trusted_admin_principal() {
     let upstream_hits = Arc::new(Mutex::new(0usize));
     let upstream_hits_clone = Arc::clone(&upstream_hits);
@@ -475,6 +566,189 @@ async fn gateway_handles_admin_provider_oauth_device_poll_locally_with_trusted_a
     gateway_handle.abort();
     token_handle.abort();
     upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_handles_admin_provider_oauth_device_poll_for_kiro_social_callback() {
+    let token_requests = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
+    let token_requests_clone = Arc::clone(&token_requests);
+    let access_token = sample_kiro_device_access_token("social@example.com");
+    let expected_access_token = access_token.clone();
+    let token_server = Router::new().route(
+        "/oauth/token",
+        post(move |request: Request| {
+            let token_requests_inner = Arc::clone(&token_requests_clone);
+            let access_token_inner = access_token.clone();
+            async move {
+                let user_agent = request
+                    .headers()
+                    .get("user-agent")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                let raw_body = String::from_utf8(
+                    to_bytes(request.into_body(), usize::MAX)
+                        .await
+                        .expect("body should read")
+                        .to_vec(),
+                )
+                .expect("body should be utf8");
+                token_requests_inner
+                    .lock()
+                    .expect("mutex should lock")
+                    .push((user_agent, raw_body));
+                Json(json!({
+                    "accessToken": access_token_inner,
+                    "refreshToken": "kiro-social-refresh-token",
+                    "profileArn": "arn:aws:kiro:profile/social",
+                    "idToken": "id-token-123",
+                    "tokenType": "Bearer",
+                    "expiresIn": 1800,
+                }))
+            }
+        }),
+    );
+
+    let mut provider = sample_provider("provider-kiro", "kiro", 10);
+    provider.provider_type = "kiro".to_string();
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        vec![],
+        vec![],
+    ));
+
+    let (token_url, token_handle) = start_server(token_server).await;
+    let state = AppState::new()
+        .expect("gateway should build")
+        .with_data_state_for_tests(
+            GatewayDataState::with_provider_catalog_repository_for_tests(
+                provider_catalog_repository.clone(),
+            )
+            .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY),
+        )
+        .with_provider_oauth_device_session_entry_for_tests(
+            "session-social",
+            json!({
+                "provider_id": "provider-kiro",
+                "region": "us-east-1",
+                "client_id": "",
+                "client_secret": "",
+                "device_code": "",
+                "auth_type": "social",
+                "social_provider": "Github",
+                "code_verifier": "verifier-123",
+                "redirect_uri": "http://localhost:49153",
+                "machine_id": "123e4567-e89b-12d3-a456-426614174000",
+                "interval": 5,
+                "expires_at_unix_secs": 4_102_444_800u64,
+                "status": "pending",
+                "proxy_node_id": null,
+                "created_at_unix_ms": 1_711_000_000u64,
+                "key_id": null,
+                "email": null,
+                "replaced": false,
+                "error_msg": null,
+            }),
+        )
+        .with_provider_oauth_token_url_for_tests(
+            "kiro_social_token",
+            format!("{token_url}/oauth/token"),
+        );
+    let gateway = build_router_with_state(state.clone());
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/api/admin/provider-oauth/providers/provider-kiro/device-poll"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "session_id": "session-social",
+            "callback_url": "http://localhost:49153/signin/callback?login_option=github&code=social-code-123&state=session-social"
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(status, StatusCode::OK, "payload={payload}");
+    assert_eq!(payload["status"], "authorized");
+    assert_eq!(payload["email"], "social@example.com");
+    assert_eq!(payload["replaced"], false);
+
+    {
+        let requests = token_requests.lock().expect("mutex should lock");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].0,
+            "KiroIDE-0.6.18-123e4567-e89b-12d3-a456-426614174000"
+        );
+        assert!(requests[0].1.contains("\"code\":\"social-code-123\""));
+        assert!(requests[0].1.contains("\"code_verifier\":\"verifier-123\""));
+        assert!(requests[0].1.contains(
+            "\"redirect_uri\":\"http://localhost:49153/signin/callback?login_option=github\""
+        ));
+    }
+
+    let stored = state
+        .load_provider_oauth_device_session_for_tests("device_auth_session:session-social")
+        .expect("device session should persist");
+    let stored: serde_json::Value =
+        serde_json::from_str(&stored).expect("device session json should parse");
+    assert_eq!(stored["status"], "authorized");
+    assert_eq!(stored["email"], "social@example.com");
+    let key_id = stored["key_id"]
+        .as_str()
+        .expect("key_id should be stored")
+        .to_string();
+    assert_eq!(payload["key_id"], key_id);
+
+    let persisted = provider_catalog_repository
+        .list_keys_by_ids(std::slice::from_ref(&key_id))
+        .await
+        .expect("keys should load")
+        .into_iter()
+        .next()
+        .expect("persisted key should exist");
+    assert_eq!(persisted.name, "social@example.com (Github)");
+    assert_eq!(persisted.auth_type, "oauth");
+    let decrypted_api_key = decrypt_python_fernet_ciphertext(
+        DEVELOPMENT_ENCRYPTION_KEY,
+        persisted
+            .encrypted_api_key
+            .as_deref()
+            .expect("api key should be present"),
+    )
+    .expect("api key should decrypt");
+    assert_eq!(decrypted_api_key, expected_access_token);
+    let decrypted_auth_config = decrypt_python_fernet_ciphertext(
+        DEVELOPMENT_ENCRYPTION_KEY,
+        persisted
+            .encrypted_auth_config
+            .as_deref()
+            .expect("auth config should exist"),
+    )
+    .expect("auth config should decrypt");
+    let auth_config: serde_json::Value =
+        serde_json::from_str(&decrypted_auth_config).expect("auth config should parse");
+    assert_eq!(auth_config["provider_type"], "kiro");
+    assert_eq!(auth_config["provider"], "Github");
+    assert_eq!(auth_config["auth_method"], "social");
+    assert_eq!(auth_config["refresh_token"], "kiro-social-refresh-token");
+    assert_eq!(auth_config["profile_arn"], "arn:aws:kiro:profile/social");
+    assert_eq!(auth_config["email"], "social@example.com");
+    assert_eq!(
+        auth_config["machine_id"],
+        "123e4567-e89b-12d3-a456-426614174000"
+    );
+    assert_eq!(auth_config["kiro_version"], "0.6.18");
+
+    gateway_handle.abort();
+    token_handle.abort();
 }
 
 #[tokio::test]
@@ -1118,9 +1392,16 @@ async fn gateway_handles_admin_provider_oauth_start_key_locally_with_trusted_adm
         .await
         .expect("request should succeed");
 
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
-    assert_eq!(payload["detail"], "provider oauth redis unavailable");
+    assert_eq!(payload["provider_type"], "codex");
+    assert_eq!(
+        payload["redirect_uri"],
+        "http://localhost:1455/auth/callback"
+    );
+    assert!(payload["authorization_url"]
+        .as_str()
+        .is_some_and(|url| url.contains("state=")));
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();
@@ -1174,9 +1455,16 @@ async fn gateway_handles_admin_provider_oauth_start_provider_locally_with_truste
         .await
         .expect("request should succeed");
 
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
-    assert_eq!(payload["detail"], "provider oauth redis unavailable");
+    assert_eq!(payload["provider_type"], "codex");
+    assert_eq!(
+        payload["redirect_uri"],
+        "http://localhost:1455/auth/callback"
+    );
+    assert!(payload["authorization_url"]
+        .as_str()
+        .is_some_and(|url| url.contains("state=")));
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();
@@ -6765,6 +7053,152 @@ async fn gateway_handles_admin_management_token_detail_locally_with_trusted_admi
 
     gateway_handle.abort();
     upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_creates_updates_and_regenerates_admin_management_token_locally_with_permissions() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().fallback(any(move |_request: Request| {
+        let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+        async move {
+            *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+            (StatusCode::OK, Body::from("unexpected upstream hit"))
+        }
+    }));
+
+    let repository = Arc::new(InMemoryManagementTokenRepository::default());
+    let state = AppState::new().expect("gateway should build");
+    let admin_user = state
+        .create_local_auth_user_with_settings(
+            Some("management-admin@example.com".to_string()),
+            true,
+            "admin".to_string(),
+            "hash".to_string(),
+            "admin".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("admin user should be created")
+        .expect("admin user should exist");
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let gateway = build_router_with_state(state.with_data_state_for_tests(
+        GatewayDataState::with_management_token_repository_for_tests(repository.clone()),
+    ));
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+    let client = reqwest::Client::new();
+
+    let create_response = client
+        .post(format!("{gateway_url}/api/admin/management-tokens"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, admin_user.id.as_str())
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "name": "admin-token",
+            "description": "admin token",
+            "allowed_ips": ["127.0.0.1"],
+            "permissions": ["admin:usage:read", "admin:pool:write"],
+            "expires_at": "2099-01-01T00:00:00Z",
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    let create_status = create_response.status();
+    let create_body = create_response.text().await.expect("body should read");
+    assert_eq!(create_status, StatusCode::CREATED, "{create_body}");
+    let create_payload: serde_json::Value =
+        serde_json::from_str(&create_body).expect("json body should parse");
+    let token_id = create_payload["data"]["id"]
+        .as_str()
+        .expect("token id should exist")
+        .to_string();
+    assert_eq!(create_payload["message"], "Management Token 创建成功");
+    assert_eq!(create_payload["data"]["user"]["id"], json!(admin_user.id));
+    assert_eq!(
+        create_payload["data"]["permissions"],
+        json!(["admin:pool:write", "admin:usage:read"])
+    );
+    let created_secret = create_payload["token"].as_str().unwrap_or_default();
+    assert!(created_secret.starts_with("ae-"));
+
+    let update_response = client
+        .put(format!(
+            "{gateway_url}/api/admin/management-tokens/{token_id}"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, admin_user.id.as_str())
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "name": "admin-token-updated",
+            "description": null,
+            "allowed_ips": null,
+            "permissions": ["admin:usage:read"],
+            "expires_at": null,
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(update_response.status(), StatusCode::OK);
+    let update_payload: serde_json::Value = update_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(update_payload["message"], "更新成功");
+    assert_eq!(update_payload["data"]["name"], "admin-token-updated");
+    assert_eq!(
+        update_payload["data"]["permissions"],
+        json!(["admin:usage:read"])
+    );
+    assert_eq!(
+        update_payload["data"]["allowed_ips"],
+        serde_json::Value::Null
+    );
+
+    let regenerate_response = client
+        .post(format!(
+            "{gateway_url}/api/admin/management-tokens/{token_id}/regenerate"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, admin_user.id.as_str())
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(regenerate_response.status(), StatusCode::OK);
+    let regenerate_payload: serde_json::Value = regenerate_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(regenerate_payload["message"], "Token 已重新生成");
+    assert!(regenerate_payload["token"]
+        .as_str()
+        .unwrap_or_default()
+        .starts_with("ae-"));
+    assert_eq!(
+        repository
+            .get_management_token_with_user(&token_id)
+            .await
+            .expect("lookup should succeed")
+            .expect("token should remain")
+            .token
+            .permissions,
+        Some(json!(["admin:usage:read"]))
+    );
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+    drop(upstream_url);
 }
 
 #[tokio::test]

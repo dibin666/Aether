@@ -313,6 +313,74 @@ async fn gateway_handles_admin_users_root_locally_with_trusted_admin_principal()
     assert_eq!(items[0]["is_active"], true);
     assert_eq!(items[0]["request_count"], 2);
     assert_eq!(items[0]["total_tokens"], 100);
+
+    let search_response = reqwest::Client::new()
+        .get(format!(
+            "{gateway_url}/api/admin/users?skip=0&limit=20&search=carol"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("search request should succeed");
+
+    assert_eq!(search_response.status(), StatusCode::OK);
+    let search_payload: serde_json::Value = search_response
+        .json()
+        .await
+        .expect("search json body should parse");
+    let search_items = search_payload
+        .as_array()
+        .expect("search list payload should be array");
+    assert_eq!(search_items.len(), 1);
+    assert_eq!(search_items[0]["id"], "user-3");
+    assert_eq!(search_items[0]["email"], "carol@example.com");
+
+    let id_search_response = reqwest::Client::new()
+        .get(format!(
+            "{gateway_url}/api/admin/users?skip=0&limit=20&search=user-3"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("id search request should succeed");
+    assert_eq!(id_search_response.status(), StatusCode::OK);
+    let id_search_payload: serde_json::Value = id_search_response
+        .json()
+        .await
+        .expect("id search json body should parse");
+    let id_search_items = id_search_payload
+        .as_array()
+        .expect("id search list payload should be array");
+    assert_eq!(id_search_items.len(), 1);
+    assert_eq!(id_search_items[0]["id"], "user-3");
+
+    let limited_search_response = reqwest::Client::new()
+        .get(format!(
+            "{gateway_url}/api/admin/users?skip=0&limit=2&search=example.com"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("limited search request should succeed");
+    assert_eq!(limited_search_response.status(), StatusCode::OK);
+    let limited_search_payload: serde_json::Value = limited_search_response
+        .json()
+        .await
+        .expect("limited search json body should parse");
+    let limited_search_items = limited_search_payload
+        .as_array()
+        .expect("limited search list payload should be array");
+    assert_eq!(limited_search_items.len(), 2);
+
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();
@@ -359,6 +427,327 @@ async fn gateway_handles_admin_users_root_locally_with_trusted_admin_principal()
     assert_eq!(create_payload["unlimited"], false);
 
     create_gateway_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_resolves_admin_user_batch_selection_locally() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().fallback(any(move |_request: Request| {
+        let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+        async move {
+            *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+            (StatusCode::OK, Body::from("unexpected upstream hit"))
+        }
+    }));
+
+    let user_repository = Arc::new(
+        InMemoryUserReadRepository::seed_auth_users(vec![
+            sample_admin_user("user-1"),
+            sample_admin_user_with_role("user-2", "admin", "root@example.com", "root"),
+            sample_admin_user_with_role("user-3", "user", "carol@example.com", "carol"),
+        ])
+        .with_export_users(vec![
+            sample_admin_export_user("user-1"),
+            sample_admin_export_user_with("admin", true, "user-2", "root@example.com", "root"),
+            sample_admin_export_user_with("user", false, "user-3", "carol@example.com", "carol"),
+        ]),
+    );
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(GatewayDataState::with_user_reader_for_tests(
+                user_repository,
+            )),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/api/admin/users/resolve-selection"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "filters": {
+                "search": "ali",
+                "role": "user",
+                "is_active": true
+            }
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["total"], 1);
+    let items = payload["items"].as_array().expect("items should be array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["user_id"], "user-1");
+    assert_eq!(items[0]["username"], "alice");
+    assert_eq!(items[0]["email"], "alice@example.com");
+    assert_eq!(items[0]["role"], "user");
+    assert_eq!(items[0]["is_active"], true);
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    let all_filtered_response = reqwest::Client::new()
+        .post(format!("{gateway_url}/api/admin/users/resolve-selection"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({ "filters": {} }))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(all_filtered_response.status(), StatusCode::OK);
+    let all_filtered_payload: serde_json::Value = all_filtered_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(all_filtered_payload["total"], 3);
+
+    let empty_selection_response = reqwest::Client::new()
+        .post(format!("{gateway_url}/api/admin/users/resolve-selection"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({}))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(empty_selection_response.status(), StatusCode::BAD_REQUEST);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_handles_admin_user_batch_actions_locally() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().fallback(any(move |_request: Request| {
+        let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+        async move {
+            *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+            (StatusCode::OK, Body::from("unexpected upstream hit"))
+        }
+    }));
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_auth_users_for_tests([sample_admin_user("user-1")])
+            .with_auth_wallets_for_tests([sample_admin_wallet("user-1", "unlimited")]),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+    let client = reqwest::Client::new();
+
+    let disable_response = client
+        .post(format!("{gateway_url}/api/admin/users/batch-action"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "selection": {
+                "user_ids": ["user-1", "user-1", "missing-user"]
+            },
+            "action": "disable"
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(disable_response.status(), StatusCode::OK);
+    let disable_payload: serde_json::Value = disable_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(disable_payload["total"], 2);
+    assert_eq!(disable_payload["success"], 1);
+    assert_eq!(disable_payload["failed"], 1);
+    assert_eq!(disable_payload["failures"][0]["user_id"], "missing-user");
+
+    let empty_selection_response = client
+        .post(format!("{gateway_url}/api/admin/users/batch-action"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "selection": {},
+            "action": "disable"
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(empty_selection_response.status(), StatusCode::BAD_REQUEST);
+
+    let access_response = client
+        .post(format!("{gateway_url}/api/admin/users/batch-action"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "selection": {
+                "user_ids": ["user-1"]
+            },
+            "action": "update_access_control",
+            "payload": {
+                "allowed_providers": null,
+                "allowed_api_formats": ["OPENAI:RESPONSES"],
+                "allowed_models": [],
+                "rate_limit": 0,
+                "unlimited": false
+            }
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(access_response.status(), StatusCode::OK);
+    let access_payload: serde_json::Value = access_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(access_payload["total"], 1);
+    assert_eq!(access_payload["success"], 1);
+    assert_eq!(access_payload["failed"], 0);
+    assert_eq!(
+        access_payload["modified_fields"],
+        json!([
+            "allowed_providers",
+            "allowed_api_formats",
+            "allowed_models",
+            "rate_limit",
+            "unlimited"
+        ])
+    );
+
+    let role_response = client
+        .post(format!("{gateway_url}/api/admin/users/batch-action"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "selection": {
+                "user_ids": ["user-1"]
+            },
+            "action": "update_role",
+            "payload": {
+                "role": "admin"
+            }
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(role_response.status(), StatusCode::OK);
+    let role_payload: serde_json::Value =
+        role_response.json().await.expect("json body should parse");
+    assert_eq!(role_payload["total"], 1);
+    assert_eq!(role_payload["success"], 1);
+    assert_eq!(role_payload["modified_fields"], json!(["role"]));
+
+    let blank_role_response = client
+        .post(format!("{gateway_url}/api/admin/users/batch-action"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "selection": {
+                "user_ids": ["user-1"]
+            },
+            "action": "update_role",
+            "payload": {
+                "role": ""
+            }
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(blank_role_response.status(), StatusCode::BAD_REQUEST);
+
+    let enable_admin_response = client
+        .post(format!("{gateway_url}/api/admin/users/batch-action"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "selection": {
+                "user_ids": ["user-1"]
+            },
+            "action": "enable"
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(enable_admin_response.status(), StatusCode::OK);
+
+    let last_admin_demotion_response = client
+        .post(format!("{gateway_url}/api/admin/users/batch-action"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .json(&json!({
+            "selection": {
+                "user_ids": ["user-1"]
+            },
+            "action": "update_role",
+            "payload": {
+                "role": "user"
+            }
+        }))
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(last_admin_demotion_response.status(), StatusCode::OK);
+    let last_admin_demotion_payload: serde_json::Value = last_admin_demotion_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(last_admin_demotion_payload["success"], 0);
+    assert_eq!(last_admin_demotion_payload["failed"], 1);
+    assert_eq!(
+        last_admin_demotion_payload["failures"][0]["reason"],
+        "不能降级最后一个管理员账户"
+    );
+
+    let detail_response = client
+        .get(format!("{gateway_url}/api/admin/users/user-1"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail_payload: serde_json::Value = detail_response
+        .json()
+        .await
+        .expect("json body should parse");
+    assert_eq!(detail_payload["role"], "admin");
+    assert_eq!(detail_payload["is_active"], true);
+    assert_eq!(detail_payload["unlimited"], false);
+    assert_eq!(detail_payload["allowed_providers"], serde_json::Value::Null);
+    assert_eq!(
+        detail_payload["allowed_api_formats"],
+        json!(["openai:responses"])
+    );
+    assert_eq!(detail_payload["allowed_models"], json!([]));
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
 }
 
 #[tokio::test]

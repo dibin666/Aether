@@ -9,9 +9,12 @@ use aether_data::repository::proxy_nodes::{
 };
 use aether_http::{build_http_client, HttpClientConfig};
 use aether_runtime::{
-    service_up_sample, AdmissionPermit, ConcurrencyGate, ConcurrencySnapshot,
-    DistributedConcurrencyError, DistributedConcurrencyGate, DistributedConcurrencySnapshot,
-    MetricKind, MetricLabel, MetricSample,
+    service_up_sample, AdmissionPermit, ConcurrencyGate, ConcurrencySnapshot, MetricKind,
+    MetricLabel, MetricSample,
+};
+use aether_runtime_state::{
+    MemoryRuntimeStateConfig, RuntimeQueueStore, RuntimeSemaphore, RuntimeSemaphoreError,
+    RuntimeSemaphoreSnapshot, RuntimeState,
 };
 use aether_scheduler_core::PROVIDER_KEY_RPM_WINDOW_SECS;
 use tokio::task::JoinHandle;
@@ -38,6 +41,7 @@ use super::super::{provider_transport, usage};
 use crate::maintenance::spawn_audit_cleanup_worker;
 use crate::maintenance::spawn_db_maintenance_worker;
 use crate::maintenance::spawn_gemini_file_mapping_cleanup_worker;
+use crate::maintenance::spawn_oauth_token_refresh_worker;
 use crate::maintenance::spawn_pending_cleanup_worker;
 use crate::maintenance::spawn_pool_monitor_worker;
 use crate::maintenance::spawn_pool_quota_probe_worker;
@@ -53,20 +57,32 @@ use crate::maintenance::spawn_wallet_daily_usage_aggregation_worker;
 const SYSTEM_CONFIG_CACHE_TTL: Duration = Duration::from_secs(3);
 
 impl AppState {
+    fn usage_worker_queue_for(
+        runtime_state: &Arc<RuntimeState>,
+    ) -> Option<Arc<dyn RuntimeQueueStore>> {
+        if runtime_state.is_redis() {
+            let queue: Arc<dyn RuntimeQueueStore> = runtime_state.clone();
+            Some(queue)
+        } else {
+            None
+        }
+    }
+
     fn spawn_scheduler_affinity_redis_write(
         &self,
         cache_key: &str,
         target: &SchedulerAffinityTarget,
         ttl: Duration,
     ) {
-        let Some(runner) = self.redis_kv_runner() else {
+        if self.runtime_state.is_memory() {
             return;
-        };
+        }
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             return;
         };
 
         let cache_key = cache_key.to_string();
+        let runtime_state = self.runtime_state.clone();
         let provider_id = target.provider_id.clone();
         let endpoint_id = target.endpoint_id.clone();
         let key_id = target.key_id.clone();
@@ -75,27 +91,55 @@ impl AppState {
         let expire_at = now_unix_secs.saturating_add(ttl_seconds);
 
         handle.spawn(async move {
+            let existing = runtime_state
+                .kv_get(&cache_key)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+            let request_count = existing
+                .as_ref()
+                .and_then(|value| value.get("request_count"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default()
+                .saturating_add(1);
+            let created_at = existing
+                .as_ref()
+                .and_then(|value| value.get("created_at"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(now_unix_secs);
             let payload = serde_json::json!({
                 "provider_id": provider_id,
                 "endpoint_id": endpoint_id,
                 "key_id": key_id,
-                "created_at": now_unix_secs,
+                "created_at": created_at,
                 "expire_at": expire_at,
-                "request_count": 0,
+                "request_count": request_count,
             });
-            let Ok(serialized) = serde_json::to_string(&payload) else {
-                return;
-            };
-            let _ = runner
-                .setex(&cache_key, &serialized, Some(ttl_seconds))
-                .await;
+            if let Ok(serialized) = serde_json::to_string(&payload) {
+                let _ = runtime_state
+                    .kv_set(
+                        &cache_key,
+                        serialized,
+                        Some(Duration::from_secs(ttl_seconds)),
+                    )
+                    .await;
+            }
         });
     }
 
     pub(crate) fn replace_data_state(&mut self, data: Arc<GatewayDataState>) {
         self.clear_provider_transport_snapshot_cache();
         self.system_config_cache.clear();
-        self.tunnel = crate::tunnel::EmbeddedTunnelState::with_data(Arc::clone(&data));
+        let data = Arc::new(
+            (*data)
+                .clone()
+                .with_usage_worker_queue(Self::usage_worker_queue_for(&self.runtime_state)),
+        );
+        self.tunnel = crate::tunnel::EmbeddedTunnelState::with_data_and_runtime_state(
+            Arc::clone(&data),
+            self.runtime_state.clone(),
+        );
         self.data = data;
     }
 
@@ -123,7 +167,11 @@ impl AppState {
     }
 
     fn build(execution_runtime_override_base_url: Option<String>) -> Result<Self, reqwest::Error> {
-        let data = Arc::new(GatewayDataState::disabled());
+        let runtime_state = Arc::new(RuntimeState::memory(MemoryRuntimeStateConfig::default()));
+        let data = Arc::new(
+            GatewayDataState::disabled()
+                .with_usage_worker_queue(Self::usage_worker_queue_for(&runtime_state)),
+        );
         let client = build_http_client(&HttpClientConfig {
             connect_timeout_ms: Some(10_000),
             request_timeout_ms: Some(300_000),
@@ -138,6 +186,7 @@ impl AppState {
             #[cfg(test)]
             execution_runtime_sync_override: None,
             data: Arc::clone(&data),
+            runtime_state: runtime_state.clone(),
             usage_runtime: Arc::new(usage::UsageRuntime::disabled()),
             video_tasks: Arc::new(VideoTaskService::new(
                 VideoTaskTruthSourceMode::PythonSyncReport,
@@ -158,7 +207,10 @@ impl AppState {
             frontdoor_user_rpm: Arc::new(FrontdoorUserRpmLimiter::new(
                 FrontdoorUserRpmConfig::default(),
             )),
-            tunnel: crate::tunnel::EmbeddedTunnelState::with_data(data),
+            tunnel: crate::tunnel::EmbeddedTunnelState::with_data_and_runtime_state(
+                data,
+                runtime_state.clone(),
+            ),
             provider_transport_snapshot_cache: Arc::new(StdMutex::new(HashMap::new())),
             provider_key_rpm_resets: Arc::new(StdMutex::new(HashMap::new())),
             local_execution_runtime_miss_diagnostics: Arc::new(StdMutex::new(HashMap::new())),
@@ -231,11 +283,12 @@ impl AppState {
         instance_id: impl Into<String>,
         relay_base_url: Option<impl Into<String>>,
     ) -> Self {
-        self.tunnel = crate::tunnel::EmbeddedTunnelState::with_data_and_identity(
+        self.tunnel = crate::tunnel::EmbeddedTunnelState::with_data_identity_and_runtime_state(
             Arc::clone(&self.data),
             instance_id,
             relay_base_url,
             90,
+            self.runtime_state.clone(),
         );
         self
     }
@@ -304,10 +357,21 @@ impl AppState {
         self
     }
 
-    pub fn with_distributed_request_concurrency_gate(
-        mut self,
-        gate: DistributedConcurrencyGate,
-    ) -> Self {
+    pub fn with_runtime_state(mut self, runtime_state: Arc<RuntimeState>) -> Self {
+        self.runtime_state = runtime_state;
+        self.data = Arc::new(
+            (*self.data)
+                .clone()
+                .with_usage_worker_queue(Self::usage_worker_queue_for(&self.runtime_state)),
+        );
+        self.tunnel = crate::tunnel::EmbeddedTunnelState::with_data_and_runtime_state(
+            Arc::clone(&self.data),
+            self.runtime_state.clone(),
+        );
+        self
+    }
+
+    pub fn with_distributed_request_concurrency_gate(mut self, gate: RuntimeSemaphore) -> Self {
         self.distributed_request_gate = Some(Arc::new(gate));
         self
     }
@@ -463,6 +527,44 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn purge_admin_system_data(
+        &self,
+        target: aether_data::repository::system::AdminSystemPurgeTarget,
+    ) -> Result<aether_data::repository::system::AdminSystemPurgeSummary, GatewayError> {
+        let summary = self
+            .data
+            .purge_admin_system_data(target)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        if matches!(
+            target,
+            aether_data::repository::system::AdminSystemPurgeTarget::Config
+                | aether_data::repository::system::AdminSystemPurgeTarget::Users
+                | aether_data::repository::system::AdminSystemPurgeTarget::Usage
+                | aether_data::repository::system::AdminSystemPurgeTarget::Stats
+        ) {
+            self.system_config_cache.clear();
+            self.clear_provider_transport_snapshot_cache();
+        }
+        Ok(summary)
+    }
+
+    pub(crate) async fn run_admin_system_cleanup_once(
+        &self,
+    ) -> Result<crate::maintenance::AdminSystemCleanupSummary, GatewayError> {
+        crate::maintenance::run_admin_system_cleanup_once(&self.data)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn rebuild_admin_stats_once(
+        &self,
+    ) -> Result<crate::maintenance::AdminStatsRebuildSummary, GatewayError> {
+        crate::maintenance::rebuild_admin_stats_once(&self.data)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
     pub(crate) async fn find_proxy_node(
         &self,
         node_id: &str,
@@ -594,7 +696,7 @@ impl AppState {
 
     pub(crate) async fn distributed_request_concurrency_snapshot(
         &self,
-    ) -> Result<Option<DistributedConcurrencySnapshot>, DistributedConcurrencyError> {
+    ) -> Result<Option<RuntimeSemaphoreSnapshot>, RuntimeSemaphoreError> {
         match self.distributed_request_gate.as_ref() {
             Some(gate) => gate.snapshot().await.map(Some),
             None => Ok(None),
@@ -737,11 +839,62 @@ impl AppState {
     }
 
     pub fn has_redis_data_backend(&self) -> bool {
-        self.data.has_redis_backend()
+        self.runtime_state.is_redis()
     }
 
-    pub(crate) fn redis_kv_runner(&self) -> Option<aether_data::driver::redis::RedisKvRunner> {
-        self.data.kv_runner()
+    pub(crate) fn runtime_state_backend(&self) -> &'static str {
+        self.runtime_state.backend_kind().as_str()
+    }
+
+    pub fn runtime_state(&self) -> &RuntimeState {
+        self.runtime_state.as_ref()
+    }
+
+    pub(crate) async fn runtime_kv_setex(
+        &self,
+        key: &str,
+        value: &str,
+        ttl_seconds: u64,
+    ) -> Result<(), GatewayError> {
+        self.runtime_state
+            .kv_set(
+                key,
+                value.to_string(),
+                Some(Duration::from_secs(ttl_seconds)),
+            )
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn runtime_kv_get(&self, key: &str) -> Result<Option<String>, GatewayError> {
+        self.runtime_state
+            .kv_get(key)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn runtime_kv_getdel(
+        &self,
+        key: &str,
+    ) -> Result<Option<String>, GatewayError> {
+        self.runtime_state
+            .kv_take(key)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn runtime_kv_del(&self, key: &str) -> Result<bool, GatewayError> {
+        self.runtime_state
+            .kv_delete(key)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn runtime_kv_exists(&self, key: &str) -> Result<bool, GatewayError> {
+        self.runtime_state
+            .kv_exists(key)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
     pub(crate) fn remove_scheduler_affinity_cache_entry(&self, cache_key: &str) -> bool {
@@ -830,6 +983,9 @@ impl AppState {
             tasks.push(handle);
         }
         if let Some(handle) = spawn_provider_checkin_worker(self.clone()) {
+            tasks.push(handle);
+        }
+        if let Some(handle) = spawn_oauth_token_refresh_worker(self.clone()) {
             tasks.push(handle);
         }
         if let Some(handle) = spawn_request_candidate_cleanup_worker(self.data.clone()) {

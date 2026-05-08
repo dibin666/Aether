@@ -224,6 +224,22 @@ impl UserReadRepository for SqliteUserReadRepository {
         if let Some(is_active) = query.is_active {
             builder.push(" AND is_active = ").push_bind(is_active);
         }
+        if let Some(search) = query
+            .search
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let pattern = format!("%{}%", search.to_ascii_lowercase());
+            builder
+                .push(" AND (LOWER(id) LIKE ")
+                .push_bind(pattern.clone())
+                .push(" OR LOWER(username) LIKE ")
+                .push_bind(pattern.clone())
+                .push(" OR LOWER(COALESCE(email, '')) LIKE ")
+                .push_bind(pattern)
+                .push(")");
+        }
         builder
             .push(" ORDER BY id ASC LIMIT ")
             .push_bind(i64::try_from(query.limit).map_err(|_| {
@@ -655,6 +671,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         allowed_api_formats: Option<Vec<String>>,
         allowed_models_present: bool,
         allowed_models: Option<Vec<String>>,
+        rate_limit_present: bool,
         rate_limit: Option<i32>,
         is_active: Option<bool>,
     ) -> Result<Option<StoredUserAuthRecord>, DataLayerError> {
@@ -688,7 +705,7 @@ WHERE id = ?
             allowed_models,
             "users.allowed_models",
         )?)
-        .bind(rate_limit.is_some())
+        .bind(rate_limit_present)
         .bind(rate_limit)
         .bind(is_active.is_some())
         .bind(is_active)
@@ -1542,6 +1559,7 @@ INSERT INTO users (
                 limit: 10,
                 role: Some("user".to_string()),
                 is_active: Some(true),
+                search: None,
             })
             .await
             .expect("export page should load");
@@ -1638,6 +1656,7 @@ INSERT INTO users (
                 Some(vec!["responses".to_string()]),
                 true,
                 Some(vec!["gpt-4.1-mini".to_string()]),
+                true,
                 Some(5),
                 Some(false),
             )
