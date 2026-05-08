@@ -1339,7 +1339,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_scheduler_cache_affinity_precedes_soft_quota_strategy() {
+    fn pool_scheduler_quota_balanced_precedes_cache_affinity_distribution() {
         let scheduling_config = Some(json!({
             "pool_advanced": {
                 "scheduling_presets": [
@@ -1401,12 +1401,12 @@ mod tests {
                 .iter()
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["key-recent", "key-less-used"]
+            vec!["key-less-used", "key-recent"]
         );
     }
 
     #[test]
-    fn pool_scheduler_cache_affinity_reuses_selected_key_before_plan_order() {
+    fn pool_scheduler_plan_order_precedes_sticky_cache_affinity() {
         let scheduling_config = Some(json!({
             "pool_advanced": {
                 "scheduling_presets": [
@@ -1487,7 +1487,7 @@ mod tests {
                 .iter()
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["key-free", "key-team", "key-plus"]
+            vec!["key-plus", "key-team", "key-free"]
         );
     }
 
@@ -1779,7 +1779,7 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_distribution_mutex_group_to_first_enabled_member() {
+    fn normalizes_non_distribution_presets_before_selected_distribution_member() {
         let presets = normalize_enabled_ai_pool_presets(
             &[
                 AiPoolSchedulingPreset {
@@ -1806,7 +1806,7 @@ mod tests {
             "openai",
         );
 
-        assert_eq!(presets, ["single_account", "priority_first"]);
+        assert_eq!(presets, ["priority_first", "single_account"]);
     }
 
     #[test]

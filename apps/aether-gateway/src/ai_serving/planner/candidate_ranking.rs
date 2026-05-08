@@ -20,7 +20,7 @@ use aether_scheduler_core::{
 };
 
 use super::candidate_affinity_cache::read_cached_scheduler_affinity_target;
-use super::candidate_resolution::EligibleLocalExecutionCandidate;
+use super::candidate_resolution::{EligibleLocalExecutionCandidate, LocalExecutionCandidateKind};
 use super::candidate_transport_ranking_facts::{
     resolve_cached_transport_ranking_facts, CandidateTransportRankingFacts,
 };
@@ -88,7 +88,7 @@ impl AiCandidateRankingPort for GatewayLocalCandidateRankingPort<'_> {
             self.ordering_config,
         )
         .await;
-        Ok(build_ai_rankable_candidate(AiRankableCandidateParts {
+        let mut rankable = build_ai_rankable_candidate(AiRankableCandidateParts {
             candidate: &candidate.candidate,
             original_index,
             normalized_client_api_format,
@@ -97,7 +97,13 @@ impl AiCandidateRankingPort for GatewayLocalCandidateRankingPort<'_> {
             cached_affinity_match,
             tunnel_bucket: ranking_facts.tunnel_bucket,
             keep_priority_on_conversion: ranking_facts.keep_priority_on_conversion,
-        }))
+        });
+
+        if cached_affinity_match && candidate.kind == LocalExecutionCandidateKind::PoolGroup {
+            promote_cached_pool_group_rankable_priority(&mut rankable);
+        }
+
+        Ok(rankable)
     }
 
     fn ranking_context(&self) -> SchedulerRankingContext {
@@ -170,6 +176,12 @@ fn cached_affinity_matches_local_execution_scope(
 fn local_execution_candidate_uses_pool(eligible: &EligibleLocalExecutionCandidate) -> bool {
     admin_provider_pool_config_from_config_value(eligible.transport.provider.config.as_ref())
         .is_some()
+}
+
+fn promote_cached_pool_group_rankable_priority(rankable: &mut SchedulerRankableCandidate) {
+    rankable.provider_priority = i32::MIN;
+    rankable.key_internal_priority = i32::MIN;
+    rankable.key_global_priority_for_format = Some(i32::MIN);
 }
 
 fn ai_ranking_context_config(ordering_config: SchedulerOrderingConfig) -> AiRankingContextConfig {
