@@ -1814,7 +1814,7 @@ function createEmptyKeyPage(page = 1, pageSizeValue = 50): PoolKeysPageResponse 
 
 const keyPage = ref<PoolKeysPageResponse>(createEmptyKeyPage())
 const poolQuotaSummary = computed(() => keyPage.value.quota_summary ?? null)
-const PLAN_SUMMARY_ORDER = ['plus', 'pro', 'team', 'free', 'enterprise', 'business', 'paid', 'unknown']
+const PLAN_SUMMARY_ORDER = ['plus', 'team', 'pro', 'free', 'enterprise', 'business', 'paid', 'unknown']
 const POOL_KEY_FREE_PLAN_DISPLAY_RANK = 8
 const POOL_KEY_UNKNOWN_PLAN_DISPLAY_RANK = 9
 type PoolQuotaFilter = 'quota_available' | 'quota_exhausted'
@@ -2499,10 +2499,8 @@ function comparePoolKeysByDisplayOrder(a: PoolKeyDetail, b: PoolKeyDetail): numb
   const planRankB = getPoolKeyPlanDisplayRank(b.oauth_plan_type)
   if (planRankA !== planRankB) return planRankA - planRankB
 
-  if (planRankA === POOL_KEY_FREE_PLAN_DISPLAY_RANK) {
-    const createdOrder = (a.created_at || '').localeCompare(b.created_at || '')
-    if (createdOrder !== 0) return createdOrder
-  }
+  const createdOrder = (a.created_at || '').localeCompare(b.created_at || '')
+  if (createdOrder !== 0) return createdOrder
 
   const priorityA = Number(a.internal_priority ?? 50)
   const priorityB = Number(b.internal_priority ?? 50)
@@ -2510,9 +2508,6 @@ function comparePoolKeysByDisplayOrder(a: PoolKeyDetail, b: PoolKeyDetail): numb
 
   const nameOrder = (a.key_name || '').localeCompare(b.key_name || '')
   if (nameOrder !== 0) return nameOrder
-
-  const createdOrder = (a.created_at || '').localeCompare(b.created_at || '')
-  if (createdOrder !== 0) return createdOrder
 
   return a.key_id.localeCompare(b.key_id)
 }
