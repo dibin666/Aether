@@ -174,26 +174,36 @@ fn admin_pool_sort_keys_for_request(
             pool_selection::admin_pool_sort_keys(state, provider_type, keys)
         }
         AdminPoolKeySortField::ImportedAt => {
-            keys.sort_by(|left, right| {
-                admin_pool_compare_optional_unix_secs(
-                    left.created_at_unix_ms,
-                    right.created_at_unix_ms,
-                    sort.direction,
-                )
-                .then(left.name.cmp(&right.name))
-                .then(left.id.cmp(&right.id))
-            });
+            pool_selection::admin_pool_sort_keys_by_plan_then(
+                state,
+                provider_type,
+                keys,
+                |left, right| {
+                    admin_pool_compare_optional_unix_secs(
+                        left.created_at_unix_ms,
+                        right.created_at_unix_ms,
+                        sort.direction,
+                    )
+                    .then(left.name.cmp(&right.name))
+                    .then(left.id.cmp(&right.id))
+                },
+            );
         }
         AdminPoolKeySortField::LastUsedAt => {
-            keys.sort_by(|left, right| {
-                admin_pool_compare_optional_unix_secs(
-                    left.last_used_at_unix_secs,
-                    right.last_used_at_unix_secs,
-                    sort.direction,
-                )
-                .then(left.name.cmp(&right.name))
-                .then(left.id.cmp(&right.id))
-            });
+            pool_selection::admin_pool_sort_keys_by_plan_then(
+                state,
+                provider_type,
+                keys,
+                |left, right| {
+                    admin_pool_compare_optional_unix_secs(
+                        left.last_used_at_unix_secs,
+                        right.last_used_at_unix_secs,
+                        sort.direction,
+                    )
+                    .then(left.name.cmp(&right.name))
+                    .then(left.id.cmp(&right.id))
+                },
+            );
         }
     }
 }

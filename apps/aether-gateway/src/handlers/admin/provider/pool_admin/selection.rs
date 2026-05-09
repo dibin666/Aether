@@ -26,31 +26,44 @@ fn admin_pool_parse_auth_config_json(
         .cloned()
 }
 
+fn admin_pool_normalize_oauth_plan_type(value: &str, provider_type: &str) -> Option<String> {
+    let mut text = value.trim().to_string();
+    if text.is_empty() {
+        return None;
+    }
+    let provider_type = provider_type.trim().to_ascii_lowercase();
+    if !provider_type.is_empty() && text.to_ascii_lowercase().starts_with(&provider_type) {
+        text = text[provider_type.len()..]
+            .trim_matches(|ch: char| [' ', ':', '-', '_'].contains(&ch))
+            .to_string();
+    }
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_ascii_lowercase())
+    }
+}
+
 fn admin_pool_derive_oauth_plan_type(
     state: &AdminAppState<'_>,
     key: &StoredProviderCatalogKey,
     provider_type: &str,
 ) -> Option<String> {
-    let normalize = |value: &str| {
-        let mut text = value.trim().to_string();
-        if text.is_empty() {
-            return None;
-        }
-        let provider_type = provider_type.trim().to_ascii_lowercase();
-        if !provider_type.is_empty() && text.to_ascii_lowercase().starts_with(&provider_type) {
-            text = text[provider_type.len()..]
-                .trim_matches(|ch: char| [' ', ':', '-', '_'].contains(&ch))
-                .to_string();
-        }
-        if text.is_empty() {
-            None
-        } else {
-            Some(text.to_ascii_lowercase())
-        }
-    };
-
     if !provider_key_is_oauth_managed(key, provider_type) {
         return None;
+    }
+
+    if let Some(value) = key
+        .status_snapshot
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .and_then(|snapshot| snapshot.get("quota"))
+        .and_then(serde_json::Value::as_object)
+        .and_then(|quota| quota.get("plan_type"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| admin_pool_normalize_oauth_plan_type(value, provider_type))
+    {
+        return Some(value);
     }
 
     if let Some(upstream_metadata) = key
@@ -70,9 +83,12 @@ fn admin_pool_derive_oauth_plan_type(
                 "tier",
                 "subscription_title",
                 "subscription_plan",
+                "plan",
             ] {
                 if let Some(value) = source.get(plan_key).and_then(serde_json::Value::as_str) {
-                    if let Some(normalized) = normalize(value) {
+                    if let Some(normalized) =
+                        admin_pool_normalize_oauth_plan_type(value, provider_type)
+                    {
                         return Some(normalized);
                     }
                 }
@@ -86,7 +102,8 @@ fn admin_pool_derive_oauth_plan_type(
                 .get(plan_key)
                 .and_then(serde_json::Value::as_str)
             {
-                if let Some(normalized) = normalize(value) {
+                if let Some(normalized) = admin_pool_normalize_oauth_plan_type(value, provider_type)
+                {
                     return Some(normalized);
                 }
             }
@@ -167,25 +184,46 @@ fn admin_pool_compare_keys_for_display(
         return plan_order;
     }
 
-    if left_plan_rank == ADMIN_POOL_FREE_PLAN_DISPLAY_RANK {
-        let created_order = left
-            .created_at_unix_ms
-            .unwrap_or_default()
-            .cmp(&right.created_at_unix_ms.unwrap_or_default());
-        if created_order != Ordering::Equal {
-            return created_order;
-        }
-    }
-
-    left.internal_priority
-        .cmp(&right.internal_priority)
+    left.created_at_unix_ms
+        .unwrap_or_default()
+        .cmp(&right.created_at_unix_ms.unwrap_or_default())
+        .then(left.internal_priority.cmp(&right.internal_priority))
         .then(left.name.cmp(&right.name))
-        .then(
-            left.created_at_unix_ms
-                .unwrap_or_default()
-                .cmp(&right.created_at_unix_ms.unwrap_or_default()),
-        )
         .then(left.id.cmp(&right.id))
+}
+
+pub(super) fn admin_pool_sort_keys_by_plan_then<F>(
+    state: &AdminAppState<'_>,
+    provider_type: &str,
+    keys: &mut [StoredProviderCatalogKey],
+    compare_same_plan_rank: F,
+) where
+    F: Fn(&StoredProviderCatalogKey, &StoredProviderCatalogKey) -> Ordering,
+{
+    let plan_by_key_id = keys
+        .iter()
+        .map(|key| {
+            (
+                key.id.clone(),
+                admin_pool_derive_oauth_plan_type(state, key, provider_type),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    keys.sort_by(|left, right| {
+        let left_plan = plan_by_key_id
+            .get(&left.id)
+            .and_then(|value| value.as_deref());
+        let right_plan = plan_by_key_id
+            .get(&right.id)
+            .and_then(|value| value.as_deref());
+        let plan_order =
+            admin_pool_display_plan_rank(left_plan).cmp(&admin_pool_display_plan_rank(right_plan));
+        if plan_order != Ordering::Equal {
+            return plan_order;
+        }
+        compare_same_plan_rank(left, right)
+    });
 }
 
 pub(super) fn admin_pool_sort_keys(
@@ -238,6 +276,7 @@ mod tests {
         let mut keys = vec![
             (sort_key("free-new", "free-new", 1, 300), Some("free")),
             (sort_key("team", "team", 50, 100), Some("team")),
+            (sort_key("pro", "pro", 50, 400), Some("pro")),
             (sort_key("free-old", "free-old", 99, 100), Some("free")),
             (sort_key("plus", "plus", 99, 200), Some("plus")),
         ];
@@ -250,6 +289,28 @@ mod tests {
             .iter()
             .map(|(key, _)| key.id.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(ordered_ids, vec!["plus", "team", "free-old", "free-new"]);
+        assert_eq!(
+            ordered_ids,
+            vec!["plus", "team", "pro", "free-old", "free-new"]
+        );
+    }
+
+    #[test]
+    fn display_sort_keeps_newer_keys_after_older_keys_in_same_plan() {
+        let mut keys = vec![
+            (sort_key("plus-new", "plus-new", 1, 300), Some("plus")),
+            (sort_key("plus-old", "plus-old", 999, 100), Some("plus")),
+            (sort_key("free", "free", 50, 50), Some("free")),
+        ];
+
+        keys.sort_by(|(left, left_plan), (right, right_plan)| {
+            admin_pool_compare_keys_for_display(left, right, *left_plan, *right_plan)
+        });
+
+        let ordered_ids = keys
+            .iter()
+            .map(|(key, _)| key.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ordered_ids, vec!["plus-old", "plus-new", "free"]);
     }
 }

@@ -43,7 +43,7 @@ export const DEFAULT_POOL_MANAGEMENT_VIEW_STATE: PoolManagementViewState = {
   status: 'all',
   page: 1,
   pageSize: 50,
-  sortBy: 'imported_at',
+  sortBy: null,
   sortOrder: 'desc',
   statsMode: 'current_cycle',
 }
@@ -76,7 +76,15 @@ function normalizeSortBy(value: unknown): PoolManagementSortBy | null {
   if (value === 'imported_at' || value === 'last_used_at') {
     return value
   }
-  return DEFAULT_POOL_MANAGEMENT_VIEW_STATE.sortBy
+  return null
+}
+
+function normalizeStoredViewState(storage?: StorageLike): PoolManagementViewState {
+  const stored = normalizeViewState(readStoredState(storage))
+  if (stored.sortBy === 'imported_at' && stored.sortOrder === 'desc') {
+    return { ...stored, sortBy: null }
+  }
+  return stored
 }
 
 function normalizeSortOrder(value: unknown): PoolManagementSortOrder {
@@ -117,7 +125,7 @@ export function readPoolManagementViewState(
   source: PoolManagementStateSource,
   storage?: StorageLike,
 ): PoolManagementViewState {
-  const stored = normalizeViewState(readStoredState(storage))
+  const stored = normalizeStoredViewState(storage)
 
   return {
     providerId: source.providerId !== undefined ? normalizeProviderId(source.providerId) : stored.providerId,

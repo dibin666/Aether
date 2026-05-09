@@ -147,6 +147,19 @@ fn admin_pool_derive_oauth_plan_type(
         return None;
     }
 
+    if let Some(value) = key
+        .status_snapshot
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .and_then(|snapshot| snapshot.get("quota"))
+        .and_then(serde_json::Value::as_object)
+        .and_then(|quota| quota.get("plan_type"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| admin_pool_normalize_oauth_plan_type(value, provider_type))
+    {
+        return Some(value);
+    }
+
     if let Some(upstream_metadata) = key
         .upstream_metadata
         .as_ref()
@@ -164,6 +177,7 @@ fn admin_pool_derive_oauth_plan_type(
                 "tier",
                 "subscription_title",
                 "subscription_plan",
+                "plan",
             ] {
                 if let Some(value) = source.get(field).and_then(serde_json::Value::as_str) {
                     let normalized = admin_pool_normalize_oauth_plan_type(value, provider_type);
