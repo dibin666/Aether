@@ -601,7 +601,7 @@
                     class="max-w-[208px] space-y-2"
                   >
                     <div
-                      v-for="(item, idx) in getQuotaProgressItems(key.key_id).slice(0, 2)"
+                      v-for="(item, idx) in getQuotaProgressItems(key.key_id)"
                       :key="`${key.key_id}-quota-${idx}`"
                       class="flex flex-col gap-1 min-w-[140px] max-w-[208px]"
                     >
@@ -2156,6 +2156,27 @@ function refreshOverviewInBackground(): void {
   void loadOverview()
 }
 
+function applyQuotaRefreshResultToCurrentPage(result: Awaited<ReturnType<typeof refreshProviderQuota>>): void {
+  const successfulResults = Array.isArray(result.results)
+    ? result.results.filter((item) => item.status === 'success' && item.quota_snapshot)
+    : []
+  if (successfulResults.length === 0) return
+
+  const quotaByKeyId = new Map(successfulResults.map((item) => [item.key_id, item.quota_snapshot!]))
+  keyPage.value.keys = keyPage.value.keys.map((key) => {
+    const quotaSnapshot = quotaByKeyId.get(key.key_id)
+    if (!quotaSnapshot) return key
+    return {
+      ...key,
+      quota_updated_at: quotaSnapshot.updated_at ?? quotaSnapshot.observed_at ?? key.quota_updated_at ?? null,
+      status_snapshot: {
+        ...(key.status_snapshot ?? {}),
+        quota: quotaSnapshot,
+      },
+    }
+  })
+}
+
 function normalizeQuotaUpdatedAt(raw: number | null | undefined): number | null {
   const value = Number(raw ?? 0)
   if (!Number.isFinite(value) || value <= 0) return null
@@ -2223,6 +2244,7 @@ async function refreshCurrentPageQuotaInBackground(
   refreshingCurrentPageQuota.value = true
   try {
     const result = await refreshProviderQuota(providerId, quotaStats.eligibleIds)
+    applyQuotaRefreshResultToCurrentPage(result)
     const successCount = Number(result.success || 0)
     const failedCount = Number(result.failed || 0)
     const skippedCount = Math.max(quotaStats.total - quotaStats.eligibleIds.length, 0)
@@ -3313,19 +3335,11 @@ function getAccountAlertTitle(key: PoolKeyDetail): string {
   return label
 }
 
-function normalizeQuotaLabel(label: string): string {
-  const normalized = label.trim()
-  if (!normalized) return '额度'
-  if (normalized.includes('5H')) return '5H'
-  if (normalized.includes('周')) return '周'
-  if (normalized.includes('最低剩余')) return '最低'
-  if (normalized === '剩余' || normalized.includes('剩余')) return '剩余'
-  return normalized
-}
-
 function getQuotaProgressLabel(label: string): string {
   if (label === '5H') return '5H'
   if (label === '周') return '周'
+  if (label === 'Spark5H') return 'Spark5H'
+  if (label === 'Spark周') return 'Spark周'
   if (label === '最低') return '最低'
   if (label === '剩余') return '剩余'
   return label

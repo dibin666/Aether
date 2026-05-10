@@ -3,9 +3,11 @@ import type { QuotaStatusSnapshot, QuotaWindowSnapshot } from '@/api/endpoints/t
 import { getCodexResetCountdown } from '@/composables/useCountdownTimer'
 import { getLegacyAccountQuotaText } from '@/utils/providerKeyQuota'
 
-const QUOTA_COUNTDOWN_WINDOWS: Record<'5H' | '周', number> = {
+const QUOTA_COUNTDOWN_WINDOWS: Record<'5H' | '周' | 'Spark5H' | 'Spark周', number> = {
   '5H': 5 * 60 * 60,
   '周': 7 * 24 * 60 * 60,
+  Spark5H: 5 * 60 * 60,
+  Spark周: 7 * 24 * 60 * 60,
 }
 
 export interface QuotaProgressItem {
@@ -18,15 +20,17 @@ export interface QuotaProgressItem {
 }
 
 export function isQuotaCountdownLabel(label: string): label is keyof typeof QUOTA_COUNTDOWN_WINDOWS {
-  return label === '5H' || label === '周'
+  return label === '5H' || label === '周' || label === 'Spark5H' || label === 'Spark周'
 }
 
 function getQuotaLabelOrder(label: string): number {
   if (label === '5H') return 0
   if (label === '周') return 1
-  if (label === '剩余') return 2
-  if (label === '最低') return 3
-  if (label === '生图') return 4
+  if (label === 'Spark5H') return 2
+  if (label === 'Spark周') return 3
+  if (label === '剩余') return 4
+  if (label === '最低') return 5
+  if (label === '生图') return 6
   return 10
 }
 
@@ -40,6 +44,8 @@ function clampPercent(value: number): number {
 function normalizeQuotaLabel(label: string): string {
   const normalized = label.trim()
   if (!normalized) return '额度'
+  if (/spark\s*5h/i.test(normalized) || normalized.includes('Spark5H')) return 'Spark5H'
+  if (/spark/i.test(normalized) && normalized.includes('周')) return 'Spark周'
   if (normalized.includes('5H')) return '5H'
   if (normalized.includes('周')) return '周'
   if (normalized.includes('最低剩余')) return '最低'
@@ -157,7 +163,12 @@ function buildQuotaProgressItemsFromSnapshot(
 
   if (providerType === 'codex') {
     const items: QuotaProgressItem[] = []
-    for (const [label, code] of [['5H', '5h'], ['周', 'weekly']] as const) {
+    for (const [label, code] of [
+      ['5H', '5h'],
+      ['周', 'weekly'],
+      ['Spark5H', 'spark_5h'],
+      ['Spark周', 'spark_weekly'],
+    ] as const) {
       const window = getQuotaSnapshotWindow(quota, code)
       const remainingPercent = getQuotaWindowRemainingPercent(window)
       if (remainingPercent == null) continue
@@ -248,10 +259,17 @@ function resolveCodexQuotaCountdown(
   label: string,
   fallbackProviderType?: string | null,
 ): Pick<QuotaProgressItem, 'resetAtSeconds' | 'resetSeconds' | 'updatedAtSeconds'> | null {
-  if (!isQuotaCountdownLabel(label)) return null
+  const codexWindowCodeByLabel: Record<string, string> = {
+    '5H': '5h',
+    '周': 'weekly',
+    Spark5H: 'spark_5h',
+    Spark周: 'spark_weekly',
+  }
+  const windowCode = codexWindowCodeByLabel[label]
+  if (!windowCode) return null
 
   const codexSnapshot = getCodexQuotaSnapshot(key, fallbackProviderType)
-  const snapshotWindow = getQuotaSnapshotWindow(codexSnapshot, label === '周' ? 'weekly' : '5h')
+  const snapshotWindow = getQuotaSnapshotWindow(codexSnapshot, windowCode)
   if (!snapshotWindow) return null
 
   const resetAtSeconds = normalizeUnixSeconds(snapshotWindow.reset_at ?? null)
