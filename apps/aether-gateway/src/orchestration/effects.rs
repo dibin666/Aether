@@ -27,9 +27,11 @@ use crate::handlers::shared::provider_pool::admin_provider_pool_config_from_conf
 use crate::handlers::shared::provider_pool::{
     admin_provider_pool_key_circuit_breaker_reason, record_admin_provider_pool_error,
     record_admin_provider_pool_stream_timeout, record_admin_provider_pool_success,
-    AdminProviderPoolConfig,
+    release_admin_provider_pool_key_lease, AdminProviderPoolConfig,
 };
+use crate::orchestration::local_execution_candidate_metadata_from_report_context;
 use crate::scheduler::affinity::SCHEDULER_AFFINITY_TTL;
+use crate::scheduler::config::{read_scheduler_ordering_config, SchedulerSchedulingMode};
 use crate::AppState;
 
 #[derive(Debug, Clone, Copy)]
@@ -129,16 +131,37 @@ pub(crate) async fn apply_local_execution_effect(
         }
         LocalExecutionEffect::PoolSuccessSync { payload } => {
             record_sync_pool_success_effect(state, context, payload).await;
+            release_pool_key_lease_effect(state, context).await;
         }
         LocalExecutionEffect::PoolSuccessStream { payload } => {
             record_stream_pool_success_effect(state, context, payload).await;
+            release_pool_key_lease_effect(state, context).await;
         }
         LocalExecutionEffect::PoolError(effect) => {
             record_pool_error_effect(state, context, effect).await;
+            release_pool_key_lease_effect(state, context).await;
         }
         LocalExecutionEffect::PoolStreamTimeout => {
             record_pool_stream_timeout_effect(state, context).await;
+            release_pool_key_lease_effect(state, context).await;
         }
+    }
+}
+
+async fn release_pool_key_lease_effect(state: &AppState, context: LocalExecutionEffectContext<'_>) {
+    let metadata = local_execution_candidate_metadata_from_report_context(context.report_context);
+    let Some(lease) = metadata.pool_key_lease else {
+        return;
+    };
+    if let Err(err) =
+        release_admin_provider_pool_key_lease(state.runtime_state.as_ref(), &lease).await
+    {
+        warn!(
+            error = ?err,
+            provider_id = %context.plan.provider_id,
+            key_id = %context.plan.key_id,
+            "gateway orchestration effects: failed to release pool key lease"
+        );
     }
 }
 
@@ -216,22 +239,44 @@ fn local_scheduler_affinity_target(plan: &ExecutionPlan) -> Option<SchedulerAffi
     })
 }
 
-fn remember_successful_local_scheduler_affinity(
+async fn scheduler_cache_affinity_enabled(state: &AppState) -> bool {
+    match read_scheduler_ordering_config(state).await {
+        Ok(config) => config.scheduling_mode == SchedulerSchedulingMode::CacheAffinity,
+        Err(error) => {
+            warn!(
+                event_name = "orchestration_scheduler_affinity_config_load_failed",
+                log_type = "event",
+                error = ?error,
+                "failed to load scheduler config while checking cache affinity mode"
+            );
+            SchedulerSchedulingMode::default() == SchedulerSchedulingMode::CacheAffinity
+        }
+    }
+}
+
+async fn remember_successful_local_scheduler_affinity(
     state: &AppState,
     context: LocalExecutionEffectContext<'_>,
 ) {
+    if !scheduler_cache_affinity_enabled(state).await {
+        return;
+    }
     let Some(cache_key) = local_scheduler_affinity_cache_key(context.report_context) else {
         return;
     };
     let Some(target) = local_scheduler_affinity_target(context.plan) else {
         return;
     };
+    let expected_epoch =
+        local_execution_candidate_metadata_from_report_context(context.report_context)
+            .scheduler_affinity_epoch;
 
-    state.remember_scheduler_affinity_target(
+    let _ = state.remember_scheduler_affinity_target_for_epoch(
         &cache_key,
         target,
         SCHEDULER_AFFINITY_TTL,
         LOCAL_EXECUTION_SCHEDULER_AFFINITY_MAX_ENTRIES,
+        expected_epoch,
     );
 }
 
@@ -490,7 +535,7 @@ async fn record_health_success_effect(
     context: LocalExecutionEffectContext<'_>,
     _effect: LocalHealthSuccessEffect,
 ) {
-    remember_successful_local_scheduler_affinity(state, context);
+    remember_successful_local_scheduler_affinity(state, context).await;
 
     let api_format = context.plan.provider_api_format.trim();
     if api_format.is_empty() {
@@ -1334,6 +1379,41 @@ mod tests {
                 key_id: "key-1".to_string(),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn load_balance_success_does_not_remember_scheduler_affinity_cache() {
+        let state = AppState::new()
+            .expect("gateway state should build")
+            .with_data_state_for_tests(
+                GatewayDataState::disabled().with_system_config_values_for_tests(vec![(
+                    "scheduling_mode".to_string(),
+                    json!("load_balance"),
+                )]),
+            );
+        let plan = sample_plan();
+        let report_context = json!({
+            "api_key_id": "api-key-1",
+            "client_api_format": "openai:chat",
+            "model": "gpt-5",
+        });
+        let cache_key =
+            build_scheduler_affinity_cache_key_for_api_key_id("api-key-1", "openai:chat", "gpt-5")
+                .expect("scheduler affinity cache key should build");
+
+        apply_local_execution_effect(
+            &state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: Some(&report_context),
+            },
+            LocalExecutionEffect::HealthSuccess(LocalHealthSuccessEffect),
+        )
+        .await;
+
+        assert!(state
+            .read_scheduler_affinity_target(cache_key.as_str(), SCHEDULER_AFFINITY_TTL)
+            .is_none());
     }
 
     #[tokio::test]

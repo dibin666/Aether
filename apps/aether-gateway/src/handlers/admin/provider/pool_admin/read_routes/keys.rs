@@ -10,7 +10,9 @@ use super::{
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::GatewayError;
 use aether_admin::provider::pool as admin_provider_pool_pure;
-use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
+use aether_data_contracts::repository::provider_catalog::{
+    ProviderCatalogKeyListOrder, ProviderCatalogKeyListQuery, StoredProviderCatalogKey,
+};
 use aether_data_contracts::repository::usage::{
     ProviderApiKeyWindowUsageRequest, StoredProviderApiKeyWindowUsageSummary,
 };
@@ -208,6 +210,24 @@ fn admin_pool_sort_keys_for_request(
     }
 }
 
+fn admin_pool_repository_key_order(sort: AdminPoolKeySort) -> ProviderCatalogKeyListOrder {
+    match (sort.field, sort.direction) {
+        (AdminPoolKeySortField::Default, _) => ProviderCatalogKeyListOrder::Name,
+        (AdminPoolKeySortField::ImportedAt, AdminPoolKeySortDirection::Asc) => {
+            ProviderCatalogKeyListOrder::CreatedAtAsc
+        }
+        (AdminPoolKeySortField::ImportedAt, AdminPoolKeySortDirection::Desc) => {
+            ProviderCatalogKeyListOrder::CreatedAtDesc
+        }
+        (AdminPoolKeySortField::LastUsedAt, AdminPoolKeySortDirection::Asc) => {
+            ProviderCatalogKeyListOrder::LastUsedAtAsc
+        }
+        (AdminPoolKeySortField::LastUsedAt, AdminPoolKeySortDirection::Desc) => {
+            ProviderCatalogKeyListOrder::LastUsedAtDesc
+        }
+    }
+}
+
 pub(super) async fn build_admin_pool_list_keys_response(
     state: &AdminAppState<'_>,
     request_context: &AdminRequestContext<'_>,
@@ -282,7 +302,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
     let pool_config = admin_provider_pool_config(&provider);
     let page_offset = page.saturating_sub(1).saturating_mul(page_size);
 
-    let mut keys = if status == "cooldown" {
+    let (keys, total, quota_summary_keys) = if status == "cooldown" {
         let cooldown_key_ids =
             read_admin_provider_pool_cooldown_key_ids(state.runtime_state(), &provider.id).await;
         let mut keys = if cooldown_key_ids.is_empty() {
@@ -302,9 +322,29 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 )
             });
         }
-        keys
-    } else {
-        state
+        if !quick_selectors.is_empty() {
+            keys.retain(|key| {
+                quick_selectors.iter().all(|selector| {
+                    pool_selection::admin_pool_matches_quick_selector(
+                        state,
+                        key,
+                        &provider.provider_type,
+                        selector,
+                    )
+                })
+            });
+        }
+        admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
+        let total = keys.len();
+        let quota_summary_keys = keys.clone();
+        let keys = keys
+            .into_iter()
+            .skip(page_offset)
+            .take(page_size)
+            .collect::<Vec<_>>();
+        (keys, total, quota_summary_keys)
+    } else if !quick_selectors.is_empty() {
+        let mut keys = state
             .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
             .await?
             .into_iter()
@@ -321,29 +361,61 @@ pub(super) async fn build_admin_pool_list_keys_response(
                     search.as_deref(),
                 )
             })
-            .collect::<Vec<_>>()
-    };
-
-    let quota_summary_keys = keys.clone();
-    if !quick_selectors.is_empty() {
-        keys.retain(|key| {
-            quick_selectors.iter().all(|selector| {
-                pool_selection::admin_pool_matches_quick_selector(
+            .filter(|key| {
+                quick_selectors.iter().all(|selector| {
+                    pool_selection::admin_pool_matches_quick_selector(
+                        state,
+                        key,
+                        &provider.provider_type,
+                        selector,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
+        let total = keys.len();
+        let quota_summary_keys = keys.clone();
+        let keys = keys
+            .into_iter()
+            .skip(page_offset)
+            .take(page_size)
+            .collect::<Vec<_>>();
+        (keys, total, quota_summary_keys)
+    } else {
+        let key_page = state
+            .list_provider_catalog_key_page(&ProviderCatalogKeyListQuery {
+                provider_id: provider.id.clone(),
+                search: search.clone(),
+                is_active: match status.as_str() {
+                    "active" => Some(true),
+                    "inactive" => Some(false),
+                    _ => None,
+                },
+                offset: page_offset,
+                limit: page_size,
+                order: admin_pool_repository_key_order(sort),
+            })
+            .await?;
+        let quota_summary_keys = state
+            .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
+            .await?
+            .into_iter()
+            .filter(|key| match status.as_str() {
+                "active" => key.is_active,
+                "inactive" => !key.is_active,
+                _ => true,
+            })
+            .filter(|key| {
+                pool_selection::admin_pool_matches_search(
                     state,
                     key,
                     &provider.provider_type,
-                    selector,
+                    search.as_deref(),
                 )
             })
-        });
-    }
-    admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
-    let total = keys.len();
-    let keys = keys
-        .into_iter()
-        .skip(page_offset)
-        .take(page_size)
-        .collect::<Vec<_>>();
+            .collect::<Vec<_>>();
+        (key_page.items, key_page.total, quota_summary_keys)
+    };
 
     let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
     let endpoints = state

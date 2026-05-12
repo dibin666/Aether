@@ -352,7 +352,8 @@ CREATE TABLE IF NOT EXISTS public.management_tokens (
     token_prefix character varying(12),
     name character varying(100) NOT NULL,
     description text,
-    allowed_ips json,
+    allowed_ips jsonb,
+    permissions jsonb,
     expires_at timestamp with time zone,
     last_used_at timestamp with time zone,
     last_used_ip character varying(45),
@@ -360,7 +361,7 @@ CREATE TABLE IF NOT EXISTS public.management_tokens (
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT check_allowed_ips_not_empty CHECK (((allowed_ips IS NULL) OR ((allowed_ips)::text = 'null'::text) OR (json_array_length(allowed_ips) > 0)))
+    CONSTRAINT check_allowed_ips_not_empty CHECK (CASE WHEN ((allowed_ips IS NULL) OR (allowed_ips = 'null'::jsonb)) THEN true WHEN (jsonb_typeof(allowed_ips) = 'array'::text) THEN (jsonb_array_length(allowed_ips) > 0) ELSE false END)
 );
 
 
@@ -1238,8 +1239,11 @@ CREATE TABLE IF NOT EXISTS public.users (
     password_hash character varying(255),
     role public.userrole DEFAULT 'user'::public.userrole NOT NULL,
     allowed_providers json,
+    allowed_providers_mode text DEFAULT 'unrestricted'::text NOT NULL,
     allowed_api_formats json,
+    allowed_api_formats_mode text DEFAULT 'unrestricted'::text NOT NULL,
     allowed_models json,
+    allowed_models_mode text DEFAULT 'unrestricted'::text NOT NULL,
     model_capability_settings json,
     is_active boolean DEFAULT true NOT NULL,
     is_deleted boolean DEFAULT false NOT NULL,
@@ -1251,7 +1255,44 @@ CREATE TABLE IF NOT EXISTS public.users (
     ldap_username character varying(255),
     email_verified boolean NOT NULL,
     rate_limit integer,
+    rate_limit_mode text DEFAULT 'system'::text NOT NULL,
     metadata json
+);
+
+
+
+--
+-- Name: user_groups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.user_groups (
+    id character varying(36) NOT NULL,
+    name character varying(100) NOT NULL,
+    normalized_name character varying(100) NOT NULL,
+    description text,
+    priority integer DEFAULT 0 NOT NULL,
+    allowed_providers json,
+    allowed_providers_mode text DEFAULT 'inherit'::text NOT NULL,
+    allowed_api_formats json,
+    allowed_api_formats_mode text DEFAULT 'inherit'::text NOT NULL,
+    allowed_models json,
+    allowed_models_mode text DEFAULT 'inherit'::text NOT NULL,
+    rate_limit integer,
+    rate_limit_mode text DEFAULT 'inherit'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+
+--
+-- Name: user_group_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.user_group_members (
+    group_id character varying(36) NOT NULL,
+    user_id character varying(36) NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 

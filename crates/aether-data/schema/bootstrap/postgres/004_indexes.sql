@@ -134,6 +134,22 @@ CREATE INDEX IF NOT EXISTS idx_provider_api_keys_provider_active ON public.provi
 
 
 --
+-- Name: idx_provider_api_keys_provider_created_at_desc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS idx_provider_api_keys_provider_created_at_desc ON public.provider_api_keys USING btree (provider_id, created_at DESC NULLS LAST, name, id);
+
+
+
+--
+-- Name: idx_provider_api_keys_provider_last_used_at_desc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS idx_provider_api_keys_provider_last_used_at_desc ON public.provider_api_keys USING btree (provider_id, last_used_at DESC NULLS LAST, name, id);
+
+
+
+--
 -- Name: idx_provider_api_keys_provider_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1018,6 +1034,22 @@ CREATE INDEX IF NOT EXISTS ix_stats_user_daily_date ON public.stats_user_daily U
 --
 
 CREATE INDEX IF NOT EXISTS ix_system_configs_id ON public.system_configs USING btree (id);
+
+
+
+--
+-- Name: user_group_members_user_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS user_group_members_user_id_idx ON public.user_group_members USING btree (user_id);
+
+
+
+--
+-- Name: user_groups_priority_name_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS user_groups_priority_name_idx ON public.user_groups USING btree (priority DESC, name, id);
 
 
 

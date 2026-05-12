@@ -351,7 +351,8 @@ CREATE TABLE IF NOT EXISTS public.management_tokens (
     token_prefix character varying(12),
     name character varying(100) NOT NULL,
     description text,
-    allowed_ips json,
+    allowed_ips jsonb,
+    permissions jsonb,
     expires_at timestamp with time zone,
     last_used_at timestamp with time zone,
     last_used_ip character varying(45),
@@ -359,7 +360,7 @@ CREATE TABLE IF NOT EXISTS public.management_tokens (
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT check_allowed_ips_not_empty CHECK (((allowed_ips IS NULL) OR ((allowed_ips)::text = 'null'::text) OR (json_array_length(allowed_ips) > 0)))
+    CONSTRAINT check_allowed_ips_not_empty CHECK (CASE WHEN ((allowed_ips IS NULL) OR (allowed_ips = 'null'::jsonb)) THEN true WHEN (jsonb_typeof(allowed_ips) = 'array'::text) THEN (jsonb_array_length(allowed_ips) > 0) ELSE false END)
 );
 
 
@@ -2653,6 +2654,22 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_wallet_created ON public.payment_o
 --
 
 CREATE INDEX IF NOT EXISTS idx_provider_api_keys_provider_active ON public.provider_api_keys USING btree (provider_id, is_active);
+
+
+
+--
+-- Name: idx_provider_api_keys_provider_created_at_desc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS idx_provider_api_keys_provider_created_at_desc ON public.provider_api_keys USING btree (provider_id, created_at DESC NULLS LAST, name, id);
+
+
+
+--
+-- Name: idx_provider_api_keys_provider_last_used_at_desc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX IF NOT EXISTS idx_provider_api_keys_provider_last_used_at_desc ON public.provider_api_keys USING btree (provider_id, last_used_at DESC NULLS LAST, name, id);
 
 
 
