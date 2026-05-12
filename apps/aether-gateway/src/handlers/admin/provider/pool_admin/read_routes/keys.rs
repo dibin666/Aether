@@ -10,9 +10,7 @@ use super::{
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::GatewayError;
 use aether_admin::provider::pool as admin_provider_pool_pure;
-use aether_data_contracts::repository::provider_catalog::{
-    ProviderCatalogKeyListOrder, ProviderCatalogKeyListQuery, StoredProviderCatalogKey,
-};
+use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 use aether_data_contracts::repository::usage::{
     ProviderApiKeyWindowUsageRequest, StoredProviderApiKeyWindowUsageSummary,
 };
@@ -210,24 +208,6 @@ fn admin_pool_sort_keys_for_request(
     }
 }
 
-fn admin_pool_repository_key_order(sort: AdminPoolKeySort) -> ProviderCatalogKeyListOrder {
-    match (sort.field, sort.direction) {
-        (AdminPoolKeySortField::Default, _) => ProviderCatalogKeyListOrder::Name,
-        (AdminPoolKeySortField::ImportedAt, AdminPoolKeySortDirection::Asc) => {
-            ProviderCatalogKeyListOrder::CreatedAtAsc
-        }
-        (AdminPoolKeySortField::ImportedAt, AdminPoolKeySortDirection::Desc) => {
-            ProviderCatalogKeyListOrder::CreatedAtDesc
-        }
-        (AdminPoolKeySortField::LastUsedAt, AdminPoolKeySortDirection::Asc) => {
-            ProviderCatalogKeyListOrder::LastUsedAtAsc
-        }
-        (AdminPoolKeySortField::LastUsedAt, AdminPoolKeySortDirection::Desc) => {
-            ProviderCatalogKeyListOrder::LastUsedAtDesc
-        }
-    }
-}
-
 pub(super) async fn build_admin_pool_list_keys_response(
     state: &AdminAppState<'_>,
     request_context: &AdminRequestContext<'_>,
@@ -382,21 +362,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
             .collect::<Vec<_>>();
         (keys, total, quota_summary_keys)
     } else {
-        let key_page = state
-            .list_provider_catalog_key_page(&ProviderCatalogKeyListQuery {
-                provider_id: provider.id.clone(),
-                search: search.clone(),
-                is_active: match status.as_str() {
-                    "active" => Some(true),
-                    "inactive" => Some(false),
-                    _ => None,
-                },
-                offset: page_offset,
-                limit: page_size,
-                order: admin_pool_repository_key_order(sort),
-            })
-            .await?;
-        let quota_summary_keys = state
+        let mut keys = state
             .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
             .await?
             .into_iter()
@@ -414,7 +380,15 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 )
             })
             .collect::<Vec<_>>();
-        (key_page.items, key_page.total, quota_summary_keys)
+        admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
+        let total = keys.len();
+        let quota_summary_keys = keys.clone();
+        let keys = keys
+            .into_iter()
+            .skip(page_offset)
+            .take(page_size)
+            .collect::<Vec<_>>();
+        (keys, total, quota_summary_keys)
     };
 
     let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
