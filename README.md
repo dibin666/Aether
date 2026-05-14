@@ -60,6 +60,25 @@ docker compose run --rm app --apply-backfills
 docker compose exec postgres pg_dump -U postgres aether | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
 ```
 
+### Docker Compose（SQLite）
+
+```bash
+# 1. 克隆代码
+git clone https://github.com/fawney19/Aether.git
+cd Aether
+
+# 2. 配置环境变量
+cp .env.example .env
+./generate_keys.sh  # 生成 JWT_SECRET_KEY / ENCRYPTION_KEY, 并填入 .env
+# 编辑 .env 设置 ADMIN_PASSWORD
+
+# 3. 首次部署 / 更新
+docker compose -f docker-compose.sqlite.yml pull && docker compose -f docker-compose.sqlite.yml up -d
+
+# 4. 升级前备份（可选）
+cp -a data/aether.db backup_$(date +%Y%m%d_%H%M%S).db
+```
+
 ### Docker Compose（本地构建镜像）
 
 ```bash
@@ -82,31 +101,10 @@ git pull
 docker compose -f docker-compose.build.yml up -d --no-build
 ```
 
-### Docker Compose（单容器 SQLite / solo）
+### 一键安装（可选部署方式 Linux: systemd; Mac: launchd）
 
 ```bash
-# 1. 克隆代码
-git clone https://github.com/fawney19/Aether.git
-cd Aether
-
-# 2. 配置环境变量
-cp .env.example .env
-./generate_keys.sh
-# 编辑 .env 设置 ADMIN_PASSWORD
-
-# 3. 启动单容器 SQLite 版本
-docker compose -f docker-compose.solo.yml up -d
-
-# 4. 升级前备份（可选）
-cp -a data/aether.db backup_$(date +%Y%m%d_%H%M%S).db
-```
-
-### 一键安装（可选部署方式）
-
-安装脚本先从 `aether-rust-pioneer` 分支下载，不依赖 GitHub Release 的 `latest` 脚本地址。运行后会先选择语言，再选择版本和部署方式。Linux 单机 / 集群服务使用 systemd，macOS 单机 / 集群服务使用系统级 launchd；脚本会按当前系统自动下载 `linux-*` 或 `macos-*` Release 压缩包。
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/aether-rust-pioneer/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | sudo bash
 ```
 
 运行后按提示输入语言、版本和部署方式。固定安装某个 tag 时，版本选择选 `2`，再输入类似 `v0.7.0-rc23` 的 tag。默认会安装最新预发布版本；Docker Compose 模式默认使用 `pre` 镜像通道。
@@ -220,9 +218,8 @@ client -> rust frontdoor (aether-gateway) -> execution_runtime/provider transpor
 
 ## Aether Proxy (可选)
 
-Aether Proxy 是配套的正向代理节点，部署在海外 VPS 上，为墙内的 Aether 实例中转 API 流量。或者部署在其他服务器为指定的提供商、账号、Key使用不同的节点访问。支持 TUI 向导一键配置、systemd 服务管理、TLS 加密、DNS 缓存及连接池调优。
+Aether Proxy 是配套的正向代理节点，部署在海外 VPS 上，为墙内的 Aether 实例中转 API 流量。
 
-- Docker Compose 部署或下载预编译二进制直接运行
 - 通过 `aether-proxy setup` 完成交互式配置，自动注册为系统服务
 - 详细文档见 [apps/aether-proxy/README.md](apps/aether-proxy/README.md)
 
@@ -233,62 +230,17 @@ Aether Proxy 是配套的正向代理节点，部署在海外 VPS 上，为墙�
 
 ## 环境变量
 
-部署建议：
-
-- Docker Compose：根目录 [`.env.example`](.env.example)
-- systemd 二进制部署：使用根目录 `install.sh` 生成 `/etc/aether/aether-gateway.env`
-
-当前主链路真正要关注的是这组变量：
-
 - `APP_PORT`：`aether-gateway` 唯一监听端口，固定绑定 `0.0.0.0:${APP_PORT}`
-- `AETHER_DATABASE_DRIVER` / `AETHER_DATABASE_URL`：二进制单机部署可用 `sqlite`，例如 `sqlite:///opt/aether/data/aether.db`
-- `DATABASE_URL` / `REDIS_URL`：共享后端连接串；多节点必须配置共享数据库和 Redis
-- `AETHER_RUNTIME_BACKEND=memory|redis`：运行时缓存/协调后端。单机 SQLite 默认用 `memory`，不会连接 Redis；显式设为 `redis` 或多节点部署才会把 `REDIS_URL` 注入运行时 Redis 后端
-- `AETHER_GATEWAY_AUTO_PREPARE_DATABASE`：常规启动前自动执行挂起的 schema migration 和 backfill；仓库自带的 `docker-compose.yml` 和 `docker-compose.build.yml` 默认开启
+- `DATABASE_URL`：数据库连接串；SQLite 例如 `sqlite:///opt/aether/data/aether.db`，Postgres 例如 `postgresql://postgres:aether@postgres:5432/aether`
+- `REDIS_URL`：Redis 连接串；仅 Postgres + Redis 的 Docker Compose 部署需要配置
+- `AETHER_RUNTIME_BACKEND=memory|redis`：运行时缓存/协调后端。SQLite 默认用 `memory`，不会连接 Redis
+- `AETHER_GATEWAY_AUTO_PREPARE_DATABASE`：常规启动前自动执行挂起的 schema migration 和 backfill；仓库自带的 `docker-compose.yml` 默认开启
 - `JWT_SECRET_KEY` / `ENCRYPTION_KEY`：认证和敏感数据加密所需密钥
 - `API_KEY_PREFIX`：用户和管理员新建 API Key 时使用的前缀，默认 `sk`
 - `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_EMAIL`：首次启动时自举首个本地管理员；`install.sh` 会提示输入管理员密码
 - `CORS_ORIGINS` / `CORS_ALLOW_CREDENTIALS`：前端跨域来源控制；如果要跨域带登录 Cookie，`CORS_ORIGINS` 不能写 `*`
-- `AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=single-node|multi-node`
-- `AETHER_GATEWAY_NODE_ROLE=all|frontdoor|background`
 - `RUST_LOG`：Rust 日志过滤，例如 `aether_gateway=info`、`aether_gateway=debug,sqlx=warn`
 - Docker Compose 的 `DB_PASSWORD` / `REDIS_PASSWORD` 默认使用 `aether`
-
-systemd 的 `.env` 必须保持简单 `KEY=VALUE` 形式，不要写 `export`、`${VAR}` 或命令替换。
-
-## Q&A
-
-### Q: 如何开启/关闭请求体记录？
-
-管理员在 **系统设置** 中配置日志记录的详细程度:
-
-| 级别 | 记录内容 |
-|------|----------|
-| Base | 基本请求信息 |
-| Headers | Base + 请求头 |
-| Full | Headers + 请求体 |
-
-### Q: 更新出问题如何回滚？
-
-**有备份的情况（推荐）：**
-
-```bash
-# Docker Compose:
-# 1. 切回旧镜像 tag / digest
-# 2. 恢复 Postgres 备份
-# 3. 再启动 app
-
-# systemd:
-# 1. 把 /opt/aether/current 切回旧 release
-# 2. systemctl restart aether-gateway
-# 3. 如果升级包含数据库结构变更，再恢复 Postgres 备份
-```
-
-> 可以在升级前通过 `docker inspect ghcr.io/fawney19/aether:latest --format '{{index .RepoDigests 0}}'` 记录当前镜像 digest，方便回滚时使用。
-
-**没有备份的情况：**
-
-当前不应该再依赖旧的 `alembic downgrade` 路线。空库首次启动会自动初始化；如果开启 `AETHER_GATEWAY_AUTO_PREPARE_DATABASE=true`（仓库自带的两份 compose 默认都如此），常规服务启动也会自动应用挂起的 migration/backfill。无论是否自动执行，只要本次发布带来了不可逆的数据结构变化，没有备份就不能保证安全回滚。因此升级前强烈建议先备份 `Postgres`。
 
 ---
 
