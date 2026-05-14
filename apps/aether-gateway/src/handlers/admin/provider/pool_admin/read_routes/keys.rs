@@ -7,9 +7,13 @@ use super::{
     AdminPoolKeySortField, AdminProviderPoolRuntimeState,
     ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL,
 };
+use crate::ai_serving::{provider_key_pool_score_id, provider_key_pool_score_scope};
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::GatewayError;
 use aether_admin::provider::pool as admin_provider_pool_pure;
+use aether_data_contracts::repository::pool_scores::{
+    GetPoolMemberScoresByIdsQuery, PoolMemberIdentity, StoredPoolMemberScore,
+};
 use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 use aether_data_contracts::repository::usage::{
     ProviderApiKeyWindowUsageRequest, StoredProviderApiKeyWindowUsageSummary,
@@ -54,6 +58,36 @@ fn admin_pool_current_unix_secs() -> u64 {
         .ok()
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+async fn read_admin_pool_scores_by_key_id(
+    state: &AdminAppState<'_>,
+    provider_id: &str,
+    key_ids: &[String],
+) -> Result<BTreeMap<String, StoredPoolMemberScore>, GatewayError> {
+    if key_ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let score_scope = provider_key_pool_score_scope();
+    let score_ids = key_ids
+        .iter()
+        .map(|key_id| {
+            let identity =
+                PoolMemberIdentity::provider_api_key(provider_id.to_string(), key_id.clone());
+            provider_key_pool_score_id(&identity, &score_scope)
+        })
+        .collect::<Vec<_>>();
+    let scores = state
+        .app()
+        .data
+        .get_pool_member_scores_by_ids(&GetPoolMemberScoresByIdsQuery { ids: score_ids })
+        .await
+        .map_err(|err| GatewayError::Internal(format!("{err:?}")))?;
+    Ok(scores
+        .into_iter()
+        .map(|score| (score.member_id.clone(), score))
+        .collect::<BTreeMap<_, _>>())
 }
 
 fn admin_pool_codex_cycle_usage_request(
@@ -205,6 +239,7 @@ fn admin_pool_sort_keys_for_request(
                 },
             );
         }
+        (AdminPoolKeySortField::Score, _) => ProviderCatalogKeyListOrder::Name,
     }
 }
 
@@ -281,6 +316,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
 
     let pool_config = admin_provider_pool_config(&provider);
     let page_offset = page.saturating_sub(1).saturating_mul(page_size);
+    let sort_by_score = matches!(sort.field, AdminPoolKeySortField::Score);
 
     let (keys, total, quota_summary_keys) = if status == "cooldown" {
         let cooldown_key_ids =
@@ -392,6 +428,12 @@ pub(super) async fn build_admin_pool_list_keys_response(
     };
 
     let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
+    let pool_scores_by_key_id = match preloaded_pool_scores_by_key_id {
+        Some(scores) => scores,
+        None => read_admin_pool_scores_by_key_id(state, &provider.id, &key_ids)
+            .await
+            .unwrap_or_default(),
+    };
     let endpoints = state
         .list_provider_catalog_endpoints_by_provider_ids(std::slice::from_ref(&provider.id))
         .await?;
@@ -427,6 +469,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 &key,
                 &runtime,
                 pool_config.clone(),
+                pool_scores_by_key_id.get(&key.id),
                 codex_cycle_usage_by_key.get(&key.id),
                 now_unix_secs,
             )

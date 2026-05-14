@@ -6,6 +6,7 @@ use crate::handlers::admin::shared::{provider_key_status_snapshot_payload, unix_
 use crate::provider_key_auth::{provider_key_auth_semantics, provider_key_effective_api_formats};
 use aether_admin::provider::pool as admin_provider_pool_pure;
 use aether_admin::provider::quota as admin_provider_quota_pure;
+use aether_data_contracts::repository::pool_scores::StoredPoolMemberScore;
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
 };
@@ -92,27 +93,6 @@ fn admin_pool_oauth_organizations(
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default()
-}
-
-fn admin_pool_normalize_oauth_plan_type(value: &str, provider_type: &str) -> Option<String> {
-    let mut normalized = value.trim().to_string();
-    if normalized.is_empty() {
-        return None;
-    }
-
-    let provider_type = provider_type.trim().to_ascii_lowercase();
-    if !provider_type.is_empty() && normalized.to_ascii_lowercase().starts_with(&provider_type) {
-        normalized = normalized[provider_type.len()..]
-            .trim_matches(|ch: char| [' ', ':', '-', '_'].contains(&ch))
-            .to_string();
-    }
-
-    let normalized = normalized.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        None
-    } else {
-        Some(normalized)
-    }
 }
 
 fn admin_pool_derive_oauth_expires_at(
@@ -985,6 +965,7 @@ pub(super) fn build_admin_pool_key_payload(
     key: &StoredProviderCatalogKey,
     runtime: &AdminProviderPoolRuntimeState,
     pool_config: Option<AdminProviderPoolConfig>,
+    pool_score: Option<&StoredPoolMemberScore>,
     codex_cycle_usage_by_code: Option<&BTreeMap<String, StoredProviderApiKeyWindowUsageSummary>>,
     now_unix_secs: u64,
 ) -> serde_json::Value {
@@ -1002,8 +983,11 @@ pub(super) fn build_admin_pool_key_payload(
     let auth_config = state.parse_catalog_auth_config_json(key);
     let oauth_expires_at =
         admin_pool_derive_oauth_expires_at(provider_type, key, auth_config.as_ref());
-    let oauth_plan_type =
-        admin_pool_derive_oauth_plan_type(key, provider_type, auth_config.as_ref());
+    let oauth_plan_type = if auth_semantics.oauth_managed() {
+        aether_provider_pool::derive_plan_tier(provider_type, key, auth_config.as_ref())
+    } else {
+        None
+    };
     let mut status_snapshot = provider_key_status_snapshot_payload(key, provider_type);
     if provider_type.trim().eq_ignore_ascii_case("codex") {
         admin_pool_apply_codex_window_usage_summaries(
@@ -1166,6 +1150,34 @@ pub(super) fn build_admin_pool_key_payload(
     payload.insert("status_snapshot".to_string(), status_snapshot);
     payload.insert("quota_updated_at".to_string(), json!(quota_updated_at));
     payload.insert("health_score".to_string(), json!(health_score));
+    payload.insert(
+        "pool_score".to_string(),
+        pool_score
+            .map(|score| {
+                json!({
+                    "id": score.id.clone(),
+                    "capability": score.capability.clone(),
+                    "scope_kind": score.scope_kind.clone(),
+                    "scope_id": score.scope_id.clone(),
+                    "score": score.score,
+                    "hard_state": score.hard_state.as_database(),
+                    "score_version": score.score_version,
+                    "score_reason": score.score_reason.clone(),
+                    "last_ranked_at": score.last_ranked_at,
+                    "last_scheduled_at": score.last_scheduled_at,
+                    "last_success_at": score.last_success_at,
+                    "last_failure_at": score.last_failure_at,
+                    "failure_count": score.failure_count,
+                    "last_probe_attempt_at": score.last_probe_attempt_at,
+                    "last_probe_success_at": score.last_probe_success_at,
+                    "last_probe_failure_at": score.last_probe_failure_at,
+                    "probe_failure_count": score.probe_failure_count,
+                    "probe_status": score.probe_status.as_database(),
+                    "updated_at": score.updated_at,
+                })
+            })
+            .unwrap_or(serde_json::Value::Null),
+    );
     payload.insert(
         "circuit_breaker_open".to_string(),
         json!(circuit_breaker_open),

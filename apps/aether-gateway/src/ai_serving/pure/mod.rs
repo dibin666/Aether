@@ -2,9 +2,10 @@ pub(crate) use aether_ai_formats::api::{
     aggregate_claude_stream_sync_response, aggregate_gemini_stream_sync_response,
     aggregate_openai_chat_stream_sync_response, aggregate_openai_responses_stream_sync_response,
     aggregate_standard_chat_stream_sync_response, aggregate_standard_cli_stream_sync_response,
-    api_format_alias_matches, apply_codex_openai_responses_special_body_edits,
-    apply_codex_openai_responses_special_headers, apply_model_directive_mapping_patch,
-    apply_model_directive_overrides_from_model, apply_model_directive_overrides_from_request,
+    api_format_alias_matches, api_format_storage_aliases,
+    apply_codex_openai_responses_special_body_edits, apply_codex_openai_responses_special_headers,
+    apply_model_directive_mapping_patch, apply_model_directive_overrides_from_model,
+    apply_model_directive_overrides_from_request,
     apply_openai_responses_compact_special_body_edits, build_chatgpt_web_image_request_body,
     build_core_error_body_for_client_format, build_cross_format_openai_chat_request_body,
     build_cross_format_openai_chat_request_body_with_model_directives,
@@ -139,3 +140,4 @@ pub(crate) use aether_ai_formats::api::{
     OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND, OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
+pub(crate) use aether_ai_formats::{is_embedding_api_format, is_rerank_api_format};

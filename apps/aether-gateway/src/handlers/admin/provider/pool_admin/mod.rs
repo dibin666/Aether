@@ -26,6 +26,8 @@ mod read_overview;
 mod read_presets;
 #[path = "read_routes/resolve_selection.rs"]
 mod read_resolve_selection;
+#[path = "read_routes/scores.rs"]
+mod read_scores;
 pub(crate) mod selection;
 mod support;
 
@@ -37,6 +39,7 @@ pub(crate) use self::batch_shared::{
 };
 pub(crate) use self::support::{
     admin_pool_provider_id_from_consumption_path, admin_pool_provider_id_from_path,
+    admin_pool_provider_id_from_scores_path,
     parse_admin_pool_key_sort, parse_admin_pool_page, parse_admin_pool_page_size,
     parse_admin_pool_quick_selectors, parse_admin_pool_search, parse_admin_pool_status_filter,
     AdminPoolKeySort, AdminPoolKeySortDirection, AdminPoolKeySortField,
@@ -113,6 +116,11 @@ pub(crate) async fn maybe_build_local_admin_pool_response(
         Some("list_keys") => {
             return Ok(Some(
                 read_keys::build_admin_pool_list_keys_response(state, request_context).await?,
+            ));
+        }
+        Some("scores") => {
+            return Ok(Some(
+                read_scores::build_admin_pool_scores_response(state, request_context).await?,
             ));
         }
         Some("resolve_selection") => {

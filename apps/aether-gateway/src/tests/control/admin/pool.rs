@@ -1,8 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 use aether_crypto::{encrypt_python_fernet_plaintext, DEVELOPMENT_ENCRYPTION_KEY};
+use aether_data::repository::pool_scores::InMemoryPoolMemberScoreRepository;
 use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
 use aether_data::repository::usage::InMemoryUsageReadRepository;
+use aether_data_contracts::repository::pool_scores::{
+    PoolMemberHardState, PoolMemberIdentity, PoolMemberProbeStatus, StoredPoolMemberScore,
+};
 use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
 use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
 use axum::body::{to_bytes, Body, Bytes};
@@ -15,6 +19,7 @@ use super::super::{
     build_router_with_state, sample_endpoint, sample_key, sample_provider, start_server, AppState,
 };
 use crate::admin_api::{maybe_build_local_admin_pool_response, AdminAppState, AdminRequestContext};
+use crate::ai_serving::{provider_key_pool_score_id, provider_key_pool_score_scope};
 use crate::audit::AdminAuditEvent;
 use crate::constants::{
     GATEWAY_HEADER, TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER, TRUSTED_ADMIN_SESSION_ID_HEADER,
@@ -102,19 +107,12 @@ fn sample_pool_usage(
         Some("chat".to_string()),
         Some("openai:responses".to_string()),
         Some("openai".to_string()),
-        Some("chat".to_string()),
-        Some("openai:responses".to_string()),
-        Some("openai".to_string()),
-        Some("chat".to_string()),
-        false,
         false,
         input_tokens,
         output_tokens,
         total_tokens,
         total_cost_usd,
-        total_cost_usd,
         Some(200),
-        None,
         None,
         Some(450),
         Some(120),
@@ -130,6 +128,34 @@ fn sample_pool_usage(
     usage.cache_read_input_tokens =
         u64::try_from(cache_read_tokens).expect("cache read should be non-negative");
     usage
+fn sample_pool_member_score(provider_id: &str, key_id: &str, score: f64) -> StoredPoolMemberScore {
+    let score_scope = provider_key_pool_score_scope();
+    let score_identity = PoolMemberIdentity::provider_api_key(provider_id, key_id);
+    StoredPoolMemberScore {
+        id: provider_key_pool_score_id(&score_identity, &score_scope),
+        pool_kind: score_identity.pool_kind.clone(),
+        pool_id: score_identity.pool_id.clone(),
+        member_kind: score_identity.member_kind.clone(),
+        member_id: score_identity.member_id.clone(),
+        capability: score_scope.capability.clone(),
+        scope_kind: score_scope.scope_kind.clone(),
+        scope_id: score_scope.scope_id.clone(),
+        score,
+        hard_state: PoolMemberHardState::Available,
+        score_version: 1,
+        score_reason: json!({ "weights": { "manual_priority": score } }),
+        last_ranked_at: Some(1_700_000_000),
+        last_scheduled_at: None,
+        last_success_at: None,
+        last_failure_at: None,
+        failure_count: 0,
+        last_probe_attempt_at: None,
+        last_probe_success_at: None,
+        last_probe_failure_at: None,
+        probe_failure_count: 0,
+        probe_status: PoolMemberProbeStatus::Ok,
+        updated_at: 1_700_000_050,
+    }
 }
 
 fn sample_provider_key_usage_row(
@@ -401,6 +427,100 @@ async fn gateway_handles_admin_pool_batch_import_locally_with_trusted_admin_prin
 
     gateway_handle.abort();
     upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_handles_admin_pool_scores_locally_with_trusted_admin_principal() {
+    let provider = sample_provider("provider-openai", "openai", 10).with_transport_fields(
+        true,
+        false,
+        true,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(json!({
+            "pool_advanced": {
+                "enabled": true
+            }
+        })),
+    );
+    let mut key = sample_key("key-openai-a", "provider-openai", "openai:chat", "sk-a");
+    key.name = "score key".to_string();
+    let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![provider],
+        Vec::new(),
+        vec![key.clone()],
+    ));
+    let score_scope = provider_key_pool_score_scope();
+    let score_identity = PoolMemberIdentity::provider_api_key("provider-openai", "key-openai-a");
+    let score_id = provider_key_pool_score_id(&score_identity, &score_scope);
+    let pool_score_repository = Arc::new(InMemoryPoolMemberScoreRepository::seed(vec![
+        StoredPoolMemberScore {
+            id: score_id,
+            pool_kind: score_identity.pool_kind.clone(),
+            pool_id: score_identity.pool_id.clone(),
+            member_kind: score_identity.member_kind.clone(),
+            member_id: score_identity.member_id.clone(),
+            capability: score_scope.capability.clone(),
+            scope_kind: score_scope.scope_kind.clone(),
+            scope_id: score_scope.scope_id.clone(),
+            score: 0.875,
+            hard_state: PoolMemberHardState::Available,
+            score_version: 1,
+            score_reason: json!({ "weights": { "manual_priority": 0.3 } }),
+            last_ranked_at: Some(1_700_000_000),
+            last_scheduled_at: Some(1_700_000_010),
+            last_success_at: Some(1_700_000_020),
+            last_failure_at: None,
+            failure_count: 0,
+            last_probe_attempt_at: Some(1_700_000_030),
+            last_probe_success_at: Some(1_700_000_040),
+            last_probe_failure_at: None,
+            probe_failure_count: 0,
+            probe_status: PoolMemberProbeStatus::Ok,
+            updated_at: 1_700_000_050,
+        },
+    ]));
+
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(Arc::clone(
+                    &provider_catalog_repository,
+                ))
+                .with_pool_score_repository_for_tests(Arc::clone(&pool_score_repository)),
+            ),
+    );
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{gateway_url}/api/admin/pool/provider-openai/scores"
+        ))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(
+        payload["items"].as_array().map(|items| items.len()),
+        Some(1)
+    );
+    assert_eq!(payload["items"][0]["member_id"], json!("key-openai-a"));
+    assert_eq!(payload["items"][0]["capability"], json!("account"));
+    assert_eq!(payload["items"][0]["scope_kind"], json!("account"));
+    assert_eq!(payload["items"][0]["scope_id"], serde_json::Value::Null);
+    assert_eq!(payload["items"][0]["key"]["name"], json!("score key"));
+    assert_eq!(payload["items"][0]["probe_status"], json!("ok"));
+
+    gateway_handle.abort();
 }
 
 #[tokio::test]
@@ -824,14 +944,46 @@ async fn gateway_handles_admin_pool_list_keys_locally_with_trusted_admin_princip
         Vec::new(),
         vec![primary_key, cooldown_key, inactive_key],
     ));
+    let score_scope = provider_key_pool_score_scope();
+    let score_identity = PoolMemberIdentity::provider_api_key("provider-openai", "key-openai-a");
+    let pool_score_repository = Arc::new(InMemoryPoolMemberScoreRepository::seed(vec![
+        StoredPoolMemberScore {
+            id: provider_key_pool_score_id(&score_identity, &score_scope),
+            pool_kind: score_identity.pool_kind.clone(),
+            pool_id: score_identity.pool_id.clone(),
+            member_kind: score_identity.member_kind.clone(),
+            member_id: score_identity.member_id.clone(),
+            capability: score_scope.capability.clone(),
+            scope_kind: score_scope.scope_kind.clone(),
+            scope_id: score_scope.scope_id.clone(),
+            score: 0.875,
+            hard_state: PoolMemberHardState::Available,
+            score_version: 1,
+            score_reason: json!({ "weights": { "manual_priority": 0.3 } }),
+            last_ranked_at: Some(1_700_000_000),
+            last_scheduled_at: Some(1_700_000_010),
+            last_success_at: Some(1_700_000_020),
+            last_failure_at: None,
+            failure_count: 0,
+            last_probe_attempt_at: Some(1_700_000_030),
+            last_probe_success_at: Some(1_700_000_040),
+            last_probe_failure_at: None,
+            probe_failure_count: 0,
+            probe_status: PoolMemberProbeStatus::Ok,
+            updated_at: 1_700_000_050,
+        },
+    ]));
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
     let gateway = build_router_with_state(
         AppState::new()
             .expect("gateway should build")
-            .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
-                provider_catalog_repository,
-            )),
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_reader_for_tests(
+                    provider_catalog_repository,
+                )
+                .with_pool_score_repository_for_tests(pool_score_repository),
+            ),
     );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
@@ -855,6 +1007,9 @@ async fn gateway_handles_admin_pool_list_keys_locally_with_trusted_admin_princip
     let keys = payload["keys"].as_array().expect("keys should be array");
     assert_eq!(keys.len(), 2);
     assert_eq!(keys[0]["key_name"], json!("alpha"));
+    assert_eq!(keys[0]["pool_score"]["score"], json!(0.875));
+    assert_eq!(keys[0]["pool_score"]["scope_kind"], json!("account"));
+    assert_eq!(keys[0]["pool_score"]["scope_id"], serde_json::Value::Null);
     assert_eq!(keys[0]["scheduling_status"], json!("available"));
     assert_eq!(keys[1]["key_name"], json!("beta"));
     assert_eq!(keys[1]["scheduling_reason"], json!("available"));
@@ -977,11 +1132,16 @@ async fn gateway_sorts_admin_pool_keys_by_imported_and_last_used_time() {
         Vec::new(),
         vec![old_key, fresh_key, active_key],
     ));
+    let pool_score_repository = Arc::new(InMemoryPoolMemberScoreRepository::seed(vec![
+        sample_pool_member_score("provider-openai", "key-openai-fresh", 0.35),
+        sample_pool_member_score("provider-openai", "key-openai-active", 0.92),
+    ]));
     let state = AppState::new()
         .expect("gateway should build")
-        .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
-            provider_catalog_repository,
-        ));
+        .with_data_state_for_tests(
+            GatewayDataState::with_provider_catalog_reader_for_tests(provider_catalog_repository)
+                .with_pool_score_repository_for_tests(pool_score_repository),
+        );
 
     let default_response = local_admin_pool_response(
         &state,
@@ -1048,6 +1208,30 @@ async fn gateway_sorts_admin_pool_keys_by_imported_and_last_used_time() {
         .map(|item| item["key_name"].as_str().unwrap_or_default())
         .collect::<Vec<_>>();
     assert_eq!(last_used_names, vec!["active", "old", "fresh"]);
+
+    let score_response = local_admin_pool_response(
+        &state,
+        http::Method::GET,
+        "/api/admin/pool/provider-openai/keys?page=1&page_size=50&status=all&sort_by=score&sort_order=desc",
+        None,
+    )
+    .await;
+    assert_eq!(score_response.status(), StatusCode::OK);
+    let score_payload: serde_json::Value = serde_json::from_slice(
+        &to_bytes(score_response.into_body(), usize::MAX)
+            .await
+            .expect("body should read"),
+    )
+    .expect("json body should parse");
+    let score_names = score_payload["keys"]
+        .as_array()
+        .expect("keys should be array")
+        .iter()
+        .map(|item| item["key_name"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(score_names, vec!["active", "fresh", "old"]);
+    assert_eq!(score_payload["keys"][0]["pool_score"]["score"], json!(0.92));
+    assert!(score_payload["keys"][2]["pool_score"].is_null());
 }
 
 #[tokio::test]

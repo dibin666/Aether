@@ -119,7 +119,7 @@ pub(super) fn admin_pool_matches_quick_selector(
     provider_type: &str,
     selector: &str,
 ) -> bool {
-    let oauth_plan_type = admin_pool_derive_oauth_plan_type(state, key, provider_type);
+    let oauth_plan_type = admin_pool_derive_plan_tier(state, key, provider_type);
     admin_provider_pool_pure::admin_pool_matches_quick_selector(
         key,
         selector,
@@ -135,7 +135,7 @@ pub(super) fn admin_pool_matches_search(
     provider_type: &str,
     search: Option<&str>,
 ) -> bool {
-    let oauth_plan_type = admin_pool_derive_oauth_plan_type(state, key, provider_type);
+    let oauth_plan_type = admin_pool_derive_plan_tier(state, key, provider_type);
     admin_provider_pool_pure::admin_pool_matches_search(key, search, oauth_plan_type.as_deref())
 }
 

@@ -1177,12 +1177,9 @@ fn ai_serving_planner_separates_local_candidate_resolution_from_ranking() {
     let ranking_call = candidate_resolution
         .find("rank_eligible_local_execution_candidates(")
         .expect("candidate_resolution.rs should call core-backed local candidate ranking");
-    let pool_scheduler_call = candidate_resolution
-        .find("apply_local_execution_pool_scheduler(")
-        .expect("candidate_resolution.rs should call pool scheduler after ranking");
     assert!(
-        ranking_call < pool_scheduler_call,
-        "candidate_resolution.rs should rank eligible candidates before applying pool-internal account scheduling"
+        !candidate_resolution.contains("apply_local_execution_pool_scheduler("),
+        "candidate_resolution.rs should leave pool-internal key scheduling to dispatch cursors"
     );
     for pattern in [
         "pub(crate) async fn resolve_and_rank_local_execution_candidates(",
@@ -1270,18 +1267,45 @@ fn ai_serving_planner_separates_local_candidate_resolution_from_ranking() {
         );
     }
 
-    let pool_scheduler =
+    let planner_pool_scheduler =
         read_workspace_file("apps/aether-gateway/src/ai_serving/planner/pool_scheduler.rs");
     for pattern in [
+        "pub(crate) use crate::dispatch::pool_scheduler::apply_local_execution_pool_scheduler;",
+        "pub(crate) use crate::dispatch::pool_scheduler::PoolKeyCursor;",
+    ] {
+        assert!(
+            planner_pool_scheduler.contains(pattern),
+            "planner/pool_scheduler.rs should only re-export dispatch pool scheduler compatibility item {pattern}"
+        );
+    }
+    for forbidden in [
         "pub(crate) async fn apply_local_execution_pool_scheduler(",
-        "run_ai_pool_scheduler(",
-        "fn ai_pool_candidate_facts(",
-        "fn ai_pool_scheduling_config(",
-        "fn ai_pool_runtime_state(",
+        "run_pool_scheduler(",
+        "fn pool_candidate_facts(",
+        "fn pool_scheduling_config(",
+        "fn pool_runtime_state(",
+    ] {
+        assert!(
+            !planner_pool_scheduler.contains(forbidden),
+            "planner/pool_scheduler.rs should not own dispatch implementation {forbidden}"
+        );
+    }
+
+    let pool_scheduler = read_workspace_file("apps/aether-gateway/src/dispatch/pool_scheduler.rs");
+    for pattern in [
+        "pub(crate) async fn apply_local_execution_pool_scheduler(",
+        "pub(crate) struct PoolKeyCursor",
+        "run_pool_scheduler(",
+        "fn pool_candidate_facts(",
+        "fn pool_scheduling_config(",
+        "fn pool_runtime_state(",
+        "DEFAULT_POOL_WINDOW_SIZE",
+        "DEFAULT_POOL_PAGE_SIZE",
+        "DEFAULT_POOL_MAX_SCAN",
     ] {
         assert!(
             pool_scheduler.contains(pattern),
-            "planner/pool_scheduler.rs should adapt gateway pool runtime data through serving pool scheduler helper {pattern}"
+            "dispatch/pool_scheduler.rs should adapt gateway pool runtime data through serving pool scheduler helper {pattern}"
         );
     }
     for forbidden in [
@@ -1296,25 +1320,249 @@ fn ai_serving_planner_separates_local_candidate_resolution_from_ranking() {
     ] {
         assert!(
             !pool_scheduler.contains(forbidden),
-            "planner/pool_scheduler.rs should not own global candidate ranking or pool scheduling policy helper {forbidden}"
+            "dispatch/pool_scheduler.rs should not own global candidate ranking or pool scheduling policy helper {forbidden}"
         );
     }
 
-    let serving_pool_scheduler =
-        read_workspace_file("crates/aether-ai-serving/src/pool_scheduler.rs");
+    let dispatch_refs = read_workspace_file("apps/aether-gateway/src/dispatch/refs.rs");
     for pattern in [
-        "pub fn run_ai_pool_scheduler",
-        "pub struct AiPoolCandidateInput",
-        "pub struct AiPoolRuntimeState",
-        "pub struct AiPoolSchedulingConfig",
+        "DispatchCandidateRef::SingleKey",
+        "DispatchCandidateRef::PoolRef",
+        "pub(crate) fn key_ref_for_candidate",
+        "pub(crate) fn pool_ref_for_candidate",
+    ] {
+        assert!(
+            dispatch_refs.contains(pattern),
+            "dispatch/refs.rs should expose logical dispatch refs through {pattern}"
+        );
+    }
+
+    let dispatch_core = read_workspace_file("crates/aether-dispatch-core/src/lib.rs");
+    for pattern in [
+        "DispatchCandidateRef",
+        "DispatchSequence",
+        "PoolDispatchPort",
+        "PoolWindowConfig",
+        "DispatchEffect",
+    ] {
+        assert!(
+            dispatch_core.contains(pattern),
+            "aether-dispatch-core should export pure dispatch primitive {pattern}"
+        );
+    }
+
+    let pool_core_lib = read_workspace_file("crates/aether-pool-core/src/lib.rs");
+    for pattern in [
+        "run_pool_scheduler",
+        "PoolCandidateInput",
+        "PoolRuntimeState",
+        "PoolSchedulingConfig",
+    ] {
+        assert!(
+            pool_core_lib.contains(pattern),
+            "aether-pool-core lib.rs should expose pool scheduling primitive {pattern}"
+        );
+    }
+
+    let pool_core_scheduler = read_workspace_file("crates/aether-pool-core/src/scheduler.rs");
+    for pattern in [
+        "pub fn run_pool_scheduler",
         "fn schedule_pool_group",
         "fn build_pool_sort_vectors",
         "fn plan_priority_score(",
         "fn stable_hash_score(",
     ] {
         assert!(
-            serving_pool_scheduler.contains(pattern),
-            "aether-ai-serving pool_scheduler.rs should own pool scheduling use-case primitive {pattern}"
+            pool_core_scheduler.contains(pattern),
+            "aether-pool-core scheduler.rs should own pool scheduling use-case primitive {pattern}"
+        );
+    }
+    for forbidden in ["codex", "kiro", "chatgpt_web", "provider_type"] {
+        assert!(
+            !pool_core_scheduler.contains(forbidden) && !pool_core_lib.contains(forbidden),
+            "aether-pool-core should stay provider-agnostic and not embed provider behavior {forbidden}"
+        );
+    }
+
+    let serving_lib = read_workspace_file("crates/aether-ai-serving/src/lib.rs");
+    for forbidden in ["pub mod pool_scheduler;", "pub mod pool_scores;"] {
+        assert!(
+            !serving_lib.contains(forbidden),
+            "aether-ai-serving should not own pool core module {forbidden}"
+        );
+    }
+
+    let provider_pool_lib = read_workspace_file("crates/aether-provider-pool/src/lib.rs");
+    for pattern in [
+        "mod capability;",
+        "mod plan;",
+        "mod presets;",
+        "mod provider;",
+        "mod quota;",
+        "mod service;",
+        "pub mod providers;",
+        "pub use provider::{ProviderPoolAdapter, ProviderPoolMemberInput};",
+        "pub use service::ProviderPoolService;",
+    ] {
+        assert!(
+            provider_pool_lib.contains(pattern),
+            "aether-provider-pool lib.rs should stay a thin module/re-export root through {pattern}"
+        );
+    }
+
+    let provider_pool_provider = read_workspace_file("crates/aether-provider-pool/src/provider.rs");
+    for pattern in [
+        "pub trait ProviderPoolAdapter",
+        "ProviderPoolMemberInput",
+        "supports_quota_refresh",
+        "quota_refresh_endpoint",
+    ] {
+        assert!(
+            provider_pool_provider.contains(pattern),
+            "aether-provider-pool provider.rs should own adapter contract {pattern}"
+        );
+    }
+
+    let provider_pool_service = read_workspace_file("crates/aether-provider-pool/src/service.rs");
+    for pattern in [
+        "pub struct ProviderPoolService",
+        "with_builtin_adapters",
+        "AntigravityProviderPoolAdapter",
+        "CodexProviderPoolAdapter",
+        "KiroProviderPoolAdapter",
+        "ChatGptWebProviderPoolAdapter",
+        "CLAUDE_CODE_PROVIDER_POOL_ADAPTER",
+        "GEMINI_CLI_PROVIDER_POOL_ADAPTER",
+        "VERTEX_AI_PROVIDER_POOL_ADAPTER",
+        "provider_types_for_capability",
+        "supports_quota_refresh",
+        "quota_refresh_endpoint_for_provider",
+    ] {
+        assert!(
+            provider_pool_service.contains(pattern),
+            "aether-provider-pool service.rs should own adapter registry/service primitive {pattern}"
+        );
+    }
+    assert!(
+        !provider_pool_service.contains("match provider_type.trim().to_ascii_lowercase().as_str()"),
+        "aether-provider-pool service.rs should delegate provider-specific behavior to adapters"
+    );
+
+    let provider_pool_providers =
+        read_workspace_file("crates/aether-provider-pool/src/providers/mod.rs");
+    for pattern in [
+        "pub mod default;",
+        "pub mod unsupported;",
+        "pub mod antigravity;",
+        "pub mod codex;",
+        "pub mod kiro;",
+        "pub mod chatgpt_web;",
+    ] {
+        assert!(
+            provider_pool_providers.contains(pattern),
+            "aether-provider-pool providers/mod.rs should expose provider-specific module {pattern}"
+        );
+    }
+    for (path, patterns) in [
+        (
+            "crates/aether-provider-pool/src/providers/default.rs",
+            vec!["DefaultProviderPoolAdapter"],
+        ),
+        (
+            "crates/aether-provider-pool/src/providers/antigravity.rs",
+            vec!["AntigravityProviderPoolAdapter"],
+        ),
+        (
+            "crates/aether-provider-pool/src/providers/codex.rs",
+            vec![
+                "CodexProviderPoolAdapter",
+                "recent_refresh",
+                "quota_exhausted_from_bucket",
+            ],
+        ),
+        (
+            "crates/aether-provider-pool/src/providers/kiro.rs",
+            vec!["KiroProviderPoolAdapter", "quota_exhausted_from_bucket"],
+        ),
+        (
+            "crates/aether-provider-pool/src/providers/chatgpt_web.rs",
+            vec![
+                "ChatGptWebProviderPoolAdapter",
+                "build_chatgpt_web_pool_quota_request",
+                "enrich_chatgpt_web_quota_metadata",
+                "normalize_chatgpt_web_image_quota_limit",
+                "quota_exhausted_from_bucket",
+            ],
+        ),
+        (
+            "crates/aether-provider-pool/src/providers/unsupported.rs",
+            vec![
+                "UnsupportedQuotaProviderPoolAdapter",
+                "CLAUDE_CODE_PROVIDER_POOL_ADAPTER",
+                "GEMINI_CLI_PROVIDER_POOL_ADAPTER",
+                "VERTEX_AI_PROVIDER_POOL_ADAPTER",
+            ],
+        ),
+    ] {
+        let source = read_workspace_file(path);
+        for pattern in patterns {
+            assert!(
+                source.contains(pattern),
+                "{path} should own provider-specific pool behavior {pattern}"
+            );
+        }
+    }
+
+    let provider_pool_plan = read_workspace_file("crates/aether-provider-pool/src/plan.rs");
+    for pattern in ["normalize_provider_plan_tier", "derive_plan_tier"] {
+        assert!(
+            provider_pool_plan.contains(pattern),
+            "aether-provider-pool plan.rs should own provider plan-tier normalization primitive {pattern}"
+        );
+    }
+
+    let provider_pool_quota = read_workspace_file("crates/aether-provider-pool/src/quota.rs");
+    for pattern in [
+        "provider_pool_key_account_quota_exhausted",
+        "provider_pool_member_quota_snapshot",
+        "provider_pool_quota_metadata_updated_at",
+        "provider_pool_quota_metadata_provider_type",
+        "provider_pool_key_scheduling_label",
+        "provider_pool_quota_snapshot_updated_at",
+    ] {
+        assert!(
+            provider_pool_quota.contains(pattern),
+            "aether-provider-pool quota.rs should own provider quota/scheduling signal primitive {pattern}"
+        );
+    }
+
+    let provider_pool_presets = read_workspace_file("crates/aether-provider-pool/src/presets.rs");
+    for pattern in [
+        "normalize_provider_scheduling_presets",
+        "build_admin_pool_scheduling_presets_payload",
+    ] {
+        assert!(
+            provider_pool_presets.contains(pattern),
+            "aether-provider-pool presets.rs should own provider preset adaptation primitive {pattern}"
+        );
+    }
+    for forbidden in [
+        "run_pool_scheduler",
+        "PoolSchedulerOutcome",
+        "schedule_pool_group",
+        "plan_priority_score(",
+    ] {
+        let mut violations = Vec::new();
+        for file in collect_workspace_rust_files("crates/aether-provider-pool/src") {
+            let source = std::fs::read_to_string(&file).expect("source file should be readable");
+            if source.contains(forbidden) {
+                violations.push(file.display().to_string());
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "aether-provider-pool should not own generic pool scheduler primitive {forbidden}:\n{}",
+            violations.join("\n")
         );
     }
 }
@@ -4711,6 +4959,8 @@ fn retired_api_format_occurrences_are_whitelisted() {
 
     let allowed_paths = [
         "apps/aether-gateway/src/handlers/admin/provider/write/normalize.rs",
+        "apps/aether-gateway/src/handlers/admin/request/system/import.rs",
+        "apps/aether-gateway/src/tests/control/admin/system_import.rs",
         "crates/aether-ai-formats/src/formats/id.rs",
         "crates/aether-ai-formats/src/formats/matrix.rs",
         "crates/aether-ai-formats/src/formats/registry.rs",

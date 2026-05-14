@@ -240,15 +240,9 @@ pub fn admin_pool_key_account_quota_exhausted(
             .get("exhausted")
             .and_then(|value| admin_pool_json_bool(Some(value)))
         {
-            return exhausted;
-        } else if let Some(exhausted) = quota_snapshot
             .get("windows")
             .and_then(Value::as_array)
             .and_then(|windows| admin_pool_quota_windows_below_skip_threshold(windows))
-        {
-            return exhausted;
-        }
-    }
 
     let Some(bucket) = admin_pool_metadata_bucket(key.upstream_metadata.as_ref(), &provider_type)
     else {
@@ -258,8 +252,6 @@ pub fn admin_pool_key_account_quota_exhausted(
     match provider_type.as_str() {
         "codex" => {
             if admin_pool_json_bool(bucket.get("credits_unlimited")) == Some(true) {
-                return false;
-            }
             let window_remaining_ratios = [
                 admin_pool_json_f64(bucket.get("primary_used_percent")),
                 admin_pool_json_f64(bucket.get("secondary_used_percent")),
@@ -272,7 +264,6 @@ pub fn admin_pool_key_account_quota_exhausted(
                 && window_remaining_ratios
                     .iter()
                     .any(|remaining| admin_pool_remaining_ratio_below_skip_threshold(*remaining))
-        }
         "kiro" => {
             if let (Some(limit), Some(remaining)) = (
                 admin_pool_json_f64(bucket.get("usage_limit")),
@@ -282,49 +273,26 @@ pub fn admin_pool_key_account_quota_exhausted(
                     return admin_pool_remaining_ratio_below_skip_threshold(
                         (remaining / limit).clamp(0.0, 1.0),
                     );
-                }
-            }
             if admin_pool_json_f64(bucket.get("remaining")).is_some_and(|value| value <= 0.0) {
                 return true;
-            }
             if admin_pool_json_f64(bucket.get("usage_percentage")).is_some_and(|value| {
                 admin_pool_remaining_ratio_below_skip_threshold(
                     (1.0 - (value / 100.0).clamp(0.0, 1.0)).max(0.0),
                 )
             }) {
-                return true;
-            }
             match (
-                admin_pool_json_f64(bucket.get("usage_limit")),
                 admin_pool_json_f64(bucket.get("current_usage")),
-            ) {
                 (Some(limit), Some(current)) if limit > 0.0 => {
-                    admin_pool_remaining_ratio_below_skip_threshold(
                         ((limit - current).max(0.0) / limit).clamp(0.0, 1.0),
-                    )
-                }
                 _ => false,
-            }
-        }
         "chatgpt_web" => {
             if admin_pool_json_bool(bucket.get("image_quota_blocked")) == Some(true) {
-                return true;
-            }
             if admin_pool_json_f64(bucket.get("image_quota_remaining"))
                 .is_some_and(|value| value <= 0.0)
-            {
-                return true;
-            }
-            match (
                 admin_pool_json_f64(bucket.get("image_quota_total")),
                 admin_pool_json_f64(bucket.get("image_quota_used")),
-            ) {
                 (Some(limit), Some(used)) if limit > 0.0 => used >= limit,
-                _ => false,
-            }
-        }
-        _ => false,
-    }
+    aether_provider_pool::provider_pool_key_account_quota_exhausted(key, provider_type)
 }
 fn admin_pool_has_proxy(key: &StoredProviderCatalogKey) -> bool {
     match key.proxy.as_ref() {
@@ -1226,148 +1194,7 @@ pub fn build_admin_pool_key_payload(
 }
 
 pub fn build_admin_pool_scheduling_presets_payload() -> Value {
-    json!([
-        {
-            "name": "lru",
-            "label": "LRU 轮转",
-            "description": "最久未使用的 Key 优先",
-            "providers": [],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": "distribution_mode",
-            "evidence_hint": "依据 LRU 时间戳（最近未使用优先）",
-        },
-        {
-            "name": "cache_affinity",
-            "label": "缓存亲和",
-            "description": "优先复用最近使用过的 Key，利用 Prompt Caching",
-            "providers": [],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": "distribution_mode",
-            "evidence_hint": "依据 LRU 时间戳（最近使用优先，与 LRU 轮转相反）",
-        },
-        {
-            "name": "cost_first",
-            "label": "成本优先",
-            "description": "优先选择窗口消耗更低的账号",
-            "providers": [],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": Value::Null,
-            "evidence_hint": "依据窗口成本/Token 用量，缺失时回退配额使用率",
-        },
-        {
-            "name": "free_first",
-            "label": "Free 优先",
-            "description": "优先消耗 Free 账号（依赖 plan_type）",
-            "providers": ["codex", "kiro"],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": Value::Null,
-            "evidence_hint": "依据 plan_type（Free 账号优先调度）",
-        },
-        {
-            "name": "health_first",
-            "label": "健康优先",
-            "description": "优先选择健康分更高、失败更少的账号",
-            "providers": [],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": Value::Null,
-            "evidence_hint": "依据 health_by_format 聚合分（含熔断/失败衰减）",
-        },
-        {
-            "name": "latency_first",
-            "label": "延迟优先",
-            "description": "优先选择最近延迟更低的账号",
-            "providers": [],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": Value::Null,
-            "evidence_hint": "依据号池延迟窗口均值（latency_window_seconds）",
-        },
-        {
-            "name": "load_balance",
-            "label": "负载均衡",
-            "description": "随机分散 Key 使用，均匀分摊负载",
-            "providers": [],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": "distribution_mode",
-            "evidence_hint": "每次随机分值，实现完全均匀分散",
-        },
-        {
-            "name": "plus_first",
-            "label": "Plus 优先",
-            "description": "优先消耗 Plus 账号（依赖 plan_type）",
-            "providers": ["codex", "kiro"],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": Value::Null,
-            "evidence_hint": "依据 plan_type（Plus 账号优先调度）",
-        },
-        {
-            "name": "pro_first",
-            "label": "Pro 优先",
-            "description": "优先消耗 Pro 账号（依赖 plan_type）",
-            "providers": ["codex", "kiro"],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": Value::Null,
-            "evidence_hint": "依据 plan_type（Pro 账号优先调度）",
-        },
-        {
-            "name": "priority_first",
-            "label": "优先级优先",
-            "description": "按账号优先级顺序调度（数字越小越优先）",
-            "providers": [],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": Value::Null,
-            "evidence_hint": "依据 internal_priority（支持拖拽/手工编辑）",
-        },
-        {
-            "name": "quota_balanced",
-            "label": "额度平均",
-            "description": "优先选额度消耗最少的账号",
-            "providers": [],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": Value::Null,
-            "evidence_hint": "依据账号配额使用率；无配额时回退到窗口成本使用",
-        },
-        {
-            "name": "recent_refresh",
-            "label": "额度刷新优先",
-            "description": "优先选即将刷新额度的账号",
-            "providers": ["codex", "kiro"],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": Value::Null,
-            "evidence_hint": "依据账号额度重置倒计时（next_reset / reset_seconds）",
-        },
-        {
-            "name": "single_account",
-            "label": "单号优先",
-            "description": "集中使用同一账号（反向 LRU）",
-            "providers": [],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": "distribution_mode",
-            "evidence_hint": "先按账号优先级（internal_priority），同级再按反向 LRU 集中",
-        },
-        {
-            "name": "team_first",
-            "label": "Team 优先",
-            "description": "优先消耗 Team 账号（依赖 plan_type）",
-            "providers": ["codex", "kiro"],
-            "modes": Value::Null,
-            "default_mode": Value::Null,
-            "mutex_group": Value::Null,
-            "evidence_hint": "依据 plan_type（Team 账号优先调度）",
-        }
-    ])
+    aether_provider_pool::build_admin_pool_scheduling_presets_payload()
 }
 
 pub fn admin_pool_batch_delete_task_parts(request_path: &str) -> Option<(String, String)> {

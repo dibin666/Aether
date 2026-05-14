@@ -133,6 +133,7 @@ export interface PoolKeyDetail {
   quota_updated_at?: number | null
   health_score?: number
   circuit_breaker_open?: boolean
+  pool_score?: PoolKeyScoreDetail | null
   api_formats?: string[]
   rate_multipliers?: Record<string, number> | null
   internal_priority?: number
@@ -257,6 +258,69 @@ export interface PoolConsumptionStatsResponse {
   periods: PoolConsumptionPeriod[]
 }
 
+export interface PoolKeyScoreDetail {
+  id: string
+  capability: string
+  scope_kind: string
+  scope_id: string | null
+  score: number
+  hard_state: PoolScoreHardState
+  score_version: number
+  score_reason: Record<string, unknown> | null
+  last_ranked_at: number | null
+  last_scheduled_at: number | null
+  last_success_at: number | null
+  last_failure_at: number | null
+  failure_count: number
+  last_probe_attempt_at: number | null
+  last_probe_success_at: number | null
+  last_probe_failure_at: number | null
+  probe_failure_count: number
+  probe_status: PoolScoreProbeStatus
+  updated_at: number
+}
+
+export type PoolScoreHardState =
+  | 'available'
+  | 'unknown'
+  | 'cooldown'
+  | 'quota_exhausted'
+  | 'auth_invalid'
+  | 'banned'
+  | 'inactive'
+
+export type PoolScoreProbeStatus = 'never' | 'ok' | 'failed' | 'stale' | 'in_progress'
+
+export interface PoolScoreKeySummary {
+  id: string
+  name: string
+  auth_type: string
+  is_active: boolean
+  internal_priority: number
+  last_used_at: number | null
+}
+
+export interface PoolMemberScoreItem extends PoolKeyScoreDetail {
+  pool_kind: string
+  pool_id: string
+  member_kind: string
+  member_id: string
+  key?: PoolScoreKeySummary | null
+}
+
+export interface PoolScoresResponse {
+  provider_id: string
+  page: number
+  page_size: number
+  filters: {
+    api_format?: string | null
+    model_id?: string | null
+    hard_state?: string | null
+    probe_status?: string | null
+  }
+  items: PoolMemberScoreItem[]
+}
+
 export interface PoolKeysQuery {
   page?: number
   page_size?: number
@@ -264,8 +328,17 @@ export interface PoolKeysQuery {
   status?: 'all' | 'active' | 'cooldown' | 'inactive'
   quick_selectors?: string[]
   search_scope?: 'name' | 'full'
-  sort_by?: 'imported_at' | 'last_used_at'
+  sort_by?: 'imported_at' | 'last_used_at' | 'score'
   sort_order?: 'asc' | 'desc'
+}
+
+export interface PoolScoresQuery {
+  page?: number
+  page_size?: number
+  api_format?: string
+  model_id?: string
+  hard_state?: string
+  probe_status?: string
 }
 
 export interface PoolKeySelectionRequest {
@@ -382,12 +455,10 @@ export async function listAllPoolKeys(
         const response = await listPoolKeys(
           providerId,
           {
-            ...params,
             page,
             page_size: POOL_KEYS_MAX_PAGE_SIZE,
           },
           { cacheTtlMs: 0 },
-        )
         const batch = Array.isArray(response?.keys) ? response.keys : []
         items.push(...batch)
 
@@ -395,31 +466,26 @@ export async function listAllPoolKeys(
         const pageSize = Number(response?.page_size ?? POOL_KEYS_MAX_PAGE_SIZE)
         if (batch.length === 0 || items.length >= total || batch.length < pageSize) {
           return items
-        }
-      }
 
       throw new Error(`号池账号列表分页超过最大页数 ${maxPages}，已中止请求`)
-    },
     options.cacheTtlMs ?? 0,
-  )
-}
 
 export async function getPoolConsumptionStats(
-  providerId: string,
   params: {
     timezone?: string | null
     tz_offset_minutes?: number
   } = {},
-  options: PoolReadOptions = {},
 ): Promise<PoolConsumptionStatsResponse> {
-  const normalizedParams = {
     timezone: typeof params.timezone === 'string' ? params.timezone.trim() || undefined : undefined,
     tz_offset_minutes: Number.isFinite(params.tz_offset_minutes)
       ? Number(params.tz_offset_minutes)
       : undefined,
-  }
-  const cacheKey = buildCacheKey(
     `pool:consumption:${providerId}`,
+export async function listPoolScores(
+  params: PoolScoresQuery = {},
+): Promise<PoolScoresResponse> {
+  const normalizedParams = { ...params }
+    `pool:scores:${providerId}`,
     normalizedParams as Record<string, unknown>,
   )
   return cachedRequest(
@@ -427,6 +493,8 @@ export async function getPoolConsumptionStats(
     async () => {
       const response = await client.get<PoolConsumptionStatsResponse>(
         `/api/admin/pool/${providerId}/consumption-stats`,
+      const response = await client.get<PoolScoresResponse>(
+        `/api/admin/pool/${providerId}/scores`,
         { params: normalizedParams },
       )
       return response.data

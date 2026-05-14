@@ -22,6 +22,7 @@ pub(crate) enum AdminPoolKeySortField {
     Default,
     ImportedAt,
     LastUsedAt,
+    Score,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,8 +124,11 @@ pub(crate) fn parse_admin_pool_key_sort(query: Option<&str>) -> Result<AdminPool
         Some("name") => AdminPoolKeySortField::Default,
         Some("imported_at") | Some("created_at") => AdminPoolKeySortField::ImportedAt,
         Some("last_used_at") | Some("last_used") => AdminPoolKeySortField::LastUsedAt,
+        Some("score") | Some("pool_score") => AdminPoolKeySortField::Score,
         Some(_) => {
-            return Err("sort_by must be one of: name, imported_at, last_used_at".to_string());
+            return Err(
+                "sort_by must be one of: name, imported_at, last_used_at, score".to_string(),
+            );
         }
     };
     let direction = match query_param_value(query, "sort_order")
@@ -155,8 +159,25 @@ pub(crate) fn admin_pool_provider_id_from_consumption_path(request_path: &str) -
     let raw = request_path.strip_prefix("/api/admin/pool/")?;
     let mut segments = raw.split('/');
     let provider_id = segments.next()?.trim();
-    let stats_segment = segments.next()?.trim();
+    let stats_segment = segments.next()?.trim_end_matches('/').trim();
     if provider_id.is_empty() || stats_segment != "consumption-stats" {
+        None
+    } else {
+        Some(provider_id.to_string())
+    }
+}
+
+pub(crate) fn admin_pool_provider_id_from_scores_path(request_path: &str) -> Option<String> {
+    let raw = request_path.strip_prefix("/api/admin/pool/")?;
+    let mut segments = raw.split('/');
+    let provider_id = segments.next()?.trim();
+    let scores_segment = segments.next()?.trim_end_matches('/').trim();
+    if provider_id.is_empty() || scores_segment != "scores" {
+        None
+    } else {
+        Some(provider_id.to_string())
+    }
+}
         None
     } else {
         Some(provider_id.to_string())
@@ -181,6 +202,10 @@ pub(crate) fn is_admin_pool_route(request_context: &AdminRequestContext<'_>) -> 
         || (request_context.method() == http::Method::GET
             && path.starts_with("/api/admin/pool/")
             && path.ends_with("/keys")
+            && path.matches('/').count() == 5)
+        || (request_context.method() == http::Method::GET
+            && path.starts_with("/api/admin/pool/")
+            && path.ends_with("/scores")
             && path.matches('/').count() == 5)
         || (request_context.method() == http::Method::POST
             && path.starts_with("/api/admin/pool/")

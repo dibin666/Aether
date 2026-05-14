@@ -20,6 +20,8 @@ mod oauth_token_refresh;
 mod pending_cleanup;
 #[path = "runtime/pool_quota_probe.rs"]
 mod pool_quota_probe;
+#[path = "runtime/pool_score_rebuild.rs"]
+mod pool_score_rebuild;
 #[path = "runtime/provider_checkin.rs"]
 mod provider_checkin;
 #[path = "runtime/proxy_node_metrics_cleanup.rs"]
@@ -54,7 +56,7 @@ use audit_cleanup::*;
 pub(crate) use cleanup_runs::{
     list_admin_cleanup_run_records, record_completed_cleanup_run, record_failed_cleanup_run,
     start_admin_request_body_cleanup_task, start_admin_system_purge_task, AdminCleanupRunRecord,
-    AdminCleanupTaskKind,
+    AdminCleanupTaskKind, USAGE_CLEANUP_KIND,
 };
 use config::*;
 use db_maintenance::*;
@@ -66,6 +68,11 @@ pub(crate) use pool_quota_probe::{
     perform_pool_quota_probe_once, perform_pool_quota_probe_once_with_config,
     select_pool_quota_probe_key_ids, spawn_pool_quota_probe_worker, PoolQuotaProbeRunSummary,
     PoolQuotaProbeWorkerConfig,
+};
+pub(crate) use pool_score_rebuild::{
+    ensure_provider_key_pool_scores_for_keys, perform_pool_score_rebuild_once,
+    perform_pool_score_rebuild_once_with_config, spawn_pool_score_rebuild_worker,
+    PoolScoreRebuildRunSummary, PoolScoreRebuildWorkerConfig,
 };
 pub(crate) use provider_checkin::{perform_provider_checkin_once, ProviderCheckinRunSummary};
 use proxy_node_metrics_cleanup::*;
@@ -83,9 +90,11 @@ pub(crate) use proxy_upgrade_rollout::{
 };
 use request_candidate_cleanup::*;
 use runners::*;
+pub(crate) use runners::{run_manual_usage_cleanup_once, ManualUsageCleanupError};
 use schedule::*;
 use stats_daily::*;
 use stats_hourly::*;
+pub(crate) use usage_cleanup::preview_manual_usage_cleanup;
 use usage_cleanup::*;
 use wallet_daily_usage::*;
 pub(crate) use workers::*;
