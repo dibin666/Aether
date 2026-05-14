@@ -59,8 +59,12 @@ fn classifies_admin_pool_provider_key_routes_as_admin_proxy_route() {
         .expect("route should classify");
     assert_eq!(consumption.route_family.as_deref(), Some("pool_manage"));
     assert_eq!(consumption.route_kind.as_deref(), Some("consumption_stats"));
+
     let scores_uri: Uri = "/api/admin/pool/provider-1/scores?api_format=openai:responses"
+        .parse()
+        .expect("uri should parse");
     let scores = classify_control_route(&http::Method::GET, &scores_uri, &headers)
+        .expect("route should classify");
     assert_eq!(scores.route_family.as_deref(), Some("pool_manage"));
     assert_eq!(scores.route_kind.as_deref(), Some("scores"));
 

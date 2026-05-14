@@ -178,11 +178,6 @@ pub(crate) fn admin_pool_provider_id_from_scores_path(request_path: &str) -> Opt
         Some(provider_id.to_string())
     }
 }
-        None
-    } else {
-        Some(provider_id.to_string())
-    }
-}
 
 pub(crate) fn is_admin_pool_route(request_context: &AdminRequestContext<'_>) -> bool {
     let normalized_path = request_context.path().trim_end_matches('/');

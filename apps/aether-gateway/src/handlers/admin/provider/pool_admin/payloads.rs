@@ -118,6 +118,10 @@ fn admin_pool_derive_oauth_expires_at(
     None
 }
 
+fn admin_pool_normalize_oauth_plan_type(value: &str, provider_type: &str) -> Option<String> {
+    aether_provider_pool::normalize_provider_plan_tier(value, provider_type)
+}
+
 fn admin_pool_derive_oauth_plan_type(
     key: &StoredProviderCatalogKey,
     provider_type: &str,

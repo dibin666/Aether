@@ -7,11 +7,6 @@ pub const POOL_ACCOUNT_EXHAUSTED_SKIP_REASON: &str = "pool_account_exhausted";
 pub const POOL_PLAN_NOT_SELECTED_SKIP_REASON: &str = "pool_plan_not_selected";
 pub const POOL_COOLDOWN_SKIP_REASON: &str = "pool_cooldown";
 pub const POOL_COST_LIMIT_REACHED_SKIP_REASON: &str = "pool_cost_limit_reached";
-pub const AI_POOL_ACCOUNT_BLOCKED_SKIP_REASON: &str = POOL_ACCOUNT_BLOCKED_SKIP_REASON;
-pub const AI_POOL_ACCOUNT_EXHAUSTED_SKIP_REASON: &str = POOL_ACCOUNT_EXHAUSTED_SKIP_REASON;
-pub const AI_POOL_PLAN_NOT_SELECTED_SKIP_REASON: &str = POOL_PLAN_NOT_SELECTED_SKIP_REASON;
-pub const AI_POOL_COOLDOWN_SKIP_REASON: &str = POOL_COOLDOWN_SKIP_REASON;
-pub const AI_POOL_COST_LIMIT_REACHED_SKIP_REASON: &str = POOL_COST_LIMIT_REACHED_SKIP_REASON;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoolSchedulingPreset {
@@ -206,12 +201,7 @@ fn schedule_pool_group<Candidate>(
     candidate_group_id: &str,
     load_balance_seed_nonce: &str,
 ) -> PoolSchedulerOutcome<Candidate> {
-    let provider_type = group
-        .first()
-        .map(|candidate| candidate.facts.provider_type.trim().to_ascii_lowercase())
-        .unwrap_or_default();
-    let active_presets =
-        normalize_enabled_pool_presets(&pool_config.scheduling_presets, provider_type.as_str());
+    let active_presets = normalize_enabled_pool_preset_entries(&pool_config.scheduling_presets);
     let selected_plan_order = selected_pool_plan_order(&active_presets);
     let lru_distribution_enabled = pool_config.lru_enabled
         && !active_presets
@@ -247,15 +237,11 @@ fn schedule_pool_group<Candidate>(
         }
 
         if let Some(selected_plan_order) = selected_plan_order.as_ref() {
-            let plan_type = item
-                .key_context
-                .oauth_plan_type
-                .as_deref()
-                .unwrap_or_default();
+            let plan_type = item.key_context.plan_tier.as_deref().unwrap_or_default();
             if !selected_plan_order.contains_key(plan_type) {
-                skipped.push(AiPoolSkippedCandidate {
+                skipped.push(PoolSkippedCandidate {
                     candidate: item.candidate,
-                    skip_reason: AI_POOL_PLAN_NOT_SELECTED_SKIP_REASON,
+                    skip_reason: POOL_PLAN_NOT_SELECTED_SKIP_REASON,
                 });
                 continue;
             }
@@ -746,15 +732,6 @@ fn rank_indices_from_score_map<Candidate>(
     ranks
 }
 
-fn neutral_rank_indices<Candidate>(
-    items: &[PoolGroupCandidateOrdering<Candidate>],
-) -> BTreeMap<String, usize> {
-    items
-        .iter()
-        .map(|item| (item.item.facts.key_id.clone(), 0))
-        .collect()
-}
-
 fn cost_penalty<Candidate>(
     item: &PoolGroupCandidateOrdering<Candidate>,
     cost_limit_per_key_tokens: Option<u64>,
@@ -771,20 +748,23 @@ fn cost_penalty<Candidate>(
     Some((used / (used + 10_000.0)).clamp(0.0, 1.0))
 }
 
-pub fn normalize_enabled_ai_pool_presets(
-    scheduling_presets: &[PoolSchedulingPreset],
-    provider_type: &str,
-) -> Vec<String> {
-    normalize_enabled_pool_presets(scheduling_presets, provider_type)
+pub fn normalize_enabled_pool_presets(scheduling_presets: &[PoolSchedulingPreset]) -> Vec<String> {
+    normalize_enabled_pool_preset_entries(scheduling_presets)
         .into_iter()
         .map(|preset| preset.preset)
         .collect()
 }
 
+pub fn normalize_enabled_ai_pool_presets(
+    scheduling_presets: &[PoolSchedulingPreset],
+    _provider_type: &str,
+) -> Vec<String> {
+    normalize_enabled_pool_presets(scheduling_presets)
+}
+
 fn normalize_enabled_pool_preset_entries(
     scheduling_presets: &[PoolSchedulingPreset],
 ) -> Vec<NormalizedPoolPreset> {
-    let provider_type = provider_type.trim().to_ascii_lowercase();
     let mut entries = Vec::<(usize, String, bool, Option<String>, bool)>::new();
     let mut seen = BTreeSet::new();
 
@@ -794,21 +774,6 @@ fn normalize_enabled_pool_preset_entries(
             continue;
         }
         entries.push((index, preset, item.enabled, item.mode.clone(), false));
-    }
-
-    if provider_type == "codex"
-        && !entries.is_empty()
-        && entries
-            .iter()
-            .all(|(_, preset, _, _, _)| preset != "recent_refresh")
-    {
-        entries.push((
-            entries.len(),
-            "recent_refresh".to_string(),
-            true,
-            None,
-            true,
-        ));
     }
 
     let mut group_anchor_index = BTreeMap::<String, usize>::new();
@@ -825,10 +790,7 @@ fn normalize_enabled_pool_preset_entries(
     let mut group_enabled = BTreeMap::<String, (usize, usize, String, Option<String>, bool)>::new();
 
     for (index, preset, enabled, mode, auto_added) in entries {
-        if !enabled
-            || preset == "lru"
-            || !pool_preset_supported_for_provider(&preset, &provider_type)
-        {
+        if !enabled || preset == "lru" {
             continue;
         }
 
@@ -946,6 +908,24 @@ fn runtime_cost_usage(runtime: &PoolRuntimeState, key_id: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    type AiPoolRuntimeState = PoolRuntimeState;
+    type AiPoolSchedulingPreset = PoolSchedulingPreset;
+
+    fn run_ai_pool_scheduler<Candidate>(
+        candidates: Vec<PoolCandidateInput<Candidate>>,
+        runtime_by_provider: &BTreeMap<String, PoolRuntimeState>,
+        load_balance_seed_nonce: &str,
+    ) -> PoolSchedulerOutcome<Candidate> {
+        run_pool_scheduler(candidates, runtime_by_provider, load_balance_seed_nonce)
+    }
+
+    fn normalize_enabled_ai_pool_presets(
+        scheduling_presets: &[PoolSchedulingPreset],
+        _provider_type: &str,
+    ) -> Vec<String> {
+        normalize_enabled_pool_presets(scheduling_presets)
+    }
 
     #[test]
     fn pool_scheduler_groups_interleaved_candidates_and_reorders_internal_keys() {

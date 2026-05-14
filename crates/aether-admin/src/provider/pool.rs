@@ -230,68 +230,6 @@ pub fn admin_pool_key_account_quota_exhausted(
     key: &StoredProviderCatalogKey,
     provider_type: &str,
 ) -> bool {
-    let provider_type = provider_type.trim().to_ascii_lowercase();
-    if let Some(quota_snapshot) = admin_pool_key_quota_snapshot(key, &provider_type) {
-        if provider_type == "codex" {
-            if let Some(exhausted) = admin_pool_codex_quota_snapshot_exhausted(quota_snapshot) {
-                return exhausted;
-            }
-        } else if let Some(exhausted) = quota_snapshot
-            .get("exhausted")
-            .and_then(|value| admin_pool_json_bool(Some(value)))
-        {
-            .get("windows")
-            .and_then(Value::as_array)
-            .and_then(|windows| admin_pool_quota_windows_below_skip_threshold(windows))
-
-    let Some(bucket) = admin_pool_metadata_bucket(key.upstream_metadata.as_ref(), &provider_type)
-    else {
-        return false;
-    };
-
-    match provider_type.as_str() {
-        "codex" => {
-            if admin_pool_json_bool(bucket.get("credits_unlimited")) == Some(true) {
-            let window_remaining_ratios = [
-                admin_pool_json_f64(bucket.get("primary_used_percent")),
-                admin_pool_json_f64(bucket.get("secondary_used_percent")),
-            ]
-            .into_iter()
-            .flatten()
-            .map(|used_percent| (1.0 - (used_percent / 100.0).clamp(0.0, 1.0)).max(0.0))
-            .collect::<Vec<_>>();
-            !window_remaining_ratios.is_empty()
-                && window_remaining_ratios
-                    .iter()
-                    .any(|remaining| admin_pool_remaining_ratio_below_skip_threshold(*remaining))
-        "kiro" => {
-            if let (Some(limit), Some(remaining)) = (
-                admin_pool_json_f64(bucket.get("usage_limit")),
-                admin_pool_json_f64(bucket.get("remaining")),
-            ) {
-                if limit > 0.0 {
-                    return admin_pool_remaining_ratio_below_skip_threshold(
-                        (remaining / limit).clamp(0.0, 1.0),
-                    );
-            if admin_pool_json_f64(bucket.get("remaining")).is_some_and(|value| value <= 0.0) {
-                return true;
-            if admin_pool_json_f64(bucket.get("usage_percentage")).is_some_and(|value| {
-                admin_pool_remaining_ratio_below_skip_threshold(
-                    (1.0 - (value / 100.0).clamp(0.0, 1.0)).max(0.0),
-                )
-            }) {
-            match (
-                admin_pool_json_f64(bucket.get("current_usage")),
-                (Some(limit), Some(current)) if limit > 0.0 => {
-                        ((limit - current).max(0.0) / limit).clamp(0.0, 1.0),
-                _ => false,
-        "chatgpt_web" => {
-            if admin_pool_json_bool(bucket.get("image_quota_blocked")) == Some(true) {
-            if admin_pool_json_f64(bucket.get("image_quota_remaining"))
-                .is_some_and(|value| value <= 0.0)
-                admin_pool_json_f64(bucket.get("image_quota_total")),
-                admin_pool_json_f64(bucket.get("image_quota_used")),
-                (Some(limit), Some(used)) if limit > 0.0 => used >= limit,
     aether_provider_pool::provider_pool_key_account_quota_exhausted(key, provider_type)
 }
 fn admin_pool_has_proxy(key: &StoredProviderCatalogKey) -> bool {

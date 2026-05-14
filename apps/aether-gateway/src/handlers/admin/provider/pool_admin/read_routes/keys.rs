@@ -197,6 +197,51 @@ fn admin_pool_compare_optional_unix_secs(
     }
 }
 
+fn admin_pool_compare_optional_score(
+    left: Option<f64>,
+    right: Option<f64>,
+    direction: AdminPoolKeySortDirection,
+) -> Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            let ordering = left.partial_cmp(&right).unwrap_or(Ordering::Equal);
+            match direction {
+                AdminPoolKeySortDirection::Asc => ordering,
+                AdminPoolKeySortDirection::Desc => ordering.reverse(),
+            }
+        }
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+fn admin_pool_score_for_key(
+    scores_by_key_id: &BTreeMap<String, StoredPoolMemberScore>,
+    key: &StoredProviderCatalogKey,
+) -> Option<f64> {
+    scores_by_key_id
+        .get(&key.id)
+        .map(|score| score.score)
+        .filter(|score| score.is_finite())
+}
+
+fn admin_pool_sort_keys_by_score(
+    keys: &mut [StoredProviderCatalogKey],
+    scores_by_key_id: &BTreeMap<String, StoredPoolMemberScore>,
+    direction: AdminPoolKeySortDirection,
+) {
+    keys.sort_by(|left, right| {
+        admin_pool_compare_optional_score(
+            admin_pool_score_for_key(scores_by_key_id, left),
+            admin_pool_score_for_key(scores_by_key_id, right),
+            direction,
+        )
+        .then(left.name.cmp(&right.name))
+        .then(left.id.cmp(&right.id))
+    });
+}
+
 fn admin_pool_sort_keys_for_request(
     state: &AdminAppState<'_>,
     provider_type: &str,
@@ -239,7 +284,7 @@ fn admin_pool_sort_keys_for_request(
                 },
             );
         }
-        (AdminPoolKeySortField::Score, _) => ProviderCatalogKeyListOrder::Name,
+        AdminPoolKeySortField::Score => {}
     }
 }
 
@@ -318,7 +363,8 @@ pub(super) async fn build_admin_pool_list_keys_response(
     let page_offset = page.saturating_sub(1).saturating_mul(page_size);
     let sort_by_score = matches!(sort.field, AdminPoolKeySortField::Score);
 
-    let (keys, total, quota_summary_keys) = if status == "cooldown" {
+    let (keys, total, quota_summary_keys, preloaded_pool_scores_by_key_id) = if status == "cooldown"
+    {
         let cooldown_key_ids =
             read_admin_provider_pool_cooldown_key_ids(state.runtime_state(), &provider.id).await;
         let mut keys = if cooldown_key_ids.is_empty() {
@@ -350,7 +396,17 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 })
             });
         }
-        admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
+        let preloaded_pool_scores_by_key_id = if sort_by_score {
+            let score_key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
+            let scores = read_admin_pool_scores_by_key_id(state, &provider.id, &score_key_ids)
+                .await
+                .unwrap_or_default();
+            admin_pool_sort_keys_by_score(&mut keys, &scores, sort.direction);
+            Some(scores)
+        } else {
+            admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
+            None
+        };
         let total = keys.len();
         let quota_summary_keys = keys.clone();
         let keys = keys
@@ -358,7 +414,12 @@ pub(super) async fn build_admin_pool_list_keys_response(
             .skip(page_offset)
             .take(page_size)
             .collect::<Vec<_>>();
-        (keys, total, quota_summary_keys)
+        (
+            keys,
+            total,
+            quota_summary_keys,
+            preloaded_pool_scores_by_key_id,
+        )
     } else if !quick_selectors.is_empty() {
         let mut keys = state
             .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
@@ -388,7 +449,17 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 })
             })
             .collect::<Vec<_>>();
-        admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
+        let preloaded_pool_scores_by_key_id = if sort_by_score {
+            let score_key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
+            let scores = read_admin_pool_scores_by_key_id(state, &provider.id, &score_key_ids)
+                .await
+                .unwrap_or_default();
+            admin_pool_sort_keys_by_score(&mut keys, &scores, sort.direction);
+            Some(scores)
+        } else {
+            admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
+            None
+        };
         let total = keys.len();
         let quota_summary_keys = keys.clone();
         let keys = keys
@@ -396,7 +467,12 @@ pub(super) async fn build_admin_pool_list_keys_response(
             .skip(page_offset)
             .take(page_size)
             .collect::<Vec<_>>();
-        (keys, total, quota_summary_keys)
+        (
+            keys,
+            total,
+            quota_summary_keys,
+            preloaded_pool_scores_by_key_id,
+        )
     } else {
         let mut keys = state
             .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
@@ -416,7 +492,17 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 )
             })
             .collect::<Vec<_>>();
-        admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
+        let preloaded_pool_scores_by_key_id = if sort_by_score {
+            let score_key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
+            let scores = read_admin_pool_scores_by_key_id(state, &provider.id, &score_key_ids)
+                .await
+                .unwrap_or_default();
+            admin_pool_sort_keys_by_score(&mut keys, &scores, sort.direction);
+            Some(scores)
+        } else {
+            admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
+            None
+        };
         let total = keys.len();
         let quota_summary_keys = keys.clone();
         let keys = keys
@@ -424,7 +510,12 @@ pub(super) async fn build_admin_pool_list_keys_response(
             .skip(page_offset)
             .take(page_size)
             .collect::<Vec<_>>();
-        (keys, total, quota_summary_keys)
+        (
+            keys,
+            total,
+            quota_summary_keys,
+            preloaded_pool_scores_by_key_id,
+        )
     };
 
     let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();

@@ -128,6 +128,8 @@ fn sample_pool_usage(
     usage.cache_read_input_tokens =
         u64::try_from(cache_read_tokens).expect("cache read should be non-negative");
     usage
+}
+
 fn sample_pool_member_score(provider_id: &str, key_id: &str, score: f64) -> StoredPoolMemberScore {
     let score_scope = provider_key_pool_score_scope();
     let score_identity = PoolMemberIdentity::provider_api_key(provider_id, key_id);
