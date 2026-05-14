@@ -113,6 +113,27 @@ interface GapInfo {
   duration: number // 间隙时长（毫秒）
 }
 
+interface TimeScatterPoint {
+  x: string
+  y: number
+  _originalX?: string
+  _originalY?: number
+}
+
+type TimeScatterChartData = ChartData<'scatter', TimeScatterPoint[]>
+
+function asTimeScatterData(data: ChartData<'scatter'>): TimeScatterChartData {
+  return data as unknown as TimeScatterChartData
+}
+
+function isTimeScatterPoint(point: unknown): point is TimeScatterPoint {
+  if (typeof point !== 'object' || point === null) {
+    return false
+  }
+  const candidate = point as { x?: unknown; y?: unknown }
+  return typeof candidate.x === 'string' && typeof candidate.y === 'number'
+}
+
 const chartRef = ref<HTMLCanvasElement>()
 let chart: ChartJS<'scatter'> | null = null
 
@@ -138,14 +159,14 @@ const crosshairStats = computed<CrosshairStats | null>(() => {
     let dsTotal = 0
 
     for (const point of dataset.data) {
-      const p = point as { x: string; y: number }
-      if (typeof p.y === 'number') {
-        dsTotal++
-        totalCount++
-        if (p.y <= crosshairY.value) {
-          belowCount++
-          totalBelowCount++
-        }
+      if (!isTimeScatterPoint(point)) {
+        continue
+      }
+      dsTotal++
+      totalCount++
+      if (point.y <= crosshairY.value) {
+        belowCount++
+        totalBelowCount++
       }
     }
 
@@ -207,13 +228,14 @@ function compressTimeGaps(data: ChartData<'scatter'>): {
   gaps: GapInfo[]
   timeMapping: Map<number, number> // 原始时间 -> 压缩后时间
 } {
+  const sourceData = asTimeScatterData(data)
   const gapThresholdMs = props.gapThreshold * 60 * 1000
   const compressedGapSizeMs = props.compressedGapSize * 60 * 1000
 
   // 收集所有数据点的时间戳并排序
   const allTimestamps: number[] = []
-  for (const dataset of data.datasets) {
-    for (const point of dataset.data as Array<{ x: string; y: number }>) {
+  for (const dataset of sourceData.datasets) {
+    for (const point of dataset.data) {
       allTimestamps.push(new Date(point.x).getTime())
     }
   }
@@ -265,11 +287,11 @@ function compressTimeGaps(data: ChartData<'scatter'>): {
   }
 
   // 转换数据
-  const compressedData: ChartData<'scatter'> = {
-    ...data,
-    datasets: data.datasets.map(dataset => ({
+  const compressedData: TimeScatterChartData = {
+    ...sourceData,
+    datasets: sourceData.datasets.map(dataset => ({
       ...dataset,
-      data: (dataset.data as Array<{ x: string; y: number }>).map(point => {
+      data: dataset.data.map(point => {
         const originalTs = new Date(point.x).getTime()
         const compressedTs = timeMapping.get(originalTs) ?? originalTs
         return {
@@ -281,22 +303,24 @@ function compressTimeGaps(data: ChartData<'scatter'>): {
     }))
   }
 
-  return { data: compressedData, gaps, timeMapping }
+  return { data: compressedData as unknown as ChartData<'scatter'>, gaps, timeMapping }
 }
 
 // 转换数据点的 Y 值
 function transformData(data: ChartData<'scatter'>): ChartData<'scatter'> {
-  return {
-    ...data,
-    datasets: data.datasets.map(dataset => ({
+  const sourceData = asTimeScatterData(data)
+  const transformedData: TimeScatterChartData = {
+    ...sourceData,
+    datasets: sourceData.datasets.map(dataset => ({
       ...dataset,
-      data: (dataset.data as Array<{ x: string; y: number; _originalX?: string; _originalY?: number }>).map(point => ({
+      data: dataset.data.map(point => ({
         ...point,
         y: toDisplayValue(Math.min(point.y, 120)),
         _originalY: point._originalY ?? point.y  // 保存原始值用于 tooltip
       }))
     }))
   }
+  return transformedData as unknown as ChartData<'scatter'>
 }
 
 function prepareRenderData(): PreparedRenderData {
@@ -404,7 +428,7 @@ const defaultOptions: ChartOptions<'scatter'> = {
       callbacks: {
         title: (contexts) => {
           if (contexts.length === 0) return ''
-          const point = contexts[0].raw as { x: string; _originalX?: string }
+          const point = contexts[0].raw as unknown as TimeScatterPoint
           const timeStr = point._originalX || point.x
           const date = new Date(timeStr)
           return date.toLocaleString('zh-CN', {
@@ -415,7 +439,7 @@ const defaultOptions: ChartOptions<'scatter'> = {
           })
         },
         label: (context) => {
-          const point = context.raw as { x: string; y: number; _originalY?: number }
+          const point = context.raw as unknown as TimeScatterPoint
           const realY = point._originalY ?? toRealValue(point.y)
           return `间隔: ${realY.toFixed(1)} 分钟`
         }

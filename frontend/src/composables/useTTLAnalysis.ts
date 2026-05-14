@@ -178,7 +178,7 @@ export function useTTLAnalysis() {
         pointRadius: 3,
         pointHoverRadius: 5
       }]
-    }
+    } as unknown as ChartData<'scatter'>
   })
 
   // 监听时间范围变化

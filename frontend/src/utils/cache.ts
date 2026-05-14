@@ -171,7 +171,7 @@ export function dedupedRequest<T>(
  * 构建归一化的缓存 key
  * 将 params 的 key 排序并过滤 undefined 值，确保相同参数生成相同 key
  */
-export function buildCacheKey(prefix: string, params?: Record<string, unknown>): string {
+export function buildCacheKey(prefix: string, params?: object): string {
   if (!params) {
     return prefix
   }

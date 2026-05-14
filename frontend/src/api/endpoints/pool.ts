@@ -455,10 +455,12 @@ export async function listAllPoolKeys(
         const response = await listPoolKeys(
           providerId,
           {
+            ...params,
             page,
             page_size: POOL_KEYS_MAX_PAGE_SIZE,
           },
           { cacheTtlMs: 0 },
+        )
         const batch = Array.isArray(response?.keys) ? response.keys : []
         items.push(...batch)
 
@@ -466,26 +468,31 @@ export async function listAllPoolKeys(
         const pageSize = Number(response?.page_size ?? POOL_KEYS_MAX_PAGE_SIZE)
         if (batch.length === 0 || items.length >= total || batch.length < pageSize) {
           return items
+        }
+      }
 
       throw new Error(`号池账号列表分页超过最大页数 ${maxPages}，已中止请求`)
+    },
     options.cacheTtlMs ?? 0,
+  )
+}
 
 export async function getPoolConsumptionStats(
+  providerId: string,
   params: {
     timezone?: string | null
     tz_offset_minutes?: number
   } = {},
+  options: PoolReadOptions = {},
 ): Promise<PoolConsumptionStatsResponse> {
+  const normalizedParams = {
     timezone: typeof params.timezone === 'string' ? params.timezone.trim() || undefined : undefined,
     tz_offset_minutes: Number.isFinite(params.tz_offset_minutes)
       ? Number(params.tz_offset_minutes)
       : undefined,
+  }
+  const cacheKey = buildCacheKey(
     `pool:consumption:${providerId}`,
-export async function listPoolScores(
-  params: PoolScoresQuery = {},
-): Promise<PoolScoresResponse> {
-  const normalizedParams = { ...params }
-    `pool:scores:${providerId}`,
     normalizedParams as Record<string, unknown>,
   )
   return cachedRequest(
@@ -493,6 +500,27 @@ export async function listPoolScores(
     async () => {
       const response = await client.get<PoolConsumptionStatsResponse>(
         `/api/admin/pool/${providerId}/consumption-stats`,
+        { params: normalizedParams },
+      )
+      return response.data
+    },
+    options.cacheTtlMs ?? 0,
+  )
+}
+
+export async function listPoolScores(
+  providerId: string,
+  params: PoolScoresQuery = {},
+  options: PoolReadOptions = {},
+): Promise<PoolScoresResponse> {
+  const normalizedParams = { ...params }
+  const cacheKey = buildCacheKey(
+    `pool:scores:${providerId}`,
+    normalizedParams as Record<string, unknown>,
+  )
+  return cachedRequest(
+    cacheKey,
+    async () => {
       const response = await client.get<PoolScoresResponse>(
         `/api/admin/pool/${providerId}/scores`,
         { params: normalizedParams },
