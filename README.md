@@ -104,6 +104,7 @@ docker compose -f docker-compose.build.yml up -d --no-build
 ### 一键安装（可选部署方式 Linux: systemd; Mac: launchd）
 
 ```bash
+cd Aether && cd Aether
 curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | sudo bash
 ```
 
@@ -176,6 +177,17 @@ REDIS_URL=redis://...
 
 ### 本地开发
 
+依赖 Docker、Rust toolchain、Node.js 和 make。
+
+```bash
+make dev
+```
+
+`make dev` 会同时启动后端 `aether-gateway` 和前端 `frontend` 的 Vite dev server。需要单独启动时可使用 `make dev-backend` 或 `make dev-frontend`。
+Postgres / Redis 本地依赖未就绪时，`make dev` 会自动执行 `docker compose up -d postgres redis`。
+
+如需手动执行迁移、回填或分开启动，也可以使用下面的命令：
+
 ```bash
 # 启动依赖
 docker compose -f docker-compose.build.yml up -d postgres redis
@@ -220,6 +232,8 @@ client -> rust frontdoor (aether-gateway) -> execution_runtime/provider transpor
 
 Aether Proxy 是配套的正向代理节点，部署在海外 VPS 上，为墙内的 Aether 实例中转 API 流量。
 
+- Docker Compose 部署或下载预编译二进制直接运行
+- 提供 macOS/Linux 与 Windows 一键脚本，自动下载最新 `proxy-v*` 制品并向现有 `aether-proxy.toml` 追加 `[[servers]]`
 - 通过 `aether-proxy setup` 完成交互式配置，自动注册为系统服务
 - 详细文档见 [apps/aether-proxy/README.md](apps/aether-proxy/README.md)
 

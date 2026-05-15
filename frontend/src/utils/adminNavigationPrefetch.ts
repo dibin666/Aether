@@ -1,5 +1,6 @@
 import { adminWalletApi } from '@/api/admin-wallets'
 import { adminApi } from '@/api/admin'
+import { adminBillingPlansApi, epayGatewayApi } from '@/api/billing'
 import { getProvidersSummary } from '@/api/endpoints/providers'
 import { getPoolOverview, getPoolSchedulingPresets, listPoolKeys } from '@/api/endpoints/pool'
 import { listGlobalModels } from '@/api/global-models'
@@ -81,6 +82,18 @@ const adminRouteWarmers: Record<string, () => Promise<void>> = {
     await Promise.allSettled([
       import('@/views/admin/PoolConsumptionStats.vue'),
       getPoolOverview({ cacheTtlMs: NAV_DATA_CACHE_TTL_MS }),
+    ])
+  },
+  '/admin/payment-gateways': async () => {
+    await Promise.allSettled([
+      import('@/views/admin/PaymentGatewaySettings.vue'),
+      epayGatewayApi.get(),
+    ])
+  },
+  '/admin/billing-plans': async () => {
+    await Promise.allSettled([
+      import('@/views/admin/BillingPlansManagement.vue'),
+      adminBillingPlansApi.list(),
     ])
   },
 }

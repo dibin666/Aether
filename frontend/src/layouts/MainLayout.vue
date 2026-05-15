@@ -392,6 +392,8 @@ import {
   ChevronRight,
   Megaphone,
   Wallet,
+  CreditCard,
+  Package,
   Menu,
   X,
   Puzzle,
@@ -638,8 +640,8 @@ const navigation = computed(() => {
       title: '账户',
       items: [
          { name: '钱包中心', href: '/dashboard/wallet', icon: Wallet },
+         { name: '套餐中心', href: '/dashboard/billing', icon: Package },
          { name: '使用统计', href: '/dashboard/usage', icon: BarChart3 },
-         { name: '异步任务', href: '/dashboard/async-tasks', icon: Zap },
       ]
     }
   ]
@@ -700,6 +702,8 @@ const navigation = computed(() => {
         { name: '账号消耗统计', href: '/admin/pool-consumption', icon: BarChart3 },
         { name: '独立密钥', href: '/admin/keys', icon: Key },
         { name: '钱包管理', href: '/admin/wallets', icon: Wallet },
+        { name: '支付配置', href: '/admin/payment-gateways', icon: CreditCard },
+        { name: '套餐管理', href: '/admin/billing-plans', icon: Package },
         { name: '异步任务', href: '/admin/async-tasks', icon: Zap },
         { name: '使用记录', href: '/admin/usage', icon: BarChart3 },
       ]
