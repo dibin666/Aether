@@ -26,6 +26,7 @@ pub struct PoolSchedulingConfig {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PoolRuntimeState {
     pub sticky_bound_key_id: Option<String>,
+    pub active_probe_member_ids: BTreeSet<String>,
     pub cooldown_reason_by_key: BTreeMap<String, String>,
     pub cost_window_usage_by_key: BTreeMap<String, u64>,
     pub latency_avg_ms_by_key: BTreeMap<String, f64>,
@@ -284,11 +285,14 @@ fn schedule_pool_group<Candidate>(
         };
     }
 
-    if !active_presets.is_empty() {
+    let active_probe_preference_enabled = !runtime.active_probe_member_ids.is_empty();
+
+    if !active_presets.is_empty() || active_probe_preference_enabled {
         let sort_vectors = build_pool_sort_vectors(
             &available,
             &active_presets,
             selected_plan_order.as_ref(),
+            &runtime.active_probe_member_ids,
             lru_distribution_enabled,
             group_sort_seed(
                 available.first().map(|item| &item.item.facts),
@@ -304,7 +308,8 @@ fn schedule_pool_group<Candidate>(
                 .then(left.original_index.cmp(&right.original_index))
         });
         if sticky_enabled {
-            let primary_strategy_components = usize::from(selected_plan_order.is_some());
+            let primary_strategy_components = usize::from(selected_plan_order.is_some())
+                + usize::from(active_probe_preference_enabled);
             promote_sticky_candidate(
                 &mut available,
                 runtime.sticky_bound_key_id.as_deref(),
@@ -399,6 +404,7 @@ fn build_pool_sort_vectors<Candidate>(
     items: &[PoolGroupCandidateOrdering<Candidate>],
     presets: &[NormalizedPoolPreset],
     selected_plan_order: Option<&BTreeMap<&'static str, usize>>,
+    active_probe_member_ids: &BTreeSet<String>,
     lru_enabled: bool,
     load_balance_seed: &str,
     cost_limit_per_key_tokens: Option<u64>,
@@ -420,6 +426,11 @@ fn build_pool_sort_vectors<Candidate>(
 
     if let Some(selected_plan_order) = selected_plan_order {
         let ranks = plan_order_ranks(items, &lru_ranks, selected_plan_order);
+        push_ranks(&mut vectors, &ranks);
+    }
+
+    if !active_probe_member_ids.is_empty() {
+        let ranks = active_probe_ranks(items, active_probe_member_ids);
         push_ranks(&mut vectors, &ranks);
     }
 
@@ -470,6 +481,28 @@ fn priority_first_ranks<Candidate>(
     let scores = collect_metric_scores(items, |item| {
         Some(f64::from(item.item.facts.key_internal_priority))
     });
+    if !score_map_has_variation(&scores) {
+        return neutral_pool_ranks(items);
+    }
+    rank_indices_from_score_map(items, &scores, false)
+}
+
+fn active_probe_ranks<Candidate>(
+    items: &[PoolGroupCandidateOrdering<Candidate>],
+    active_probe_member_ids: &BTreeSet<String>,
+) -> BTreeMap<String, usize> {
+    let scores = items
+        .iter()
+        .map(|item| {
+            let key_id = item.item.facts.key_id.clone();
+            let rank = if active_probe_member_ids.contains(&key_id) {
+                0.0
+            } else {
+                1.0
+            };
+            (key_id, Some(rank))
+        })
+        .collect::<BTreeMap<_, _>>();
     if !score_map_has_variation(&scores) {
         return neutral_pool_ranks(items);
     }
@@ -790,7 +823,7 @@ fn normalize_enabled_pool_preset_entries(
     let mut group_enabled = BTreeMap::<String, (usize, usize, String, Option<String>, bool)>::new();
 
     for (index, preset, enabled, mode, auto_added) in entries {
-        if !enabled || preset == "lru" {
+        if !enabled {
             continue;
         }
 
@@ -811,7 +844,11 @@ fn normalize_enabled_pool_preset_entries(
         }
     }
 
-    ordered_enabled.extend(group_enabled.into_values());
+    ordered_enabled.extend(
+        group_enabled
+            .into_values()
+            .filter(|(_, _, preset, _, _)| preset != "lru"),
+    );
     ordered_enabled.sort_by(|left, right| {
         pool_preset_order_tier(&left.2, left.4)
             .cmp(&pool_preset_order_tier(&right.2, right.4))
@@ -1294,6 +1331,83 @@ mod tests {
                 .map(|item| item.candidate.as_str())
                 .collect::<Vec<_>>(),
             vec!["key-plus", "key-free"]
+        );
+    }
+
+    #[test]
+    fn pool_scheduler_active_probe_preference_does_not_cross_plan_priority() {
+        let presets = vec![
+            PoolSchedulingPreset {
+                preset: "plus_first".to_string(),
+                enabled: true,
+                mode: None,
+            },
+            PoolSchedulingPreset {
+                preset: "free_first".to_string(),
+                enabled: true,
+                mode: None,
+            },
+        ];
+        let key_free = sample_candidate("provider-pool", "endpoint-1", "key-free", 10, true)
+            .with_presets(presets.clone())
+            .with_plan("free");
+        let key_plus = sample_candidate("provider-pool", "endpoint-1", "key-plus", 10, true)
+            .with_presets(presets)
+            .with_plan("plus");
+
+        let runtime_by_provider = BTreeMap::from([(
+            "provider-pool".to_string(),
+            PoolRuntimeState {
+                active_probe_member_ids: BTreeSet::from(["key-free".to_string()]),
+                ..PoolRuntimeState::default()
+            },
+        )]);
+
+        let outcome = run_ai_pool_scheduler(vec![key_free, key_plus], &runtime_by_provider, "seed");
+
+        assert!(outcome.skipped_candidates.is_empty());
+        assert_eq!(
+            outcome
+                .candidates
+                .iter()
+                .map(|item| item.candidate.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-plus", "key-free"]
+        );
+    }
+
+    #[test]
+    fn pool_scheduler_active_probe_preference_breaks_ties_within_same_plan() {
+        let presets = vec![PoolSchedulingPreset {
+            preset: "plus_first".to_string(),
+            enabled: true,
+            mode: None,
+        }];
+        let key_cold = sample_candidate("provider-pool", "endpoint-1", "key-plus-cold", 10, true)
+            .with_presets(presets.clone())
+            .with_plan("plus");
+        let key_hot = sample_candidate("provider-pool", "endpoint-1", "key-plus-hot", 10, true)
+            .with_presets(presets)
+            .with_plan("plus");
+
+        let runtime_by_provider = BTreeMap::from([(
+            "provider-pool".to_string(),
+            PoolRuntimeState {
+                active_probe_member_ids: BTreeSet::from(["key-plus-hot".to_string()]),
+                ..PoolRuntimeState::default()
+            },
+        )]);
+
+        let outcome = run_ai_pool_scheduler(vec![key_cold, key_hot], &runtime_by_provider, "seed");
+
+        assert!(outcome.skipped_candidates.is_empty());
+        assert_eq!(
+            outcome
+                .candidates
+                .iter()
+                .map(|item| item.candidate.as_str())
+                .collect::<Vec<_>>(),
+            vec!["key-plus-hot", "key-plus-cold"]
         );
     }
 

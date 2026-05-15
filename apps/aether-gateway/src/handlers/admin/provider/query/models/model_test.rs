@@ -771,6 +771,7 @@ fn provider_query_ai_pool_runtime_state(
 ) -> AiPoolRuntimeState {
     AiPoolRuntimeState {
         sticky_bound_key_id: runtime.sticky_bound_key_id.clone(),
+        active_probe_member_ids: runtime.active_probe_member_ids.clone(),
         cooldown_reason_by_key: runtime.cooldown_reason_by_key.clone(),
         cost_window_usage_by_key: runtime.cost_window_usage_by_key.clone(),
         latency_avg_ms_by_key: runtime.latency_avg_ms_by_key.clone(),
