@@ -48,8 +48,16 @@ pub(super) fn provider_auto_remove_banned_keys(config: Option<&serde_json::Value
     admin_provider_quota_pure::provider_auto_remove_banned_keys(config)
 }
 
-pub(super) fn should_auto_remove_structured_reason(reason: Option<&str>) -> bool {
-    admin_provider_quota_pure::should_auto_remove_structured_reason(reason)
+pub(super) fn should_auto_remove_oauth_invalid_key(
+    key: &StoredProviderCatalogKey,
+    candidate_reason: Option<&str>,
+    now_unix_secs: u64,
+) -> bool {
+    admin_provider_quota_pure::should_auto_remove_oauth_invalid_key(
+        key,
+        candidate_reason,
+        now_unix_secs,
+    )
 }
 
 pub(crate) fn normalize_string_id_list(values: Option<Vec<String>>) -> Option<Vec<String>> {
@@ -70,22 +78,6 @@ pub(crate) fn provider_quota_refresh_endpoint_for_provider(
     include_inactive: bool,
 ) -> Option<StoredProviderCatalogEndpoint> {
     ProviderPoolService::with_builtin_adapters().quota_refresh_endpoint_for_provider(
-        provider_type,
-        endpoints,
-        include_inactive,
-    )
-}
-
-pub(crate) fn provider_type_supports_account_self_check(provider_type: &str) -> bool {
-    ProviderPoolService::with_builtin_adapters().supports_account_self_check(provider_type)
-}
-
-pub(crate) fn provider_account_self_check_endpoint_for_provider(
-    provider_type: &str,
-    endpoints: &[StoredProviderCatalogEndpoint],
-    include_inactive: bool,
-) -> Option<StoredProviderCatalogEndpoint> {
-    ProviderPoolService::with_builtin_adapters().account_self_check_endpoint_for_provider(
         provider_type,
         endpoints,
         include_inactive,

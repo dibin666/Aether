@@ -26,6 +26,57 @@ pub fn should_auto_remove_structured_reason(reason: Option<&str>) -> bool {
     ))
 }
 
+fn oauth_reason_has_tag(reason: Option<&str>, tag: &str) -> bool {
+    reason
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|reason| {
+            reason
+                .lines()
+                .map(str::trim)
+                .any(|line| line.starts_with(tag))
+        })
+}
+
+fn oauth_access_token_expired(key: &StoredProviderCatalogKey, now_unix_secs: u64) -> bool {
+    let now_unix_secs = if now_unix_secs == 0 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0)
+    } else {
+        now_unix_secs
+    };
+    key.expires_at_unix_secs
+        .is_none_or(|expires_at| expires_at == 0 || expires_at <= now_unix_secs)
+}
+
+pub fn should_auto_remove_oauth_invalid_key(
+    key: &StoredProviderCatalogKey,
+    candidate_reason: Option<&str>,
+    now_unix_secs: u64,
+) -> bool {
+    if should_auto_remove_structured_reason(candidate_reason)
+        || should_auto_remove_structured_reason(key.oauth_invalid_reason.as_deref())
+    {
+        return true;
+    }
+
+    let refresh_token_failed = oauth_reason_has_tag(candidate_reason, OAUTH_REFRESH_FAILED_PREFIX)
+        || oauth_reason_has_tag(
+            key.oauth_invalid_reason.as_deref(),
+            OAUTH_REFRESH_FAILED_PREFIX,
+        );
+    if !refresh_token_failed {
+        return false;
+    }
+
+    oauth_reason_has_tag(candidate_reason, OAUTH_EXPIRED_PREFIX)
+        || oauth_reason_has_tag(key.oauth_invalid_reason.as_deref(), OAUTH_EXPIRED_PREFIX)
+        || oauth_access_token_expired(key, now_unix_secs)
+}
+
 pub fn normalize_string_id_list(values: Option<Vec<String>>) -> Option<Vec<String>> {
     let mut out = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
@@ -314,6 +365,133 @@ pub fn parse_codex_wham_usage_response(
     Some(serde_json::Value::Object(result))
 }
 
+fn codex_json_object<'a>(
+    root: &'a serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    keys.iter()
+        .find_map(|key| root.get(*key).and_then(serde_json::Value::as_object))
+}
+
+fn codex_json_string_from_object(
+    object: Option<&serde_json::Map<String, serde_json::Value>>,
+    keys: &[&str],
+) -> Option<String> {
+    let object = object?;
+    keys.iter()
+        .find_map(|key| coerce_json_string(object.get(*key)))
+}
+
+fn codex_json_string_from_root(
+    root: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<String> {
+    keys.iter()
+        .find_map(|key| coerce_json_string(root.get(*key)))
+}
+
+fn codex_backend_me_account_object(
+    root: &serde_json::Map<String, serde_json::Value>,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    codex_json_object(root, &["account", "current_account", "selected_account"])
+        .or_else(|| {
+            root.get("accounts")
+                .and_then(serde_json::Value::as_array)?
+                .iter()
+                .filter_map(serde_json::Value::as_object)
+                .find(|account| {
+                    account
+                        .get("is_default")
+                        .or_else(|| account.get("selected"))
+                        .or_else(|| account.get("current"))
+                        .and_then(coerce_json_bool)
+                        .unwrap_or(false)
+                })
+        })
+        .or_else(|| {
+            root.get("accounts")
+                .and_then(serde_json::Value::as_array)?
+                .iter()
+                .find_map(serde_json::Value::as_object)
+        })
+}
+
+fn codex_backend_me_plan_object<'a>(
+    root: &'a serde_json::Map<String, serde_json::Value>,
+    account: Option<&'a serde_json::Map<String, serde_json::Value>>,
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    codex_json_object(root, &["plan", "subscription", "workspace_plan"]).or_else(|| {
+        account
+            .and_then(|account| account.get("plan"))
+            .and_then(serde_json::Value::as_object)
+    })
+}
+
+pub fn parse_codex_backend_me_response(
+    value: &serde_json::Value,
+    updated_at_unix_secs: u64,
+) -> Option<serde_json::Value> {
+    let root = value.as_object()?;
+    if root.is_empty() {
+        return None;
+    }
+
+    let user = codex_json_object(root, &["user", "auth_user", "profile"]);
+    let account = codex_backend_me_account_object(root);
+    let plan = codex_backend_me_plan_object(root, account);
+    let mut result = serde_json::Map::new();
+
+    if let Some(user_id) = codex_json_string_from_object(user, &["id", "user_id"])
+        .or_else(|| codex_json_string_from_root(root, &["user_id"]))
+    {
+        result.insert("user_id".to_string(), json!(user_id));
+    }
+    if let Some(email) = codex_json_string_from_object(user, &["email"])
+        .or_else(|| codex_json_string_from_root(root, &["email"]))
+    {
+        result.insert("email".to_string(), json!(email));
+    }
+    if let Some(name) = codex_json_string_from_object(user, &["name", "display_name", "full_name"])
+        .or_else(|| codex_json_string_from_root(root, &["name", "display_name", "full_name"]))
+    {
+        result.insert("user_name".to_string(), json!(name));
+    }
+    if let Some(account_id) =
+        codex_json_string_from_object(account, &["id", "account_id", "accountId", "workspace_id"])
+            .or_else(|| {
+                codex_json_string_from_root(root, &["account_id", "accountId", "workspace_id"])
+            })
+    {
+        result.insert("account_id".to_string(), json!(account_id));
+    }
+    if let Some(account_name) =
+        codex_json_string_from_object(account, &["name", "title", "display_name"])
+    {
+        result.insert("account_name".to_string(), json!(account_name));
+    }
+
+    let plan_type = codex_json_string_from_object(
+        account,
+        &["plan_type", "planType", "subscription_plan", "tier"],
+    )
+    .or_else(|| codex_json_string_from_object(plan, &["type", "plan_type", "name", "tier"]))
+    .or_else(|| codex_json_string_from_root(root, &["plan_type", "planType"]));
+    if let Some(plan_type) = normalize_codex_plan_type(plan_type.as_deref()) {
+        result.insert("plan_type".to_string(), json!(plan_type));
+    }
+    if let Some(plan_title) =
+        codex_json_string_from_object(plan, &["title", "display_name", "label"])
+    {
+        result.insert("plan_title".to_string(), json!(plan_title));
+    }
+
+    if result.is_empty() {
+        return None;
+    }
+    result.insert("updated_at".to_string(), json!(updated_at_unix_secs));
+    Some(serde_json::Value::Object(result))
+}
+
 pub fn parse_codex_usage_headers(
     headers: &BTreeMap<String, String>,
     updated_at_unix_secs: u64,
@@ -435,8 +613,19 @@ fn codex_merge_invalid_reason(current: &str, candidate_reason: &str) -> String {
         return current.to_string();
     }
     if current.starts_with(OAUTH_EXPIRED_PREFIX)
-        && (candidate_reason.starts_with(OAUTH_REQUEST_FAILED_PREFIX)
-            || candidate_reason.starts_with(OAUTH_REFRESH_FAILED_PREFIX))
+        && candidate_reason.starts_with(OAUTH_REFRESH_FAILED_PREFIX)
+    {
+        if current
+            .lines()
+            .map(str::trim)
+            .any(|line| line.starts_with(OAUTH_REFRESH_FAILED_PREFIX))
+        {
+            return current.to_string();
+        }
+        return format!("{current}\n{candidate_reason}");
+    }
+    if current.starts_with(OAUTH_EXPIRED_PREFIX)
+        && candidate_reason.starts_with(OAUTH_REQUEST_FAILED_PREFIX)
     {
         return current.to_string();
     }
@@ -512,6 +701,14 @@ pub fn codex_structured_invalid_reason(status_code: u16, upstream_message: Optio
         };
         return format!("{OAUTH_ACCOUNT_BLOCK_PREFIX}{detail}");
     }
+    if status_code == 402 {
+        let detail = if message.is_empty() {
+            "Codex 账户需要付款 (402)"
+        } else {
+            message
+        };
+        return format!("{OAUTH_ACCOUNT_BLOCK_PREFIX}{detail}");
+    }
     message.to_string()
 }
 
@@ -521,9 +718,7 @@ pub fn codex_runtime_invalid_reason(
 ) -> Option<String> {
     match status_code {
         401 => Some(codex_structured_invalid_reason(401, upstream_message)),
-        402 if codex_looks_like_workspace_deactivated(upstream_message) => {
-            Some(codex_structured_invalid_reason(402, upstream_message))
-        }
+        402 => Some(codex_structured_invalid_reason(402, upstream_message)),
         403 if codex_looks_like_token_invalidated(upstream_message)
             || codex_looks_like_account_deactivated(upstream_message) =>
         {
@@ -913,9 +1108,9 @@ pub fn parse_chatgpt_web_conversation_init_response(
 mod tests {
     use super::{
         codex_build_invalid_state, codex_runtime_invalid_reason,
-        parse_chatgpt_web_conversation_init_response, parse_codex_wham_usage_response,
-        OAUTH_ACCOUNT_BLOCK_PREFIX, OAUTH_EXPIRED_PREFIX, OAUTH_REFRESH_FAILED_PREFIX,
-        OAUTH_REQUEST_FAILED_PREFIX,
+        parse_chatgpt_web_conversation_init_response, parse_codex_backend_me_response,
+        parse_codex_wham_usage_response, OAUTH_ACCOUNT_BLOCK_PREFIX, OAUTH_EXPIRED_PREFIX,
+        OAUTH_REFRESH_FAILED_PREFIX, OAUTH_REQUEST_FAILED_PREFIX,
     };
     use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
     use serde_json::json;
@@ -939,12 +1134,20 @@ mod tests {
     }
 
     #[test]
+    fn codex_runtime_invalid_reason_marks_402_as_account_blocked() {
+        assert_eq!(
+            codex_runtime_invalid_reason(402, Some("payment required")),
+            Some(format!("{OAUTH_ACCOUNT_BLOCK_PREFIX}payment required"))
+        );
+    }
+
+    #[test]
     fn codex_runtime_invalid_reason_ignores_generic_403() {
         assert_eq!(codex_runtime_invalid_reason(403, Some("forbidden")), None);
     }
 
     #[test]
-    fn codex_invalid_state_keeps_oauth_expired_over_refresh_failure() {
+    fn codex_invalid_state_appends_refresh_failure_to_oauth_expired() {
         let mut key = StoredProviderCatalogKey::new(
             "key-1".to_string(),
             "provider-1".to_string(),
@@ -964,10 +1167,28 @@ mod tests {
                 200,
             ),
             (
-                Some(100),
-                Some(format!("{OAUTH_EXPIRED_PREFIX}session expired"))
+                Some(200),
+                Some(format!(
+                    "{OAUTH_EXPIRED_PREFIX}session expired\n{OAUTH_REFRESH_FAILED_PREFIX}Token 续期失败"
+                ))
             )
         );
+    }
+
+    #[test]
+    fn codex_invalid_state_keeps_oauth_expired_over_request_failure() {
+        let mut key = StoredProviderCatalogKey::new(
+            "key-1".to_string(),
+            "provider-1".to_string(),
+            "key-1".to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build");
+        key.oauth_invalid_at_unix_secs = Some(100);
+        key.oauth_invalid_reason = Some(format!("{OAUTH_EXPIRED_PREFIX}session expired"));
+
         assert_eq!(
             codex_build_invalid_state(
                 &key,
@@ -1008,6 +1229,68 @@ mod tests {
                 ))
             )
         );
+    }
+
+    #[test]
+    fn auto_remove_refresh_failed_after_access_token_expiry() {
+        let mut key = StoredProviderCatalogKey::new(
+            "key-1".to_string(),
+            "provider-1".to_string(),
+            "key-1".to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build");
+        key.expires_at_unix_secs = Some(1_000);
+        key.oauth_invalid_reason = Some(format!("{OAUTH_REFRESH_FAILED_PREFIX}Token 续期失败"));
+
+        assert!(!super::should_auto_remove_oauth_invalid_key(
+            &key, None, 999
+        ));
+        assert!(super::should_auto_remove_oauth_invalid_key(
+            &key, None, 1_000
+        ));
+    }
+
+    #[test]
+    fn auto_remove_combined_refresh_and_access_token_failure() {
+        let mut key = StoredProviderCatalogKey::new(
+            "key-1".to_string(),
+            "provider-1".to_string(),
+            "key-1".to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build");
+        key.expires_at_unix_secs = Some(2_000);
+        key.oauth_invalid_reason = Some(format!("{OAUTH_REFRESH_FAILED_PREFIX}Token 续期失败"));
+
+        assert!(super::should_auto_remove_oauth_invalid_key(
+            &key,
+            Some("[OAUTH_EXPIRED] access token invalid"),
+            1_000,
+        ));
+    }
+
+    #[test]
+    fn does_not_auto_remove_access_token_failure_without_refresh_failure() {
+        let mut key = StoredProviderCatalogKey::new(
+            "key-1".to_string(),
+            "provider-1".to_string(),
+            "key-1".to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build");
+        key.expires_at_unix_secs = Some(1_000);
+        key.oauth_invalid_reason = Some(format!("{OAUTH_EXPIRED_PREFIX}session expired"));
+
+        assert!(!super::should_auto_remove_oauth_invalid_key(
+            &key, None, 1_001
+        ));
     }
 
     #[test]
@@ -1065,6 +1348,40 @@ mod tests {
             parsed.get("spark_secondary_window_minutes"),
             Some(&json!(10_080u64))
         );
+    }
+
+    #[test]
+    fn parses_codex_backend_me_identity_metadata_without_quota_windows() {
+        let parsed = parse_codex_backend_me_response(
+            &json!({
+                "user": {
+                    "id": "user-codex-123",
+                    "email": "codex@example.com",
+                    "name": "Codex User"
+                },
+                "account": {
+                    "id": "acct-codex-123",
+                    "name": "Personal",
+                    "plan_type": "plus"
+                },
+                "plan": {
+                    "type": "Plus",
+                    "title": "ChatGPT Plus"
+                }
+            }),
+            1_777_000_000,
+        )
+        .expect("codex backend me should parse");
+
+        assert_eq!(parsed.get("user_id"), Some(&json!("user-codex-123")));
+        assert_eq!(parsed.get("email"), Some(&json!("codex@example.com")));
+        assert_eq!(parsed.get("account_id"), Some(&json!("acct-codex-123")));
+        assert_eq!(parsed.get("account_name"), Some(&json!("Personal")));
+        assert_eq!(parsed.get("plan_type"), Some(&json!("plus")));
+        assert_eq!(parsed.get("plan_title"), Some(&json!("ChatGPT Plus")));
+        assert_eq!(parsed.get("updated_at"), Some(&json!(1_777_000_000u64)));
+        assert!(parsed.get("primary_used_percent").is_none());
+        assert!(parsed.get("secondary_used_percent").is_none());
     }
 
     #[test]

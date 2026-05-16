@@ -87,8 +87,6 @@ mod tests {
         assert!(service.supports_quota_refresh("codex"));
         assert!(service.supports_quota_refresh("antigravity"));
         assert!(!service.supports_quota_refresh("gemini_cli"));
-        assert!(service.supports_account_self_check("codex"));
-        assert!(!service.supports_account_self_check("gemini_cli"));
         assert_eq!(
             service.quota_refresh_unsupported_message("claude_code"),
             "Claude Code 暂不支持自动刷新额度：上游没有稳定可用的账号额度查询接口"
@@ -116,6 +114,29 @@ mod tests {
             spec.headers.get("chatgpt-account-id").map(String::as_str),
             Some("acct-1")
         );
+    }
+
+    #[test]
+    fn codex_quota_request_uses_wham_usage_endpoint() {
+        let spec = build_codex_pool_quota_request(
+            "key-1",
+            Some(("authorization".to_string(), "Bearer access".to_string())),
+            None,
+            None,
+        )
+        .expect("spec should build");
+
+        assert_eq!(spec.method, "GET");
+        assert_eq!(spec.url, "https://chatgpt.com/backend-api/wham/usage");
+        assert_eq!(
+            spec.headers.get("authorization").map(String::as_str),
+            Some("Bearer access")
+        );
+        assert_eq!(
+            spec.headers.get("accept").map(String::as_str),
+            Some("application/json")
+        );
+        assert_eq!(spec.model_name.as_deref(), Some("codex-wham-usage"));
     }
 
     #[test]

@@ -194,16 +194,17 @@ fn codex_quota_execution_result(request_id: &str) -> serde_json::Value {
         "headers": {},
         "body": {
             "json_body": {
-                "plan_type": "plus",
-                "rate_limit": {
-                    "primary_window": {
-                        "used_percent": 10.0,
-                        "window_minutes": 300
-                    },
-                    "secondary_window": {
-                        "used_percent": 20.0,
-                        "window_minutes": 10080
-                    }
+                "user": {
+                    "id": "user-codex-123",
+                    "email": "alice@example.com"
+                },
+                "account": {
+                    "id": "acct-codex-123",
+                    "plan_type": "plus"
+                },
+                "plan": {
+                    "type": "Plus",
+                    "title": "ChatGPT Plus"
                 }
             }
         }
