@@ -1127,7 +1127,8 @@ async fn gateway_routes_openai_chat_stream_image_intent_to_openai_image_plan_wit
         seen_plan.body_json["input"][0]["content"],
         "Draw a city made of glass"
     );
-    assert!(seen_plan.body_json.get("tools").is_none());
+    assert_eq!(seen_plan.body_json["tools"][0]["type"], "image_generation");
+    assert_eq!(seen_plan.body_json["tools"][0]["size"], "1024x1024");
 
     gateway_handle.abort();
     execution_runtime_handle.abort();
@@ -1183,7 +1184,8 @@ async fn gateway_routes_openai_responses_stream_image_intent_to_openai_image_pla
     assert_eq!(seen_plan.auth_header, "Bearer sk-upstream-image-bridge");
     assert_eq!(seen_plan.body_json["stream"], true);
     assert_eq!(seen_plan.body_json["input"], "Draw a mountain observatory");
-    assert!(seen_plan.body_json.get("tools").is_none());
+    assert_eq!(seen_plan.body_json["tools"][0]["type"], "image_generation");
+    assert_eq!(seen_plan.body_json["tools"][0]["size"], "1024x1024");
 
     gateway_handle.abort();
     execution_runtime_handle.abort();
