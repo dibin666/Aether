@@ -194,8 +194,15 @@ export const asyncTasksApi = {
     return response.data
   },
 
-  async getEvents(taskId: string): Promise<{ items: AsyncTaskEvent[] }> {
-    const response = await apiClient.get(`/api/admin/tasks/${taskId}/events`)
+  async getEvents(
+    taskId: string,
+    params: { page?: number; page_size?: number } = {},
+  ): Promise<{ items: AsyncTaskEvent[] }> {
+    const searchParams = new URLSearchParams()
+    if (params.page) searchParams.append('page', params.page.toString())
+    if (params.page_size) searchParams.append('page_size', params.page_size.toString())
+    const query = searchParams.toString()
+    const response = await apiClient.get(`/api/admin/tasks/${taskId}/events${query ? `?${query}` : ''}`)
     return response.data
   },
 

@@ -120,9 +120,9 @@
                 class="h-8 w-8 shrink-0"
                 data-testid="pool-refresh-worker-button"
                 title="自动刷新配置和日志"
-                @click="openRefreshWorkerPanel"
+                @click="openRefreshWorkerDialog"
               >
-                <RefreshCw class="w-3.5 h-3.5" />
+                <History class="w-3.5 h-3.5" />
               </Button>
             </div>
             <div class="min-w-0 flex-1 flex justify-center">
@@ -337,9 +337,9 @@
               class="h-8 w-8"
               data-testid="pool-refresh-worker-button"
               title="自动刷新配置和日志"
-              @click="openRefreshWorkerPanel"
+              @click="openRefreshWorkerDialog"
             >
-              <RefreshCw class="w-3.5 h-3.5" />
+              <History class="w-3.5 h-3.5" />
             </Button>
             <Button
               v-if="selectedProviderId"
@@ -1471,22 +1471,43 @@
       </template>
     </Card>
 
-    <div ref="refreshWorkerPanelRef">
-      <Card
-        variant="default"
-        class="overflow-hidden"
-      >
-      <div class="border-b border-border/60 px-4 py-3 sm:px-6">
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 class="text-base font-semibold">
-              自动刷新
-            </h3>
-            <p class="mt-1 text-xs text-muted-foreground">
-              配置 OAuth 自动续期，并查看 OAuth 与额度刷新的后台日志。
-            </p>
+    <!-- Dialogs -->
+    <Dialog
+      :model-value="showRefreshWorkerDialog"
+      :no-padding="true"
+      size="5xl"
+      @update:model-value="showRefreshWorkerDialog = $event"
+    >
+      <template #header>
+        <div class="border-b border-border px-4 py-4 sm:px-6">
+          <div class="flex items-start gap-3">
+            <div class="min-w-0 flex-1">
+              <h3 class="text-lg font-semibold leading-tight text-foreground">
+                自动刷新
+              </h3>
+              <p class="text-xs text-muted-foreground">
+                OAuth 与额度后台任务
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-8 w-8 shrink-0"
+              title="关闭"
+              @click="showRefreshWorkerDialog = false"
+            >
+              <X class="h-4 w-4" />
+            </Button>
           </div>
-          <div class="flex items-center gap-2">
+        </div>
+      </template>
+
+      <div class="grid max-h-[calc(100dvh-13rem)] overflow-y-auto overscroll-contain lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)] lg:overflow-hidden">
+        <section class="border-b border-border/60 p-4 sm:p-6 lg:border-b-0 lg:border-r">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-sm font-semibold">
+              OAuth 配置
+            </h3>
             <Button
               variant="outline"
               size="sm"
@@ -1496,110 +1517,103 @@
               <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
               读取配置
             </Button>
-            <Button
-              size="sm"
-              :disabled="refreshWorkerSettingsSaving"
-              @click="saveRefreshWorkerSettings"
-            >
-              保存
-            </Button>
           </div>
-        </div>
-      </div>
-      <div class="grid gap-4 p-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)] sm:p-6">
-        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <div class="space-y-1.5">
-            <label class="text-xs font-medium text-muted-foreground">提前刷新</label>
-            <Input
-              :model-value="refreshWorkerSettings.lookaheadSeconds"
-              type="number"
-              min="0"
-              class="h-9"
-              @update:model-value="(value) => refreshWorkerSettings.lookaheadSeconds = Number(value || 0)"
-            />
-          </div>
-          <div class="space-y-1.5">
-            <label class="text-xs font-medium text-muted-foreground">扫描间隔</label>
-            <Input
-              :model-value="refreshWorkerSettings.intervalSeconds"
-              type="number"
-              min="15"
-              class="h-9"
-              @update:model-value="(value) => refreshWorkerSettings.intervalSeconds = Number(value || 0)"
-            />
-          </div>
-          <div class="space-y-1.5">
-            <label class="text-xs font-medium text-muted-foreground">并发</label>
-            <Input
-              :model-value="refreshWorkerSettings.concurrency"
-              type="number"
-              min="1"
-              max="64"
-              class="h-9"
-              @update:model-value="(value) => refreshWorkerSettings.concurrency = Number(value || 0)"
-            />
-          </div>
-          <div class="space-y-1.5">
-            <label class="text-xs font-medium text-muted-foreground">每轮最多</label>
-            <Input
-              :model-value="refreshWorkerSettings.maxPerRun"
-              type="number"
-              min="1"
-              max="10000"
-              class="h-9"
-              @update:model-value="(value) => refreshWorkerSettings.maxPerRun = Number(value || 0)"
-            />
-          </div>
-          <div class="space-y-1.5 sm:col-span-2 xl:col-span-1">
-            <label class="text-xs font-medium text-muted-foreground">OAuth 代理</label>
-            <Select v-model="oauthRefreshProxySelectValue">
-              <SelectTrigger class="h-9 border-border/60">
-                <SelectValue placeholder="选择代理" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem :value="OAUTH_PROXY_AUTO_VALUE">
-                  跟随账号/系统
-                </SelectItem>
-                <SelectItem :value="OAUTH_PROXY_DIRECT_VALUE">
-                  直连
-                </SelectItem>
-                <SelectItem
-                  v-for="node in proxyNodesStore.onlineNodes"
-                  :key="node.id"
-                  :value="node.id"
-                >
-                  {{ node.name }}{{ node.region ? ` · ${node.region}` : '' }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
 
-        <div class="rounded-xl border border-border/60 bg-muted/10">
-          <div class="flex items-center justify-between border-b border-border/60 px-3 py-2">
-            <div class="text-sm font-medium">
-              刷新日志
+          <div class="mt-4 grid gap-3 sm:grid-cols-2">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">提前刷新（秒）</label>
+              <Input
+                :model-value="refreshWorkerSettings.lookaheadSeconds"
+                type="number"
+                min="0"
+                class="h-9"
+                @update:model-value="(value) => refreshWorkerSettings.lookaheadSeconds = Number(value || 0)"
+              />
             </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">扫描间隔（秒）</label>
+              <Input
+                :model-value="refreshWorkerSettings.intervalSeconds"
+                type="number"
+                min="15"
+                class="h-9"
+                @update:model-value="(value) => refreshWorkerSettings.intervalSeconds = Number(value || 0)"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">并发（账号）</label>
+              <Input
+                :model-value="refreshWorkerSettings.concurrency"
+                type="number"
+                min="1"
+                max="64"
+                class="h-9"
+                @update:model-value="(value) => refreshWorkerSettings.concurrency = Number(value || 0)"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">每轮最多（账号）</label>
+              <Input
+                :model-value="refreshWorkerSettings.maxPerRun"
+                type="number"
+                min="1"
+                max="10000"
+                class="h-9"
+                @update:model-value="(value) => refreshWorkerSettings.maxPerRun = Number(value || 0)"
+              />
+            </div>
+            <div class="space-y-1.5 sm:col-span-2">
+              <label class="text-xs font-medium text-muted-foreground">OAuth 代理</label>
+              <Select v-model="oauthRefreshProxySelectValue">
+                <SelectTrigger class="h-9 border-border/60">
+                  <SelectValue placeholder="选择代理" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="OAUTH_PROXY_AUTO_VALUE">
+                    跟随账号/系统
+                  </SelectItem>
+                  <SelectItem :value="OAUTH_PROXY_DIRECT_VALUE">
+                    直连
+                  </SelectItem>
+                  <SelectItem
+                    v-for="node in proxyNodesStore.onlineNodes"
+                    :key="node.id"
+                    :value="node.id"
+                  >
+                    {{ node.name }}{{ node.region ? ` · ${node.region}` : '' }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </section>
+
+        <section class="min-h-[24rem] p-4 sm:p-6">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-sm font-semibold">
+              刷新日志
+            </h3>
             <Button
               variant="ghost"
               size="sm"
-              class="h-7 px-2"
+              class="h-8 px-2"
               :disabled="refreshWorkerLogsLoading"
               @click="loadRefreshWorkerLogs"
             >
               <RefreshCw class="h-3.5 w-3.5" />
             </Button>
           </div>
-          <div class="max-h-56 overflow-auto p-3">
+
+          <div class="mt-4 max-h-[min(62vh,34rem)] overflow-auto rounded-lg border border-border/60 bg-muted/10">
             <div
               v-if="refreshWorkerLogsLoading"
-              class="py-6 text-center text-xs text-muted-foreground"
+              class="py-10 text-center text-xs text-muted-foreground"
             >
               加载中...
             </div>
             <div
               v-else-if="refreshWorkerLogs.length === 0"
-              class="py-6 text-center text-xs text-muted-foreground"
+              class="py-10 text-center text-xs text-muted-foreground"
             >
               暂无日志
             </div>
@@ -1607,27 +1621,54 @@
               <div
                 v-for="item in refreshWorkerLogs"
                 :key="item.id"
-                class="border-b border-border/50 py-2 last:border-b-0"
+                class="border-b border-border/50 px-3 py-2.5 last:border-b-0"
               >
-                <div class="flex items-center justify-between gap-3 text-xs">
+                <div class="flex items-start justify-between gap-3 text-xs">
                   <div class="min-w-0">
-                    <span class="font-medium text-foreground">{{ refreshTaskLabel(item.taskKey) }}</span>
-                    <span class="ml-2 text-muted-foreground">{{ eventLabel(item.eventType) }}</span>
+                    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span class="font-medium text-foreground">{{ refreshTaskLabel(item.taskKey) }}</span>
+                      <span class="text-foreground/90">{{ refreshLogSubject(item) }}</span>
+                      <Badge
+                        variant="outline"
+                        class="h-5 px-1.5 py-0 text-[11px]"
+                        :class="refreshLogStatusClass(item)"
+                      >
+                        {{ refreshLogStatusLabel(item) }}
+                      </Badge>
+                    </div>
+                    <div class="mt-1 truncate text-xs text-muted-foreground">
+                      {{ refreshLogDetail(item) }}
+                    </div>
                   </div>
-                  <span class="shrink-0 text-muted-foreground">{{ item.createdAt }}</span>
-                </div>
-                <div class="mt-1 truncate text-xs text-muted-foreground">
-                  {{ formatRefreshLogPayload(item.payload) || item.message }}
+                  <span class="shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
+                    {{ formatBrowserDateTime(item.createdAt) }}
+                  </span>
                 </div>
               </div>
             </template>
           </div>
-        </div>
+        </section>
       </div>
-      </Card>
-    </div>
 
-    <!-- Dialogs -->
+      <template #footer>
+        <Button
+          variant="outline"
+          class="min-w-[96px] flex-1 sm:flex-none"
+          :disabled="refreshWorkerSettingsSaving"
+          @click="showRefreshWorkerDialog = false"
+        >
+          关闭
+        </Button>
+        <Button
+          class="min-w-[96px] flex-1 sm:flex-none"
+          :disabled="refreshWorkerSettingsSaving"
+          @click="saveRefreshWorkerSettings"
+        >
+          {{ refreshWorkerSettingsSaving ? '保存中...' : '保存' }}
+        </Button>
+      </template>
+    </Dialog>
+
     <OAuthAccountDialog
       v-if="selectedProviderId"
       :open="showImportDialog"
@@ -1716,6 +1757,7 @@ import {
   Upload,
   ChevronDown,
   RefreshCw,
+  History,
   Activity,
   Power,
   Database,
@@ -1734,10 +1776,12 @@ import {
   CircleHelp,
   Edit,
   Plug,
+  X,
 } from 'lucide-vue-next'
 
 import {
   Card,
+  Dialog,
   Badge,
   Button,
   Input,
@@ -1887,7 +1931,7 @@ const DEFAULT_REFRESH_WORKER_SETTINGS = {
   proxyNodeId: '',
 } satisfies RefreshWorkerSettings
 
-const refreshWorkerPanelRef = ref<HTMLElement | null>(null)
+const showRefreshWorkerDialog = ref(false)
 const refreshWorkerSettings = ref<RefreshWorkerSettings>({
   ...DEFAULT_REFRESH_WORKER_SETTINGS,
 })
@@ -1957,6 +2001,11 @@ interface PoolRefreshLogItem {
   message: string
   createdAt: string
   payload: unknown
+  providerName?: string
+  keyId?: string
+  keyName?: string
+  status?: string
+  detail?: string
 }
 
 interface PoolDemandMetricSample {
@@ -2090,6 +2139,10 @@ function refreshTaskLabel(taskKey: string): string {
 }
 
 function eventLabel(eventType: string): string {
+  if (eventType.includes('refreshed')) return '已刷新'
+  if (eventType.includes('checked')) return '已检查'
+  if (eventType.includes('skipped')) return '跳过'
+  if (eventType.includes('succeeded')) return '成功'
   if (eventType.includes('failed')) return '失败'
   if (eventType.includes('completed')) return '完成'
   if (eventType.includes('boot')) return '启动'
@@ -2102,11 +2155,98 @@ function payloadRecord(payload: unknown): Record<string, unknown> | null {
     : null
 }
 
+function payloadString(payload: Record<string, unknown> | null, key: string): string {
+  const value = payload?.[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function payloadNumber(payload: Record<string, unknown> | null, key: string): number | null {
+  const value = payload?.[key]
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function buildRefreshLogItem(taskKey: string, event: AsyncTaskEvent): PoolRefreshLogItem {
+  const payload = payloadRecord(event.payload)
+  const detail = payloadString(payload, 'message')
+    || payloadString(payload, 'error')
+    || formatRefreshLogPayload(event.payload)
+    || event.message
+  return {
+    id: `${taskKey}:${event.id}`,
+    taskKey,
+    eventType: event.event_type,
+    message: event.message,
+    createdAt: event.created_at,
+    payload: event.payload,
+    providerName: payloadString(payload, 'provider_name'),
+    keyId: payloadString(payload, 'key_id'),
+    keyName: payloadString(payload, 'key_name'),
+    status: payloadString(payload, 'status'),
+    detail,
+  }
+}
+
+function refreshLogSubject(item: PoolRefreshLogItem): string {
+  const accountName = item.keyName || (item.keyId ? `Key ${item.keyId.slice(0, 8)}` : '')
+  if (accountName && item.providerName) return `${item.providerName} / ${accountName}`
+  return accountName || item.providerName || '后台任务'
+}
+
+function refreshLogStatusLabel(item: PoolRefreshLogItem): string {
+  const status = item.status?.trim()
+  if (status === 'refreshed') return '已刷新'
+  if (status === 'checked') return '已检查'
+  if (status === 'skipped') return '跳过'
+  if (status === 'success') return '成功'
+  if (status === 'failed' || status === 'error' || status === 'worker_error' || status === 'missing_result') return '失败'
+  if (status === 'auto_removed') return '已删除'
+  return eventLabel(item.eventType)
+}
+
+function refreshLogStatusClass(item: PoolRefreshLogItem): string {
+  const label = refreshLogStatusLabel(item)
+  if (label === '失败' || label === '已删除') {
+    return 'border-destructive/30 bg-destructive/10 text-destructive'
+  }
+  if (label === '跳过') {
+    return 'border-border/60 bg-muted text-muted-foreground'
+  }
+  return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+}
+
+function refreshLogDetail(item: PoolRefreshLogItem): string {
+  const payload = payloadRecord(item.payload)
+  const statusCode = payloadNumber(payload, 'status_code')
+  const reason = payloadString(payload, 'reason')
+  const autoRemoved = payload?.auto_removed === true ? '已自动删除' : ''
+  const parts = [item.detail || formatRefreshLogPayload(item.payload) || item.message]
+  if (statusCode !== null) parts.push(`HTTP ${statusCode}`)
+  if (reason) parts.push(reason)
+  if (autoRemoved) parts.push(autoRemoved)
+  return parts.filter(Boolean).join(' · ')
+}
+
+function formatBrowserDateTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  }).format(date)
+}
+
 function formatRefreshLogPayload(payload: unknown): string {
   const record = payloadRecord(payload)
   if (!record) return ''
   const parts: string[] = []
-  for (const key of ['eligible', 'refreshed', 'selected_keys', 'succeeded', 'failed', 'max_per_run']) {
+  for (const key of ['eligible', 'refreshed', 'selected_keys', 'succeeded', 'failed', 'max_per_run', 'account_events_recorded']) {
     const value = record[key]
     if (value !== undefined && value !== null) {
       parts.push(`${key}: ${value}`)
@@ -2125,15 +2265,8 @@ async function loadRefreshWorkerLogs() {
       const runs = await asyncTasksApi.list({ task_key: taskKey, page_size: 1 })
       const run = runs.items[0]
       if (!run) return []
-      const events = await asyncTasksApi.getEvents(run.id)
-      return events.items.map((event: AsyncTaskEvent) => ({
-        id: `${taskKey}:${event.id}`,
-        taskKey,
-        eventType: event.event_type,
-        message: event.message,
-        createdAt: event.created_at,
-        payload: event.payload,
-      }))
+      const events = await asyncTasksApi.getEvents(run.id, { page_size: 100 })
+      return events.items.map((event: AsyncTaskEvent) => buildRefreshLogItem(taskKey, event))
     }))
     refreshWorkerLogs.value = eventGroups
       .flat()
@@ -2146,28 +2279,12 @@ async function loadRefreshWorkerLogs() {
   }
 }
 
-function getPoolScrollContainer(): HTMLElement | null {
-  return document.querySelector('.app-shell__content')
-}
-
-function scrollToRefreshWorkerPanel() {
-  const el = refreshWorkerPanelRef.value
-  const container = getPoolScrollContainer()
-  if (el && container) {
-    const offset = 80
-    const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - offset
-    container.scrollTo({ top, behavior: 'smooth' })
-    return
-  }
-  el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-
-async function openRefreshWorkerPanel() {
+async function openRefreshWorkerDialog() {
+  showRefreshWorkerDialog.value = true
   await Promise.allSettled([
     loadRefreshWorkerSettings(),
     loadRefreshWorkerLogs(),
   ])
-  requestAnimationFrame(scrollToRefreshWorkerPanel)
 }
 
 const showDemandMetricsDialog = ref(false)
@@ -4393,8 +4510,6 @@ function formatPoolKeyImportedAt(key: PoolKeyDetail): string {
 onMounted(() => {
   startCountdownTimer()
   void proxyNodesStore.ensureLoaded()
-  void loadRefreshWorkerSettings()
-  void loadRefreshWorkerLogs()
   void loadSchedulingPresetMetas({ cacheTtlMs: POOL_SCHEDULING_PRESETS_CACHE_TTL_MS })
   void loadOverview({ cacheTtlMs: POOL_OVERVIEW_CACHE_TTL_MS })
 })

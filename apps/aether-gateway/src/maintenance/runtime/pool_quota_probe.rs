@@ -1201,6 +1201,134 @@ fn probe_result_hard_state(item: &Value) -> Option<PoolMemberHardState> {
     }
 }
 
+fn pool_quota_probe_run_id(state: &AppState) -> String {
+    format!(
+        "boot:{}:{}",
+        TASK_KEY_POOL_QUOTA_PROBE,
+        state.tunnel.local_instance_id()
+    )
+}
+
+fn quota_probe_result_string<'a>(item: &'a Value, key: &str) -> Option<&'a str> {
+    item.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+async fn append_pool_quota_probe_account_event(
+    state: &AppState,
+    provider: &StoredProviderCatalogProvider,
+    provider_type: &str,
+    key_id: &str,
+    key_name: &str,
+    event_type: &str,
+    message: &str,
+    mut payload: serde_json::Map<String, Value>,
+) {
+    payload.insert(
+        "provider_id".to_string(),
+        serde_json::json!(provider.id.clone()),
+    );
+    payload.insert(
+        "provider_name".to_string(),
+        serde_json::json!(provider.name.clone()),
+    );
+    payload.insert(
+        "provider_type".to_string(),
+        serde_json::json!(provider_type),
+    );
+    payload.insert("key_id".to_string(), serde_json::json!(key_id));
+    payload.insert("key_name".to_string(), serde_json::json!(key_name));
+    payload.insert("action".to_string(), serde_json::json!("quota_refresh"));
+
+    append_event_with_logging(
+        state,
+        &pool_quota_probe_run_id(state),
+        event_type,
+        message,
+        Some(Value::Object(payload)),
+    )
+    .await;
+}
+
+async fn append_pool_quota_probe_account_events_from_payload(
+    state: &AppState,
+    provider: &StoredProviderCatalogProvider,
+    provider_type: &str,
+    fallback_key_id: &str,
+    fallback_key_name: &str,
+    payload: Option<&Value>,
+) {
+    let Some(results) = payload
+        .and_then(|value| value.get("results"))
+        .and_then(Value::as_array)
+    else {
+        let mut event_payload = serde_json::Map::new();
+        event_payload.insert("status".to_string(), serde_json::json!("missing_result"));
+        event_payload.insert(
+            "message".to_string(),
+            serde_json::json!("额度刷新无明细结果"),
+        );
+        append_pool_quota_probe_account_event(
+            state,
+            provider,
+            provider_type,
+            fallback_key_id,
+            fallback_key_name,
+            "quota_refresh_account_failed",
+            "quota refresh result missing",
+            event_payload,
+        )
+        .await;
+        return;
+    };
+
+    for item in results {
+        let key_id = quota_probe_result_string(item, "key_id").unwrap_or(fallback_key_id);
+        let key_name = quota_probe_result_string(item, "key_name").unwrap_or(fallback_key_name);
+        let succeeded = probe_result_succeeded(item);
+        let status = quota_probe_result_string(item, "status").unwrap_or(if succeeded {
+            "success"
+        } else {
+            "error"
+        });
+        let message = quota_probe_result_string(item, "message").unwrap_or(if succeeded {
+            "额度刷新成功"
+        } else {
+            "额度刷新失败"
+        });
+        let mut event_payload = serde_json::Map::new();
+        event_payload.insert("status".to_string(), serde_json::json!(status));
+        event_payload.insert("message".to_string(), serde_json::json!(message));
+        if let Some(value) = item.get("status_code").cloned() {
+            event_payload.insert("status_code".to_string(), value);
+        }
+        if let Some(value) = item.get("auto_removed").cloned() {
+            event_payload.insert("auto_removed".to_string(), value);
+        }
+        append_pool_quota_probe_account_event(
+            state,
+            provider,
+            provider_type,
+            key_id,
+            key_name,
+            if succeeded {
+                "quota_refresh_account_succeeded"
+            } else {
+                "quota_refresh_account_failed"
+            },
+            if succeeded {
+                "quota refresh succeeded"
+            } else {
+                "quota refresh failed"
+            },
+            event_payload,
+        )
+        .await;
+    }
+}
+
 async fn perform_pool_quota_probe_for_provider(
     state: &AppState,
     admin_state: &AdminAppState<'_>,
@@ -1297,6 +1425,7 @@ async fn perform_pool_quota_probe_for_provider(
     let probe_concurrency = probe_concurrency.min(config.global_concurrency).max(1);
     let probe_results = stream::iter(keys.into_iter().map(|key| {
         let key_id = key.id.clone();
+        let key_name = key.name.clone();
         let endpoint = &endpoint;
         let provider_type = provider_type.to_string();
         async move {
@@ -1308,7 +1437,7 @@ async fn perform_pool_quota_probe_for_provider(
                 vec![key],
             )
             .await;
-            (key_id, result)
+            (key_id, key_name, result)
         }
     }))
     .buffer_unordered(probe_concurrency)
@@ -1317,7 +1446,7 @@ async fn perform_pool_quota_probe_for_provider(
 
     let mut probe_success = 0usize;
     let mut probe_failed = 0usize;
-    for (key_id, result) in probe_results {
+    for (key_id, key_name, result) in probe_results {
         match result {
             Ok(payload) => {
                 update_summary_from_payload(&mut summary, 1, payload.as_ref());
@@ -1337,6 +1466,15 @@ async fn perform_pool_quota_probe_for_provider(
                     std::slice::from_ref(&key_id),
                     payload.as_ref(),
                     now_ts,
+                )
+                .await;
+                append_pool_quota_probe_account_events_from_payload(
+                    state,
+                    provider,
+                    provider_type,
+                    &key_id,
+                    &key_name,
+                    payload.as_ref(),
                 )
                 .await;
             }
@@ -1366,6 +1504,20 @@ async fn perform_pool_quota_probe_for_provider(
                     error = ?err,
                     "gateway pool quota probe failed"
                 );
+                let mut event_payload = serde_json::Map::new();
+                event_payload.insert("status".to_string(), serde_json::json!("worker_error"));
+                event_payload.insert("message".to_string(), serde_json::json!(format!("{err:?}")));
+                append_pool_quota_probe_account_event(
+                    state,
+                    provider,
+                    provider_type,
+                    &key_id,
+                    &key_name,
+                    "quota_refresh_account_failed",
+                    "quota refresh failed",
+                    event_payload,
+                )
+                .await;
             }
         }
     }
@@ -1634,11 +1786,7 @@ pub(crate) fn spawn_pool_quota_probe_worker(
         interval.tick().await;
         loop {
             interval.tick().await;
-            let run_id = format!(
-                "boot:{}:{}",
-                TASK_KEY_POOL_QUOTA_PROBE,
-                state.tunnel.local_instance_id()
-            );
+            let run_id = pool_quota_probe_run_id(&state);
             match perform_pool_quota_probe_once_with_config(&state, config).await {
                 Ok(summary) => {
                     if summary.selected_keys > 0 || summary.failed > 0 {

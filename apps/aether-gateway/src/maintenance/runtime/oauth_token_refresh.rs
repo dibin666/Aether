@@ -20,6 +20,7 @@ const OAUTH_TOKEN_REFRESH_DEFAULT_INTERVAL_SECS: u64 = 60;
 const OAUTH_TOKEN_REFRESH_MIN_INTERVAL_SECS: u64 = 15;
 const OAUTH_TOKEN_REFRESH_DEFAULT_CONCURRENCY: usize = 4;
 const OAUTH_TOKEN_REFRESH_DEFAULT_MAX_PER_RUN: usize = 50;
+const OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT: usize = 200;
 const OAUTH_ACCOUNT_BLOCK_PREFIX: &str = "[ACCOUNT_BLOCK] ";
 const OAUTH_EXPIRED_PREFIX: &str = "[OAUTH_EXPIRED] ";
 const OAUTH_REFRESH_FAILED_PREFIX: &str = "[REFRESH_FAILED] ";
@@ -95,21 +96,37 @@ pub(crate) struct OAuthTokenRefreshRunSummary {
 
 struct OAuthTokenRefreshCandidate {
     provider_id: String,
+    provider_name: String,
     provider_type: String,
     key_id: String,
+    key_name: String,
     key: StoredProviderCatalogKey,
     transport: crate::provider_transport::GatewayProviderTransportSnapshot,
 }
 
 enum OAuthTokenRefreshCandidateOutcome {
     Resolved {
-        refreshed: bool,
-    },
-    Skipped,
-    Failed {
         provider_id: String,
+        provider_name: String,
         provider_type: String,
         key_id: String,
+        key_name: String,
+        refreshed: bool,
+    },
+    Skipped {
+        provider_id: String,
+        provider_name: String,
+        provider_type: String,
+        key_id: String,
+        key_name: String,
+        reason: String,
+    },
+    Failed {
+        provider_id: String,
+        provider_name: String,
+        provider_type: String,
+        key_id: String,
+        key_name: String,
         error: String,
     },
 }
@@ -188,8 +205,10 @@ pub(crate) async fn perform_oauth_token_refresh_once(
 
             candidates.push(OAuthTokenRefreshCandidate {
                 provider_id: provider.id.clone(),
+                provider_name: provider.name.clone(),
                 provider_type: provider.provider_type.clone(),
                 key_id: key.id.clone(),
+                key_name: key.name.clone(),
                 key: key.clone(),
                 transport,
             });
@@ -206,20 +225,38 @@ pub(crate) async fn perform_oauth_token_refresh_once(
         match resolution {
             Ok(Some(_auth)) => {
                 match provider_key_credentials_changed(state, &candidate.key).await {
-                    Ok(refreshed) => OAuthTokenRefreshCandidateOutcome::Resolved { refreshed },
-                    Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
+                    Ok(refreshed) => OAuthTokenRefreshCandidateOutcome::Resolved {
                         provider_id: candidate.provider_id,
+                        provider_name: candidate.provider_name,
                         provider_type: candidate.provider_type,
                         key_id: candidate.key_id,
+                        key_name: candidate.key_name,
+                        refreshed,
+                    },
+                    Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
+                        provider_id: candidate.provider_id,
+                        provider_name: candidate.provider_name,
+                        provider_type: candidate.provider_type,
+                        key_id: candidate.key_id,
+                        key_name: candidate.key_name,
                         error: format!("{err:?}"),
                     },
                 }
             }
-            Ok(None) => OAuthTokenRefreshCandidateOutcome::Skipped,
-            Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
+            Ok(None) => OAuthTokenRefreshCandidateOutcome::Skipped {
                 provider_id: candidate.provider_id,
+                provider_name: candidate.provider_name,
                 provider_type: candidate.provider_type,
                 key_id: candidate.key_id,
+                key_name: candidate.key_name,
+                reason: "auth_not_resolved".to_string(),
+            },
+            Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
+                provider_id: candidate.provider_id,
+                provider_name: candidate.provider_name,
+                provider_type: candidate.provider_type,
+                key_id: candidate.key_id,
+                key_name: candidate.key_name,
                 error: format!("{err:?}"),
             },
         }
@@ -228,21 +265,88 @@ pub(crate) async fn perform_oauth_token_refresh_once(
     .collect::<Vec<_>>()
     .await;
 
+    let mut account_events_recorded = 0usize;
     for outcome in outcomes {
         match outcome {
-            OAuthTokenRefreshCandidateOutcome::Resolved { refreshed } => {
+            OAuthTokenRefreshCandidateOutcome::Resolved {
+                provider_id,
+                provider_name,
+                provider_type,
+                key_id,
+                key_name,
+                refreshed,
+            } => {
                 summary.resolved = summary.resolved.saturating_add(1);
                 if refreshed {
                     summary.refreshed = summary.refreshed.saturating_add(1);
                 }
+                if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
+                    account_events_recorded = account_events_recorded.saturating_add(1);
+                    append_event_with_logging(
+                        state,
+                        &oauth_token_refresh_run_id(state),
+                        if refreshed {
+                            "oauth_refresh_account_refreshed"
+                        } else {
+                            "oauth_refresh_account_checked"
+                        },
+                        if refreshed {
+                            "oauth token refreshed"
+                        } else {
+                            "oauth token checked"
+                        },
+                        Some(serde_json::json!({
+                            "provider_id": provider_id,
+                            "provider_name": provider_name,
+                            "provider_type": provider_type,
+                            "key_id": key_id,
+                            "key_name": key_name,
+                            "action": "oauth_refresh",
+                            "status": if refreshed { "refreshed" } else { "checked" },
+                            "message": if refreshed { "Token 已刷新" } else { "Token 已检查，无需更新" },
+                            "refreshed": refreshed,
+                        })),
+                    )
+                    .await;
+                }
             }
-            OAuthTokenRefreshCandidateOutcome::Skipped => {
+            OAuthTokenRefreshCandidateOutcome::Skipped {
+                provider_id,
+                provider_name,
+                provider_type,
+                key_id,
+                key_name,
+                reason,
+            } => {
                 summary.skipped = summary.skipped.saturating_add(1);
+                if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
+                    account_events_recorded = account_events_recorded.saturating_add(1);
+                    append_event_with_logging(
+                        state,
+                        &oauth_token_refresh_run_id(state),
+                        "oauth_refresh_account_skipped",
+                        "oauth token refresh skipped",
+                        Some(serde_json::json!({
+                            "provider_id": provider_id,
+                            "provider_name": provider_name,
+                            "provider_type": provider_type,
+                            "key_id": key_id,
+                            "key_name": key_name,
+                            "action": "oauth_refresh",
+                            "status": "skipped",
+                            "message": "Token 刷新已跳过",
+                            "reason": reason,
+                        })),
+                    )
+                    .await;
+                }
             }
             OAuthTokenRefreshCandidateOutcome::Failed {
                 provider_id,
+                provider_name,
                 provider_type,
                 key_id,
+                key_name,
                 error,
             } => {
                 summary.failed = summary.failed.saturating_add(1);
@@ -255,6 +359,7 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                     error = %error,
                     "gateway oauth token auto refresh failed"
                 );
+                account_events_recorded = account_events_recorded.saturating_add(1);
                 append_event_with_logging(
                     state,
                     &oauth_token_refresh_run_id(state),
@@ -262,8 +367,13 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                     "oauth token refresh failed",
                     Some(serde_json::json!({
                         "provider_id": provider_id,
+                        "provider_name": provider_name,
                         "provider_type": provider_type,
                         "key_id": key_id,
+                        "key_name": key_name,
+                        "action": "oauth_refresh",
+                        "status": "failed",
+                        "message": "Token 刷新失败",
                         "error": error,
                     })),
                 )
@@ -301,6 +411,8 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 "interval_seconds": config.interval.as_secs(),
                 "concurrency": config.concurrency,
                 "max_per_run": config.max_per_run,
+                "account_events_recorded": account_events_recorded,
+                "account_event_limit": OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT,
             })),
         )
         .await;
