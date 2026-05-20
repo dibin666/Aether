@@ -47,6 +47,7 @@ use crate::maintenance::spawn_gemini_file_mapping_cleanup_worker;
 use crate::maintenance::spawn_oauth_token_refresh_worker;
 use crate::maintenance::spawn_pending_cleanup_worker;
 use crate::maintenance::spawn_pool_monitor_worker;
+use crate::maintenance::spawn_pool_quota_probe_worker;
 use crate::maintenance::spawn_pool_score_rebuild_worker;
 use crate::maintenance::spawn_provider_checkin_worker;
 use crate::maintenance::spawn_proxy_node_metrics_cleanup_worker;
@@ -1179,6 +1180,10 @@ impl AppState {
             spawn_pool_monitor_worker(self.data.clone()),
         );
         supervise_worker(
+            crate::task_runtime::TASK_KEY_POOL_QUOTA_PROBE,
+            spawn_pool_quota_probe_worker(self.clone()),
+        );
+        supervise_worker(
             crate::task_runtime::TASK_KEY_ACCOUNT_SELF_CHECK,
             spawn_account_self_check_worker(self.clone()),
         );
@@ -1255,11 +1260,43 @@ fn runtime_miss_diagnostic_has_candidate_signal(
 mod tests {
     use std::sync::Arc;
 
+    use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+    use aether_data_contracts::repository::provider_catalog::ProviderCatalogReadRepository;
     use serde_json::json;
 
     use super::AppState;
     use crate::cache::SchedulerAffinityTarget;
     use crate::data::GatewayDataState;
+
+    #[tokio::test]
+    async fn background_tasks_include_pool_quota_probe_when_provider_catalog_is_available() {
+        let read_only_repository: Arc<dyn ProviderCatalogReadRepository> =
+            Arc::new(InMemoryProviderCatalogReadRepository::default());
+        let read_only_state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
+                read_only_repository,
+            ));
+        let read_only_background_tasks = read_only_state.spawn_background_tasks();
+        let read_only_task_count = read_only_background_tasks.task_count();
+        read_only_background_tasks.shutdown().await;
+
+        let read_write_repository = Arc::new(InMemoryProviderCatalogReadRepository::default());
+        let read_write_state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(read_write_repository),
+            );
+        let read_write_background_tasks = read_write_state.spawn_background_tasks();
+        let read_write_task_count = read_write_background_tasks.task_count();
+
+        assert!(
+            read_write_task_count >= read_only_task_count.saturating_add(3),
+            "provider catalog read/write workers should add account self-check, oauth refresh, and pool quota probe; read_only={read_only_task_count}, read_write={read_write_task_count}"
+        );
+
+        read_write_background_tasks.shutdown().await;
+    }
 
     #[tokio::test]
     async fn system_config_reads_use_short_lived_cache_until_app_invalidation() {

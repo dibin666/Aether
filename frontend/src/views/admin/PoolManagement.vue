@@ -1449,6 +1449,160 @@
       </template>
     </Card>
 
+    <Card
+      variant="default"
+      class="overflow-hidden"
+    >
+      <div class="border-b border-border/60 px-4 py-3 sm:px-6">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 class="text-base font-semibold">
+              自动刷新
+            </h3>
+            <p class="mt-1 text-xs text-muted-foreground">
+              配置 OAuth 自动续期，并查看 OAuth 与额度刷新的后台日志。
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="refreshWorkerSettingsLoading || refreshWorkerSettingsSaving"
+              @click="loadRefreshWorkerSettings"
+            >
+              <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
+              读取配置
+            </Button>
+            <Button
+              size="sm"
+              :disabled="refreshWorkerSettingsSaving"
+              @click="saveRefreshWorkerSettings"
+            >
+              保存
+            </Button>
+          </div>
+        </div>
+      </div>
+      <div class="grid gap-4 p-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)] sm:p-6">
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-muted-foreground">提前刷新</label>
+            <Input
+              :model-value="refreshWorkerSettings.lookaheadSeconds"
+              type="number"
+              min="0"
+              class="h-9"
+              @update:model-value="(value) => refreshWorkerSettings.lookaheadSeconds = Number(value || 0)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-muted-foreground">扫描间隔</label>
+            <Input
+              :model-value="refreshWorkerSettings.intervalSeconds"
+              type="number"
+              min="15"
+              class="h-9"
+              @update:model-value="(value) => refreshWorkerSettings.intervalSeconds = Number(value || 0)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-muted-foreground">并发</label>
+            <Input
+              :model-value="refreshWorkerSettings.concurrency"
+              type="number"
+              min="1"
+              max="64"
+              class="h-9"
+              @update:model-value="(value) => refreshWorkerSettings.concurrency = Number(value || 0)"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-medium text-muted-foreground">每轮最多</label>
+            <Input
+              :model-value="refreshWorkerSettings.maxPerRun"
+              type="number"
+              min="1"
+              max="10000"
+              class="h-9"
+              @update:model-value="(value) => refreshWorkerSettings.maxPerRun = Number(value || 0)"
+            />
+          </div>
+          <div class="space-y-1.5 sm:col-span-2 xl:col-span-1">
+            <label class="text-xs font-medium text-muted-foreground">OAuth 代理</label>
+            <Select v-model="oauthRefreshProxySelectValue">
+              <SelectTrigger class="h-9 border-border/60">
+                <SelectValue placeholder="选择代理" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem :value="OAUTH_PROXY_AUTO_VALUE">
+                  跟随账号/系统
+                </SelectItem>
+                <SelectItem :value="OAUTH_PROXY_DIRECT_VALUE">
+                  直连
+                </SelectItem>
+                <SelectItem
+                  v-for="node in proxyNodesStore.onlineNodes"
+                  :key="node.id"
+                  :value="node.id"
+                >
+                  {{ node.name }}{{ node.region ? ` · ${node.region}` : '' }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-border/60 bg-muted/10">
+          <div class="flex items-center justify-between border-b border-border/60 px-3 py-2">
+            <div class="text-sm font-medium">
+              刷新日志
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              class="h-7 px-2"
+              :disabled="refreshWorkerLogsLoading"
+              @click="loadRefreshWorkerLogs"
+            >
+              <RefreshCw class="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <div class="max-h-56 overflow-auto p-3">
+            <div
+              v-if="refreshWorkerLogsLoading"
+              class="py-6 text-center text-xs text-muted-foreground"
+            >
+              加载中...
+            </div>
+            <div
+              v-else-if="refreshWorkerLogs.length === 0"
+              class="py-6 text-center text-xs text-muted-foreground"
+            >
+              暂无日志
+            </div>
+            <template v-else>
+              <div
+                v-for="item in refreshWorkerLogs"
+                :key="item.id"
+                class="border-b border-border/50 py-2 last:border-b-0"
+              >
+                <div class="flex items-center justify-between gap-3 text-xs">
+                  <div class="min-w-0">
+                    <span class="font-medium text-foreground">{{ refreshTaskLabel(item.taskKey) }}</span>
+                    <span class="ml-2 text-muted-foreground">{{ eventLabel(item.eventType) }}</span>
+                  </div>
+                  <span class="shrink-0 text-muted-foreground">{{ item.createdAt }}</span>
+                </div>
+                <div class="mt-1 truncate text-xs text-muted-foreground">
+                  {{ formatRefreshLogPayload(item.payload) || item.message }}
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </Card>
+
     <!-- Dialogs -->
     <OAuthAccountDialog
       v-if="selectedProviderId"
@@ -1617,6 +1771,8 @@ import type {
   ProviderWithEndpointsSummary,
 } from '@/api/endpoints/types/provider'
 import { getProvider, updateProvider } from '@/api/endpoints'
+import { adminApi } from '@/api/admin'
+import { asyncTasksApi, type AsyncTaskEvent } from '@/api/async-tasks'
 import { useProxyNodesStore } from '@/stores/proxy-nodes'
 import PoolSchedulingDialog from '@/features/pool/components/PoolSchedulingDialog.vue'
 import PoolAdvancedDialog from '@/features/pool/components/PoolAdvancedDialog.vue'
@@ -1699,6 +1855,18 @@ const { tick: countdownTick, start: startCountdownTimer } = useCountdownTimer()
 const proxyNodesStore = useProxyNodesStore()
 const { getQueryValue, patchQuery } = useRouteQuery()
 
+const refreshWorkerSettings = ref<RefreshWorkerSettings>({
+  lookaheadSeconds: 120,
+  intervalSeconds: 60,
+  concurrency: 4,
+  maxPerRun: 50,
+  proxyNodeId: '',
+})
+const refreshWorkerSettingsLoading = ref(false)
+const refreshWorkerSettingsSaving = ref(false)
+const refreshWorkerLogs = ref<PoolRefreshLogItem[]>([])
+const refreshWorkerLogsLoading = ref(false)
+
 const poolManagementViewStorage = typeof window === 'undefined' ? undefined : window.sessionStorage
 const restoredViewState = readPoolManagementViewState(
   {
@@ -1731,6 +1899,36 @@ const POOL_KEYS_CACHE_TTL_MS = 10 * 1000
 const POOL_SCHEDULING_PRESETS_CACHE_TTL_MS = 5 * 60 * 1000
 const POOL_DEMAND_METRICS_SAMPLES_LIMIT = 120
 const POOL_DEMAND_METRICS_POLL_INTERVAL_MS = 10 * 1000
+const OAUTH_REFRESH_CONFIG_KEYS = {
+  lookaheadSeconds: 'oauth_token_refresh_lookahead_seconds',
+  intervalSeconds: 'oauth_token_refresh_interval_seconds',
+  concurrency: 'oauth_token_refresh_concurrency',
+  maxPerRun: 'oauth_token_refresh_max_per_run',
+  proxyNodeId: 'oauth_token_refresh_proxy_node_id',
+} as const
+const REFRESH_TASK_KEYS = [
+  'maintenance.oauth.token.refresh',
+  'pool.quota.probe.worker',
+] as const
+const OAUTH_PROXY_AUTO_VALUE = '__auto'
+const OAUTH_PROXY_DIRECT_VALUE = 'direct'
+
+interface RefreshWorkerSettings {
+  lookaheadSeconds: number
+  intervalSeconds: number
+  concurrency: number
+  maxPerRun: number
+  proxyNodeId: string
+}
+
+interface PoolRefreshLogItem {
+  id: string
+  taskKey: string
+  eventType: string
+  message: string
+  createdAt: string
+  payload: unknown
+}
 
 interface PoolDemandMetricSample {
   providerId: string
@@ -1740,6 +1938,162 @@ interface PoolDemandMetricSample {
   inFlight: number
   emaInFlight: number
   burstPending: boolean
+}
+
+const oauthRefreshProxySelectValue = computed({
+  get: () => refreshWorkerSettings.value.proxyNodeId || OAUTH_PROXY_AUTO_VALUE,
+  set: (value: string) => {
+    refreshWorkerSettings.value.proxyNodeId = value === OAUTH_PROXY_AUTO_VALUE ? '' : value
+  },
+})
+
+function configNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function configString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+async function loadRefreshWorkerSettings() {
+  refreshWorkerSettingsLoading.value = true
+  try {
+    const [
+      lookaheadSeconds,
+      intervalSeconds,
+      concurrency,
+      maxPerRun,
+      proxyNodeId,
+    ] = await Promise.all([
+      adminApi.getSystemConfig(OAUTH_REFRESH_CONFIG_KEYS.lookaheadSeconds),
+      adminApi.getSystemConfig(OAUTH_REFRESH_CONFIG_KEYS.intervalSeconds),
+      adminApi.getSystemConfig(OAUTH_REFRESH_CONFIG_KEYS.concurrency),
+      adminApi.getSystemConfig(OAUTH_REFRESH_CONFIG_KEYS.maxPerRun),
+      adminApi.getSystemConfig(OAUTH_REFRESH_CONFIG_KEYS.proxyNodeId),
+    ])
+    refreshWorkerSettings.value = {
+      lookaheadSeconds: configNumber(lookaheadSeconds.value, 120),
+      intervalSeconds: configNumber(intervalSeconds.value, 60),
+      concurrency: configNumber(concurrency.value, 4),
+      maxPerRun: configNumber(maxPerRun.value, 50),
+      proxyNodeId: configString(proxyNodeId.value),
+    }
+  } catch (err) {
+    showError(parseApiError(err, '加载刷新配置失败'))
+  } finally {
+    refreshWorkerSettingsLoading.value = false
+  }
+}
+
+async function saveRefreshWorkerSettings() {
+  refreshWorkerSettingsSaving.value = true
+  try {
+    const settings = refreshWorkerSettings.value
+    const normalized = {
+      lookaheadSeconds: Math.max(0, Math.floor(configNumber(settings.lookaheadSeconds, 120))),
+      intervalSeconds: Math.max(15, Math.floor(configNumber(settings.intervalSeconds, 60))),
+      concurrency: Math.min(64, Math.max(1, Math.floor(configNumber(settings.concurrency, 4)))),
+      maxPerRun: Math.min(10000, Math.max(1, Math.floor(configNumber(settings.maxPerRun, 50)))),
+      proxyNodeId: configString(settings.proxyNodeId),
+    }
+    await Promise.all([
+      adminApi.updateSystemConfig(
+        OAUTH_REFRESH_CONFIG_KEYS.lookaheadSeconds,
+        normalized.lookaheadSeconds,
+        'OAuth 自动刷新提前量（秒）',
+      ),
+      adminApi.updateSystemConfig(
+        OAUTH_REFRESH_CONFIG_KEYS.intervalSeconds,
+        normalized.intervalSeconds,
+        'OAuth 自动刷新扫描间隔（秒）',
+      ),
+      adminApi.updateSystemConfig(
+        OAUTH_REFRESH_CONFIG_KEYS.concurrency,
+        normalized.concurrency,
+        'OAuth 自动刷新并发数',
+      ),
+      adminApi.updateSystemConfig(
+        OAUTH_REFRESH_CONFIG_KEYS.maxPerRun,
+        normalized.maxPerRun,
+        'OAuth 自动刷新每轮最多处理账号数',
+      ),
+      adminApi.updateSystemConfig(
+        OAUTH_REFRESH_CONFIG_KEYS.proxyNodeId,
+        normalized.proxyNodeId,
+        'OAuth 自动刷新代理节点；为空时跟随账号、端点、Provider 或系统代理',
+      ),
+    ])
+    refreshWorkerSettings.value = normalized
+    success('刷新配置已保存')
+  } catch (err) {
+    showError(parseApiError(err, '保存刷新配置失败'))
+  } finally {
+    refreshWorkerSettingsSaving.value = false
+  }
+}
+
+function refreshTaskLabel(taskKey: string): string {
+  if (taskKey === 'maintenance.oauth.token.refresh') return 'OAuth'
+  if (taskKey === 'pool.quota.probe.worker') return '额度'
+  return taskKey
+}
+
+function eventLabel(eventType: string): string {
+  if (eventType.includes('failed')) return '失败'
+  if (eventType.includes('completed')) return '完成'
+  if (eventType.includes('boot')) return '启动'
+  return eventType
+}
+
+function payloadRecord(payload: unknown): Record<string, unknown> | null {
+  return payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : null
+}
+
+function formatRefreshLogPayload(payload: unknown): string {
+  const record = payloadRecord(payload)
+  if (!record) return ''
+  const parts: string[] = []
+  for (const key of ['eligible', 'refreshed', 'selected_keys', 'succeeded', 'failed', 'max_per_run']) {
+    const value = record[key]
+    if (value !== undefined && value !== null) {
+      parts.push(`${key}: ${value}`)
+    }
+  }
+  if (typeof record.error === 'string' && record.error.trim()) {
+    parts.push(record.error.trim())
+  }
+  return parts.join(' · ')
+}
+
+async function loadRefreshWorkerLogs() {
+  refreshWorkerLogsLoading.value = true
+  try {
+    const eventGroups = await Promise.all(REFRESH_TASK_KEYS.map(async (taskKey) => {
+      const runs = await asyncTasksApi.list({ task_key: taskKey, page_size: 1 })
+      const run = runs.items[0]
+      if (!run) return []
+      const events = await asyncTasksApi.getEvents(run.id)
+      return events.items.map((event: AsyncTaskEvent) => ({
+        id: `${taskKey}:${event.id}`,
+        taskKey,
+        eventType: event.event_type,
+        message: event.message,
+        createdAt: event.created_at,
+        payload: event.payload,
+      }))
+    }))
+    refreshWorkerLogs.value = eventGroups
+      .flat()
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, 60)
+  } catch (err) {
+    showError(parseApiError(err, '加载刷新日志失败'))
+  } finally {
+    refreshWorkerLogsLoading.value = false
+  }
 }
 
 const showDemandMetricsDialog = ref(false)
@@ -1918,8 +2272,7 @@ const selectedProviderOverview = computed<PoolOverviewItem | null>(() => {
 })
 
 const showAdaptiveHotPoolMetricsButton = computed(() => {
-  if (!selectedProviderId.value) return false
-  return selectedProviderConfig.value?.probing_enabled === true
+  return false
 })
 
 function normalizeDemandMetricNumber(value: unknown): number {
@@ -2077,28 +2430,13 @@ const selectedProviderStatusText = computed(() => {
   return ''
 })
 
-function formatDemandEma(value: number | undefined): string {
-  const normalized = Number(value ?? 0)
-  if (!Number.isFinite(normalized) || normalized <= 0) return '0.0'
-  return normalized.toFixed(1)
-}
-
 const selectedProviderDemandMetaText = computed(() => {
   const overview = selectedProviderOverview.value
   if (!overview) return ''
   const segments: string[] = []
-  const desiredHot = Number(overview.provider_desired_hot ?? 0)
-  const hotCount = Number(overview.provider_hot_count ?? 0)
   const inFlight = Number(overview.provider_in_flight ?? 0)
-  if (Number.isFinite(desiredHot) && desiredHot > 0) {
-    segments.push(`热池 ${hotCount} / ${desiredHot}`)
-    segments.push(`EMA ${formatDemandEma(overview.provider_ema_in_flight)}`)
-  }
   if (Number.isFinite(inFlight) && inFlight > 0) {
     segments.push(`in-flight ${inFlight}`)
-  }
-  if (overview.provider_burst_pending) {
-    segments.push('补热中')
   }
   return segments.join(' | ')
 })
@@ -3980,6 +4318,9 @@ function formatPoolKeyImportedAt(key: PoolKeyDetail): string {
 // --- Init ---
 onMounted(() => {
   startCountdownTimer()
+  void proxyNodesStore.ensureLoaded()
+  void loadRefreshWorkerSettings()
+  void loadRefreshWorkerLogs()
   void loadSchedulingPresetMetas({ cacheTtlMs: POOL_SCHEDULING_PRESETS_CACHE_TTL_MS })
   void loadOverview({ cacheTtlMs: POOL_OVERVIEW_CACHE_TTL_MS })
 })

@@ -70,7 +70,7 @@ pub(crate) use cleanup_runs::{
 use config::*;
 use db_maintenance::*;
 pub(crate) use oauth_token_refresh::{
-    perform_oauth_token_refresh_once, OAuthTokenRefreshRunSummary,
+    oauth_token_refresh_interval, perform_oauth_token_refresh_once, OAuthTokenRefreshRunSummary,
 };
 use pending_cleanup::*;
 pub(crate) use pool_quota_probe::{
@@ -130,7 +130,6 @@ const PROXY_UPGRADE_ROLLOUT_INTERVAL: Duration = Duration::from_secs(15);
 const PROXY_NODE_STALE_MIN_GRACE_SECS: u64 = 15;
 const PROXY_NODE_STALE_MISSED_HEARTBEATS: u64 = 3;
 const POOL_MONITOR_INTERVAL: Duration = Duration::from_secs(5 * 60);
-const OAUTH_TOKEN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const USAGE_COUNTER_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 const USAGE_COUNTER_FLUSH_BATCH_SIZE: usize = 1_000;
 const USAGE_COUNTER_FLUSH_CATCH_UP_BURST_LIMIT: usize = 20;

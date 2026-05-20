@@ -25,6 +25,7 @@ pub(crate) const TASK_KEY_PROVIDER_QUOTA_RESET: &str = "provider.quota.reset.wor
 pub(crate) const TASK_KEY_ACCOUNT_SELF_CHECK: &str = "account.self_check.worker";
 pub(crate) const TASK_KEY_POOL_SCORE_REBUILD: &str = "pool.score.rebuild.worker";
 pub(crate) const TASK_KEY_POOL_MONITOR: &str = "pool.monitor.worker";
+pub(crate) const TASK_KEY_POOL_QUOTA_PROBE: &str = "pool.quota.probe.worker";
 pub(crate) const TASK_KEY_AUDIT_CLEANUP: &str = "maintenance.audit.cleanup";
 pub(crate) const TASK_KEY_DB_MAINTENANCE: &str = "maintenance.database";
 pub(crate) const TASK_KEY_PENDING_CLEANUP: &str = "maintenance.pending.cleanup";
@@ -121,6 +122,14 @@ const TASK_DEFINITIONS: &[TaskDefinition] = &[
     ),
     TaskDefinition::new(
         TASK_KEY_POOL_MONITOR,
+        TaskKind::Scheduled,
+        "interval",
+        true,
+        true,
+        RETRY_ONCE,
+    ),
+    TaskDefinition::new(
+        TASK_KEY_POOL_QUOTA_PROBE,
         TaskKind::Scheduled,
         "interval",
         true,
@@ -274,6 +283,22 @@ pub(crate) fn task_definition(task_key: &str) -> Option<TaskDefinition> {
         .iter()
         .copied()
         .find(|definition| definition.key == task_key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{task_definition, TaskKind, TASK_KEY_POOL_QUOTA_PROBE};
+
+    #[test]
+    fn pool_quota_probe_task_is_registered_as_scheduled_interval() {
+        let definition =
+            task_definition(TASK_KEY_POOL_QUOTA_PROBE).expect("pool quota probe task definition");
+
+        assert_eq!(definition.kind, TaskKind::Scheduled);
+        assert_eq!(definition.trigger, "interval");
+        assert!(definition.singleton);
+        assert!(definition.persist_history);
+    }
 }
 
 pub(crate) const fn background_task_kind(kind: TaskKind) -> BackgroundTaskKind {

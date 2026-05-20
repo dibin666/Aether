@@ -32,6 +32,7 @@ const OAUTH_REQUEST_FAILED_PREFIX: &str = "[REQUEST_FAILED] ";
 
 struct GatewayLocalOAuthHttpExecutor<'a> {
     state: &'a AppState,
+    proxy_node_id_override: Option<String>,
 }
 
 fn trimmed_reason(reason: Option<&str>) -> Option<String> {
@@ -466,7 +467,12 @@ impl<'a> provider_transport::LocalOAuthHttpExecutor for GatewayLocalOAuthHttpExe
         provider_transport::LocalOAuthRefreshError,
     > {
         self.state
-            .execute_local_oauth_http_request(provider_type, transport, request)
+            .execute_local_oauth_http_request(
+                provider_type,
+                transport,
+                request,
+                self.proxy_node_id_override.as_deref(),
+            )
             .await
     }
 }
@@ -852,10 +858,37 @@ impl AppState {
         &self,
         transport: &provider_transport::GatewayProviderTransportSnapshot,
     ) -> Result<Option<provider_transport::LocalResolvedOAuthRequestAuth>, GatewayError> {
+        self.resolve_local_oauth_request_auth_with_proxy_override(transport, None)
+            .await
+    }
+
+    pub(crate) async fn resolve_local_oauth_request_auth_for_auto_refresh(
+        &self,
+        transport: &provider_transport::GatewayProviderTransportSnapshot,
+    ) -> Result<Option<provider_transport::LocalResolvedOAuthRequestAuth>, GatewayError> {
+        let proxy_node_id_override = self
+            .read_system_config_json_value("oauth_token_refresh_proxy_node_id")
+            .await
+            .ok()
+            .flatten()
+            .and_then(|value| value.as_str().map(str::trim).map(ToOwned::to_owned))
+            .filter(|value| !value.is_empty());
+        self.resolve_local_oauth_request_auth_with_proxy_override(transport, proxy_node_id_override)
+            .await
+    }
+
+    async fn resolve_local_oauth_request_auth_with_proxy_override(
+        &self,
+        transport: &provider_transport::GatewayProviderTransportSnapshot,
+        proxy_node_id_override: Option<String>,
+    ) -> Result<Option<provider_transport::LocalResolvedOAuthRequestAuth>, GatewayError> {
         let distributed_lock = self.runtime_state.as_ref();
         let lock_owner = format!("aether-gateway-{}", std::process::id());
         let mut current_transport = transport.clone();
-        let executor = GatewayLocalOAuthHttpExecutor { state: self };
+        let executor = GatewayLocalOAuthHttpExecutor {
+            state: self,
+            proxy_node_id_override,
+        };
 
         for _ in 0..2 {
             let resolution = match self
@@ -953,7 +986,10 @@ impl AppState {
         let lock_owner = format!("aether-gateway-admin-{}", std::process::id());
         let mut current_transport = transport.clone();
         current_transport.key.decrypted_api_key = "__placeholder__".to_string();
-        let executor = GatewayLocalOAuthHttpExecutor { state: self };
+        let executor = GatewayLocalOAuthHttpExecutor {
+            state: self,
+            proxy_node_id_override: None,
+        };
         let transport_refresh_token_fingerprint = oauth_auth_config_refresh_token_fingerprint(
             current_transport.key.decrypted_auth_config.as_deref(),
         )
@@ -1322,6 +1358,7 @@ impl AppState {
         provider_type: &'static str,
         transport: &provider_transport::GatewayProviderTransportSnapshot,
         request: &provider_transport::LocalOAuthHttpRequest,
+        proxy_node_id_override: Option<&str>,
     ) -> Result<
         provider_transport::LocalOAuthHttpResponse,
         provider_transport::LocalOAuthRefreshError,
@@ -1344,9 +1381,21 @@ impl AppState {
                 body_ref: None,
             }
         };
-        let proxy_snapshot = self
-            .resolve_transport_proxy_snapshot_with_tunnel_affinity(transport)
-            .await;
+        let proxy_snapshot = if let Some(proxy_node_id) = proxy_node_id_override
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if proxy_node_id.eq_ignore_ascii_case("direct")
+                || proxy_node_id.eq_ignore_ascii_case("none")
+            {
+                None
+            } else {
+                self.resolve_proxy_node_snapshot(Some(proxy_node_id)).await
+            }
+        } else {
+            self.resolve_transport_proxy_snapshot_with_tunnel_affinity(transport)
+                .await
+        };
         let proxy_is_tunnel = local_oauth_proxy_is_tunnel(proxy_snapshot.as_ref());
         let mut headers = request.headers.clone();
         headers.insert(

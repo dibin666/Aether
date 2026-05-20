@@ -9,9 +9,7 @@ use crate::handlers::admin::provider::shared::support::{
     AdminProviderPoolRuntimeState,
 };
 use crate::maintenance::PoolQuotaProbeWorkerConfig;
-use crate::provider_pool_demand::{
-    provider_pool_burst_pending, read_provider_pool_demand_snapshot,
-};
+use crate::provider_pool_demand::read_provider_pool_demand_snapshot;
 use aether_runtime_state::{DataLayerError, RuntimeState};
 use futures_util::future::join_all;
 use std::collections::{BTreeMap, BTreeSet};
@@ -26,7 +24,8 @@ fn current_unix_secs() -> u64 {
 }
 
 fn should_load_active_probe_members(pool_config: &AdminProviderPoolConfig) -> bool {
-    pool_config.probing_enabled
+    let _ = pool_config;
+    false
 }
 
 pub(crate) async fn read_admin_provider_pool_cooldown_counts(
@@ -139,13 +138,8 @@ pub(crate) async fn read_admin_provider_pool_runtime_state(
     .await;
     state.provider_in_flight = demand_snapshot.in_flight;
     state.provider_ema_in_flight = demand_snapshot.ema_in_flight;
-    state.provider_desired_hot = if pool_config.probing_enabled {
-        demand_snapshot.desired_hot
-    } else {
-        0
-    };
-    state.provider_burst_pending =
-        pool_config.probing_enabled && provider_pool_burst_pending(runtime, provider_id).await;
+    state.provider_desired_hot = 0;
+    state.provider_burst_pending = false;
 
     if !cooldown_keys.is_empty() {
         let cooldown_reasons = runtime

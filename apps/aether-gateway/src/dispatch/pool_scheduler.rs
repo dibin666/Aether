@@ -348,6 +348,7 @@ pub(crate) struct PoolKeyCursor<'a> {
     exhausted_logged: bool,
     returned_key_count: u32,
     exhaustion_skip_recorded: bool,
+    plan_priority_enabled: bool,
 }
 
 impl<'a> PoolKeyCursor<'a> {
@@ -391,6 +392,9 @@ impl<'a> PoolKeyCursor<'a> {
             .clamp(1, u64::from(u32::MAX)) as u32;
         let window_config = crate::dispatch::pool::default_pool_window_config().normalized();
         let max_scanned_keys = max_scanned_keys.min(window_config.max_scan);
+        let plan_priority_enabled = pool_config.as_ref().is_some_and(|config| {
+            pool_config_has_plan_priority(config, group.transport.provider.provider_type.as_str())
+        });
         Self {
             state,
             group,
@@ -417,6 +421,7 @@ impl<'a> PoolKeyCursor<'a> {
             exhausted_logged: false,
             returned_key_count: 0,
             exhaustion_skip_recorded: false,
+            plan_priority_enabled,
         }
     }
 
@@ -710,7 +715,11 @@ impl<'a> PoolKeyCursor<'a> {
 
     async fn refill_queued_candidates(&mut self) -> bool {
         let mut candidates = Vec::new();
-        let refill_target = self.window_size.max(1) as usize;
+        let refill_target = if self.plan_priority_enabled {
+            self.max_scanned_keys.max(self.window_size).max(1) as usize
+        } else {
+            self.window_size.max(1) as usize
+        };
         // Keep pool expansion bounded; the cursor freezes one small window at a time.
         while candidates.len() < refill_target {
             let Some(mut page_candidates) = self.next_page_candidates().await else {
@@ -1182,36 +1191,9 @@ fn active_probe_evicted_members_from_skipped(
     skipped: &[SkippedLocalExecutionCandidate],
     runtime_by_provider: &BTreeMap<String, AdminProviderPoolRuntimeState>,
 ) -> BTreeMap<String, BTreeSet<String>> {
-    if skipped.is_empty() {
-        return BTreeMap::new();
-    }
-
-    let mut evicted = BTreeMap::<String, BTreeSet<String>>::new();
-    for skipped_candidate in skipped {
-        if !matches!(
-            skipped_candidate.skip_reason,
-            POOL_ACCOUNT_BLOCKED_SKIP_REASON
-                | POOL_ACCOUNT_EXHAUSTED_SKIP_REASON
-                | POOL_COOLDOWN_SKIP_REASON
-                | POOL_COST_LIMIT_REACHED_SKIP_REASON
-        ) {
-            continue;
-        }
-        let Some(runtime) = runtime_by_provider.get(&skipped_candidate.candidate.provider_id)
-        else {
-            continue;
-        };
-        if runtime
-            .active_probe_member_ids
-            .contains(&skipped_candidate.candidate.key_id)
-        {
-            evicted
-                .entry(skipped_candidate.candidate.provider_id.clone())
-                .or_default()
-                .insert(skipped_candidate.candidate.key_id.clone());
-        }
-    }
-    evicted
+    let _ = skipped;
+    let _ = runtime_by_provider;
+    BTreeMap::new()
 }
 
 fn run_local_execution_pool_scheduler_with_runtime_map(
@@ -1298,21 +1280,17 @@ fn pool_config_for_candidate(
 }
 
 fn should_enforce_active_probe_sealed_pool(pool_config: &AdminProviderPoolConfig) -> bool {
-    pool_config.probing_enabled
+    let _ = pool_config;
+    false
 }
 
 fn should_trigger_active_probe_burst_for_request(
     pool_config: &AdminProviderPoolConfig,
     runtime: &AdminProviderPoolRuntimeState,
 ) -> bool {
-    if !should_enforce_active_probe_sealed_pool(pool_config) {
-        return false;
-    }
-    if runtime.provider_burst_pending {
-        return false;
-    }
-    let active_count = runtime.active_probe_member_ids.len();
-    runtime.provider_desired_hot > 0 && active_count < runtime.provider_desired_hot
+    let _ = pool_config;
+    let _ = runtime;
+    false
 }
 
 fn pool_key_candidate_order_for_group(
@@ -1376,6 +1354,30 @@ fn pool_key_candidate_order_for_group(
 
 fn pool_distribution_mode_preset(preset: &str) -> bool {
     matches!(preset, "cache_affinity" | "load_balance" | "single_account")
+}
+
+fn pool_plan_priority_preset(preset: &str) -> bool {
+    matches!(
+        preset,
+        "free_first" | "team_first" | "plus_first" | "pro_first"
+    )
+}
+
+fn pool_config_has_plan_priority(config: &AdminProviderPoolConfig, provider_type: &str) -> bool {
+    let service = ProviderPoolService::with_builtin_adapters();
+    let scheduling_presets = config
+        .scheduling_presets
+        .iter()
+        .map(|preset| PoolSchedulingPreset {
+            preset: preset.preset.clone(),
+            enabled: preset.enabled,
+            mode: preset.mode.clone(),
+        })
+        .collect::<Vec<_>>();
+    service
+        .normalize_scheduling_presets(provider_type, &scheduling_presets)
+        .iter()
+        .any(|preset| pool_plan_priority_preset(preset.preset.as_str()))
 }
 
 fn pool_sort_seed() -> String {
@@ -1453,8 +1455,7 @@ mod tests {
         build_pool_catalog_key_context, pool_config_for_candidate,
         prune_unschedulable_active_probe_members_for_request,
         remove_active_probe_members_for_request, should_trigger_active_probe_burst_for_request,
-        PoolCatalogKeyContext, PoolKeyCursor, POOL_ACTIVE_PROBE_SEALED_SKIP_REASON,
-        ROUTING_PROFILE_DISALLOWED_KEY_SKIP_REASON,
+        PoolCatalogKeyContext, PoolKeyCursor, ROUTING_PROFILE_DISALLOWED_KEY_SKIP_REASON,
     };
     use crate::ai_serving::{
         apply_local_runtime_candidate_terminal_reason, EligibleLocalExecutionCandidate,
@@ -1833,7 +1834,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_scheduler_uses_only_active_probe_members_when_active_probe_enabled() {
+    fn pool_scheduler_ignores_legacy_active_probe_members() {
         let provider_config = Some(json!({
             "pool_advanced": {
                 "probing_enabled": true
@@ -1873,14 +1874,14 @@ mod tests {
                 .iter()
                 .map(|item| item.candidate.key_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["key-active"]
+            vec!["key-active", "key-sealed"]
         );
         assert_eq!(
             skipped
                 .iter()
                 .map(|item| (item.candidate.key_id.as_str(), item.skip_reason))
                 .collect::<Vec<_>>(),
-            vec![("key-sealed", POOL_ACTIVE_PROBE_SEALED_SKIP_REASON)]
+            Vec::<(&str, &str)>::new()
         );
     }
 
@@ -1945,12 +1946,12 @@ mod tests {
             outcome
                 .active_probe_evicted_members_by_provider
                 .get("provider-pool"),
-            Some(&BTreeSet::from(["key-hot".to_string()]))
+            None
         );
     }
 
     #[test]
-    fn pool_scheduler_prunes_cold_active_probe_members_before_scheduling() {
+    fn pool_scheduler_leaves_legacy_active_probe_members_alone() {
         let provider_config = Some(json!({
             "pool_advanced": {
                 "probing_enabled": true
@@ -1982,15 +1983,12 @@ mod tests {
             &BTreeMap::new(),
         );
 
-        assert_eq!(
-            evicted.get("provider-pool"),
-            Some(&BTreeSet::from(["key-hot".to_string()]))
-        );
+        assert_eq!(evicted.get("provider-pool"), None);
         assert!(runtime_by_provider
             .get("provider-pool")
             .expect("runtime should exist")
             .active_probe_member_ids
-            .is_empty());
+            .contains("key-hot"));
     }
 
     #[tokio::test]
@@ -2064,7 +2062,7 @@ mod tests {
     }
 
     #[test]
-    fn pool_scheduler_triggers_burst_when_auto_hot_target_has_gap() {
+    fn pool_scheduler_does_not_trigger_legacy_active_probe_burst() {
         let provider_config = Some(json!({
             "pool_advanced": {
                 "probing_enabled": true
@@ -2079,7 +2077,7 @@ mod tests {
             ..AdminProviderPoolRuntimeState::default()
         };
 
-        assert!(should_trigger_active_probe_burst_for_request(
+        assert!(!should_trigger_active_probe_burst_for_request(
             &pool_config,
             &runtime
         ));
@@ -2546,6 +2544,30 @@ mod tests {
         let lru_cursor =
             PoolKeyCursor::new(PlannerAppState::new(&app), lru_group, None, None, None);
         assert_eq!(lru_cursor.pool_key_order, StoredPoolKeyCandidateOrder::Lru);
+    }
+
+    #[test]
+    fn pool_key_cursor_expands_refill_window_for_plan_priority_presets() {
+        let app = AppState::new().expect("state should build");
+        let group = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "pool-group",
+            10,
+            Some(json!({
+                "pool_advanced": {
+                    "score_fallback_scan_limit": 512,
+                    "scheduling_presets": [
+                        {"preset": "plus_first", "enabled": true},
+                        {"preset": "free_first", "enabled": true}
+                    ]
+                }
+            })),
+        );
+        let cursor = PoolKeyCursor::new(PlannerAppState::new(&app), group, None, None, None);
+
+        assert!(cursor.plan_priority_enabled);
+        assert!(cursor.max_scanned_keys > cursor.window_size);
     }
 
     #[test]
