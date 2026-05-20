@@ -31,9 +31,10 @@ impl AppState {
         run_id: &str,
         offset: usize,
         limit: usize,
+        descending: bool,
     ) -> Result<Vec<StoredBackgroundTaskEvent>, GatewayError> {
         self.data
-            .list_background_task_events(run_id, offset, limit)
+            .list_background_task_events(run_id, offset, limit, descending)
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }

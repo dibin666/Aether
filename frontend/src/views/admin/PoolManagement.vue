@@ -2172,7 +2172,7 @@ const REFRESH_TASK_KEYS = [
   'pool.quota.probe.worker',
 ] as const
 const REFRESH_LOG_RUNS_PER_TASK = 4
-const REFRESH_LOG_EVENTS_PER_RUN = 120
+const REFRESH_LOG_EVENTS_PER_RUN = 100
 const REFRESH_LOG_MAX_ITEMS = 160
 const OAUTH_PROXY_AUTO_VALUE = '__auto'
 const OAUTH_PROXY_INHERIT_VALUE = '__inherit'
@@ -2698,7 +2698,10 @@ async function loadRefreshWorkerLogs() {
     const eventGroups = await Promise.all(REFRESH_TASK_KEYS.map(async (taskKey) => {
       const runs = await asyncTasksApi.list({ task_key: taskKey, page_size: REFRESH_LOG_RUNS_PER_TASK })
       const eventsByRun = await Promise.all(runs.items.map(async (run) => {
-        const events = await asyncTasksApi.getEvents(run.id, { page_size: REFRESH_LOG_EVENTS_PER_RUN })
+        const events = await asyncTasksApi.getEvents(run.id, {
+          page_size: REFRESH_LOG_EVENTS_PER_RUN,
+          order: 'desc',
+        })
         return events.items.map((event: AsyncTaskEvent) => buildRefreshLogItem(taskKey, event))
       }))
       return eventsByRun.flat()

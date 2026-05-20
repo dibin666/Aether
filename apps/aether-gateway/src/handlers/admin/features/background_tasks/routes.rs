@@ -201,9 +201,11 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
                 .and_then(|value| value.parse::<usize>().ok())
                 .unwrap_or(DEFAULT_EVENTS_PAGE_SIZE)
                 .clamp(1, MAX_PAGE_SIZE);
+            let descending = query_param_value(query, "order")
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("desc"));
             let offset = (page - 1).saturating_mul(page_size);
             let events = state
-                .list_background_task_events(run_id, offset, page_size)
+                .list_background_task_events(run_id, offset, page_size, descending)
                 .await?;
             return Ok(Some(
                 Json(json!({

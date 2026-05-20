@@ -1966,9 +1966,14 @@ impl GatewayDataState {
         run_id: &str,
         offset: usize,
         limit: usize,
+        descending: bool,
     ) -> Result<Vec<StoredBackgroundTaskEvent>, DataLayerError> {
         match &self.background_task_reader {
-            Some(repository) => repository.list_events(run_id, offset, limit).await,
+            Some(repository) => {
+                repository
+                    .list_events(run_id, offset, limit, descending)
+                    .await
+            }
             None => Ok(Vec::new()),
         }
     }

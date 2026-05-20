@@ -151,10 +151,16 @@ impl BackgroundTaskReadRepository for MysqlBackgroundTaskRepository {
         run_id: &str,
         offset: usize,
         limit: usize,
+        descending: bool,
     ) -> Result<Vec<StoredBackgroundTaskEvent>, DataLayerError> {
         let limit = limit.max(1);
+        let order = if descending {
+            "DESC, id DESC"
+        } else {
+            "ASC, id ASC"
+        };
         let rows = sqlx::query(&format!(
-            "{EVENT_COLUMNS} WHERE run_id = ? ORDER BY created_at_unix_secs ASC, id ASC LIMIT ? OFFSET ?"
+            "{EVENT_COLUMNS} WHERE run_id = ? ORDER BY created_at_unix_secs {order} LIMIT ? OFFSET ?"
         ))
         .bind(run_id)
         .bind(i64_from_usize(limit, "event limit")?)

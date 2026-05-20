@@ -112,8 +112,9 @@ impl BackgroundTaskReadRepository for InMemoryBackgroundTaskRepository {
         run_id: &str,
         offset: usize,
         limit: usize,
+        descending: bool,
     ) -> Result<Vec<StoredBackgroundTaskEvent>, DataLayerError> {
-        let Some(events) = self
+        let Some(mut events) = self
             .index
             .read()
             .expect("background task repository lock")
@@ -124,6 +125,9 @@ impl BackgroundTaskReadRepository for InMemoryBackgroundTaskRepository {
             return Ok(Vec::new());
         };
         let limit = limit.max(1);
+        if descending {
+            events.reverse();
+        }
         Ok(events.into_iter().skip(offset).take(limit).collect())
     }
 

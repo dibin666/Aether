@@ -255,6 +255,7 @@ pub trait BackgroundTaskReadRepository: Send + Sync {
         run_id: &str,
         offset: usize,
         limit: usize,
+        descending: bool,
     ) -> Result<Vec<StoredBackgroundTaskEvent>, crate::DataLayerError>;
 
     async fn summarize_runs(&self) -> Result<BackgroundTaskSummary, crate::DataLayerError>;

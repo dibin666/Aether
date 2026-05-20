@@ -196,11 +196,12 @@ export const asyncTasksApi = {
 
   async getEvents(
     taskId: string,
-    params: { page?: number; page_size?: number } = {},
+    params: { page?: number; page_size?: number; order?: 'asc' | 'desc' } = {},
   ): Promise<{ items: AsyncTaskEvent[] }> {
     const searchParams = new URLSearchParams()
     if (params.page) searchParams.append('page', params.page.toString())
     if (params.page_size) searchParams.append('page_size', params.page_size.toString())
+    if (params.order) searchParams.append('order', params.order)
     const query = searchParams.toString()
     const response = await apiClient.get(`/api/admin/tasks/${taskId}/events${query ? `?${query}` : ''}`)
     return response.data

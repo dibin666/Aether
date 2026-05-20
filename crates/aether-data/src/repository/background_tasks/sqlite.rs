@@ -143,6 +143,7 @@ impl BackgroundTaskReadRepository for SqliteBackgroundTaskRepository {
         run_id: &str,
         offset: usize,
         limit: usize,
+        descending: bool,
     ) -> Result<Vec<StoredBackgroundTaskEvent>, DataLayerError> {
         let limit = limit.max(1);
         let mut builder = QueryBuilder::<Sqlite>::new(EVENT_COLUMNS);
@@ -153,7 +154,11 @@ impl BackgroundTaskReadRepository for SqliteBackgroundTaskRepository {
             "run_id",
             run_id.to_string(),
         );
-        builder.push(" ORDER BY created_at_unix_secs ASC, id ASC");
+        if descending {
+            builder.push(" ORDER BY created_at_unix_secs DESC, id DESC");
+        } else {
+            builder.push(" ORDER BY created_at_unix_secs ASC, id ASC");
+        }
         push_limit_offset(
             &mut builder,
             i64_from_usize(limit, "event limit")?,

@@ -27,12 +27,13 @@ impl<'a> AdminAppState<'a> {
         run_id: &str,
         offset: usize,
         limit: usize,
+        descending: bool,
     ) -> Result<
         Vec<aether_data_contracts::repository::background_tasks::StoredBackgroundTaskEvent>,
         GatewayError,
     > {
         self.app
-            .list_background_task_events(run_id, offset, limit)
+            .list_background_task_events(run_id, offset, limit, descending)
             .await
     }
 
