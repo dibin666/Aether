@@ -118,6 +118,18 @@
                 variant="ghost"
                 size="icon"
                 class="h-8 w-8 shrink-0"
+                data-testid="pool-refresh-worker-button"
+                title="自动刷新配置和日志"
+                @click="openRefreshWorkerPanel"
+              >
+                <RefreshCw class="w-3.5 h-3.5" />
+              </Button>
+            </div>
+            <div class="min-w-0 flex-1 flex justify-center">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-8 w-8 shrink-0"
                 title="账号批量操作"
                 @click="showAccountBatchDialog = true"
               >
@@ -318,6 +330,16 @@
               @click="showDemandMetricsDialog = true"
             >
               <Activity class="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-8 w-8"
+              data-testid="pool-refresh-worker-button"
+              title="自动刷新配置和日志"
+              @click="openRefreshWorkerPanel"
+            >
+              <RefreshCw class="w-3.5 h-3.5" />
             </Button>
             <Button
               v-if="selectedProviderId"
@@ -1449,10 +1471,11 @@
       </template>
     </Card>
 
-    <Card
-      variant="default"
-      class="overflow-hidden"
-    >
+    <div ref="refreshWorkerPanelRef">
+      <Card
+        variant="default"
+        class="overflow-hidden"
+      >
       <div class="border-b border-border/60 px-4 py-3 sm:px-6">
         <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -1601,7 +1624,8 @@
           </div>
         </div>
       </div>
-    </Card>
+      </Card>
+    </div>
 
     <!-- Dialogs -->
     <OAuthAccountDialog
@@ -1855,12 +1879,17 @@ const { tick: countdownTick, start: startCountdownTimer } = useCountdownTimer()
 const proxyNodesStore = useProxyNodesStore()
 const { getQueryValue, patchQuery } = useRouteQuery()
 
-const refreshWorkerSettings = ref<RefreshWorkerSettings>({
+const DEFAULT_REFRESH_WORKER_SETTINGS = {
   lookaheadSeconds: 120,
   intervalSeconds: 60,
   concurrency: 4,
   maxPerRun: 50,
   proxyNodeId: '',
+} satisfies RefreshWorkerSettings
+
+const refreshWorkerPanelRef = ref<HTMLElement | null>(null)
+const refreshWorkerSettings = ref<RefreshWorkerSettings>({
+  ...DEFAULT_REFRESH_WORKER_SETTINGS,
 })
 const refreshWorkerSettingsLoading = ref(false)
 const refreshWorkerSettingsSaving = ref(false)
@@ -1959,25 +1988,46 @@ function configString(value: unknown): string {
 async function loadRefreshWorkerSettings() {
   refreshWorkerSettingsLoading.value = true
   try {
-    const [
-      lookaheadSeconds,
-      intervalSeconds,
-      concurrency,
-      maxPerRun,
-      proxyNodeId,
-    ] = await Promise.all([
-      adminApi.getSystemConfig(OAUTH_REFRESH_CONFIG_KEYS.lookaheadSeconds),
-      adminApi.getSystemConfig(OAUTH_REFRESH_CONFIG_KEYS.intervalSeconds),
-      adminApi.getSystemConfig(OAUTH_REFRESH_CONFIG_KEYS.concurrency),
-      adminApi.getSystemConfig(OAUTH_REFRESH_CONFIG_KEYS.maxPerRun),
-      adminApi.getSystemConfig(OAUTH_REFRESH_CONFIG_KEYS.proxyNodeId),
-    ])
+    const configs = await adminApi.getAllSystemConfigs()
+    const valuesByKey = new Map(configs.map(item => [item.key, item.value]))
+    const configValue = (key: string, fallback: unknown) => (
+      valuesByKey.has(key) ? valuesByKey.get(key) : fallback
+    )
     refreshWorkerSettings.value = {
-      lookaheadSeconds: configNumber(lookaheadSeconds.value, 120),
-      intervalSeconds: configNumber(intervalSeconds.value, 60),
-      concurrency: configNumber(concurrency.value, 4),
-      maxPerRun: configNumber(maxPerRun.value, 50),
-      proxyNodeId: configString(proxyNodeId.value),
+      lookaheadSeconds: configNumber(
+        configValue(
+          OAUTH_REFRESH_CONFIG_KEYS.lookaheadSeconds,
+          DEFAULT_REFRESH_WORKER_SETTINGS.lookaheadSeconds,
+        ),
+        DEFAULT_REFRESH_WORKER_SETTINGS.lookaheadSeconds,
+      ),
+      intervalSeconds: configNumber(
+        configValue(
+          OAUTH_REFRESH_CONFIG_KEYS.intervalSeconds,
+          DEFAULT_REFRESH_WORKER_SETTINGS.intervalSeconds,
+        ),
+        DEFAULT_REFRESH_WORKER_SETTINGS.intervalSeconds,
+      ),
+      concurrency: configNumber(
+        configValue(
+          OAUTH_REFRESH_CONFIG_KEYS.concurrency,
+          DEFAULT_REFRESH_WORKER_SETTINGS.concurrency,
+        ),
+        DEFAULT_REFRESH_WORKER_SETTINGS.concurrency,
+      ),
+      maxPerRun: configNumber(
+        configValue(
+          OAUTH_REFRESH_CONFIG_KEYS.maxPerRun,
+          DEFAULT_REFRESH_WORKER_SETTINGS.maxPerRun,
+        ),
+        DEFAULT_REFRESH_WORKER_SETTINGS.maxPerRun,
+      ),
+      proxyNodeId: configString(
+        configValue(
+          OAUTH_REFRESH_CONFIG_KEYS.proxyNodeId,
+          DEFAULT_REFRESH_WORKER_SETTINGS.proxyNodeId,
+        ),
+      ),
     }
   } catch (err) {
     showError(parseApiError(err, '加载刷新配置失败'))
@@ -2094,6 +2144,30 @@ async function loadRefreshWorkerLogs() {
   } finally {
     refreshWorkerLogsLoading.value = false
   }
+}
+
+function getPoolScrollContainer(): HTMLElement | null {
+  return document.querySelector('.app-shell__content')
+}
+
+function scrollToRefreshWorkerPanel() {
+  const el = refreshWorkerPanelRef.value
+  const container = getPoolScrollContainer()
+  if (el && container) {
+    const offset = 80
+    const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - offset
+    container.scrollTo({ top, behavior: 'smooth' })
+    return
+  }
+  el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+async function openRefreshWorkerPanel() {
+  await Promise.allSettled([
+    loadRefreshWorkerSettings(),
+    loadRefreshWorkerLogs(),
+  ])
+  requestAnimationFrame(scrollToRefreshWorkerPanel)
 }
 
 const showDemandMetricsDialog = ref(false)

@@ -1570,6 +1570,11 @@ pub fn admin_system_config_default_value(key: &str) -> Option<serde_json::Value>
         "smtp_from_email" => Some(serde_json::Value::Null),
         "smtp_from_name" => Some(json!("Aether")),
         "enable_oauth_token_refresh" => Some(json!(true)),
+        "oauth_token_refresh_lookahead_seconds" => Some(json!(120)),
+        "oauth_token_refresh_interval_seconds" => Some(json!(60)),
+        "oauth_token_refresh_concurrency" => Some(json!(4)),
+        "oauth_token_refresh_max_per_run" => Some(json!(50)),
+        "oauth_token_refresh_proxy_node_id" => Some(serde_json::Value::Null),
         "module.chat_pii_redaction.enabled" => Some(json!(false)),
         "module.chat_pii_redaction.rules" => Some(chat_pii_redaction_default_rules()),
         "module.chat_pii_redaction.cache_ttl_seconds" => Some(json!(300)),
@@ -2564,6 +2569,30 @@ fn mask_admin_proxy_node_password(password: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn admin_system_config_default_value_includes_oauth_refresh_worker_settings() {
+        assert_eq!(
+            admin_system_config_default_value("oauth_token_refresh_lookahead_seconds"),
+            Some(serde_json::json!(120))
+        );
+        assert_eq!(
+            admin_system_config_default_value("oauth_token_refresh_interval_seconds"),
+            Some(serde_json::json!(60))
+        );
+        assert_eq!(
+            admin_system_config_default_value("oauth_token_refresh_concurrency"),
+            Some(serde_json::json!(4))
+        );
+        assert_eq!(
+            admin_system_config_default_value("oauth_token_refresh_max_per_run"),
+            Some(serde_json::json!(50))
+        );
+        assert_eq!(
+            admin_system_config_default_value("oauth_token_refresh_proxy_node_id"),
+            Some(serde_json::Value::Null)
+        );
+    }
 
     #[test]
     fn build_admin_system_check_update_payload_reports_available_release() {
