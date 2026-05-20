@@ -3,11 +3,18 @@ import type { QuotaStatusSnapshot, QuotaWindowSnapshot } from '@/api/endpoints/t
 import { getCodexResetCountdown } from '@/composables/useCountdownTimer'
 import { getLegacyAccountQuotaText } from '@/utils/providerKeyQuota'
 
-const QUOTA_COUNTDOWN_WINDOWS: Record<'5H' | '周' | 'Spark5H' | 'Spark周', number> = {
+const DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS = 24 * 60 * 60
+
+const QUOTA_COUNTDOWN_WINDOWS: Record<string, number> = {
   '5H': 5 * 60 * 60,
   '周': 7 * 24 * 60 * 60,
   Spark5H: 5 * 60 * 60,
   Spark周: 7 * 24 * 60 * 60,
+  Auto: DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS,
+  Fast: DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS,
+  Expert: DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS,
+  Heavy: DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS,
+  'Grok 4.3': DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS,
 }
 
 export interface QuotaProgressItem {
@@ -19,11 +26,16 @@ export interface QuotaProgressItem {
   updatedAtSeconds?: number | null
 }
 
-export function isQuotaCountdownLabel(label: string): label is keyof typeof QUOTA_COUNTDOWN_WINDOWS {
-  return label === '5H' || label === '周' || label === 'Spark5H' || label === 'Spark周'
+export function isQuotaCountdownLabel(label: string): boolean {
+  return Object.prototype.hasOwnProperty.call(QUOTA_COUNTDOWN_WINDOWS, label)
 }
 
 function getQuotaLabelOrder(label: string): number {
+  if (label === 'Auto') return 0
+  if (label === 'Fast') return 1
+  if (label === 'Expert') return 2
+  if (label === 'Heavy') return 3
+  if (label === 'Grok 4.3') return 4
   if (label === '5H') return 0
   if (label === '周') return 1
   if (label === 'Spark5H') return 2
@@ -92,6 +104,14 @@ function getQuotaSnapshotUpdatedAtSeconds(quota: QuotaStatusSnapshot | null | un
   return normalizeUnixSeconds(quota?.updated_at ?? quota?.observed_at ?? null)
 }
 
+function getQuotaSnapshotResetAtSeconds(quota: QuotaStatusSnapshot | null | undefined): number | null {
+  return normalizeUnixSeconds(quota?.reset_at ?? null)
+}
+
+function getQuotaSnapshotResetSeconds(quota: QuotaStatusSnapshot | null | undefined): number | null {
+  return normalizeRemainingSeconds(quota?.reset_seconds ?? null)
+}
+
 function getQuotaSnapshotWindow(
   quota: QuotaStatusSnapshot | null | undefined,
   code: string,
@@ -152,6 +172,41 @@ function formatQuotaValue(value: number | null | undefined): string {
   return normalized.toFixed(1)
 }
 
+function getQuotaWindowValueText(window: QuotaWindowSnapshot | null | undefined): string | undefined {
+  if (!window || typeof window.limit_value !== 'number' || window.limit_value <= 0) return undefined
+  if (typeof window.remaining_value === 'number') {
+    return `${formatQuotaValue(window.remaining_value)}/${formatQuotaValue(window.limit_value)}`
+  }
+  if (typeof window.used_value === 'number') {
+    return `${formatQuotaValue(Math.max(window.limit_value - window.used_value, 0))}/${formatQuotaValue(window.limit_value)}`
+  }
+  return undefined
+}
+
+const GROK_QUOTA_MODE_LABELS: Record<string, string> = {
+  quota_auto: 'Auto',
+  auto: 'Auto',
+  quota_fast: 'Fast',
+  fast: 'Fast',
+  quota_expert: 'Expert',
+  expert: 'Expert',
+  quota_heavy: 'Heavy',
+  heavy: 'Heavy',
+  quota_grok_4_3: 'Grok 4.3',
+  'grok-420-computer-use-sa': 'Grok 4.3',
+}
+
+function getGrokQuotaWindowLabel(window: QuotaWindowSnapshot): string {
+  const rawCode = String(window.code || '').trim().replace(/^model:/i, '')
+  const rawLabel = String(window.label || window.model || rawCode).trim()
+  const normalized = (rawLabel || rawCode).toLowerCase()
+  return GROK_QUOTA_MODE_LABELS[normalized]
+    || GROK_QUOTA_MODE_LABELS[rawCode.toLowerCase()]
+    || rawLabel
+    || rawCode
+    || '模式'
+}
+
 function buildQuotaProgressItemsFromSnapshot(
   key: PoolKeyDetail,
   fallbackProviderType?: string | null,
@@ -163,6 +218,8 @@ function buildQuotaProgressItemsFromSnapshot(
 
   if (providerType === 'codex') {
     const items: QuotaProgressItem[] = []
+    const quotaResetAtSeconds = getQuotaSnapshotResetAtSeconds(quota)
+    const quotaResetSeconds = getQuotaSnapshotResetSeconds(quota)
     for (const [label, code] of [
       ['5H', '5h'],
       ['周', 'weekly'],
@@ -175,8 +232,8 @@ function buildQuotaProgressItemsFromSnapshot(
       items.push({
         label,
         remainingPercent,
-        resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? null),
-        resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? null),
+        resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? quotaResetAtSeconds ?? null),
+        resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? quotaResetSeconds ?? null),
         updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
       })
     }
@@ -184,6 +241,8 @@ function buildQuotaProgressItemsFromSnapshot(
   }
 
   if (providerType === 'kiro') {
+    const quotaResetAtSeconds = getQuotaSnapshotResetAtSeconds(quota)
+    const quotaResetSeconds = getQuotaSnapshotResetSeconds(quota)
     const window = getQuotaSnapshotWindow(quota, 'usage')
       ?? getQuotaSnapshotWindowsByScope(quota, 'account')[0]
       ?? null
@@ -198,8 +257,45 @@ function buildQuotaProgressItemsFromSnapshot(
       label: '剩余',
       remainingPercent,
       detail,
-      resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? null),
-      resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? null),
+      resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? quotaResetAtSeconds ?? null),
+      resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? quotaResetSeconds ?? null),
+      updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+    }]
+  }
+
+  if (providerType === 'grok') {
+    const quotaResetAtSeconds = getQuotaSnapshotResetAtSeconds(quota)
+    const quotaResetSeconds = getQuotaSnapshotResetSeconds(quota)
+    const modelWindows = getQuotaSnapshotWindowsByScope(quota, 'model')
+    if (modelWindows.length > 0) {
+      return modelWindows
+        .map((window): QuotaProgressItem | null => {
+          const remainingPercent = getQuotaWindowRemainingPercent(window)
+          if (remainingPercent == null) return null
+          return {
+            label: getGrokQuotaWindowLabel(window),
+            remainingPercent,
+            detail: getQuotaWindowValueText(window),
+            resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? quotaResetAtSeconds ?? null),
+            resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? quotaResetSeconds ?? null),
+            updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+          }
+        })
+        .filter((item): item is QuotaProgressItem => item != null)
+    }
+
+    const window = getQuotaSnapshotWindow(quota, 'usage')
+      ?? getQuotaSnapshotWindowsByScope(quota, 'account')[0]
+      ?? null
+    const remainingPercent = getQuotaWindowRemainingPercent(window)
+    if (remainingPercent == null) return []
+
+    return [{
+      label: '剩余',
+      remainingPercent,
+      detail: getQuotaWindowValueText(window),
+      resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? quotaResetAtSeconds ?? null),
+      resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? quotaResetSeconds ?? null),
       updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
     }]
   }
@@ -360,7 +456,8 @@ export function getQuotaCountdownProgressPercent(item: QuotaProgressItem, tick: 
   void tick
   if (!isQuotaCountdownLabel(item.label)) return 0
 
-  const totalWindowSeconds = QUOTA_COUNTDOWN_WINDOWS[item.label]
+  const totalWindowSeconds =
+    QUOTA_COUNTDOWN_WINDOWS[item.label] ?? DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS
   const remainingSeconds = resolveQuotaCountdownRemainingSeconds(item)
   if (remainingSeconds == null) return 0
 

@@ -346,7 +346,7 @@
                               <Copy class="w-2.5 h-2.5" />
                             </Button>
                             <!-- OAuth 状态（失效/过期/倒计时）和刷新按钮 -->
-                            <template v-if="shouldShowOAuthRefreshControl(key)">
+                            <template v-if="shouldShowOAuthRefreshControl(key, provider.provider_type)">
                               <!-- 账号级别异常：醒目提示 + 清除按钮 -->
                               <template v-if="isAccountLevelBlock(key)">
                                 <Badge
@@ -425,8 +425,9 @@
                           v-if="key.circuit_breaker_open"
                           variant="destructive"
                           class="text-[10px] px-1.5 py-0 shrink-0"
+                          :title="getKeyCircuitBreakerTitle(key)"
                         >
-                          熔断
+                          熔断{{ getKeyCircuitProbeCountdown(key) }}
                         </Badge>
                         <!-- 健康度 -->
                         <div
@@ -448,11 +449,11 @@
                           </span>
                         </div>
                         <Button
-                          v-if="key.circuit_breaker_open || (key.health_score !== undefined && key.health_score < 0.5)"
+                          v-if="isKeyRecoverable(key)"
                           variant="ghost"
                           size="icon"
                           class="h-7 w-7 text-green-600"
-                          title="刷新健康状态"
+                          :title="getRecoverKeyTitle(key)"
                           @click="handleRecoverKey(key)"
                         >
                           <RefreshCw class="w-3.5 h-3.5" />
@@ -553,6 +554,64 @@
                           <Trash2 class="w-3.5 h-3.5" />
                         </Button>
                       </div>
+                    </div>
+                    <!-- 手动余额查询摘要 -->
+                    <div
+                      v-if="getKeyBalanceSummary(key)"
+                      class="mt-2 flex items-center gap-2 rounded-md border border-border/70 bg-muted/20 px-2.5 py-2 text-[11px]"
+                    >
+                      <div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                        <span class="inline-flex items-center gap-1 font-medium text-foreground">
+                          <WalletCards class="h-3 w-3 text-primary" />
+                          上游余额 {{ formatKeyBalanceAmount(getKeyBalanceSummary(key)?.available, getKeyBalanceSummary(key)?.currency) }}
+                        </span>
+                        <span
+                          v-if="getKeyBalanceSummary(key)?.used !== null"
+                          class="text-muted-foreground"
+                        >
+                          已用 {{ formatKeyBalanceAmount(getKeyBalanceSummary(key)?.used, getKeyBalanceSummary(key)?.currency) }}
+                        </span>
+                        <span
+                          v-if="getKeyBalanceSummary(key)?.granted !== null"
+                          class="text-muted-foreground"
+                        >
+                          总额 {{ formatKeyBalanceAmount(getKeyBalanceSummary(key)?.granted, getKeyBalanceSummary(key)?.currency) }}
+                        </span>
+                        <span
+                          v-if="getKeyBalanceSummary(key)?.planName"
+                          class="text-muted-foreground"
+                        >
+                          套餐 {{ getKeyBalanceSummary(key)?.planName }}
+                        </span>
+                        <span class="text-muted-foreground/70">
+                          {{ getKeyBalanceSummary(key)?.templateLabel }} · {{ formatUpdatedAt(getKeyBalanceSummary(key)?.updatedAt || 0) }}
+                        </span>
+                        <span
+                          v-if="getKeyBalanceAutoRefreshIntervalMinutes(key) > 0"
+                          class="text-muted-foreground/70"
+                        >
+                          每 {{ getKeyBalanceAutoRefreshIntervalMinutes(key) }} 分钟自动
+                        </span>
+                        <span
+                          v-if="keyBalanceRefreshRequiresSavedSecret(key) && !hasSavedBalanceSecret(key)"
+                          class="text-amber-600 dark:text-amber-400"
+                        >
+                          需保存查询凭据
+                        </span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="h-5 w-5 shrink-0 text-muted-foreground hover:text-foreground"
+                        :disabled="refreshingBalanceKeyId === key.id || !canRefreshKeyBalance(key)"
+                        :title="getKeyBalanceRefreshTitle(key)"
+                        @click.stop="handleRefreshKeyBalance(key)"
+                      >
+                        <RefreshCw
+                          class="h-3 w-3"
+                          :class="{ 'animate-spin': refreshingBalanceKeyId === key.id }"
+                        />
+                      </Button>
                     </div>
                     <!-- Codex 上游额度信息（仅当有元数据时显示） -->
                     <div
@@ -1216,7 +1275,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, nextTick } from 'vue'
+import { ref, watch, computed, nextTick, onUnmounted } from 'vue'
 import {
   Plus,
   Key,
@@ -1235,6 +1294,7 @@ import {
   ShieldX,
   Globe,
   GitBranch,
+  WalletCards,
 } from 'lucide-vue-next'
 import { parseApiError } from '@/utils/errorParser'
 import { useEscapeKey } from '@/composables/useEscapeKey'
@@ -1281,10 +1341,12 @@ import {
   exportKey,
   refreshProviderOAuth,
   refreshProviderQuota,
+  queryProviderKeyBalance,
   clearOAuthInvalid,
   type ProviderEndpoint,
   type EndpointAPIKey,
   type Model,
+  type ProviderKeyBalanceQuery,
   API_FORMAT_ORDER,
   sortApiFormats,
 } from '@/api/endpoints'
@@ -1293,6 +1355,7 @@ import type {
   AntigravityModelQuota,
   CodexUpstreamMetadata,
   ChatGPTWebUpstreamMetadata,
+  GrokUpstreamMetadata,
   KiroUpstreamMetadata,
   QuotaStatusSnapshot,
   QuotaWindowSnapshot,
@@ -1326,6 +1389,17 @@ import {
 interface ProviderEndpointWithKeys extends ProviderEndpoint {
   keys?: EndpointAPIKey[]
   rpm_limit?: number
+}
+
+interface KeyBalanceSummary {
+  available: number | null
+  used: number | null
+  granted: number | null
+  currency: string
+  updatedAt: number
+  templateLabel: string
+  planName: string | null
+  architectureId: string
 }
 
 interface Props {
@@ -1363,6 +1437,8 @@ let keysLoadRequestId = 0
 let mappingPreviewLoadRequestId = 0
 const DEFAULT_PROVIDER_KEYS_PAGE_SIZE = 3
 const CUSTOM_PROVIDER_KEYS_PAGE_SIZE = 4
+const BALANCE_AUTO_REFRESH_CHECK_MS = 60_000
+let balanceAutoRefreshTimer: ReturnType<typeof setInterval> | null = null
 
 function getProviderKeysPageSize(providerType?: string | null): number {
   return (providerType || '').trim().toLowerCase() === 'custom'
@@ -1386,6 +1462,7 @@ const editingKey = ref<EndpointAPIKey | null>(null)
 const deleteKeyConfirmOpen = ref(false)
 const keyToDelete = ref<EndpointAPIKey | null>(null)
 const togglingKeyId = ref<string | null>(null)
+const refreshingBalanceKeyId = ref<string | null>(null)
 
 // 密钥显示状态：key_id -> 完整密钥
 const revealedKeys = ref<Map<string, string>>(new Map())
@@ -1568,6 +1645,7 @@ watch(
       // 仅在抽屉刚打开时启动倒计时
       if (newOpen && !oldOpen) {
         startCountdownTimer()
+        startKeyBalanceAutoRefreshTimer()
       }
       void endpointsPromise.then(() => autoRefreshQuotaInBackground())
     } else if (!newOpen && oldOpen) {
@@ -1579,6 +1657,7 @@ watch(
 
       // 停止倒计时定时器
       stopCountdownTimer()
+      stopKeyBalanceAutoRefreshTimer()
       // 重置所有状态
       loading.value = false
       provider.value = null
@@ -1738,6 +1817,167 @@ function handleEditKey(endpoint: ProviderEndpoint | undefined, key: EndpointAPIK
     oauthKeyEditDialogOpen.value = true
   } else {
     keyFormDialogOpen.value = true
+  }
+}
+
+function canOpenKeyBalanceQuery(key: EndpointAPIKey): boolean {
+  return key.auth_type === 'api_key' || key.auth_type === 'bearer'
+}
+
+function normalizeBalanceArchitectureId(value: unknown): ProviderKeyBalanceQuery['architecture_id'] | undefined {
+  const normalized = String(value || '').trim().toLowerCase().replace(/-/g, '_')
+  if (normalized === 'newapi' || normalized === 'new_api') return 'new_api'
+  if (normalized === 'sub2api') return 'sub2api'
+  if (normalized === 'generic' || normalized === 'custom' || normalized === 'generic_api') return 'generic_api'
+  return undefined
+}
+
+function canRefreshKeyBalance(key: EndpointAPIKey): boolean {
+  return canOpenKeyBalanceQuery(key)
+    && !!normalizeBalanceArchitectureId(key.upstream_metadata?.balance_query?.architecture_id)
+    && (!keyBalanceRefreshRequiresSavedSecret(key) || hasSavedBalanceSecret(key))
+}
+
+function hasSavedBalanceSecret(key: EndpointAPIKey): boolean {
+  return key.upstream_metadata?.balance_query?.query_config?.has_saved_secret === true
+}
+
+function keyBalanceRefreshRequiresSavedSecret(key: EndpointAPIKey): boolean {
+  const architectureId = normalizeBalanceArchitectureId(key.upstream_metadata?.balance_query?.architecture_id)
+  if (architectureId === 'new_api') return true
+  if (architectureId !== 'sub2api') return false
+  const credentialKind = String(
+    key.upstream_metadata?.balance_query?.query_config?.sub2api_credential_kind || ''
+  ).trim()
+  return credentialKind === 'access_token' || credentialKind === 'refresh_token'
+}
+
+function getKeyBalanceAutoRefreshIntervalMinutes(key: EndpointAPIKey): number {
+  const parsed = toFiniteNumber(
+    key.upstream_metadata?.balance_query?.query_config?.auto_refresh_interval_minutes
+  )
+  if (parsed === null || parsed <= 0) return 0
+  return Math.min(Math.floor(parsed), 10080)
+}
+
+function isKeyBalanceAutoRefreshDue(key: EndpointAPIKey): boolean {
+  const intervalMinutes = getKeyBalanceAutoRefreshIntervalMinutes(key)
+  if (intervalMinutes <= 0 || !canRefreshKeyBalance(key)) return false
+
+  const updatedAt = toFiniteNumber(key.upstream_metadata?.balance_query?.updated_at)
+  if (updatedAt === null || updatedAt <= 0) return true
+
+  const now = Math.floor(Date.now() / 1000)
+  return now - updatedAt >= intervalMinutes * 60
+}
+
+function startKeyBalanceAutoRefreshTimer() {
+  if (balanceAutoRefreshTimer) return
+  balanceAutoRefreshTimer = setInterval(() => {
+    void refreshDueKeyBalances()
+  }, BALANCE_AUTO_REFRESH_CHECK_MS)
+}
+
+function stopKeyBalanceAutoRefreshTimer() {
+  if (!balanceAutoRefreshTimer) return
+  clearInterval(balanceAutoRefreshTimer)
+  balanceAutoRefreshTimer = null
+}
+
+async function refreshDueKeyBalances() {
+  if (!props.open || !props.providerId || refreshingBalanceKeyId.value) return
+  const dueKey = providerKeys.value.find(key => key.is_active && isKeyBalanceAutoRefreshDue(key))
+  if (!dueKey) return
+  await handleRefreshKeyBalance(dueKey, { silent: true })
+}
+
+function getKeyBalanceRefreshTitle(key: EndpointAPIKey): string {
+  if (!canOpenKeyBalanceQuery(key)) {
+    return '余额查询仅支持 API Key 或 Bearer Token'
+  }
+  if (!canRefreshKeyBalance(key)) {
+    if (keyBalanceRefreshRequiresSavedSecret(key) && !hasSavedBalanceSecret(key)) {
+      return '需要先手动查询一次，并开启“保存余额查询凭据”'
+    }
+    return '缺少上次查询模板，请先手动查询一次余额'
+  }
+  const summary = getKeyBalanceSummary(key)
+  return summary?.templateLabel
+    ? `重新查询 ${summary.templateLabel} 余额`
+    : '重新查询余额'
+}
+
+function assignSavedBalanceQueryConfig(query: ProviderKeyBalanceQuery, key: EndpointAPIKey) {
+  const config = key.upstream_metadata?.balance_query?.query_config
+  if (!config || typeof config !== 'object') return
+
+  query.custom_base_url = trimmedStringOrUndefined(config.custom_base_url)
+  query.new_api_user_id = trimmedStringOrUndefined(config.new_api_user_id)
+
+  const sub2apiKind = String(config.sub2api_credential_kind || '').trim()
+  if (sub2apiKind === 'api_key' || sub2apiKind === 'access_token' || sub2apiKind === 'refresh_token') {
+    query.sub2api_credential_kind = sub2apiKind
+  }
+
+  query.custom_endpoint = trimmedStringOrUndefined(config.custom_endpoint)
+  const customMethod = String(config.custom_method || '').trim().toUpperCase()
+  if (customMethod === 'GET' || customMethod === 'POST') {
+    query.custom_method = customMethod
+  }
+  query.custom_currency = trimmedStringOrUndefined(config.custom_currency)
+  const customQuotaDivisor = toFiniteNumber(config.custom_quota_divisor)
+  if (customQuotaDivisor !== null && customQuotaDivisor > 0) {
+    query.custom_quota_divisor = customQuotaDivisor
+  }
+  const intervalMinutes = toFiniteNumber(config.auto_refresh_interval_minutes)
+  if (intervalMinutes !== null && intervalMinutes > 0) {
+    query.auto_refresh_interval_minutes = Math.min(Math.floor(intervalMinutes), 10080)
+  }
+  query.custom_balance_path = trimmedStringOrUndefined(config.custom_balance_path)
+  query.custom_used_path = trimmedStringOrUndefined(config.custom_used_path)
+  query.custom_granted_path = trimmedStringOrUndefined(config.custom_granted_path)
+}
+
+function trimmedStringOrUndefined(value: unknown): string | undefined {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  return trimmed || undefined
+}
+
+async function handleRefreshKeyBalance(key: EndpointAPIKey, options: { silent?: boolean } = {}) {
+  if (!props.providerId || refreshingBalanceKeyId.value || !canRefreshKeyBalance(key)) return
+
+  const architectureId = normalizeBalanceArchitectureId(key.upstream_metadata?.balance_query?.architecture_id)
+  if (!architectureId) return
+
+  refreshingBalanceKeyId.value = key.id
+  try {
+    const query: ProviderKeyBalanceQuery = {
+      key_id: key.id,
+      auth_type: key.auth_type === 'bearer' ? 'bearer' : 'api_key',
+      api_formats: key.api_formats || [],
+      architecture_id: architectureId,
+      save_result: true,
+    }
+    assignSavedBalanceQueryConfig(query, key)
+
+    const result = await queryProviderKeyBalance(props.providerId, query)
+    if (result.status !== 'success') {
+      if (!options.silent) {
+        showError(result.message || '余额刷新失败', '错误')
+      }
+      return
+    }
+    if (!options.silent) {
+      showSuccess('余额已刷新')
+    }
+    await loadProviderKeysPage(currentKeyPage.value)
+    emit('refresh')
+  } catch (err: unknown) {
+    if (!options.silent) {
+      showError(parseApiError(err, '余额刷新失败'), '错误')
+    }
+  } finally {
+    refreshingBalanceKeyId.value = null
   }
 }
 
@@ -1964,7 +2204,7 @@ function quotaSnapshotHasDisplayData(quota: QuotaStatusSnapshot | null | undefin
 
 function getQuotaSnapshotForProvider(
   key: EndpointAPIKey,
-  providerType: 'codex' | 'kiro' | 'antigravity' | 'chatgpt_web' | 'gemini_cli',
+  providerType: 'codex' | 'kiro' | 'antigravity' | 'chatgpt_web' | 'gemini_cli' | 'grok',
 ): QuotaStatusSnapshot | null {
   const quota = key.status_snapshot?.quota
   if (!quota) return null
@@ -2166,6 +2406,66 @@ function getKiroQuotaDisplay(key: EndpointAPIKey): KiroUpstreamMetadata | null {
 function hasKiroQuotaDisplayData(key: EndpointAPIKey): boolean {
   const kiro = getKiroQuotaDisplay(key)
   return !!kiro && (kiro.usage_percentage !== undefined || kiro.usage_limit !== undefined)
+}
+
+type GrokQuotaDisplay = GrokUpstreamMetadata & {
+  usage_percentage?: number
+  usage_limit?: number
+  current_usage?: number
+  remaining?: number
+  next_reset_at?: number
+}
+
+function getGrokQuotaDisplay(key: EndpointAPIKey): GrokQuotaDisplay | null {
+  const quota = getQuotaSnapshotForProvider(key, 'grok')
+  if (!quota) return null
+
+  const display: GrokQuotaDisplay = {}
+  const updatedAt = getQuotaSnapshotUpdatedAt(quota)
+  if (updatedAt !== undefined) display.updated_at = updatedAt
+  if (quota.plan_type) display.plan_type = quota.plan_type
+  if (quota.pool_tier) display.pool_tier = quota.pool_tier
+
+  const code = String(quota.code || '').trim().toLowerCase()
+  if (code === 'banned' || code === 'forbidden') {
+    display.is_banned = true
+    if (quota.reason) display.ban_reason = quota.reason
+  }
+
+  const usageWindow =
+    getQuotaWindow(quota, 'usage')
+    ?? getQuotaWindowByScope(quota, 'account')[0]
+    ?? getQuotaWindowByScope(quota, 'model')
+      .map(window => ({
+        window,
+        remainingPercent: getQuotaWindowRemainingPercent(window),
+      }))
+      .filter((item): item is { window: QuotaWindowSnapshot, remainingPercent: number } => item.remainingPercent !== undefined)
+      .sort((a, b) => a.remainingPercent - b.remainingPercent)[0]?.window
+    ?? null
+  if (usageWindow) {
+    const usedPercent = getQuotaWindowUsedPercent(usageWindow)
+    if (usedPercent !== undefined) display.usage_percentage = usedPercent
+    if (typeof usageWindow.used_value === 'number') display.current_usage = usageWindow.used_value
+    if (typeof usageWindow.limit_value === 'number') display.usage_limit = usageWindow.limit_value
+    if (typeof usageWindow.remaining_value === 'number') display.remaining = usageWindow.remaining_value
+
+    const nextResetAt =
+      getQuotaWindowResetAt(usageWindow)
+      ?? (() => {
+        const resetSeconds = getQuotaWindowResetSeconds(usageWindow)
+        if (updatedAt === undefined || resetSeconds === undefined) return undefined
+        return updatedAt + resetSeconds
+      })()
+    if (nextResetAt !== undefined) display.next_reset_at = nextResetAt
+  }
+
+  return Object.keys(display).length > 0 ? display : null
+}
+
+function hasGrokQuotaDisplayData(key: EndpointAPIKey): boolean {
+  const grok = getGrokQuotaDisplay(key)
+  return !!grok && (grok.usage_percentage !== undefined || grok.usage_limit !== undefined)
 }
 
 type ChatGPTWebQuotaDisplay = ChatGPTWebUpstreamMetadata & {
@@ -2435,6 +2735,28 @@ function shouldAutoRefreshKiroQuota(): boolean {
   return false
 }
 
+function shouldAutoRefreshGrokQuota(): boolean {
+  if (provider.value?.provider_type !== 'grok') return false
+  const now = Math.floor(Date.now() / 1000)
+
+  for (const { key } of allKeys.value) {
+    if (!key.is_active) continue
+
+    if (isTokenExpiringSoon(key, now)) return true
+
+    if (!hasGrokQuotaDisplayData(key)) {
+      return true
+    }
+
+    const updatedAt = getGrokQuotaDisplay(key)?.updated_at
+    if (typeof updatedAt !== 'number' || (now - updatedAt) > AUTO_QUOTA_REFRESH_STALE_SECONDS) {
+      return true
+    }
+  }
+
+  return false
+}
+
 function shouldAutoRefreshChatGPTWebQuota(): boolean {
   if (provider.value?.provider_type !== 'chatgpt_web') return false
   const now = Math.floor(Date.now() / 1000)
@@ -2541,7 +2863,7 @@ async function autoRefreshQuotaInBackground(options: { ignoreCooldown?: boolean 
   if (refreshingQuota.value) return
 
   const providerType = provider.value?.provider_type
-  if (providerType !== 'codex' && providerType !== 'antigravity' && providerType !== 'kiro' && providerType !== 'chatgpt_web') return
+  if (providerType !== 'codex' && providerType !== 'antigravity' && providerType !== 'kiro' && providerType !== 'chatgpt_web' && providerType !== 'grok') return
 
   // 检查是否需要刷新
   let shouldRefresh = false
@@ -2551,6 +2873,8 @@ async function autoRefreshQuotaInBackground(options: { ignoreCooldown?: boolean 
     shouldRefresh = shouldAutoRefreshAntigravityQuota()
   } else if (providerType === 'kiro') {
     shouldRefresh = shouldAutoRefreshKiroQuota()
+  } else if (providerType === 'grok') {
+    shouldRefresh = shouldAutoRefreshGrokQuota()
   } else if (providerType === 'chatgpt_web') {
     shouldRefresh = shouldAutoRefreshChatGPTWebQuota()
   }
@@ -2564,6 +2888,8 @@ async function autoRefreshQuotaInBackground(options: { ignoreCooldown?: boolean 
     hadCachedQuota = allKeys.value.some(({ key }) => key.is_active && hasAntigravityQuotaDisplayData(key))
   } else if (providerType === 'kiro') {
     hadCachedQuota = allKeys.value.some(({ key }) => key.is_active && hasKiroQuotaDisplayData(key))
+  } else if (providerType === 'grok') {
+    hadCachedQuota = allKeys.value.some(({ key }) => key.is_active && hasGrokQuotaDisplayData(key))
   } else if (providerType === 'chatgpt_web') {
     hadCachedQuota = allKeys.value.some(({ key }) => key.is_active && hasChatGPTWebQuotaDisplayData(key))
   }
@@ -2610,7 +2936,7 @@ async function openAntigravityQuotaDialog(key: EndpointAPIKey) {
 }
 
 async function handleKeyChanged() {
-  await Promise.all([loadEndpoints(), loadMappingPreview()])
+  await Promise.all([loadEndpoints(), loadProviderKeysPage(currentKeyPage.value), loadMappingPreview()])
   emit('refresh')
   // 添加/修改 key 后自动获取 Antigravity 配额（新 key 的 upstream_metadata 为空）
   void autoRefreshQuotaInBackground({ ignoreCooldown: true })
@@ -3030,6 +3356,9 @@ function formatOAuthPlanType(planType: string): string {
     team: 'Team',
     enterprise: 'Enterprise',
     ultra: 'Ultra',
+    basic: 'Basic',
+    super: 'Super',
+    heavy: 'Heavy',
   }
   return labels[planType.toLowerCase()] || planType
 }
@@ -3076,6 +3405,58 @@ function hasAntigravityQuotaDisplayData(key: EndpointAPIKey): boolean {
     return true
   }
   return hasAntigravityQuotaData(key.upstream_metadata)
+}
+
+function getKeyBalanceSummary(key: EndpointAPIKey): KeyBalanceSummary | null {
+  const metadata = key.upstream_metadata?.balance_query
+  if (!metadata) return null
+  const updatedAt = toFiniteNumber(metadata.updated_at)
+  const available = toFiniteNumber(metadata.total_available)
+  const used = toFiniteNumber(metadata.total_used)
+  const granted = toFiniteNumber(metadata.total_granted)
+  if (updatedAt === null || (available === null && used === null && granted === null)) {
+    return null
+  }
+  const architectureId = String(metadata.architecture_id || '').trim()
+  const labels: Record<string, string> = {
+    new_api: 'NewAPI',
+    sub2api: 'Sub2API',
+    generic_api: '自定义'
+  }
+  return {
+    available,
+    used,
+    granted,
+    currency: String(metadata.currency || 'USD').trim() || 'USD',
+    updatedAt,
+    templateLabel: labels[architectureId] || architectureId || '余额查询',
+    architectureId,
+    planName: typeof metadata.plan_name === 'string' && metadata.plan_name.trim()
+      ? metadata.plan_name.trim()
+      : null,
+  }
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+function formatKeyBalanceAmount(value: unknown, currency = 'USD'): string {
+  const numberValue = toFiniteNumber(value)
+  if (numberValue === null) return '未知'
+  const normalizedCurrency = (currency || 'USD').toUpperCase()
+  const prefix = normalizedCurrency === 'USD'
+    ? '$'
+    : normalizedCurrency === 'CNY'
+      ? '¥'
+      : `${normalizedCurrency} `
+  const decimals = Math.abs(numberValue) >= 100 ? 2 : 4
+  return `${prefix}${numberValue.toFixed(decimals)}`
 }
 
 function formatUpdatedAt(updatedAt: number): string {
@@ -3377,6 +3758,9 @@ function getOAuthPlanTypeClass(planType: string): string {
     ultra: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
     'pro+': 'border-purple-500/50 text-purple-600 dark:text-purple-400',
     power: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
+    basic: 'border-primary/50 text-primary',
+    super: 'border-green-500/50 text-green-600 dark:text-green-400',
+    heavy: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
   }
   return classes[planType.toLowerCase()] || ''
 }
@@ -3410,6 +3794,65 @@ function getHealthScoreBarColor(score: number): string {
   if (score >= 0.8) return 'bg-green-500 dark:bg-green-400'
   if (score >= 0.5) return 'bg-yellow-500 dark:bg-yellow-400'
   return 'bg-red-500 dark:bg-red-400'
+}
+
+function isKeyRecoverable(key: EndpointAPIKey): boolean {
+  return Boolean(
+    key.circuit_breaker_open
+    || (key.health_score !== undefined && key.health_score < 0.5)
+  )
+}
+
+function getOpenCircuitEntries(key: EndpointAPIKey): Array<[string, NonNullable<EndpointAPIKey['circuit_breaker_by_format']>[string]]> {
+  return Object.entries(key.circuit_breaker_by_format || {})
+    .filter(([, value]) => value?.open === true)
+}
+
+function getKeyCircuitProbeCountdown(key: EndpointAPIKey): string {
+  void countdownTick.value
+  const nextProbe = getOpenCircuitEntries(key)
+    .map(([, value]) => {
+      if (typeof value.next_probe_at_unix_secs === 'number' && Number.isFinite(value.next_probe_at_unix_secs)) {
+        return value.next_probe_at_unix_secs * 1000
+      }
+      if (value.next_probe_at) {
+        const ms = new Date(value.next_probe_at).getTime()
+        return Number.isFinite(ms) ? ms : null
+      }
+      return null
+    })
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => a - b)[0]
+  if (!nextProbe) {
+    return ''
+  }
+  const diffMs = nextProbe - Date.now()
+  return diffMs > 0 ? ` ${formatCountdown(diffMs)}` : ' 探测中'
+}
+
+function getKeyCircuitBreakerTitle(key: EndpointAPIKey): string {
+  const entries = getOpenCircuitEntries(key)
+  if (entries.length === 0) return '熔断器已打开'
+  const parts = entries.map(([format, value]) => {
+    const label = formatApiFormatShort(format)
+    const reason = value.reason ? `原因: ${value.reason}` : '原因: 连续失败'
+    const interval = typeof value.probe_interval_minutes === 'number'
+      ? `探测间隔: ${value.probe_interval_minutes} 分钟`
+      : ''
+    const countdown = getFormatProbeCountdown(key, format).trim()
+    return [label, reason, interval, countdown ? `状态: ${countdown}` : '']
+      .filter(Boolean)
+      .join(' / ')
+  })
+  parts.push('点击恢复按钮可重置熔断器')
+  return parts.join('\n')
+}
+
+function getRecoverKeyTitle(key: EndpointAPIKey): string {
+  if (key.circuit_breaker_open) {
+    return '重置熔断器并恢复健康状态'
+  }
+  return '刷新健康状态'
 }
 
 // 获取自动获取模型状态的 title 提示
@@ -3453,10 +3896,11 @@ function getFormatProbeCountdown(key: EndpointAPIKey, format: string): string {
     }
   }
   // 等待探测
-  if (formatData.next_probe_at) {
-    const nextProbe = new Date(formatData.next_probe_at)
-    const now = new Date()
-    const diffMs = nextProbe.getTime() - now.getTime()
+  if (formatData.next_probe_at_unix_secs || formatData.next_probe_at) {
+    const nextProbeMs = typeof formatData.next_probe_at_unix_secs === 'number'
+      ? formatData.next_probe_at_unix_secs * 1000
+      : new Date(formatData.next_probe_at || '').getTime()
+    const diffMs = nextProbeMs - Date.now()
     if (diffMs > 0) {
       return ` ${formatCountdown(diffMs)}`
     } else {
@@ -3531,6 +3975,7 @@ async function loadProviderKeysPage(page = currentKeyPage.value) {
     currentKeyPage.value = Math.min(result.page, nextTotalPages)
     keyPageSize.value = result.page_size
     syncCurrentSelections(endpoints.value, result.keys)
+    void refreshDueKeyBalances()
   } catch (err: unknown) {
     if (requestId !== keysLoadRequestId || props.providerId !== providerId) return
     providerKeys.value = []
@@ -3627,6 +4072,10 @@ useEscapeKey(() => {
 }, {
   disableOnInput: true,
   once: false
+})
+
+onUnmounted(() => {
+  stopKeyBalanceAutoRefreshTimer()
 })
 </script>
 

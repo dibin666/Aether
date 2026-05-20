@@ -1,8 +1,9 @@
 mod types;
 
 pub use types::{
-    parse_usage_body_ref, usage_body_ref, PendingUsageCleanupSummary,
-    ProviderApiKeyConsumptionSummaryQuery, ProviderApiKeyWindowUsageRequest,
+    parse_usage_body_ref, usage_body_ref, usage_request_metadata_client_family,
+    ApiKeyLastUsedDelta, ManagementTokenCounterDelta, PendingUsageCleanupSummary,
+    ProviderApiKeyConsumptionSummaryQuery, ProviderApiKeyWindowUsageRequest, ProxyNodeCounterDelta,
     StoredProviderApiKeyConsumptionSummary, StoredProviderApiKeyUsageSummary,
     StoredProviderApiKeyWindowUsageSummary, StoredProviderUsageSummary, StoredProviderUsageWindow,
     StoredRequestUsageAudit, StoredUsageAuditAggregation, StoredUsageAuditSummary,
@@ -21,10 +22,11 @@ pub use types::{
     UsageCacheAffinityHitSummaryQuery, UsageCacheAffinityIntervalGroupBy,
     UsageCacheAffinityIntervalQuery, UsageCacheHitSummaryQuery, UsageCleanupExecutionMode,
     UsageCleanupPreviewCounts, UsageCleanupSummary, UsageCleanupTargets, UsageCleanupWindow,
-    UsageCostSavingsSummaryQuery, UsageDailyHeatmapQuery, UsageDashboardDailyBreakdownQuery,
-    UsageDashboardProviderCountsQuery, UsageDashboardSummaryQuery, UsageErrorDistributionQuery,
-    UsageLeaderboardGroupBy, UsageLeaderboardQuery, UsageMonitoringErrorCountQuery,
-    UsageMonitoringErrorListQuery, UsagePerformancePercentilesQuery, UsageProviderPerformanceQuery,
-    UsageReadRepository, UsageRepository, UsageSettledCostSummaryQuery, UsageTimeSeriesGranularity,
+    UsageCostSavingsSummaryQuery, UsageCounterFlushSummary, UsageCounterHealthSnapshot,
+    UsageDailyHeatmapQuery, UsageDashboardDailyBreakdownQuery, UsageDashboardProviderCountsQuery,
+    UsageDashboardSummaryQuery, UsageErrorDistributionQuery, UsageLeaderboardGroupBy,
+    UsageLeaderboardQuery, UsageMonitoringErrorCountQuery, UsageMonitoringErrorListQuery,
+    UsagePerformancePercentilesQuery, UsageProviderPerformanceQuery, UsageReadRepository,
+    UsageRepository, UsageSettledCostSummaryQuery, UsageTimeSeriesGranularity,
     UsageTimeSeriesQuery, UsageWriteRepository,
 };

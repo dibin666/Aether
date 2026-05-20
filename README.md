@@ -60,7 +60,7 @@ docker compose run --rm app --apply-backfills
 docker compose exec postgres pg_dump -U postgres aether | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz
 ```
 
-### Docker Compose（SQLite）
+### Docker Compose（Single Node / SQLite）
 
 ```bash
 # 1. 克隆代码
@@ -73,7 +73,7 @@ cp .env.example .env
 # 编辑 .env 设置 ADMIN_PASSWORD
 
 # 3. 首次部署 / 更新
-docker compose -f docker-compose.sqlite.yml pull && docker compose -f docker-compose.sqlite.yml up -d
+docker compose -f docker-compose.single-node.yml pull && docker compose -f docker-compose.single-node.yml up -d
 
 # 4. 升级前备份（可选）
 cp -a data/aether.db backup_$(date +%Y%m%d_%H%M%S).db
@@ -101,7 +101,7 @@ git pull
 docker compose -f docker-compose.build.yml up -d --no-build
 ```
 
-### 一键安装（可选部署方式 Linux: systemd; Mac: launchd）
+### 一键安装（默认 Single Node：Linux systemd / macOS launchd + SQLite）
 
 ```bash
 cd Aether && cd Aether
@@ -228,14 +228,14 @@ client -> rust frontdoor (aether-gateway) -> execution_runtime/provider transpor
 - 仓库自带的 `docker-compose.yml` 和 `docker-compose.build.yml` 都已把 `AETHER_GATEWAY_AUTO_PREPARE_DATABASE` 设为默认开启，因此无论是预构建镜像部署，还是先 `./deploy.sh` 构建本地镜像再执行 `docker compose -f docker-compose.build.yml up -d --no-build`，常规启动都会在监听端口前自动执行挂起的 migration 和 backfill。
 - `./deploy.sh --tag <tag>` 会在保留 `aether-app:latest` 的同时额外打一个 `aether-app:<tag>`，方便手工发布或留档；`docker-compose.build.yml` 默认仍使用 `aether-app:latest`。
 
-## Aether Proxy (可选)
+## Aether Tunnel (可选)
 
-Aether Proxy 是配套的正向代理节点，部署在海外 VPS 上，为墙内的 Aether 实例中转 API 流量。
+Aether Tunnel 是配套的正向代理节点，部署在海外 VPS 上，为墙内的 Aether 实例中转 API 流量。
 
 - Docker Compose 部署或下载预编译二进制直接运行
-- 提供 macOS/Linux 与 Windows 一键脚本，自动下载最新 `proxy-v*` 制品并向现有 `aether-proxy.toml` 追加 `[[servers]]`
-- 通过 `aether-proxy setup` 完成交互式配置，自动注册为系统服务
-- 详细文档见 [apps/aether-proxy/README.md](apps/aether-proxy/README.md)
+- 提供 macOS/Linux 与 Windows 一键脚本，自动下载最新 `tunnel-v*` 制品并向现有 `aether-tunnel.toml` 追加 `[[servers]]`
+- 通过 `aether-tunnel setup` 完成交互式配置，自动注册为系统服务
+- 详细文档见 [apps/aether-tunnel/README.md](apps/aether-tunnel/README.md)
 
 ## API 文档
 

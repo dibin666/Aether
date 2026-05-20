@@ -94,6 +94,7 @@ pub(crate) async fn request_model_local_rejection(
         decision,
         auth_context,
         requested_model.as_deref(),
+        headers,
         body,
     )
     .await
@@ -104,9 +105,10 @@ async fn balance_capacity_rejection(
     decision: &GatewayControlDecision,
     auth_context: &GatewayControlAuthContext,
     requested_model: Option<&str>,
+    headers: &http::HeaderMap,
     body: &Bytes,
 ) -> Result<Option<GatewayLocalAuthRejection>, GatewayError> {
-    if auth_context.api_key_is_standalone || auth_context.admin_bypass_limits {
+    if auth_context.api_key_is_standalone {
         return Ok(None);
     }
     if auth_context.local_rejection.is_some() {
@@ -146,7 +148,8 @@ async fn balance_capacity_rejection(
         return Ok(None);
     };
     let Some(estimated_cost_usd) =
-        estimate_request_cost_upper_bound_usd(state, decision, requested_model, body).await?
+        estimate_request_cost_upper_bound_usd(state, decision, requested_model, headers, body)
+            .await?
     else {
         return Ok(None);
     };
@@ -173,6 +176,7 @@ async fn estimate_request_cost_upper_bound_usd(
     state: &AppState,
     decision: &GatewayControlDecision,
     requested_model: &str,
+    headers: &http::HeaderMap,
     body: &Bytes,
 ) -> Result<Option<f64>, GatewayError> {
     let Some(api_format) = decision
@@ -183,7 +187,11 @@ async fn estimate_request_cost_upper_bound_usd(
     else {
         return Ok(None);
     };
-    let body_json = serde_json::from_slice::<serde_json::Value>(body).ok();
+    let body = crate::headers::decoded_request_body_bytes(headers, body.as_ref()).ok();
+    let Some(body) = body else {
+        return Ok(None);
+    };
+    let body_json = serde_json::from_slice::<serde_json::Value>(body.as_ref()).ok();
     let Some(input_tokens) = body_json
         .as_ref()
         .map(estimate_json_tokens)
@@ -814,6 +822,43 @@ mod tests {
 
             assert_eq!(rejection, None);
         }
+    }
+
+    #[tokio::test]
+    async fn admin_bypass_limits_does_not_skip_exhausted_daily_quota_capacity() {
+        let context = billing_context_with_pricing(
+            Some(json!({
+                "tiers": [{
+                    "up_to": null,
+                    "input_price_per_1m": 1.0,
+                    "output_price_per_1m": 2.0
+                }]
+            })),
+            None,
+            None,
+            None,
+        );
+        let state = state_with_quota_and_wallet(quota_availability(0.0, false), context);
+        let mut decision = decision_with_allowed_models(vec!["gpt-5".to_string()]);
+        if let Some(auth_context) = decision.auth_context.as_mut() {
+            auth_context.admin_bypass_limits = true;
+        }
+        let uri: Uri = "/v1/chat/completions".parse().expect("uri should parse");
+        let body = Bytes::from_static(
+            br#"{"model":"gpt-5","messages":[{"role":"user","content":"hi"}],"stream":true}"#,
+        );
+
+        let rejection =
+            request_model_local_rejection(&state, Some(&decision), &uri, &json_headers(), &body)
+                .await
+                .expect("quota rejection should resolve");
+
+        assert_eq!(
+            rejection,
+            Some(GatewayLocalAuthRejection::BalanceDenied {
+                remaining: Some(0.0),
+            })
+        );
     }
 
     #[tokio::test]

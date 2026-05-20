@@ -625,7 +625,7 @@
                         <Copy class="w-2.5 h-2.5" />
                       </Button>
                       <span class="font-mono">
-                        {{ getProviderMaskedSecretLabel(key) }}
+                        {{ getProviderMaskedSecretLabel(key, selectedProviderType) }}
                       </span>
                       <template v-if="keyUiStateMap[key.key_id]?.showOAuthRefreshControl">
                         <Button
@@ -655,7 +655,7 @@
                         </span>
                       </template>
                       <Badge
-                        v-if="key.oauth_plan_type"
+                        v-if="keyUiStateMap[key.key_id]?.planLabel"
                         variant="outline"
                         class="text-[9px] px-1 py-0 h-4 shrink-0"
                         :class="getKeyUiState(key.key_id)?.planClass || ''"
@@ -689,10 +689,11 @@
                       <div class="flex items-center justify-between text-[10px] leading-none">
                         <span class="text-muted-foreground font-medium shrink-0">{{ getQuotaProgressLabel(item.label) }}</span>
                         <span
-                          v-if="getQuotaProgressDisplayText(item)"
+                          v-if="getQuotaProgressResetDisplayText(item)"
+                          data-testid="pool-quota-reset-text"
                           class="text-muted-foreground/80 tabular-nums truncate"
-                          :title="item.detail"
-                        >{{ getQuotaProgressDisplayText(item) }}</span>
+                          :title="getQuotaProgressResetDisplayText(item)"
+                        >{{ getQuotaProgressResetDisplayText(item) }}</span>
                       </div>
                       <div class="flex items-center gap-1.5">
                         <div class="relative flex-1 h-1.5 rounded-full bg-border overflow-hidden">
@@ -703,9 +704,10 @@
                           />
                         </div>
                         <span
+                          data-testid="pool-quota-meter-text"
                           class="shrink-0 text-[10px] font-medium tabular-nums leading-none"
                           :class="getQuotaRemainingClassByRemaining(item.remainingPercent)"
-                        >{{ item.remainingPercent.toFixed(1) }}%</span>
+                        >{{ getQuotaProgressMeterDisplayText(item) }}</span>
                       </div>
                     </div>
                   </div>
@@ -1205,11 +1207,12 @@
                   >
                     <div class="flex items-center justify-between text-[10px] leading-none">
                       <span class="text-muted-foreground font-medium shrink-0">{{ getQuotaProgressLabel(item.label) }}</span>
-                      <span
-                        v-if="getQuotaProgressDisplayText(item)"
-                        class="text-muted-foreground/80 tabular-nums truncate"
-                        :title="item.detail"
-                      >{{ getQuotaProgressDisplayText(item) }}</span>
+                        <span
+                          v-if="getQuotaProgressResetDisplayText(item)"
+                          data-testid="pool-quota-reset-text"
+                          class="text-muted-foreground/80 tabular-nums truncate"
+                          :title="getQuotaProgressResetDisplayText(item)"
+                        >{{ getQuotaProgressResetDisplayText(item) }}</span>
                     </div>
                     <div class="flex items-center gap-1.5">
                       <div class="relative flex-1 h-1.5 rounded-full bg-border overflow-hidden">
@@ -1220,9 +1223,10 @@
                         />
                       </div>
                       <span
+                        data-testid="pool-quota-meter-text"
                         class="shrink-0 text-[10px] font-medium tabular-nums leading-none"
                         :class="getQuotaRemainingClassByRemaining(item.remainingPercent)"
-                      >{{ item.remainingPercent.toFixed(1) }}%</span>
+                      >{{ getQuotaProgressMeterDisplayText(item) }}</span>
                     </div>
                   </div>
                 </div>
@@ -1649,8 +1653,10 @@ import {
   formatPoolTokenCount as formatTokenCount,
 } from '@/features/pool/utils/display'
 import {
-  getQuotaProgressDisplayText as resolveQuotaProgressDisplayText,
+  formatCompactQuotaCountdownText,
+  getQuotaCountdownStatus,
   parsePoolQuotaProgressItems,
+  shouldHideQuotaProgressDetailText,
   type QuotaProgressItem,
 } from '@/features/pool/utils/quotaCountdown'
 import {
@@ -2135,6 +2141,7 @@ const showAccountQuotaColumn = computed(() => {
     || selectedProviderType.value === 'gemini_cli'
     || selectedProviderType.value === 'kiro'
     || selectedProviderType.value === 'antigravity'
+    || selectedProviderType.value === 'grok'
     || selectedProviderType.value === 'chatgpt_web'
 })
 
@@ -2462,8 +2469,9 @@ const keyUiStateMap = computed<Record<string, PoolKeyUiState>>(() => {
     const visibleOAuthState = getVisibleOAuthState(key)
     const oauthOrgBadge = getOAuthOrgBadge(key)
     const quotaFallbackText = getQuotaFallbackText(key)
+    const planType = resolvePoolKeyPlanType(key)
     const canRefreshToken = canRefreshOAuthCredential(key)
-    const showOAuthRefreshControl = shouldShowOAuthRefreshControl(key)
+    const showOAuthRefreshControl = shouldShowOAuthRefreshControl(key, selectedProviderType.value)
 
     map[key.key_id] = {
       rowClass: getRowClass(key),
@@ -2476,8 +2484,8 @@ const keyUiStateMap = computed<Record<string, PoolKeyUiState>>(() => {
       oauthRefreshButtonTitle: showOAuthRefreshControl ? getOAuthRefreshButtonTitle(key) : '',
       showOAuthRefreshControl,
       canRefreshToken,
-      planLabel: key.oauth_plan_type ? formatOAuthPlanType(key.oauth_plan_type) : '',
-      planClass: key.oauth_plan_type ? getOAuthPlanTypeClass(key.oauth_plan_type) : '',
+      planLabel: planType ? formatOAuthPlanType(planType) : '',
+      planClass: planType ? getOAuthPlanTypeClass(planType) : '',
       quotaFallbackText,
       quotaTextClass: quotaFallbackText ? getQuotaTextClass(quotaFallbackText) : '',
       importedAtRelative: formatPoolKeyImportedAt(key),
@@ -2563,6 +2571,7 @@ const quotaRefreshSupported = computed(() => {
   return selectedProviderType.value === 'codex'
     || selectedProviderType.value === 'kiro'
     || selectedProviderType.value === 'antigravity'
+    || selectedProviderType.value === 'grok'
     || selectedProviderType.value === 'chatgpt_web'
 })
 
@@ -2682,7 +2691,12 @@ async function refreshCurrentPageQuotaInBackground(
 
     if (!options.silent) {
       const skippedText = skippedCount > 0 ? `，冷却跳过 ${skippedCount}` : ''
-      success(`当前页额度刷新完成：成功 ${successCount}，失败 ${failedCount}${skippedText}`)
+      const firstFailureMessage = result.results.find(item => item.status !== 'success')?.message?.trim()
+      if (successCount === 0 && failedCount > 0 && firstFailureMessage) {
+        showError(`当前页额度刷新失败：${firstFailureMessage}${skippedText}`)
+      } else {
+        success(`当前页额度刷新完成：成功 ${successCount}，失败 ${failedCount}${skippedText}`)
+      }
     }
     return true
   } catch (err) {
@@ -2874,7 +2888,7 @@ function toEndpointApiKey(key: PoolKeyDetail): EndpointAPIKey {
     id: key.key_id,
     provider_id: selectedProviderId.value || '',
     api_formats: key.api_formats || [],
-    api_key_masked: getProviderMaskedSecretLabel(key),
+    api_key_masked: getProviderMaskedSecretLabel(key, selectedProviderType.value),
     auth_type: normalizeAuthTypeForEdit(key),
     auth_type_by_format: key.auth_type_by_format ?? null,
     credential_kind: key.credential_kind ?? null,
@@ -3716,6 +3730,7 @@ function getMobileTagItems(key: PoolKeyDetail): PoolMobileTagItem[] {
   const accountAlert = getAccountAlertLabel(key)
   const oauthState = getVisibleOAuthState(key)
   const orgBadge = getOAuthOrgBadge(key)
+  const planType = resolvePoolKeyPlanType(key)
 
   return buildPoolMobileTagItems({
     accountStatusLabel: compactPoolStatusLabel(accountAlert),
@@ -3724,7 +3739,7 @@ function getMobileTagItems(key: PoolKeyDetail): PoolMobileTagItem[] {
     oauthStatusTone: getMobileOAuthTone(key),
     priorityLabel: `P${key.internal_priority ?? 50}`,
     authLabel: getAuthTypeChipLabel(key),
-    planLabel: key.oauth_plan_type ? formatOAuthPlanType(key.oauth_plan_type) : null,
+    planLabel: planType ? formatOAuthPlanType(planType) : null,
     orgLabel: orgBadge?.label ?? null,
     proxyLabel: key.proxy?.node_id ? '独立代理' : null,
   })
@@ -3764,6 +3779,9 @@ function formatOAuthPlanType(planType: string): string {
     ultra: 'Ultra',
     'pro+': 'Pro+',
     power: 'Power',
+    basic: 'Basic',
+    super: 'Super',
+    heavy: 'Heavy',
   }
   return labelMap[planType.toLowerCase()] || planType
 }
@@ -3779,6 +3797,9 @@ function getOAuthPlanTypeClass(planType: string): string {
     ultra: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
     'pro+': 'border-purple-500/50 text-purple-600 dark:text-purple-400',
     power: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
+    basic: 'border-primary/50 text-primary',
+    super: 'border-green-500/50 text-green-600 dark:text-green-400',
+    heavy: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
   }
   return classes[planType.toLowerCase()] || ''
 }
@@ -3860,12 +3881,31 @@ function getQuotaProgressLabel(label: string): string {
   return label
 }
 
-function getQuotaProgressDisplayText(item: QuotaProgressItem): string {
-  return resolveQuotaProgressDisplayText(item, countdownTick.value)
+function getQuotaProgressResetDisplayText(item: QuotaProgressItem): string {
+  const status = getQuotaCountdownStatus(item, countdownTick.value)
+  return status && !status.isExpired
+    ? formatCompactQuotaCountdownText(`${status.text} 后重置`)
+    : ''
+}
+
+function getQuotaProgressMeterDisplayText(item: QuotaProgressItem): string {
+  const detail = item.detail?.trim() || ''
+  if (!shouldHideQuotaProgressDetailText(detail) && detail) return detail
+  return `${item.remainingPercent.toFixed(1)}%`
 }
 
 function getQuotaFallbackText(key: PoolKeyDetail): string | null {
   return getQuotaDisplayText(key, selectedProviderType.value)
+}
+
+function resolvePoolKeyPlanType(key: PoolKeyDetail): string | null {
+  const direct = key.oauth_plan_type?.trim()
+  if (direct) return direct
+  const quota = getQuotaSnapshot(key)
+  const quotaPlan = quota?.plan_type?.trim()
+  if (quotaPlan) return quotaPlan
+  const quotaPoolTier = quota?.pool_tier?.trim()
+  return quotaPoolTier || null
 }
 
 function parseQuotaProgressItems(key: PoolKeyDetail): QuotaProgressItem[] {
@@ -3889,29 +3929,6 @@ function getQuotaTextClass(quotaText: string): string {
     return 'text-[11px] text-destructive leading-4'
   }
   return 'text-[11px] text-foreground/90 leading-4'
-}
-
-function formatStatInteger(value: number | null | undefined): string {
-  const n = Number(value ?? 0)
-  if (!Number.isFinite(n) || n <= 0) return '0'
-  return Math.round(n).toLocaleString('en-US')
-}
-
-function formatTokenCount(value: number | null | undefined): string {
-  const n = Number(value ?? 0)
-  if (!Number.isFinite(n) || n <= 0) return '0'
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(Math.round(n))
-}
-
-function formatStatUsd(value: number | string | null | undefined): string {
-  const n = Number(value ?? 0)
-  if (!Number.isFinite(n) || n <= 0) return '$0.00'
-  if (n < 0.01) return `$${n.toFixed(4)}`
-  if (n < 1) return `$${n.toFixed(3)}`
-  if (n < 1000) return `$${n.toFixed(2)}`
-  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function formatPoolScore(value: number | null | undefined): string {

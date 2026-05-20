@@ -29,8 +29,9 @@ use serde_json::Value;
 use super::{
     api_key_usage_contribution, provider_api_key_usage_contribution,
     strip_deprecated_usage_display_fields, usage_can_recover_terminal_failure,
-    ApiKeyUsageContribution, ApiKeyUsageDelta, ProviderApiKeyConsumptionSummaryQuery,
-    ProviderApiKeyUsageContribution, ProviderApiKeyUsageDelta, ProviderApiKeyWindowUsageRequest,
+    usage_request_metadata_client_family, ApiKeyUsageContribution, ApiKeyUsageDelta,
+    ProviderApiKeyConsumptionSummaryQuery, ProviderApiKeyUsageContribution,
+    ProviderApiKeyUsageDelta, ProviderApiKeyWindowUsageRequest,
     StoredProviderApiKeyConsumptionSummary, StoredProviderApiKeyUsageSummary,
     StoredProviderApiKeyWindowUsageSummary, StoredProviderUsageSummary, StoredProviderUsageWindow,
     StoredRequestUsageAudit, StoredUsageDailySummary, UpsertUsageRecord, UsageAuditListQuery,
@@ -57,6 +58,7 @@ impl InMemoryUsageReadRepository {
         let mut by_request_id = BTreeMap::new();
         for mut item in items {
             hydrate_legacy_body_refs(&mut item);
+            hydrate_client_family(&mut item);
             by_request_id.insert(item.request_id.clone(), item);
         }
         Self {
@@ -76,6 +78,7 @@ impl InMemoryUsageReadRepository {
         let mut detached_bodies = BTreeMap::new();
         for mut item in items {
             hydrate_legacy_body_refs(&mut item);
+            hydrate_client_family(&mut item);
             let request_id = item.request_id.clone();
             if let Some(body_ref) = detach_usage_body(
                 &request_id,
@@ -2608,6 +2611,13 @@ fn hydrate_legacy_body_refs(item: &mut StoredRequestUsageAudit) {
     }
 }
 
+fn hydrate_client_family(item: &mut StoredRequestUsageAudit) {
+    if item.client_family.is_none() {
+        item.client_family = usage_request_metadata_client_family(item.request_metadata.as_ref())
+            .map(ToOwned::to_owned);
+    }
+}
+
 fn persisted_usage_body_ref(
     incoming_ref: Option<&str>,
     incoming_body: Option<&Value>,
@@ -2913,6 +2923,13 @@ impl UsageWriteRepository for InMemoryUsageReadRepository {
                     })
                 },
             ),
+            client_family: usage_request_metadata_client_family(request_metadata.as_ref())
+                .map(ToOwned::to_owned)
+                .or_else(|| {
+                    existing
+                        .as_ref()
+                        .and_then(|existing| existing.client_family.clone())
+                }),
             request_metadata,
             created_at_unix_ms,
             updated_at_unix_secs: usage.updated_at_unix_secs,
@@ -4461,6 +4478,7 @@ mod tests {
             provider_endpoint_kind: Some("chat".to_string()),
             has_format_conversion: false,
             is_stream: false,
+            client_family: None,
             input_tokens: 10,
             output_tokens: 20,
             total_tokens: 30,
