@@ -1746,7 +1746,24 @@
             </Button>
           </div>
 
-          <div class="mt-4 max-h-[min(62vh,34rem)] overflow-auto rounded-lg border border-border/60 bg-muted/10">
+          <div class="mt-4 flex items-center gap-2">
+            <button
+              v-for="tab in refreshWorkerLogTabs"
+              :key="tab.value"
+              type="button"
+              class="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs transition-colors"
+              :class="refreshWorkerLogKind === tab.value
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'border-border/60 bg-background text-muted-foreground hover:text-foreground'"
+              :aria-pressed="refreshWorkerLogKind === tab.value"
+              @click="refreshWorkerLogKind = tab.value"
+            >
+              <span>{{ tab.label }}</span>
+              <span class="tabular-nums">{{ tab.count }}</span>
+            </button>
+          </div>
+
+          <div class="mt-3 max-h-[min(62vh,34rem)] overflow-auto rounded-lg border border-border/60 bg-muted/10">
             <div
               v-if="refreshWorkerLogsLoading"
               class="py-10 text-center text-xs text-muted-foreground"
@@ -1754,22 +1771,21 @@
               加载中...
             </div>
             <div
-              v-else-if="refreshWorkerLogs.length === 0"
+              v-else-if="filteredRefreshWorkerLogs.length === 0"
               class="py-10 text-center text-xs text-muted-foreground"
             >
-              暂无日志
+              {{ refreshWorkerLogEmptyText }}
             </div>
             <template v-else>
               <div
-                v-for="item in refreshWorkerLogs"
+                v-for="item in filteredRefreshWorkerLogs"
                 :key="item.id"
-                class="border-b border-border/50 px-3 py-2.5 last:border-b-0"
+                class="border-b border-border/50 px-3 py-3 last:border-b-0"
               >
                 <div class="flex items-start justify-between gap-3 text-xs">
-                  <div class="min-w-0">
+                  <div class="min-w-0 flex-1 space-y-1.5">
                     <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span class="font-medium text-foreground">{{ refreshTaskLabel(item.taskKey) }}</span>
-                      <span class="text-foreground/90">{{ refreshLogSubject(item) }}</span>
+                      <span class="font-medium text-foreground">{{ refreshLogSubject(item) }}</span>
                       <Badge
                         variant="outline"
                         class="h-5 px-1.5 py-0 text-[11px]"
@@ -1778,8 +1794,19 @@
                         {{ refreshLogStatusLabel(item) }}
                       </Badge>
                     </div>
-                    <div class="mt-1 truncate text-xs text-muted-foreground">
+                    <div class="text-xs leading-5 text-muted-foreground break-words">
                       {{ refreshLogDetail(item) }}
+                    </div>
+                    <div
+                      v-if="refreshLogMetaItems(item).length > 0"
+                      class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground"
+                    >
+                      <span
+                        v-for="meta in refreshLogMetaItems(item)"
+                        :key="meta"
+                      >
+                        {{ meta }}
+                      </span>
                     </div>
                   </div>
                   <span class="shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
@@ -2091,6 +2118,7 @@ const refreshWorkerSettingsLoading = ref(false)
 const refreshWorkerSettingsSaving = ref(false)
 const refreshWorkerLogs = ref<PoolRefreshLogItem[]>([])
 const refreshWorkerLogsLoading = ref(false)
+const refreshWorkerLogKind = ref<RefreshWorkerLogKind>('oauth')
 const refreshWorkerProviderId = ref('')
 const refreshWorkerProviderOverrideEnabled = ref(false)
 const refreshWorkerProviderSettings = ref<ProviderRefreshWorkerSettings>({
@@ -2143,9 +2171,14 @@ const REFRESH_TASK_KEYS = [
   'maintenance.oauth.token.refresh',
   'pool.quota.probe.worker',
 ] as const
+const REFRESH_LOG_RUNS_PER_TASK = 4
+const REFRESH_LOG_EVENTS_PER_RUN = 120
+const REFRESH_LOG_MAX_ITEMS = 160
 const OAUTH_PROXY_AUTO_VALUE = '__auto'
 const OAUTH_PROXY_INHERIT_VALUE = '__inherit'
 const OAUTH_PROXY_DIRECT_VALUE = 'direct'
+
+type RefreshWorkerLogKind = 'oauth' | 'quota'
 
 interface RefreshWorkerSettings {
   lookaheadSeconds: number
@@ -2167,15 +2200,18 @@ interface ProviderRefreshWorkerSettings {
 interface PoolRefreshLogItem {
   id: string
   taskKey: string
+  runId: string
   eventType: string
   message: string
   createdAt: string
   payload: unknown
   providerName?: string
+  providerType?: string
   keyId?: string
   keyName?: string
   status?: string
   detail?: string
+  action?: string
 }
 
 interface PoolDemandMetricSample {
@@ -2209,6 +2245,37 @@ const providerOauthRefreshProxySelectValue = computed({
         : value
   },
 })
+
+const oauthRefreshWorkerLogs = computed(() =>
+  refreshWorkerLogs.value.filter(item => refreshLogKind(item) === 'oauth'),
+)
+
+const quotaRefreshWorkerLogs = computed(() =>
+  refreshWorkerLogs.value.filter(item => refreshLogKind(item) === 'quota'),
+)
+
+const filteredRefreshWorkerLogs = computed(() =>
+  refreshWorkerLogKind.value === 'oauth'
+    ? oauthRefreshWorkerLogs.value
+    : quotaRefreshWorkerLogs.value,
+)
+
+const refreshWorkerLogTabs = computed<Array<{ value: RefreshWorkerLogKind, label: string, count: number }>>(() => [
+  {
+    value: 'oauth',
+    label: 'OAuth',
+    count: oauthRefreshWorkerLogs.value.length,
+  },
+  {
+    value: 'quota',
+    label: '额度',
+    count: quotaRefreshWorkerLogs.value.length,
+  },
+])
+
+const refreshWorkerLogEmptyText = computed(() =>
+  refreshWorkerLogKind.value === 'oauth' ? '暂无 OAuth 日志' : '暂无额度日志',
+)
 
 function configNumber(value: unknown, fallback: number): number {
   const parsed = Number(value)
@@ -2447,6 +2514,10 @@ function refreshTaskLabel(taskKey: string): string {
   return taskKey
 }
 
+function refreshLogKind(item: PoolRefreshLogItem): RefreshWorkerLogKind {
+  return item.taskKey === 'pool.quota.probe.worker' ? 'quota' : 'oauth'
+}
+
 function eventLabel(eventType: string): string {
   if (eventType.includes('refreshed')) return '已刷新'
   if (eventType.includes('checked')) return '已检查'
@@ -2484,15 +2555,18 @@ function buildRefreshLogItem(taskKey: string, event: AsyncTaskEvent): PoolRefres
   return {
     id: `${taskKey}:${event.id}`,
     taskKey,
+    runId: event.run_id,
     eventType: event.event_type,
     message: event.message,
     createdAt: event.created_at,
     payload: event.payload,
     providerName: payloadString(payload, 'provider_name'),
+    providerType: payloadString(payload, 'provider_type'),
     keyId: payloadString(payload, 'key_id'),
     keyName: payloadString(payload, 'key_name'),
     status: payloadString(payload, 'status'),
     detail,
+    action: payloadString(payload, 'action'),
   }
 }
 
@@ -2536,6 +2610,26 @@ function refreshLogDetail(item: PoolRefreshLogItem): string {
   return parts.filter(Boolean).join(' · ')
 }
 
+function refreshLogMetaItems(item: PoolRefreshLogItem): string[] {
+  const payload = payloadRecord(item.payload)
+  const items: string[] = []
+  items.push(`任务：${refreshTaskLabel(item.taskKey)}`)
+  if (item.providerName) items.push(`Provider：${item.providerName}`)
+  if (item.providerType) items.push(`类型：${item.providerType}`)
+  if (item.keyName) items.push(`账号：${item.keyName}`)
+  if (item.keyId) items.push(`Key：${shortRefreshLogId(item.keyId)}`)
+  const summary = formatRefreshLogPayload(payload)
+  if (summary) items.push(summary)
+  items.push(`事件：${eventLabel(item.eventType)}`)
+  return items
+}
+
+function shortRefreshLogId(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed.length <= 12) return trimmed
+  return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`
+}
+
 function formatBrowserDateTime(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
@@ -2555,10 +2649,35 @@ function formatRefreshLogPayload(payload: unknown): string {
   const record = payloadRecord(payload)
   if (!record) return ''
   const parts: string[] = []
-  for (const key of ['eligible', 'refreshed', 'selected_keys', 'succeeded', 'failed', 'max_per_run', 'account_events_recorded']) {
+  const labels: Record<string, string> = {
+    scanned: '扫描',
+    eligible: '待刷新',
+    resolved: '已处理',
+    refreshed: '已刷新',
+    skipped: '跳过',
+    selected_keys: '选中账号',
+    succeeded: '成功',
+    failed: '失败',
+    auto_removed: '自动删除',
+    max_per_run: '每轮最多',
+    account_events_recorded: '账号日志',
+    account_event_limit: '日志上限',
+    providers_checked: '检查 Provider',
+    providers_probed: '刷新 Provider',
+    providers_skipped: '跳过 Provider',
+    providers_busy: '忙碌 Provider',
+    scan_interval_seconds: '扫描间隔',
+    refresh_interval_seconds: '刷新间隔',
+    interval_seconds: '任务间隔',
+    lookahead_seconds: '提前刷新',
+    concurrency: '并发',
+    global_concurrency: '全局并发',
+    max_keys_per_provider: 'Provider 上限',
+  }
+  for (const key of Object.keys(labels)) {
     const value = record[key]
     if (value !== undefined && value !== null) {
-      parts.push(`${key}: ${value}`)
+      parts.push(`${labels[key]}：${formatRefreshLogPayloadValue(key, value)}`)
     }
   }
   if (typeof record.error === 'string' && record.error.trim()) {
@@ -2567,20 +2686,27 @@ function formatRefreshLogPayload(payload: unknown): string {
   return parts.join(' · ')
 }
 
+function formatRefreshLogPayloadValue(key: string, value: unknown): string {
+  if (typeof value === 'boolean') return value ? '是' : '否'
+  if (typeof value === 'number' && key.endsWith('_seconds')) return `${value} 秒`
+  return String(value)
+}
+
 async function loadRefreshWorkerLogs() {
   refreshWorkerLogsLoading.value = true
   try {
     const eventGroups = await Promise.all(REFRESH_TASK_KEYS.map(async (taskKey) => {
-      const runs = await asyncTasksApi.list({ task_key: taskKey, page_size: 1 })
-      const run = runs.items[0]
-      if (!run) return []
-      const events = await asyncTasksApi.getEvents(run.id, { page_size: 100 })
-      return events.items.map((event: AsyncTaskEvent) => buildRefreshLogItem(taskKey, event))
+      const runs = await asyncTasksApi.list({ task_key: taskKey, page_size: REFRESH_LOG_RUNS_PER_TASK })
+      const eventsByRun = await Promise.all(runs.items.map(async (run) => {
+        const events = await asyncTasksApi.getEvents(run.id, { page_size: REFRESH_LOG_EVENTS_PER_RUN })
+        return events.items.map((event: AsyncTaskEvent) => buildRefreshLogItem(taskKey, event))
+      }))
+      return eventsByRun.flat()
     }))
     refreshWorkerLogs.value = eventGroups
       .flat()
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-      .slice(0, 60)
+      .slice(0, REFRESH_LOG_MAX_ITEMS)
   } catch (err) {
     showError(parseApiError(err, '加载刷新日志失败'))
   } finally {
