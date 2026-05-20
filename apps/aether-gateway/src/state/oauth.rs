@@ -999,13 +999,71 @@ impl AppState {
         Option<provider_transport::CachedOAuthEntry>,
         provider_transport::LocalOAuthRefreshError,
     > {
+        self.force_local_oauth_refresh_entry_with_proxy_override(
+            transport,
+            None,
+            "aether-gateway-admin",
+            "manual",
+        )
+        .await
+    }
+
+    pub(crate) async fn force_local_oauth_refresh_entry_for_auto_refresh_with_proxy_override(
+        &self,
+        transport: &provider_transport::GatewayProviderTransportSnapshot,
+        provider_proxy_node_id_override: Option<Option<String>>,
+    ) -> Result<Option<provider_transport::CachedOAuthEntry>, GatewayError> {
+        let proxy_node_id_override =
+            if let Some(proxy_node_id_override) = provider_proxy_node_id_override {
+                proxy_node_id_override
+            } else {
+                self.read_oauth_token_refresh_proxy_node_id_override().await
+            };
+        match self
+            .force_local_oauth_refresh_entry_with_proxy_override(
+                transport,
+                proxy_node_id_override,
+                "aether-gateway-auto-oauth",
+                "auto",
+            )
+            .await
+        {
+            Ok(entry) => Ok(entry),
+            Err(provider_transport::LocalOAuthRefreshError::HttpStatus {
+                status_code,
+                body_excerpt,
+                ..
+            }) if matches!(status_code, 400 | 401 | 403) => {
+                self.persist_local_oauth_refresh_failure_state(
+                    transport,
+                    status_code,
+                    body_excerpt.as_str(),
+                    false,
+                )
+                .await?;
+                Ok(None)
+            }
+            Err(err) => Err(GatewayError::Internal(err.to_string())),
+        }
+    }
+
+    async fn force_local_oauth_refresh_entry_with_proxy_override(
+        &self,
+        transport: &provider_transport::GatewayProviderTransportSnapshot,
+        proxy_node_id_override: Option<String>,
+        lock_owner_prefix: &str,
+        refresh_context: &str,
+    ) -> Result<
+        Option<provider_transport::CachedOAuthEntry>,
+        provider_transport::LocalOAuthRefreshError,
+    > {
         let distributed_lock = self.runtime_state.as_ref();
-        let lock_owner = format!("aether-gateway-admin-{}", std::process::id());
+        let lock_owner = format!("{lock_owner_prefix}-{}", std::process::id());
         let mut current_transport = transport.clone();
         current_transport.key.decrypted_api_key = "__placeholder__".to_string();
         let executor = GatewayLocalOAuthHttpExecutor {
             state: self,
-            proxy_node_id_override: None,
+            proxy_node_id_override,
         };
         let transport_refresh_token_fingerprint = oauth_auth_config_refresh_token_fingerprint(
             current_transport.key.decrypted_auth_config.as_deref(),
@@ -1015,6 +1073,7 @@ impl AppState {
             key_id = %current_transport.key.id,
             provider_id = %current_transport.provider.id,
             provider_type = %current_transport.provider.provider_type,
+            refresh_context = %refresh_context,
             transport_refresh_token_fingerprint = %transport_refresh_token_fingerprint,
             has_transport_auth_config = current_transport
                 .key
@@ -1022,7 +1081,7 @@ impl AppState {
                 .as_deref()
                 .map(str::trim)
                 .is_some_and(|value| !value.is_empty()),
-            "gateway manual oauth refresh starting"
+            "gateway local oauth refresh starting"
         );
 
         for _ in 0..2 {
@@ -1068,8 +1127,9 @@ impl AppState {
                     tracing::warn!(
                         key_id = %current_transport.key.id,
                         provider_type = %current_transport.provider.provider_type,
+                        refresh_context = %refresh_context,
                         error = ?err,
-                        "gateway manual oauth refresh persistence failed"
+                        "gateway local oauth refresh persistence failed"
                     );
                     let _ = self
                         .invalidate_local_oauth_refresh_entry(&current_transport.key.id)

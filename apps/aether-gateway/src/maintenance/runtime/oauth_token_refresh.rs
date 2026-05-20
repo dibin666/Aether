@@ -420,14 +420,14 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 .acquire_owned()
                 .await
                 .expect("oauth refresh provider semaphore closed");
-            let resolution = state
-                .resolve_local_oauth_request_auth_for_auto_refresh_with_proxy_override(
+            let refreshed_entry = state
+                .force_local_oauth_refresh_entry_for_auto_refresh_with_proxy_override(
                     &candidate.transport,
                     candidate.proxy_node_id_override.clone(),
                 )
                 .await;
-            match resolution {
-                Ok(Some(_auth)) => {
+            match refreshed_entry {
+                Ok(Some(_entry)) => {
                     match provider_key_credentials_changed(state, &candidate.key).await {
                         Ok(refreshed) => OAuthTokenRefreshCandidateOutcome::Resolved {
                             provider_id: candidate.provider_id,
@@ -453,7 +453,7 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                     provider_type: candidate.provider_type,
                     key_id: candidate.key_id,
                     key_name: candidate.key_name,
-                    reason: "auth_not_resolved".to_string(),
+                    reason: "refresh_not_run".to_string(),
                 },
                 Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
                     provider_id: candidate.provider_id,

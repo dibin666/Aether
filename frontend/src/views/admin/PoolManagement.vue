@@ -1502,7 +1502,7 @@
         </div>
       </template>
 
-      <div class="grid max-h-[calc(100dvh-13rem)] overflow-y-auto overscroll-contain lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)] lg:overflow-hidden">
+      <div class="grid max-h-[calc(100dvh-13rem)] overflow-y-auto overscroll-contain lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)]">
         <section class="border-b border-border/60 p-4 sm:p-6 lg:border-b-0 lg:border-r">
           <div class="flex items-center justify-between gap-3">
             <h3 class="text-sm font-semibold">
