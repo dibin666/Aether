@@ -180,11 +180,21 @@ export interface ChatPiiRedactionProviderConfig {
   enabled: boolean
 }
 
+export interface OAuthTokenRefreshProviderConfig {
+  enabled?: boolean
+  lookahead_seconds?: number | null
+  interval_seconds?: number | null
+  concurrency?: number | null
+  max_per_run?: number | null
+  proxy_node_id?: string | null
+}
+
 export interface ProviderConfig {
   chat_pii_redaction?: ChatPiiRedactionProviderConfig
   pool_advanced?: PoolAdvancedConfig
   failover_rules?: FailoverRulesConfig
   claude_code_advanced?: ClaudeCodeAdvancedConfig
+  oauth_token_refresh?: OAuthTokenRefreshProviderConfig | null
   [key: string]: unknown
 }
 
@@ -716,6 +726,7 @@ export interface ProviderWithEndpointsSummary {
   chat_pii_redaction?: ChatPiiRedactionProviderConfig | null
   pool_advanced?: PoolAdvancedConfig | null
   failover_rules?: FailoverRulesConfig | null
+  oauth_token_refresh?: OAuthTokenRefreshProviderConfig | null
   ops_configured: boolean  // 是否配置了扩展操作（余额监控等）
   ops_architecture_id?: string  // 扩展操作使用的架构 ID（如 cubence, anyrouter）
   key_balance_summary?: ProviderKeyBalanceSummary | null

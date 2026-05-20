@@ -1586,6 +1586,148 @@
               </Select>
             </div>
           </div>
+
+          <div class="mt-6 border-t border-border/60 pt-5">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h3 class="text-sm font-semibold">
+                Provider 覆盖
+              </h3>
+              <Select v-model="refreshWorkerProviderId">
+                <SelectTrigger class="h-8 w-full border-border/60 text-xs sm:w-48">
+                  <SelectValue placeholder="选择 Provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="item in poolProviders"
+                    :key="item.provider_id"
+                    :value="item.provider_id"
+                  >
+                    {{ item.provider_name }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div
+              v-if="!refreshWorkerProviderId"
+              class="mt-4 rounded-lg border border-dashed border-border/70 py-8 text-center text-xs text-muted-foreground"
+            >
+              请选择 Provider
+            </div>
+            <div
+              v-else
+              class="mt-4 space-y-4"
+            >
+              <div class="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
+                <div class="min-w-0">
+                  <div class="text-sm font-medium">
+                    使用单独配置
+                  </div>
+                  <div class="text-xs text-muted-foreground">
+                    关闭时继承全局设置
+                  </div>
+                </div>
+                <Switch v-model="refreshWorkerProviderOverrideEnabled" />
+              </div>
+
+              <div class="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
+                <div class="min-w-0">
+                  <div class="text-sm font-medium">
+                    参与 OAuth 自动刷新
+                  </div>
+                  <div class="text-xs text-muted-foreground">
+                    关闭后该 Provider 不会被后台 OAuth 刷新任务处理
+                  </div>
+                </div>
+                <Switch
+                  v-model="refreshWorkerProviderSettings.enabled"
+                  :disabled="!refreshWorkerProviderOverrideEnabled"
+                />
+              </div>
+
+              <div class="grid gap-3 sm:grid-cols-2">
+                <div class="space-y-1.5">
+                  <label class="text-xs font-medium text-muted-foreground">提前刷新（秒）</label>
+                  <Input
+                    :model-value="optionalNumberInput(refreshWorkerProviderSettings.lookaheadSeconds)"
+                    type="number"
+                    min="0"
+                    placeholder="继承全局"
+                    class="h-9"
+                    :disabled="!refreshWorkerProviderOverrideEnabled"
+                    @update:model-value="(value) => refreshWorkerProviderSettings.lookaheadSeconds = parseOptionalNumber(value)"
+                  />
+                </div>
+                <div class="space-y-1.5">
+                  <label class="text-xs font-medium text-muted-foreground">扫描间隔（秒）</label>
+                  <Input
+                    :model-value="optionalNumberInput(refreshWorkerProviderSettings.intervalSeconds)"
+                    type="number"
+                    min="15"
+                    placeholder="继承全局"
+                    class="h-9"
+                    :disabled="!refreshWorkerProviderOverrideEnabled"
+                    @update:model-value="(value) => refreshWorkerProviderSettings.intervalSeconds = parseOptionalNumber(value)"
+                  />
+                </div>
+                <div class="space-y-1.5">
+                  <label class="text-xs font-medium text-muted-foreground">并发（账号）</label>
+                  <Input
+                    :model-value="optionalNumberInput(refreshWorkerProviderSettings.concurrency)"
+                    type="number"
+                    min="1"
+                    max="64"
+                    placeholder="继承全局"
+                    class="h-9"
+                    :disabled="!refreshWorkerProviderOverrideEnabled"
+                    @update:model-value="(value) => refreshWorkerProviderSettings.concurrency = parseOptionalNumber(value)"
+                  />
+                </div>
+                <div class="space-y-1.5">
+                  <label class="text-xs font-medium text-muted-foreground">每轮最多（账号）</label>
+                  <Input
+                    :model-value="optionalNumberInput(refreshWorkerProviderSettings.maxPerRun)"
+                    type="number"
+                    min="1"
+                    max="10000"
+                    placeholder="继承全局"
+                    class="h-9"
+                    :disabled="!refreshWorkerProviderOverrideEnabled"
+                    @update:model-value="(value) => refreshWorkerProviderSettings.maxPerRun = parseOptionalNumber(value)"
+                  />
+                </div>
+                <div class="space-y-1.5 sm:col-span-2">
+                  <label class="text-xs font-medium text-muted-foreground">OAuth 代理</label>
+                  <Select
+                    v-model="providerOauthRefreshProxySelectValue"
+                    :disabled="!refreshWorkerProviderOverrideEnabled"
+                  >
+                    <SelectTrigger class="h-9 border-border/60">
+                      <SelectValue placeholder="选择代理" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem :value="OAUTH_PROXY_INHERIT_VALUE">
+                        继承全局
+                      </SelectItem>
+                      <SelectItem :value="OAUTH_PROXY_AUTO_VALUE">
+                        跟随账号/系统
+                      </SelectItem>
+                      <SelectItem :value="OAUTH_PROXY_DIRECT_VALUE">
+                        直连
+                      </SelectItem>
+                      <SelectItem
+                        v-for="node in proxyNodesStore.onlineNodes"
+                        :key="node.id"
+                        :value="node.id"
+                      >
+                        {{ node.name }}{{ node.region ? ` · ${node.region}` : '' }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section class="min-h-[24rem] p-4 sm:p-6">
@@ -1654,17 +1796,17 @@
         <Button
           variant="outline"
           class="min-w-[96px] flex-1 sm:flex-none"
-          :disabled="refreshWorkerSettingsSaving"
+          :disabled="refreshWorkerSettingsSaving || refreshWorkerProviderSaving"
           @click="showRefreshWorkerDialog = false"
         >
           关闭
         </Button>
         <Button
           class="min-w-[96px] flex-1 sm:flex-none"
-          :disabled="refreshWorkerSettingsSaving"
-          @click="saveRefreshWorkerSettings"
+          :disabled="refreshWorkerSettingsSaving || refreshWorkerProviderSaving"
+          @click="saveRefreshWorkerDialogSettings"
         >
-          {{ refreshWorkerSettingsSaving ? '保存中...' : '保存' }}
+          {{ refreshWorkerSettingsSaving || refreshWorkerProviderSaving ? '保存中...' : '保存' }}
         </Button>
       </template>
     </Dialog>
@@ -1785,6 +1927,7 @@ import {
   Badge,
   Button,
   Input,
+  Switch,
   Select,
   SelectTrigger,
   SelectValue,
@@ -1836,6 +1979,7 @@ import type {
   EndpointAPIKey,
   ProviderEndpoint,
   PoolAdvancedConfig,
+  OAuthTokenRefreshProviderConfig,
   ProviderWithEndpointsSummary,
 } from '@/api/endpoints/types/provider'
 import { getProvider, updateProvider } from '@/api/endpoints'
@@ -1930,6 +2074,14 @@ const DEFAULT_REFRESH_WORKER_SETTINGS = {
   maxPerRun: 50,
   proxyNodeId: '',
 } satisfies RefreshWorkerSettings
+const DEFAULT_PROVIDER_REFRESH_WORKER_SETTINGS = {
+  enabled: true,
+  lookaheadSeconds: null,
+  intervalSeconds: null,
+  concurrency: null,
+  maxPerRun: null,
+  proxyNodeId: null,
+} satisfies ProviderRefreshWorkerSettings
 
 const showRefreshWorkerDialog = ref(false)
 const refreshWorkerSettings = ref<RefreshWorkerSettings>({
@@ -1939,6 +2091,14 @@ const refreshWorkerSettingsLoading = ref(false)
 const refreshWorkerSettingsSaving = ref(false)
 const refreshWorkerLogs = ref<PoolRefreshLogItem[]>([])
 const refreshWorkerLogsLoading = ref(false)
+const refreshWorkerProviderId = ref('')
+const refreshWorkerProviderOverrideEnabled = ref(false)
+const refreshWorkerProviderSettings = ref<ProviderRefreshWorkerSettings>({
+  ...DEFAULT_PROVIDER_REFRESH_WORKER_SETTINGS,
+})
+const refreshWorkerProviderLoading = ref(false)
+const refreshWorkerProviderSaving = ref(false)
+let refreshWorkerProviderRequestId = 0
 
 const poolManagementViewStorage = typeof window === 'undefined' ? undefined : window.sessionStorage
 const restoredViewState = readPoolManagementViewState(
@@ -1984,6 +2144,7 @@ const REFRESH_TASK_KEYS = [
   'pool.quota.probe.worker',
 ] as const
 const OAUTH_PROXY_AUTO_VALUE = '__auto'
+const OAUTH_PROXY_INHERIT_VALUE = '__inherit'
 const OAUTH_PROXY_DIRECT_VALUE = 'direct'
 
 interface RefreshWorkerSettings {
@@ -1992,6 +2153,15 @@ interface RefreshWorkerSettings {
   concurrency: number
   maxPerRun: number
   proxyNodeId: string
+}
+
+interface ProviderRefreshWorkerSettings {
+  enabled: boolean
+  lookaheadSeconds: number | null
+  intervalSeconds: number | null
+  concurrency: number | null
+  maxPerRun: number | null
+  proxyNodeId: string | null
 }
 
 interface PoolRefreshLogItem {
@@ -2025,6 +2195,21 @@ const oauthRefreshProxySelectValue = computed({
   },
 })
 
+const providerOauthRefreshProxySelectValue = computed({
+  get: () => {
+    const proxyNodeId = refreshWorkerProviderSettings.value.proxyNodeId
+    if (proxyNodeId === null) return OAUTH_PROXY_INHERIT_VALUE
+    return proxyNodeId || OAUTH_PROXY_AUTO_VALUE
+  },
+  set: (value: string) => {
+    refreshWorkerProviderSettings.value.proxyNodeId = value === OAUTH_PROXY_INHERIT_VALUE
+      ? null
+      : value === OAUTH_PROXY_AUTO_VALUE
+        ? ''
+        : value
+  },
+})
+
 function configNumber(value: unknown, fallback: number): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : fallback
@@ -2032,6 +2217,17 @@ function configNumber(value: unknown, fallback: number): number {
 
 function configString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function optionalNumberInput(value: number | null): string {
+  return value === null ? '' : String(value)
+}
+
+function parseOptionalNumber(value: unknown): number | null {
+  const raw = String(value ?? '').trim()
+  if (!raw) return null
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 async function loadRefreshWorkerSettings() {
@@ -2085,7 +2281,7 @@ async function loadRefreshWorkerSettings() {
   }
 }
 
-async function saveRefreshWorkerSettings() {
+async function saveRefreshWorkerSettings(options: { silent?: boolean } = {}) {
   refreshWorkerSettingsSaving.value = true
   try {
     const settings = refreshWorkerSettings.value
@@ -2124,11 +2320,124 @@ async function saveRefreshWorkerSettings() {
       ),
     ])
     refreshWorkerSettings.value = normalized
-    success('刷新配置已保存')
+    if (!options.silent) success('刷新配置已保存')
   } catch (err) {
     showError(parseApiError(err, '保存刷新配置失败'))
+    throw err
   } finally {
     refreshWorkerSettingsSaving.value = false
+  }
+}
+
+function normalizeProviderRefreshSettings(config: OAuthTokenRefreshProviderConfig | null | undefined): {
+  overrideEnabled: boolean
+  settings: ProviderRefreshWorkerSettings
+} {
+  if (!config || typeof config !== 'object') {
+    return {
+      overrideEnabled: false,
+      settings: { ...DEFAULT_PROVIDER_REFRESH_WORKER_SETTINGS },
+    }
+  }
+  return {
+    overrideEnabled: true,
+    settings: {
+      enabled: config.enabled ?? true,
+      lookaheadSeconds: parseOptionalNumber(config.lookahead_seconds),
+      intervalSeconds: parseOptionalNumber(config.interval_seconds),
+      concurrency: parseOptionalNumber(config.concurrency),
+      maxPerRun: parseOptionalNumber(config.max_per_run),
+      proxyNodeId: typeof config.proxy_node_id === 'string' ? config.proxy_node_id.trim() : null,
+    },
+  }
+}
+
+function applyProviderRefreshSettings(config: OAuthTokenRefreshProviderConfig | null | undefined) {
+  const normalized = normalizeProviderRefreshSettings(config)
+  refreshWorkerProviderOverrideEnabled.value = normalized.overrideEnabled
+  refreshWorkerProviderSettings.value = normalized.settings
+}
+
+async function loadRefreshWorkerProviderSettings(providerId = refreshWorkerProviderId.value) {
+  if (!providerId) {
+    applyProviderRefreshSettings(null)
+    return
+  }
+  const requestId = ++refreshWorkerProviderRequestId
+  refreshWorkerProviderLoading.value = true
+  try {
+    const provider = await getProvider(providerId)
+    if (requestId !== refreshWorkerProviderRequestId || refreshWorkerProviderId.value !== providerId) return
+    if (selectedProviderId.value === providerId) {
+      selectedProviderData.value = provider
+    }
+    applyProviderRefreshSettings(provider.oauth_token_refresh)
+  } catch (err) {
+    if (requestId === refreshWorkerProviderRequestId) {
+      showError(parseApiError(err, '加载 Provider 刷新配置失败'))
+    }
+  } finally {
+    if (requestId === refreshWorkerProviderRequestId) {
+      refreshWorkerProviderLoading.value = false
+    }
+  }
+}
+
+function buildProviderRefreshConfigPayload(): OAuthTokenRefreshProviderConfig | null {
+  if (!refreshWorkerProviderOverrideEnabled.value) return null
+  const settings = refreshWorkerProviderSettings.value
+  const payload: OAuthTokenRefreshProviderConfig = {
+    enabled: settings.enabled,
+  }
+  if (settings.lookaheadSeconds !== null) {
+    payload.lookahead_seconds = Math.max(0, Math.floor(configNumber(settings.lookaheadSeconds, 120)))
+  }
+  if (settings.intervalSeconds !== null) {
+    payload.interval_seconds = Math.max(15, Math.floor(configNumber(settings.intervalSeconds, 60)))
+  }
+  if (settings.concurrency !== null) {
+    payload.concurrency = Math.min(64, Math.max(1, Math.floor(configNumber(settings.concurrency, 4))))
+  }
+  if (settings.maxPerRun !== null) {
+    payload.max_per_run = Math.min(10000, Math.max(1, Math.floor(configNumber(settings.maxPerRun, 50))))
+  }
+  if (settings.proxyNodeId !== null) {
+    payload.proxy_node_id = configString(settings.proxyNodeId)
+  }
+  return payload
+}
+
+async function saveRefreshWorkerProviderSettings(options: { silent?: boolean } = {}) {
+  const providerId = refreshWorkerProviderId.value
+  if (!providerId) return
+  refreshWorkerProviderSaving.value = true
+  try {
+    const payload = buildProviderRefreshConfigPayload()
+    const provider = await updateProvider(providerId, {
+      config: {
+        oauth_token_refresh: payload,
+      },
+    })
+    if (selectedProviderId.value === providerId) {
+      selectedProviderData.value = provider
+    }
+    applyProviderRefreshSettings(provider.oauth_token_refresh)
+    if (!options.silent) success('Provider 刷新配置已保存')
+  } catch (err) {
+    showError(parseApiError(err, '保存 Provider 刷新配置失败'))
+    throw err
+  } finally {
+    refreshWorkerProviderSaving.value = false
+  }
+}
+
+async function saveRefreshWorkerDialogSettings() {
+  try {
+    await saveRefreshWorkerSettings({ silent: true })
+    await saveRefreshWorkerProviderSettings({ silent: true })
+    success('刷新配置已保存')
+  } catch {
+    // individual save handlers have already shown the failure
   }
 }
 
@@ -2281,8 +2590,12 @@ async function loadRefreshWorkerLogs() {
 
 async function openRefreshWorkerDialog() {
   showRefreshWorkerDialog.value = true
+  if (!refreshWorkerProviderId.value) {
+    refreshWorkerProviderId.value = selectedProviderId.value || poolProviders.value[0]?.provider_id || ''
+  }
   await Promise.allSettled([
     loadRefreshWorkerSettings(),
+    refreshWorkerProviderId.value ? loadRefreshWorkerProviderSettings(refreshWorkerProviderId.value) : Promise.resolve(),
     loadRefreshWorkerLogs(),
   ])
 }
@@ -2653,6 +2966,10 @@ watch(selectedProviderId, () => {
   if (showDemandMetricsDialog.value) {
     appendDemandMetricSample(selectedProviderOverview.value)
   }
+})
+
+watch(refreshWorkerProviderId, (providerId) => {
+  void loadRefreshWorkerProviderSettings(providerId)
 })
 
 watch(selectedProviderOverview, (overview) => {

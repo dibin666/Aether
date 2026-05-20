@@ -866,15 +866,32 @@ impl AppState {
         &self,
         transport: &provider_transport::GatewayProviderTransportSnapshot,
     ) -> Result<Option<provider_transport::LocalResolvedOAuthRequestAuth>, GatewayError> {
-        let proxy_node_id_override = self
-            .read_system_config_json_value("oauth_token_refresh_proxy_node_id")
+        self.resolve_local_oauth_request_auth_for_auto_refresh_with_proxy_override(transport, None)
+            .await
+    }
+
+    pub(crate) async fn resolve_local_oauth_request_auth_for_auto_refresh_with_proxy_override(
+        &self,
+        transport: &provider_transport::GatewayProviderTransportSnapshot,
+        provider_proxy_node_id_override: Option<Option<String>>,
+    ) -> Result<Option<provider_transport::LocalResolvedOAuthRequestAuth>, GatewayError> {
+        let proxy_node_id_override =
+            if let Some(proxy_node_id_override) = provider_proxy_node_id_override {
+                proxy_node_id_override
+            } else {
+                self.read_oauth_token_refresh_proxy_node_id_override().await
+            };
+        self.resolve_local_oauth_request_auth_with_proxy_override(transport, proxy_node_id_override)
+            .await
+    }
+
+    async fn read_oauth_token_refresh_proxy_node_id_override(&self) -> Option<String> {
+        self.read_system_config_json_value("oauth_token_refresh_proxy_node_id")
             .await
             .ok()
             .flatten()
             .and_then(|value| value.as_str().map(str::trim).map(ToOwned::to_owned))
-            .filter(|value| !value.is_empty());
-        self.resolve_local_oauth_request_auth_with_proxy_override(transport, proxy_node_id_override)
-            .await
+            .filter(|value| !value.is_empty())
     }
 
     async fn resolve_local_oauth_request_auth_with_proxy_override(

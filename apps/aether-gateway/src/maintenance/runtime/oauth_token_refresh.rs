@@ -1,11 +1,13 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
 use futures_util::{stream, StreamExt};
-use serde_json::Value;
+use serde_json::{Map, Value};
+use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::admin_api::provider_oauth_maintenance_endpoint_for_provider;
@@ -21,6 +23,7 @@ const OAUTH_TOKEN_REFRESH_MIN_INTERVAL_SECS: u64 = 15;
 const OAUTH_TOKEN_REFRESH_DEFAULT_CONCURRENCY: usize = 4;
 const OAUTH_TOKEN_REFRESH_DEFAULT_MAX_PER_RUN: usize = 50;
 const OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT: usize = 200;
+const OAUTH_TOKEN_REFRESH_PROVIDER_STAMP_PREFIX: &str = "ap:oauth_refresh:last_scan";
 const OAUTH_ACCOUNT_BLOCK_PREFIX: &str = "[ACCOUNT_BLOCK] ";
 const OAUTH_EXPIRED_PREFIX: &str = "[OAUTH_EXPIRED] ";
 const OAUTH_REFRESH_FAILED_PREFIX: &str = "[REFRESH_FAILED] ";
@@ -31,6 +34,16 @@ pub(crate) struct OAuthTokenRefreshWorkerConfig {
     pub(crate) interval: Duration,
     pub(crate) concurrency: usize,
     pub(crate) max_per_run: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OAuthTokenRefreshProviderConfig {
+    enabled: bool,
+    lookahead_seconds: u64,
+    scan_interval: Option<Duration>,
+    concurrency: usize,
+    max_per_run: usize,
+    proxy_node_id_override: Option<Option<String>>,
 }
 
 impl OAuthTokenRefreshWorkerConfig {
@@ -77,6 +90,146 @@ impl OAuthTokenRefreshWorkerConfig {
     }
 }
 
+impl OAuthTokenRefreshProviderConfig {
+    fn from_provider_config(
+        global: &OAuthTokenRefreshWorkerConfig,
+        provider_config: Option<&Value>,
+    ) -> Self {
+        let config = oauth_token_refresh_provider_config_object(provider_config);
+        let enabled = config
+            .and_then(|object| provider_config_bool(object, "enabled"))
+            .unwrap_or(true);
+        let lookahead_seconds = config
+            .and_then(|object| provider_config_u64(object, "lookahead_seconds"))
+            .unwrap_or(global.lookahead_seconds)
+            .min(30 * 24 * 60 * 60);
+        let scan_interval = config
+            .and_then(|object| provider_config_u64(object, "interval_seconds"))
+            .map(|seconds| {
+                Duration::from_secs(
+                    seconds.clamp(OAUTH_TOKEN_REFRESH_MIN_INTERVAL_SECS, 24 * 60 * 60),
+                )
+            });
+        let concurrency = config
+            .and_then(|object| provider_config_usize(object, "concurrency"))
+            .unwrap_or(global.concurrency)
+            .clamp(1, 64);
+        let max_per_run = config
+            .and_then(|object| provider_config_usize(object, "max_per_run"))
+            .unwrap_or(global.max_per_run)
+            .clamp(1, 10_000);
+        let proxy_node_id_override = provider_config_proxy_override(config);
+
+        Self {
+            enabled,
+            lookahead_seconds,
+            scan_interval,
+            concurrency,
+            max_per_run,
+            proxy_node_id_override,
+        }
+    }
+}
+
+fn oauth_token_refresh_provider_config_object(
+    provider_config: Option<&Value>,
+) -> Option<&Map<String, Value>> {
+    provider_config
+        .and_then(Value::as_object)
+        .and_then(|object| object.get("oauth_token_refresh"))
+        .and_then(Value::as_object)
+}
+
+fn provider_config_bool(object: &Map<String, Value>, key: &str) -> Option<bool> {
+    object.get(key).and_then(Value::as_bool)
+}
+
+fn provider_config_u64(object: &Map<String, Value>, key: &str) -> Option<u64> {
+    let value = object.get(key)?;
+    if value.is_null() {
+        return None;
+    }
+    value
+        .as_u64()
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|number| number.is_finite() && *number >= 0.0)
+                .map(|number| number as u64)
+        })
+        .or_else(|| {
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|raw| !raw.is_empty())
+                .and_then(|raw| raw.parse::<u64>().ok())
+        })
+}
+
+fn provider_config_usize(object: &Map<String, Value>, key: &str) -> Option<usize> {
+    provider_config_u64(object, key).and_then(|value| usize::try_from(value).ok())
+}
+
+fn provider_config_proxy_override(object: Option<&Map<String, Value>>) -> Option<Option<String>> {
+    let object = object?;
+    if !object.contains_key("proxy_node_id") {
+        return None;
+    }
+    let value = object.get("proxy_node_id")?;
+    if value.is_null() {
+        return Some(None);
+    }
+    let proxy_node_id = value
+        .as_str()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .map(ToOwned::to_owned);
+    Some(proxy_node_id)
+}
+
+fn oauth_token_refresh_provider_scan_stamp_key(provider_id: &str) -> String {
+    format!("{OAUTH_TOKEN_REFRESH_PROVIDER_STAMP_PREFIX}:{provider_id}")
+}
+
+async fn oauth_token_refresh_provider_scan_due(
+    state: &AppState,
+    provider_id: &str,
+    provider_config: &OAuthTokenRefreshProviderConfig,
+    now_ts: u64,
+) -> bool {
+    let Some(interval) = provider_config.scan_interval else {
+        return true;
+    };
+    let key = oauth_token_refresh_provider_scan_stamp_key(provider_id);
+    let last_scan = state
+        .runtime_state
+        .kv_get(&key)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .unwrap_or_default();
+    if last_scan > 0 && now_ts < last_scan.saturating_add(interval.as_secs()) {
+        return false;
+    }
+    let ttl = interval
+        .checked_mul(2)
+        .unwrap_or(interval)
+        .saturating_add(Duration::from_secs(60));
+    if let Err(err) = state
+        .runtime_state
+        .kv_set(&key, now_ts.to_string(), Some(ttl))
+        .await
+    {
+        warn!(
+            provider_id,
+            error = ?err,
+            "gateway oauth token refresh failed to record provider scan stamp"
+        );
+    }
+    true
+}
+
 pub(crate) async fn oauth_token_refresh_interval(state: &AppState) -> Duration {
     OAuthTokenRefreshWorkerConfig::load(state)
         .await
@@ -102,6 +255,8 @@ struct OAuthTokenRefreshCandidate {
     key_name: String,
     key: StoredProviderCatalogKey,
     transport: crate::provider_transport::GatewayProviderTransportSnapshot,
+    proxy_node_id_override: Option<Option<String>>,
+    provider_concurrency: usize,
 }
 
 enum OAuthTokenRefreshCandidateOutcome {
@@ -163,10 +318,24 @@ pub(crate) async fn perform_oauth_token_refresh_once(
     let endpoints_by_provider = group_endpoints_by_provider(endpoints);
     let keys_by_provider = group_keys_by_provider(keys);
     let mut summary = OAuthTokenRefreshRunSummary::default();
-    let refresh_cutoff_unix_secs = now_unix_secs().saturating_add(config.lookahead_seconds);
+    let now_ts = now_unix_secs();
+    let mut remaining_this_run = config.max_per_run;
     let mut candidates = Vec::<OAuthTokenRefreshCandidate>::new();
 
     'providers: for provider in providers {
+        if remaining_this_run == 0 {
+            break;
+        }
+        let provider_config = OAuthTokenRefreshProviderConfig::from_provider_config(
+            &config,
+            provider.config.as_ref(),
+        );
+        if !provider_config.enabled
+            || !oauth_token_refresh_provider_scan_due(state, &provider.id, &provider_config, now_ts)
+                .await
+        {
+            continue;
+        }
         let provider_keys = keys_by_provider
             .get(provider.id.as_str())
             .map(Vec::as_slice)
@@ -175,6 +344,9 @@ pub(crate) async fn perform_oauth_token_refresh_once(
             .get(provider.id.as_str())
             .map(Vec::as_slice)
             .unwrap_or(&[]);
+        let refresh_cutoff_unix_secs = now_ts.saturating_add(provider_config.lookahead_seconds);
+        let provider_limit = provider_config.max_per_run.min(remaining_this_run);
+        let mut provider_selected = 0usize;
         for key in provider_keys {
             summary.scanned = summary.scanned.saturating_add(1);
             if !oauth_refresh_candidate(&provider, key, refresh_cutoff_unix_secs) {
@@ -211,57 +383,90 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 key_name: key.name.clone(),
                 key: key.clone(),
                 transport,
+                proxy_node_id_override: provider_config.proxy_node_id_override.clone(),
+                provider_concurrency: provider_config.concurrency,
             });
-            if candidates.len() >= config.max_per_run {
+            provider_selected = provider_selected.saturating_add(1);
+            remaining_this_run = remaining_this_run.saturating_sub(1);
+            if remaining_this_run == 0 {
                 break 'providers;
+            }
+            if provider_selected >= provider_limit {
+                break;
             }
         }
     }
 
-    let outcomes = stream::iter(candidates.into_iter().map(|candidate| async move {
-        let resolution = state
-            .resolve_local_oauth_request_auth_for_auto_refresh(&candidate.transport)
-            .await;
-        match resolution {
-            Ok(Some(_auth)) => {
-                match provider_key_credentials_changed(state, &candidate.key).await {
-                    Ok(refreshed) => OAuthTokenRefreshCandidateOutcome::Resolved {
-                        provider_id: candidate.provider_id,
-                        provider_name: candidate.provider_name,
-                        provider_type: candidate.provider_type,
-                        key_id: candidate.key_id,
-                        key_name: candidate.key_name,
-                        refreshed,
-                    },
-                    Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
-                        provider_id: candidate.provider_id,
-                        provider_name: candidate.provider_name,
-                        provider_type: candidate.provider_type,
-                        key_id: candidate.key_id,
-                        key_name: candidate.key_name,
-                        error: format!("{err:?}"),
-                    },
+    let mut provider_limits = HashMap::<String, Arc<Semaphore>>::new();
+    for candidate in &candidates {
+        provider_limits
+            .entry(candidate.provider_id.clone())
+            .or_insert_with(|| Arc::new(Semaphore::new(candidate.provider_concurrency)));
+    }
+    let execution_buffer = candidates.len().max(1);
+    let global_limit = Arc::new(Semaphore::new(config.concurrency));
+    let outcomes = stream::iter(candidates.into_iter().map(|candidate| {
+        let global_limit = Arc::clone(&global_limit);
+        let provider_limit = provider_limits
+            .get(&candidate.provider_id)
+            .cloned()
+            .expect("oauth refresh provider semaphore missing");
+        async move {
+            let _global_permit = global_limit
+                .acquire_owned()
+                .await
+                .expect("oauth refresh global semaphore closed");
+            let _provider_permit = provider_limit
+                .acquire_owned()
+                .await
+                .expect("oauth refresh provider semaphore closed");
+            let resolution = state
+                .resolve_local_oauth_request_auth_for_auto_refresh_with_proxy_override(
+                    &candidate.transport,
+                    candidate.proxy_node_id_override.clone(),
+                )
+                .await;
+            match resolution {
+                Ok(Some(_auth)) => {
+                    match provider_key_credentials_changed(state, &candidate.key).await {
+                        Ok(refreshed) => OAuthTokenRefreshCandidateOutcome::Resolved {
+                            provider_id: candidate.provider_id,
+                            provider_name: candidate.provider_name,
+                            provider_type: candidate.provider_type,
+                            key_id: candidate.key_id,
+                            key_name: candidate.key_name,
+                            refreshed,
+                        },
+                        Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
+                            provider_id: candidate.provider_id,
+                            provider_name: candidate.provider_name,
+                            provider_type: candidate.provider_type,
+                            key_id: candidate.key_id,
+                            key_name: candidate.key_name,
+                            error: format!("{err:?}"),
+                        },
+                    }
                 }
+                Ok(None) => OAuthTokenRefreshCandidateOutcome::Skipped {
+                    provider_id: candidate.provider_id,
+                    provider_name: candidate.provider_name,
+                    provider_type: candidate.provider_type,
+                    key_id: candidate.key_id,
+                    key_name: candidate.key_name,
+                    reason: "auth_not_resolved".to_string(),
+                },
+                Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
+                    provider_id: candidate.provider_id,
+                    provider_name: candidate.provider_name,
+                    provider_type: candidate.provider_type,
+                    key_id: candidate.key_id,
+                    key_name: candidate.key_name,
+                    error: format!("{err:?}"),
+                },
             }
-            Ok(None) => OAuthTokenRefreshCandidateOutcome::Skipped {
-                provider_id: candidate.provider_id,
-                provider_name: candidate.provider_name,
-                provider_type: candidate.provider_type,
-                key_id: candidate.key_id,
-                key_name: candidate.key_name,
-                reason: "auth_not_resolved".to_string(),
-            },
-            Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
-                provider_id: candidate.provider_id,
-                provider_name: candidate.provider_name,
-                provider_type: candidate.provider_type,
-                key_id: candidate.key_id,
-                key_name: candidate.key_name,
-                error: format!("{err:?}"),
-            },
         }
     }))
-    .buffer_unordered(config.concurrency)
+    .buffer_unordered(execution_buffer)
     .collect::<Vec<_>>()
     .await;
 
