@@ -10,8 +10,9 @@ use crate::provider::{
     ProviderPoolMemberInput,
 };
 use crate::quota::{
-    provider_pool_json_bool, provider_pool_json_f64, provider_pool_metadata_bucket,
-    provider_pool_quota_snapshot_exhausted_decision,
+    provider_pool_current_unix_secs, provider_pool_json_bool, provider_pool_json_f64,
+    provider_pool_metadata_bucket, provider_pool_quota_snapshot_exhausted_decision,
+    provider_pool_reset_deadline_elapsed, provider_pool_timestamp_unix_secs,
 };
 use crate::quota_refresh::ProviderPoolQuotaRequestSpec;
 
@@ -255,6 +256,19 @@ fn infer_chatgpt_web_image_quota_limit(
 }
 
 pub(crate) fn quota_exhausted_from_bucket(bucket: &Map<String, Value>) -> bool {
+    if provider_pool_current_unix_secs().is_some_and(|now| {
+        let mut image_quota = Map::new();
+        if let Some(value) = bucket.get("image_quota_reset_at") {
+            image_quota.insert("reset_at".to_string(), value.clone());
+        }
+        provider_pool_reset_deadline_elapsed(
+            &image_quota,
+            provider_pool_timestamp_unix_secs(bucket.get("updated_at")),
+            now,
+        )
+    }) {
+        return false;
+    }
     if provider_pool_json_bool(bucket.get("image_quota_blocked")) == Some(true) {
         return true;
     }

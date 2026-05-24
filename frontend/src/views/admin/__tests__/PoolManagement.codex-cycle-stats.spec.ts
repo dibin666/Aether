@@ -125,6 +125,7 @@ vi.mock('lucide-vue-next', async () => {
     Upload: Icon,
     ChevronDown: Icon,
     RefreshCw: Icon,
+    History: Icon,
     Activity: Icon,
     Power: Icon,
     Database: Icon,
@@ -143,6 +144,7 @@ vi.mock('lucide-vue-next', async () => {
     CircleHelp: Icon,
     Edit: Icon,
     Plug: Icon,
+    X: Icon,
   }
 })
 
@@ -257,6 +259,7 @@ vi.mock('@/components/ui', async () => {
 
   return {
     Card: passthrough('CardStub'),
+    Dialog: passthrough('DialogStub'),
     Badge: passthrough('BadgeStub', 'span'),
     Button,
     Input,
@@ -599,8 +602,8 @@ describe('PoolManagement Codex cycle stats mode', () => {
     expect(endpointMocks.listPoolKeys).toHaveBeenLastCalledWith(
       'codex-provider',
       expect.objectContaining({
-        sort_by: 'imported_at',
-        sort_order: 'desc',
+        sort_by: undefined,
+        sort_order: undefined,
       }),
       expect.anything(),
     )
@@ -810,7 +813,7 @@ describe('PoolManagement Codex cycle stats mode', () => {
     expect(root.textContent).toContain('$1.25')
   })
 
-  it('shows adaptive hot pool metrics entry only when probing is enabled', async () => {
+  it('keeps the adaptive hot pool metrics entry hidden while the retained UI disables it', async () => {
     endpointMocks.getPoolOverview.mockResolvedValue({
       items: [{ ...createOverview('codex'), provider_desired_hot: 4, provider_in_flight: 2, provider_ema_in_flight: 1.8 }],
     })
@@ -824,7 +827,7 @@ describe('PoolManagement Codex cycle stats mode', () => {
     const enabledRoot = mountPoolManagement()
     await settle()
 
-    expect(enabledRoot.querySelectorAll('[data-testid="pool-demand-metrics-button"]').length).toBeGreaterThan(0)
+    expect(enabledRoot.querySelector('[data-testid="pool-demand-metrics-button"]')).toBeNull()
 
     for (const { app, root } of mountedApps.splice(0)) {
       app.unmount()

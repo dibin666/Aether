@@ -62,7 +62,7 @@ INNER JOIN global_models gm
   ON gm.id = m.global_model_id
 WHERE p.is_active = TRUE
   AND pe.is_active = TRUE
-  AND pak.is_active = TRUE
+  AND pak.is_active IS TRUE
   AND m.is_active = TRUE
   AND m.is_available = TRUE
   AND gm.is_active = TRUE
@@ -114,6 +114,11 @@ WHERE p.is_active = TRUE
       AND LOWER($3) = 'gemini:generate_content'
     )
     OR (
+      LOWER(BTRIM(p.provider_type)) = 'windsurf'
+      AND LOWER(BTRIM(pak.auth_type)) IN ('oauth', 'api_key', 'bearer')
+      AND LOWER($3) = 'openai:chat'
+    )
+    OR (
       LOWER(BTRIM(p.provider_type)) = 'vertex_ai'
       AND (
         (
@@ -135,7 +140,8 @@ WHERE p.is_active = TRUE
         'grok',
         'vertex_ai',
         'antigravity',
-        'kiro'
+        'kiro',
+        'windsurf'
       )
       AND LOWER(BTRIM(pak.auth_type)) <> 'oauth'
     )
@@ -250,7 +256,7 @@ INNER JOIN global_models gm
   ON gm.id = m.global_model_id
 WHERE p.is_active = TRUE
   AND pe.is_active = TRUE
-  AND pak.is_active = TRUE
+  AND pak.is_active IS TRUE
   AND m.is_active = TRUE
   AND m.is_available = TRUE
   AND gm.is_active = TRUE
@@ -303,6 +309,11 @@ WHERE p.is_active = TRUE
       AND LOWER($4) = 'gemini:generate_content'
     )
     OR (
+      LOWER(BTRIM(p.provider_type)) = 'windsurf'
+      AND LOWER(BTRIM(pak.auth_type)) IN ('oauth', 'api_key', 'bearer')
+      AND LOWER($4) = 'openai:chat'
+    )
+    OR (
       LOWER(BTRIM(p.provider_type)) = 'vertex_ai'
       AND (
         (
@@ -324,7 +335,8 @@ WHERE p.is_active = TRUE
         'grok',
         'vertex_ai',
         'antigravity',
-        'kiro'
+        'kiro',
+        'windsurf'
       )
       AND LOWER(BTRIM(pak.auth_type)) <> 'oauth'
     )
@@ -436,7 +448,7 @@ INNER JOIN global_models gm
   ON gm.id = m.global_model_id
 WHERE p.is_active = TRUE
   AND pe.is_active = TRUE
-  AND pak.is_active = TRUE
+  AND pak.is_active IS TRUE
   AND m.is_active = TRUE
   AND m.is_available = TRUE
   AND gm.is_active = TRUE
@@ -491,6 +503,11 @@ WHERE p.is_active = TRUE
       AND LOWER($6) = 'gemini:generate_content'
     )
     OR (
+      LOWER(BTRIM(p.provider_type)) = 'windsurf'
+      AND LOWER(BTRIM(pak.auth_type)) IN ('oauth', 'api_key', 'bearer')
+      AND LOWER($6) = 'openai:chat'
+    )
+    OR (
       LOWER(BTRIM(p.provider_type)) = 'vertex_ai'
       AND (
         (
@@ -512,7 +529,8 @@ WHERE p.is_active = TRUE
         'grok',
         'vertex_ai',
         'antigravity',
-        'kiro'
+        'kiro',
+        'windsurf'
       )
       AND LOWER(BTRIM(pak.auth_type)) <> 'oauth'
     )
@@ -1319,6 +1337,26 @@ mod tests {
             assert!(sql
                 .contains("'openai:chat', 'openai:responses', 'claude:messages', 'openai:image'"));
             assert!(sql.contains("'grok',"));
+        }
+    }
+
+    #[test]
+    fn candidate_selection_sql_allows_windsurf_openai_chat_managed_keys() {
+        let requested_model_sql = requested_model_selection_sql();
+        for sql in [
+            LIST_FOR_EXACT_API_FORMAT_SQL,
+            LIST_FOR_EXACT_API_FORMAT_AND_GLOBAL_MODEL_SQL,
+            LIST_POOL_KEYS_FOR_GROUP_SQL,
+            requested_model_sql.as_str(),
+        ] {
+            assert!(sql.contains("LOWER(BTRIM(p.provider_type)) = 'windsurf'"));
+            assert!(
+                sql.contains("LOWER($3) = 'openai:chat'")
+                    || sql.contains("LOWER($4) = 'openai:chat'")
+                    || sql.contains("LOWER($6) = 'openai:chat'")
+            );
+            assert!(sql.contains("LOWER(BTRIM(pak.auth_type)) IN ('oauth', 'api_key', 'bearer')"));
+            assert!(sql.contains("'windsurf'"));
         }
     }
 

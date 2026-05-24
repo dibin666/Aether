@@ -150,7 +150,7 @@ describe('poolManagementState', () => {
         status: 'all',
         page: 1,
         pageSize: 50,
-        sortBy: 'imported_at',
+        sortBy: null,
         sortOrder: 'desc',
         statsMode: 'current_cycle',
       }),

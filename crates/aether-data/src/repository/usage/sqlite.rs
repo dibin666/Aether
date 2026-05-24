@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
 
+use aether_ai_formats::UPSTREAM_IS_STREAM_KEY;
 use aether_data_contracts::repository::usage::{parse_usage_body_ref, UsageBodyField};
 use async_trait::async_trait;
 use flate2::read::GzDecoder;
@@ -183,17 +184,41 @@ ON CONFLICT (request_id) DO UPDATE SET
   output_price_per_1m = excluded.output_price_per_1m,
   total_cost_usd = excluded.total_cost_usd,
   actual_total_cost_usd = excluded.actual_total_cost_usd,
-  status_code = excluded.status_code,
-  error_message = excluded.error_message,
-  error_category = excluded.error_category,
-  response_time_ms = excluded.response_time_ms,
-  first_byte_time_ms = excluded.first_byte_time_ms,
-  status = excluded.status,
+    status_code = CASE
+        WHEN "usage".status IN ('completed', 'failed', 'cancelled') AND excluded.status IN ('pending', 'streaming') THEN "usage".status_code
+        WHEN "usage".status = 'streaming' AND excluded.status = 'pending' THEN "usage".status_code
+        ELSE excluded.status_code
+    END,
+    error_message = CASE
+        WHEN "usage".status IN ('completed', 'failed', 'cancelled') AND excluded.status IN ('pending', 'streaming') THEN "usage".error_message
+        WHEN "usage".status = 'streaming' AND excluded.status = 'pending' THEN "usage".error_message
+        ELSE excluded.error_message
+    END,
+    error_category = CASE
+        WHEN "usage".status IN ('completed', 'failed', 'cancelled') AND excluded.status IN ('pending', 'streaming') THEN "usage".error_category
+        WHEN "usage".status = 'streaming' AND excluded.status = 'pending' THEN "usage".error_category
+        ELSE excluded.error_category
+    END,
+    response_time_ms = CASE
+        WHEN "usage".status IN ('completed', 'failed', 'cancelled') AND excluded.status IN ('pending', 'streaming') THEN "usage".response_time_ms
+        WHEN excluded.response_time_ms IS NULL OR excluded.response_time_ms = 0 THEN COALESCE("usage".response_time_ms, excluded.response_time_ms)
+        ELSE excluded.response_time_ms
+    END,
+    first_byte_time_ms = CASE
+        WHEN "usage".status IN ('completed', 'failed', 'cancelled') AND excluded.status IN ('pending', 'streaming') THEN "usage".first_byte_time_ms
+        WHEN excluded.first_byte_time_ms IS NULL OR excluded.first_byte_time_ms = 0 THEN COALESCE("usage".first_byte_time_ms, excluded.first_byte_time_ms)
+        ELSE excluded.first_byte_time_ms
+    END,
+    status = CASE
+        WHEN "usage".status IN ('completed', 'failed', 'cancelled') AND excluded.status IN ('pending', 'streaming') THEN "usage".status
+        WHEN "usage".status = 'streaming' AND excluded.status = 'pending' THEN "usage".status
+        ELSE excluded.status
+    END,
   billing_status = excluded.billing_status,
   request_metadata = excluded.request_metadata,
-  candidate_id = excluded.candidate_id,
-  candidate_index = excluded.candidate_index,
-  key_name = excluded.key_name,
+    candidate_id = COALESCE(excluded.candidate_id, "usage".candidate_id),
+    candidate_index = COALESCE(excluded.candidate_index, "usage".candidate_index),
+    key_name = COALESCE(excluded.key_name, "usage".key_name),
   planner_kind = excluded.planner_kind,
   route_family = excluded.route_family,
   route_kind = excluded.route_kind,
@@ -224,10 +249,19 @@ WHERE request_id = ?
   AND status IN ('streaming', 'success')
 "#;
 
-const SQLITE_PROVIDER_NAME_IS_NOT_RESERVED: &str = r#"
-provider_name IS NOT NULL
-AND TRIM(provider_name) <> ''
-AND LOWER(TRIM(provider_name)) NOT IN ('unknown', 'unknow', 'pending')
+const SQLITE_PROVIDER_IDENTITY_IS_NOT_RESERVED: &str = r#"
+(
+  (
+    provider_id IS NOT NULL
+    AND TRIM(provider_id) <> ''
+    AND LOWER(TRIM(provider_id)) NOT IN ('unknown', 'unknow', 'pending')
+  )
+  OR (
+    provider_name IS NOT NULL
+    AND TRIM(provider_name) <> ''
+    AND LOWER(TRIM(provider_name)) NOT IN ('unknown', 'unknow', 'pending')
+  )
+)
 "#;
 
 const SQLITE_USAGE_CACHE_CREATION_TOKENS_EXPR: &str = r#"
@@ -618,6 +652,23 @@ THEN TRIM(provider_id) ELSE TRIM(provider_name) END"
     }
 }
 
+fn sqlite_usage_aggregation_secondary_expr(group_by: UsageAuditAggregationGroupBy) -> &'static str {
+    match group_by {
+        UsageAuditAggregationGroupBy::Provider => {
+            "CASE WHEN SUM(CASE WHEN provider_id IS NOT NULL \
+AND TRIM(provider_id) <> '' \
+AND LOWER(TRIM(provider_id)) NOT IN ('unknown', 'unknow', 'pending') \
+THEN 1 ELSE 0 END) > 0 THEN 'provider_id' \
+WHEN SUM(CASE WHEN provider_name IS NOT NULL \
+AND TRIM(provider_name) <> '' \
+AND LOWER(TRIM(provider_name)) NOT IN ('unknown', 'unknow', 'pending') \
+THEN 1 ELSE 0 END) > 0 THEN 'legacy_name' \
+ELSE NULL END"
+        }
+        _ => "NULL",
+    }
+}
+
 fn sqlite_aggregate_u64(row: &SqliteRow, field: &str) -> Result<u64, DataLayerError> {
     Ok(row.try_get::<i64, _>(field).map_sql_err()?.max(0) as u64)
 }
@@ -683,7 +734,7 @@ fn decode_sqlite_usage_aggregation_row(
     Ok(StoredUsageAuditAggregation {
         group_key: row.try_get::<String, _>("group_key").map_sql_err()?,
         display_name: row.try_get("display_name").map_sql_err()?,
-        secondary_name: None,
+        secondary_name: row.try_get("secondary_name").map_sql_err()?,
         request_count: sqlite_aggregate_u64(row, "request_count")?,
         total_tokens: sqlite_aggregate_u64(row, "total_tokens")?,
         output_tokens: sqlite_aggregate_u64(row, "output_tokens")?,
@@ -1324,8 +1375,9 @@ FROM "usage"
         }
 
         let group_expr = sqlite_usage_aggregation_group_expr(query.group_by);
+        let secondary_expr = sqlite_usage_aggregation_secondary_expr(query.group_by);
         let display_expr = if matches!(query.group_by, UsageAuditAggregationGroupBy::Provider) {
-            "NULLIF(TRIM(provider_name), '')"
+            "CASE WHEN provider_name IS NOT NULL AND TRIM(provider_name) <> '' AND LOWER(TRIM(provider_name)) NOT IN ('unknown', 'unknow', 'pending') THEN TRIM(provider_name) ELSE NULL END"
         } else {
             "NULL"
         };
@@ -1349,6 +1401,7 @@ FROM "usage"
 SELECT
   {group_expr} AS group_key,
   {display_expr} AS display_name,
+  {secondary_expr} AS secondary_name,
   COUNT(*) AS request_count,
   COALESCE(SUM(MAX(COALESCE(total_tokens, 0), 0)), 0) AS total_tokens,
   COALESCE(SUM(MAX(COALESCE(output_tokens, 0), 0)), 0) AS output_tokens,
@@ -1369,6 +1422,7 @@ FROM "usage"
 "#,
             effective_input_expr = SQLITE_USAGE_EFFECTIVE_INPUT_TOKENS_EXPR,
             total_input_context_expr = SQLITE_USAGE_TOTAL_INPUT_CONTEXT_EXPR,
+            secondary_expr = secondary_expr,
             cache_creation_expr = SQLITE_USAGE_CACHE_CREATION_TOKENS_EXPR
         ));
         let mut has_where = false;
@@ -1384,7 +1438,7 @@ FROM "usage"
         builder.push("status NOT IN ('pending', 'streaming')");
         if query.exclude_reserved_provider_labels {
             push_sqlite_usage_where(&mut builder, &mut has_where);
-            builder.push(SQLITE_PROVIDER_NAME_IS_NOT_RESERVED);
+            builder.push(SQLITE_PROVIDER_IDENTITY_IS_NOT_RESERVED);
         }
         if matches!(query.group_by, UsageAuditAggregationGroupBy::User) {
             push_sqlite_usage_where(&mut builder, &mut has_where);
@@ -3606,13 +3660,20 @@ WHERE request_id = ?
                     continue;
                 }
 
-                let error_message = stale_pending_error_message(&row.status, timeout_minutes);
+                let candidate_info =
+                    latest_failed_candidate_sqlite(&mut tx, &row.request_id).await?;
+                let (status_code, error_message) = resolve_stale_pending_failure(
+                    candidate_info.as_ref(),
+                    &row.status,
+                    timeout_minutes,
+                );
+                let status_code_i64 = i64::from(status_code);
                 if row.billing_status == "pending" {
                     sqlx::query(
                         r#"
 UPDATE "usage"
 SET status = 'failed',
-    status_code = 504,
+    status_code = ?,
     error_message = ?,
     billing_status = 'void',
     finalized_at = ?,
@@ -3621,6 +3682,7 @@ SET status = 'failed',
 WHERE request_id = ?
 "#,
                     )
+                    .bind(status_code_i64)
                     .bind(&error_message)
                     .bind(to_i64(now_unix_secs, "usage finalized_at")?)
                     .bind(&row.request_id)
@@ -3638,11 +3700,12 @@ WHERE request_id = ?
                         r#"
 UPDATE "usage"
 SET status = 'failed',
-    status_code = 504,
+    status_code = ?,
     error_message = ?
 WHERE request_id = ?
 "#,
                     )
+                    .bind(status_code_i64)
                     .bind(&error_message)
                     .bind(&row.request_id)
                     .execute(&mut *tx)
@@ -3763,6 +3826,67 @@ DO UPDATE SET
 
 fn stale_pending_error_message(status: &str, timeout_minutes: u64) -> String {
     format!("请求超时: 状态 '{status}' 超过 {timeout_minutes} 分钟未完成")
+}
+
+struct FailedCandidateCleanupInfo {
+    status_code: Option<u16>,
+    error_message: Option<String>,
+}
+
+fn resolve_stale_pending_failure(
+    candidate: Option<&FailedCandidateCleanupInfo>,
+    status: &str,
+    timeout_minutes: u64,
+) -> (u16, String) {
+    match candidate {
+        Some(info) => (
+            info.status_code.unwrap_or(502),
+            info.error_message
+                .clone()
+                .unwrap_or_else(|| stale_pending_error_message(status, timeout_minutes)),
+        ),
+        None => (504, stale_pending_error_message(status, timeout_minutes)),
+    }
+}
+
+async fn latest_failed_candidate_sqlite(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    request_id: &str,
+) -> Result<Option<FailedCandidateCleanupInfo>, DataLayerError> {
+    let row = sqlx::query(
+        r#"
+SELECT status_code, error_message
+FROM request_candidates
+WHERE request_id = ?
+  AND status IN ('failed', 'cancelled')
+ORDER BY
+  COALESCE(finished_at, started_at, created_at) DESC,
+  retry_index DESC,
+  candidate_index DESC
+LIMIT 1
+"#,
+    )
+    .bind(request_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_sql_err()?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let status_code = row
+        .try_get::<Option<i64>, _>("status_code")
+        .map_sql_err()?
+        .and_then(|value| u16::try_from(value).ok());
+    let error_message = row
+        .try_get::<Option<String>, _>("error_message")
+        .map_sql_err()?
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Ok(Some(FailedCandidateCleanupInfo {
+        status_code,
+        error_message,
+    }))
 }
 
 fn bind_upsert<'q>(
@@ -3956,7 +4080,7 @@ fn usage_upstream_is_stream(usage: &UpsertUsageRecord) -> bool {
         .request_metadata
         .as_ref()
         .and_then(serde_json::Value::as_object)
-        .and_then(|metadata| metadata.get("upstream_is_stream"))
+        .and_then(|metadata| metadata.get(UPSTREAM_IS_STREAM_KEY))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or_else(|| usage.is_stream.unwrap_or(false))
 }
@@ -3970,7 +4094,7 @@ fn merge_usage_stream_metadata(metadata: &mut Option<serde_json::Value>, upstrea
         return;
     };
     object
-        .entry("upstream_is_stream")
+        .entry(UPSTREAM_IS_STREAM_KEY)
         .or_insert(serde_json::Value::Bool(upstream));
 }
 
@@ -4195,6 +4319,91 @@ ORDER BY request_id
         .await
         .expect("void settlement snapshot should load");
         assert_eq!(snapshot, ("void".to_string(), Some(10)));
+    }
+
+    #[tokio::test]
+    async fn sqlite_usage_write_repository_cleanup_uses_failed_candidate_status_when_present() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool should connect");
+        run_sqlite_migrations(&pool)
+            .await
+            .expect("sqlite migrations should run");
+        seed_stats_targets(&pool).await;
+
+        let repository = SqliteUsageWriteRepository::new(pool.clone());
+        repository
+            .upsert(sample_usage(
+                "request-upstream-reset",
+                "pending",
+                "pending",
+                1,
+            ))
+            .await
+            .expect("pending usage should upsert");
+        repository
+            .upsert(sample_usage("request-stuck", "pending", "pending", 1))
+            .await
+            .expect("pending usage should upsert");
+
+        // request-upstream-reset has a failed candidate carrying a concrete 502 status
+        // and a connection-reset message — cleanup should use them instead of 504.
+        // request-stuck has only a still-pending candidate, so cleanup should fall back to 504.
+        sqlx::query(
+            r#"
+INSERT INTO request_candidates (
+  id,
+  request_id,
+  candidate_index,
+  retry_index,
+  status,
+  status_code,
+  error_message,
+  is_cached,
+  created_at,
+  started_at,
+  finished_at
+) VALUES
+  ('candidate-reset', 'request-upstream-reset', 0, 0, 'failed', 502, 'upstream connection reset by peer', 0, 1, 2, 3),
+  ('candidate-stuck', 'request-stuck', 0, 0, 'pending', NULL, NULL, 0, 1, NULL, NULL)
+"#,
+        )
+        .execute(&pool)
+        .await
+        .expect("request candidates should seed");
+
+        let summary = repository
+            .cleanup_stale_pending_requests(2, 10, 5, 5)
+            .await
+            .expect("cleanup should run");
+        assert_eq!(summary.recovered, 0);
+        assert_eq!(summary.failed, 2);
+
+        let reset = repository
+            .find_by_request_id("request-upstream-reset")
+            .await
+            .expect("upstream-reset usage should load")
+            .expect("upstream-reset usage should exist");
+        assert_eq!(reset.status, "failed");
+        assert_eq!(reset.status_code, Some(502));
+        assert_eq!(
+            reset.error_message.as_deref(),
+            Some("upstream connection reset by peer")
+        );
+
+        let stuck = repository
+            .find_by_request_id("request-stuck")
+            .await
+            .expect("stuck usage should load")
+            .expect("stuck usage should exist");
+        assert_eq!(stuck.status, "failed");
+        assert_eq!(stuck.status_code, Some(504));
+        assert!(stuck
+            .error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("超过 5 分钟未完成")));
     }
 
     #[tokio::test]

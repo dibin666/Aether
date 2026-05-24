@@ -3,7 +3,7 @@ import { cachedRequest } from '@/utils/cache'
 import type { UserSession as SessionRecord } from '@/types/session'
 import type { BillingPlan, UserPlanEntitlement } from './billing'
 
-export type UserRole = 'admin' | 'user'
+export type UserRole = 'admin' | 'audit_admin' | 'user'
 export type ListPolicyMode = 'inherit' | 'unrestricted' | 'specific' | 'deny_all'
 export type RateLimitPolicyMode = 'inherit' | 'system' | 'custom'
 export type FeatureSettings = Record<string, unknown>
@@ -264,10 +264,32 @@ export interface GetAllUsersOptions {
   skip?: number
   limit?: number
   cacheTtlMs?: number
+  cacheKeySuffix?: string
+}
+
+export interface AdminUsersListResponse {
+  items: User[]
+  total: number
+  skip: number
+  limit: number
+  has_more: boolean
+}
+
+function normalizeAdminUsersListResponse(payload: User[] | AdminUsersListResponse): AdminUsersListResponse {
+  if (Array.isArray(payload)) {
+    return {
+      items: payload,
+      total: payload.length,
+      skip: 0,
+      limit: payload.length,
+      has_more: false,
+    }
+  }
+  return payload
 }
 
 export const usersApi = {
-  async getAllUsers(options: GetAllUsersOptions = {}): Promise<User[]> {
+  async getAllUsersPage(options: GetAllUsersOptions = {}): Promise<AdminUsersListResponse> {
     const cacheTtlMs = options.cacheTtlMs ?? 0
     const params: Record<string, string | number> = {}
     const search = options.search?.trim()
@@ -289,18 +311,24 @@ export const usersApi = {
           options.group_id ?? '',
           options.skip ?? '',
           options.limit ?? '',
+          options.cacheKeySuffix ?? '',
         ].join(':')
 
     return cachedRequest(
       cacheKey,
       async () => {
-        const response = await apiClient.get<User[]>('/api/admin/users', {
+        const response = await apiClient.get<User[] | AdminUsersListResponse>('/api/admin/users', {
           params: Object.keys(params).length > 0 ? params : undefined,
         })
-        return response.data
+        return normalizeAdminUsersListResponse(response.data)
       },
       cacheTtlMs,
     )
+  },
+
+  async getAllUsers(options: GetAllUsersOptions = {}): Promise<User[]> {
+    const response = await this.getAllUsersPage(options)
+    return response.items
   },
 
   async getUser(userId: string): Promise<User> {

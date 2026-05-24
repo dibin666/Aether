@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use axum::extract::Request;
-use axum::http::{header, HeaderValue, Method};
+use axum::http::header::{CACHE_CONTROL, EXPIRES, PRAGMA};
+use axum::http::{HeaderValue, Method};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use axum::Router;
@@ -117,7 +118,7 @@ async fn serve_static_asset(static_dir: &PathBuf, path: &str, request: Request) 
         Ok(mut response) => {
             response
                 .headers_mut()
-                .insert(header::CACHE_CONTROL, frontend_asset_cache_control(path));
+                .insert(CACHE_CONTROL, frontend_asset_cache_control(path));
             response.into_response()
         }
         Err(err) => {
@@ -130,9 +131,10 @@ async fn serve_static_asset(static_dir: &PathBuf, path: &str, request: Request) 
 async fn serve_frontend_index(index_html: &PathBuf, request: Request) -> Response {
     match ServeFile::new(index_html).oneshot(request).await {
         Ok(mut response) => {
-            response
-                .headers_mut()
-                .insert(header::CACHE_CONTROL, frontend_index_cache_control());
+            let headers = response.headers_mut();
+            headers.insert(CACHE_CONTROL, frontend_index_cache_control());
+            headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
+            headers.insert(EXPIRES, HeaderValue::from_static("0"));
             response.into_response()
         }
         Err(err) => {
@@ -150,7 +152,7 @@ mod frontend_static_tests {
     use http::Request;
     use tower::ServiceExt;
 
-    use super::{attach_static_frontend, header, HeaderValue};
+    use super::{attach_static_frontend, HeaderValue, CACHE_CONTROL};
 
     fn test_static_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -184,7 +186,7 @@ mod frontend_static_tests {
             .expect("serve index");
 
         assert_eq!(
-            response.headers().get(header::CACHE_CONTROL),
+            response.headers().get(CACHE_CONTROL),
             Some(&HeaderValue::from_static(
                 "no-cache, no-store, must-revalidate"
             )),
@@ -209,7 +211,7 @@ mod frontend_static_tests {
             .expect("serve asset");
 
         assert_eq!(
-            response.headers().get(header::CACHE_CONTROL),
+            response.headers().get(CACHE_CONTROL),
             Some(&HeaderValue::from_static(
                 "public, max-age=31536000, immutable"
             )),

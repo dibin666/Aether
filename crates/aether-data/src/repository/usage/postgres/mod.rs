@@ -176,6 +176,38 @@ fn split_dashboard_hourly_aggregate_range(
     }
 }
 
+fn dashboard_aggregate_schema_mismatch_message(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    let references_dashboard_aggregate = [
+        "stats_summary",
+        "stats_daily",
+        "stats_user_daily",
+        "stats_daily_model_provider",
+        "stats_user_daily_model_provider",
+        "cutoff_date",
+        "effective_input_tokens",
+        "total_input_context",
+        "response_time_sum_ms",
+        "response_time_samples",
+    ]
+    .iter()
+    .any(|pattern| message.contains(pattern));
+    if !references_dashboard_aggregate {
+        return false;
+    }
+
+    message.contains("does not exist")
+        || message.contains("unknown column")
+        || message.contains("no column named")
+        || message.contains("error occurred while decoding column")
+        || message.contains("is not compatible with sql type")
+        || message.contains("unexpected null")
+}
+
+fn dashboard_should_fallback_to_raw_on_aggregate_error(err: &DataLayerError) -> bool {
+    dashboard_aggregate_schema_mismatch_message(&err.to_string())
+}
+
 fn absorb_dashboard_summary(
     target: &mut StoredUsageDashboardSummary,
     part: &StoredUsageDashboardSummary,
@@ -1491,8 +1523,16 @@ const REBUILD_PROVIDER_API_KEY_CODEX_WINDOW_USAGE_STATS_SQL: &str =
     include_str!("queries/rebuild_provider_api_key_codex_window_usage_stats_sql.sql");
 
 const LIST_USAGE_AUDITS_PREFIX: &str = include_str!("queries/list_usage_audits_prefix.sql");
-const USAGE_RESERVED_PROVIDER_LABELS_FILTER_SQL: &str = " AND BTRIM(COALESCE(\"usage\".provider_name, '')) <> '' AND lower(BTRIM(COALESCE(\"usage\".provider_name, ''))) NOT IN ('unknown', 'unknow', 'pending')";
-const USAGE_PROVIDER_IDENTITY_FILTER_SQL: &str = " AND BTRIM(COALESCE(\"usage\".provider_id, '')) <> '' AND lower(BTRIM(COALESCE(\"usage\".provider_id, ''))) NOT IN ('unknown', 'unknow', 'pending')";
+const USAGE_PROVIDER_IDENTITY_FILTER_SQL: &str = r#" AND (
+      (
+        BTRIM(COALESCE("usage".provider_id, '')) <> ''
+        AND lower(BTRIM(COALESCE("usage".provider_id, ''))) NOT IN ('unknown', 'unknow', 'pending')
+      )
+      OR (
+        BTRIM(COALESCE("usage".provider_name, '')) <> ''
+        AND lower(BTRIM(COALESCE("usage".provider_name, ''))) NOT IN ('unknown', 'unknow', 'pending')
+      )
+    )"#;
 const USAGE_RAW_PROVIDER_GROUP_KEY_SQL: &str = r#"CASE
       WHEN BTRIM(COALESCE("usage".provider_id, '')) = ''
         OR lower(BTRIM(COALESCE("usage".provider_id, ''))) IN ('unknown', 'unknow', 'pending')
@@ -1505,13 +1545,33 @@ const USAGE_RAW_PROVIDER_DISPLAY_NAME_SQL: &str = r#"CASE
       THEN NULL
       ELSE BTRIM("usage".provider_name)
     END"#;
+const USAGE_PROVIDER_IDENTITY_SOURCE_SQL: &str = r#"CASE
+      WHEN BTRIM(COALESCE("usage".provider_id, '')) <> ''
+        AND lower(BTRIM(COALESCE("usage".provider_id, ''))) NOT IN ('unknown', 'unknow', 'pending')
+      THEN 'provider_id'
+      WHEN BTRIM(COALESCE("usage".provider_name, '')) <> ''
+        AND lower(BTRIM(COALESCE("usage".provider_name, ''))) NOT IN ('unknown', 'unknow', 'pending')
+      THEN 'legacy_name'
+      ELSE NULL
+    END"#;
 const USAGE_PROVIDER_IDENTITY_JOIN_SQL: &str = r#"  LEFT JOIN providers AS provider_by_id
     ON BTRIM(COALESCE("usage".provider_id, '')) <> ''
    AND lower(BTRIM(COALESCE("usage".provider_id, ''))) NOT IN ('unknown', 'unknow', 'pending')
    AND provider_by_id.id = BTRIM("usage".provider_id)"#;
 const USAGE_RESOLVED_PROVIDER_GROUP_KEY_SQL: &str = r#"COALESCE(
       provider_by_id.id,
-      BTRIM("usage".provider_id)
+      CASE
+        WHEN BTRIM(COALESCE("usage".provider_id, '')) = ''
+          OR lower(BTRIM(COALESCE("usage".provider_id, ''))) IN ('unknown', 'unknow', 'pending')
+        THEN NULL
+        ELSE BTRIM("usage".provider_id)
+      END,
+      CASE
+        WHEN BTRIM(COALESCE("usage".provider_name, '')) = ''
+          OR lower(BTRIM(COALESCE("usage".provider_name, ''))) IN ('unknown', 'unknow', 'pending')
+        THEN NULL
+        ELSE BTRIM("usage".provider_name)
+      END
     )"#;
 const USAGE_RESOLVED_PROVIDER_DISPLAY_NAME_SQL: &str = r#"COALESCE(
       provider_by_id.name,
@@ -1561,9 +1621,9 @@ fn usage_audit_aggregation_sql_fragments(
             filtered_extra_where: "",
             group_key_expr: "provider_group_key",
             display_name_expr: "provider_display_name",
-            secondary_name_expr: "NULL::varchar",
+            secondary_name_expr: "provider_identity_source",
             aggregate_display_name_expr: "MAX(display_name)",
-            aggregate_secondary_name_expr: "NULL::varchar",
+            aggregate_secondary_name_expr: "CASE WHEN COUNT(*) FILTER (WHERE secondary_name = 'provider_id') > 0 THEN 'provider_id' WHEN COUNT(*) FILTER (WHERE secondary_name = 'legacy_name') > 0 THEN 'legacy_name' ELSE NULL END",
             avg_response_time_expr: "AVG(response_time_ms::DOUBLE PRECISION)",
             success_count_expr: "COALESCE(SUM(success_flag), 0)::BIGINT",
         },
@@ -1665,10 +1725,25 @@ SET status = 'completed',
 WHERE request_id = $1
 "#;
 
+const SELECT_LATEST_FAILED_CANDIDATE_FOR_STALE_REQUESTS_SQL: &str = r#"
+SELECT DISTINCT ON (request_id)
+  request_id,
+  status_code,
+  error_message
+FROM request_candidates
+WHERE request_id = ANY($1)
+  AND status IN ('failed', 'cancelled')
+ORDER BY request_id,
+         COALESCE(finished_at, started_at, created_at) DESC,
+         retry_index DESC,
+         candidate_index DESC,
+         created_at DESC
+"#;
+
 const UPDATE_FAILED_STALE_USAGE_SQL: &str = r#"
 UPDATE usage
 SET status = 'failed',
-    status_code = 504,
+    status_code = $3,
     error_message = $2
 WHERE request_id = $1
 "#;
@@ -1677,7 +1752,7 @@ const UPDATE_FAILED_VOID_STALE_USAGE_SQL: &str = r#"
 WITH updated_usage AS (
     UPDATE usage
     SET status = 'failed',
-        status_code = 504,
+        status_code = $4,
         error_message = $2,
         billing_status = 'void',
         finalized_at = $3,
@@ -4025,7 +4100,20 @@ ORDER BY created_at_unix_secs ASC, group_id ASC, usage_id ASC
         &self,
         query: &UsageDashboardSummaryQuery,
     ) -> Result<StoredUsageDashboardSummary, DataLayerError> {
-        let Some(cutoff_utc) = self.read_stats_daily_cutoff_date().await? else {
+        let cutoff_utc = match self.read_stats_daily_cutoff_date().await {
+            Ok(value) => value,
+            Err(err) if dashboard_should_fallback_to_raw_on_aggregate_error(&err) => {
+                return self
+                    .summarize_dashboard_usage_raw(
+                        query.created_from_unix_secs,
+                        query.created_until_unix_secs,
+                        query.user_id.as_deref(),
+                    )
+                    .await;
+            }
+            Err(err) => return Err(err),
+        };
+        let Some(cutoff_utc) = cutoff_utc else {
             return self
                 .summarize_dashboard_usage_raw(
                     query.created_from_unix_secs,
@@ -4059,13 +4147,26 @@ ORDER BY created_at_unix_secs ASC, group_id ASC, usage_id ASC
             absorb_dashboard_summary(&mut summary, &raw);
         }
         if let Some((aggregate_start, aggregate_end)) = split.aggregate {
-            let aggregate = self
+            let aggregate = match self
                 .summarize_dashboard_usage_from_daily_aggregates(
                     aggregate_start,
                     aggregate_end,
                     query.user_id.as_deref(),
                 )
-                .await?;
+                .await
+            {
+                Ok(value) => value,
+                Err(err) if dashboard_should_fallback_to_raw_on_aggregate_error(&err) => {
+                    return self
+                        .summarize_dashboard_usage_raw(
+                            query.created_from_unix_secs,
+                            query.created_until_unix_secs,
+                            query.user_id.as_deref(),
+                        )
+                        .await;
+                }
+                Err(err) => return Err(err),
+            };
             absorb_dashboard_summary(&mut summary, &aggregate);
         }
         if let Some((raw_start, raw_end)) = split.raw_trailing {
@@ -4260,7 +4361,14 @@ ORDER BY date ASC, total_cost_usd DESC, "usage".model ASC, "usage".provider_name
             return self.list_dashboard_daily_breakdown_raw(query).await;
         }
 
-        let Some(cutoff_utc) = self.read_stats_daily_cutoff_date().await? else {
+        let cutoff_utc = match self.read_stats_daily_cutoff_date().await {
+            Ok(value) => value,
+            Err(err) if dashboard_should_fallback_to_raw_on_aggregate_error(&err) => {
+                return self.list_dashboard_daily_breakdown_raw(query).await;
+            }
+            Err(err) => return Err(err),
+        };
+        let Some(cutoff_utc) = cutoff_utc else {
             return self.list_dashboard_daily_breakdown_raw(query).await;
         };
         let start_utc = dashboard_unix_secs_to_utc(query.created_from_unix_secs);
@@ -4283,14 +4391,21 @@ ORDER BY date ASC, total_cost_usd DESC, "usage".model ASC, "usage".provider_name
             );
         }
         if let Some((aggregate_start, aggregate_end)) = split.aggregate {
-            items.extend(
-                self.list_dashboard_daily_breakdown_from_daily_aggregates(
+            let aggregate_rows = match self
+                .list_dashboard_daily_breakdown_from_daily_aggregates(
                     aggregate_start,
                     aggregate_end,
                     query.user_id.as_deref(),
                 )
-                .await?,
-            );
+                .await
+            {
+                Ok(value) => value,
+                Err(err) if dashboard_should_fallback_to_raw_on_aggregate_error(&err) => {
+                    return self.list_dashboard_daily_breakdown_raw(query).await;
+                }
+                Err(err) => return Err(err),
+            };
+            items.extend(aggregate_rows);
         }
         if let Some((raw_start, raw_end)) = split.raw_trailing {
             items.extend(
@@ -6690,10 +6805,10 @@ ORDER BY request_count DESC, group_key ASC
     ) -> Result<Vec<StoredUsageAuditAggregation>, DataLayerError> {
         let fragments = usage_audit_aggregation_sql_fragments(query.group_by);
         let provider_extra_where =
-            if matches!(query.group_by, UsageAuditAggregationGroupBy::Provider) {
+            if matches!(query.group_by, UsageAuditAggregationGroupBy::Provider)
+                || query.exclude_reserved_provider_labels
+            {
                 USAGE_PROVIDER_IDENTITY_FILTER_SQL
-            } else if query.exclude_reserved_provider_labels {
-                USAGE_RESERVED_PROVIDER_LABELS_FILTER_SQL
             } else {
                 ""
             };
@@ -6705,6 +6820,7 @@ WITH filtered_usage AS (
     "usage".user_id AS user_id,
     {provider_group_key_expr} AS provider_group_key,
     {provider_display_name_expr} AS provider_display_name,
+    {provider_identity_source_expr} AS provider_identity_source,
     COALESCE("usage".api_format, 'unknown') AS api_format_group_key,
     GREATEST(COALESCE("usage".input_tokens, 0), 0) AS input_tokens,
     GREATEST(COALESCE("usage".output_tokens, 0), 0) AS output_tokens,
@@ -6838,6 +6954,7 @@ LIMIT $3
             provider_identity_join = fragments.provider_identity_join,
             provider_group_key_expr = fragments.provider_group_key_expr,
             provider_display_name_expr = fragments.provider_display_name_expr,
+            provider_identity_source_expr = USAGE_PROVIDER_IDENTITY_SOURCE_SQL,
             group_key_expr = fragments.group_key_expr,
             display_name_expr = fragments.display_name_expr,
             secondary_name_expr = fragments.secondary_name_expr,
@@ -8397,17 +8514,44 @@ ORDER BY "usage".user_id ASC
                 .iter()
                 .map(|row| row.request_id.clone())
                 .collect::<Vec<_>>();
-            let completed_request_ids = if request_ids.is_empty() {
-                Vec::new()
+            let (completed_request_ids, failed_candidate_info) = if request_ids.is_empty() {
+                (Vec::new(), std::collections::HashMap::new())
             } else {
-                sqlx::query(SELECT_COMPLETED_PENDING_REQUEST_IDS_SQL)
-                    .bind(request_ids)
+                let completed = sqlx::query(SELECT_COMPLETED_PENDING_REQUEST_IDS_SQL)
+                    .bind(&request_ids)
                     .fetch_all(&mut *tx)
                     .await
                     .map_postgres_err()?
                     .iter()
                     .map(|row| row.try_get("request_id").map_postgres_err())
-                    .collect::<Result<Vec<String>, DataLayerError>>()?
+                    .collect::<Result<Vec<String>, DataLayerError>>()?;
+                let failed_rows =
+                    sqlx::query(SELECT_LATEST_FAILED_CANDIDATE_FOR_STALE_REQUESTS_SQL)
+                        .bind(&request_ids)
+                        .fetch_all(&mut *tx)
+                        .await
+                        .map_postgres_err()?;
+                let mut failed_map = std::collections::HashMap::new();
+                for row in failed_rows {
+                    let request_id: String = row.try_get("request_id").map_postgres_err()?;
+                    let status_code = row
+                        .try_get::<Option<i32>, _>("status_code")
+                        .map_postgres_err()?
+                        .and_then(|value| u16::try_from(value).ok());
+                    let error_message = row
+                        .try_get::<Option<String>, _>("error_message")
+                        .map_postgres_err()?
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty());
+                    failed_map.insert(
+                        request_id,
+                        FailedCandidateCleanupInfo {
+                            status_code,
+                            error_message,
+                        },
+                    );
+                }
+                (completed, failed_map)
             };
 
             for row in stale_rows {
@@ -8427,12 +8571,16 @@ ORDER BY "usage".user_id ASC
                     continue;
                 }
 
-                let error_message = stale_pending_error_message(&row.status, timeout_minutes);
+                let candidate_info = failed_candidate_info.get(&row.request_id);
+                let (status_code, error_message) =
+                    resolve_stale_pending_failure(candidate_info, &row.status, timeout_minutes);
+                let status_code_i32 = i32::from(status_code);
                 if row.billing_status == "pending" {
                     sqlx::query(UPDATE_FAILED_VOID_STALE_USAGE_SQL)
                         .bind(&row.request_id)
                         .bind(&error_message)
                         .bind(now)
+                        .bind(status_code_i32)
                         .execute(&mut *tx)
                         .await
                         .map_postgres_err()?;
@@ -8440,6 +8588,7 @@ ORDER BY "usage".user_id ASC
                     sqlx::query(UPDATE_FAILED_STALE_USAGE_SQL)
                         .bind(&row.request_id)
                         .bind(&error_message)
+                        .bind(status_code_i32)
                         .execute(&mut *tx)
                         .await
                         .map_postgres_err()?;
@@ -8900,8 +9049,29 @@ struct StalePendingUsageRow {
     billing_status: String,
 }
 
+struct FailedCandidateCleanupInfo {
+    status_code: Option<u16>,
+    error_message: Option<String>,
+}
+
 fn stale_pending_error_message(status: &str, timeout_minutes: u64) -> String {
     format!("请求超时: 状态 '{status}' 超过 {timeout_minutes} 分钟未完成")
+}
+
+fn resolve_stale_pending_failure(
+    candidate: Option<&FailedCandidateCleanupInfo>,
+    status: &str,
+    timeout_minutes: u64,
+) -> (u16, String) {
+    match candidate {
+        Some(info) => (
+            info.status_code.unwrap_or(502),
+            info.error_message
+                .clone()
+                .unwrap_or_else(|| stale_pending_error_message(status, timeout_minutes)),
+        ),
+        None => (504, stale_pending_error_message(status, timeout_minutes)),
+    }
 }
 
 async fn find_usage_by_request_id_in_tx(

@@ -39,10 +39,13 @@ use crate::ai_serving::transport::kiro::{
 use crate::ai_serving::transport::{
     build_grok_browser_headers, build_grok_upstream_url, build_kiro_cross_format_upstream_url,
     build_openai_image_headers, build_openai_image_upstream_url,
-    build_standard_provider_request_headers,
-    local_standard_transport_unsupported_reason_with_network,
+    build_standard_provider_request_headers, build_windsurf_cascade_headers,
+    build_windsurf_cascade_request_body, build_windsurf_cascade_upstream_url,
+    is_windsurf_provider_transport, local_standard_transport_unsupported_reason_with_network,
+    local_windsurf_request_transport_unsupported_reason_with_network,
     openai_image_transport_unsupported_reason, resolve_openai_image_auth, GrokHeaderInput,
     ProviderOpenAiImageHeadersInput, StandardProviderRequestHeadersInput, GROK_CHAT_PATH,
+    WINDSURF_ENVELOPE_NAME,
 };
 use crate::ai_serving::{
     ai_local_execution_contract_for_formats, request_conversion_direct_auth,
@@ -114,7 +117,7 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
         .trim()
         .eq_ignore_ascii_case("grok");
 
-    if provider_api_format.eq_ignore_ascii_case("openai:image") {
+    if !is_grok && provider_api_format.eq_ignore_ascii_case("openai:image") {
         return resolve_openai_responses_to_openai_image_payload_parts(
             state,
             parts,
@@ -128,6 +131,8 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
         )
         .await;
     }
+    let is_windsurf_cascade =
+        provider_api_format == "openai:chat" && is_windsurf_provider_transport(transport);
 
     let same_format = api_format_alias_matches(provider_api_format, &client_api_format);
     let conversion_kind = request_conversion_kind(spec_metadata.api_format, provider_api_format);
@@ -139,6 +144,8 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
         local_kiro_request_transport_unsupported_reason_with_network(transport)
     } else if same_format {
         local_standard_transport_unsupported_reason_with_network(transport, provider_api_format)
+    } else if is_windsurf_cascade {
+        local_windsurf_request_transport_unsupported_reason_with_network(transport)
     } else {
         match conversion_kind {
             Some(_) if is_antigravity && provider_api_format == "gemini:generate_content" => None,
@@ -302,7 +309,7 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
                 upstream_is_stream,
                 force_body_stream_field,
                 transport.provider.provider_type.as_str(),
-                if is_kiro_claude_cli {
+                if is_kiro_claude_cli || is_windsurf_cascade {
                     None
                 } else {
                     transport.endpoint.body_rules.as_ref()
@@ -319,7 +326,7 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
                 force_body_stream_field,
                 transport.provider.provider_type.as_str(),
                 provider_api_format,
-                if is_kiro_claude_cli {
+                if is_kiro_claude_cli || is_windsurf_cascade {
                     None
                 } else {
                     transport.endpoint.body_rules.as_ref()
@@ -444,6 +451,27 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
             upstream_is_stream,
             needs_bidirectional_conversion,
             kiro_auth,
+        )
+        .await;
+    }
+    if is_windsurf_cascade {
+        return build_windsurf_openai_responses_payload_parts(
+            state,
+            parts,
+            trace_id,
+            body_json,
+            input,
+            eligible,
+            candidate_index,
+            candidate_id,
+            spec_metadata.api_format,
+            transport,
+            provider_api_format,
+            mapped_model,
+            auth_header,
+            auth_value,
+            provider_request_body,
+            upstream_is_stream,
         )
         .await;
     }
@@ -619,6 +647,130 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn build_windsurf_openai_responses_payload_parts(
+    state: &AppState,
+    parts: &http::request::Parts,
+    trace_id: &str,
+    original_body_json: &serde_json::Value,
+    input: &LocalOpenAiResponsesDecisionInput,
+    eligible: &EligibleLocalExecutionCandidate,
+    candidate_index: u32,
+    candidate_id: &str,
+    client_api_format: &str,
+    transport: &Arc<GatewayProviderTransportSnapshot>,
+    provider_api_format: &str,
+    mapped_model: String,
+    auth_header: String,
+    auth_value: String,
+    openai_chat_request_body: Value,
+    upstream_is_stream: bool,
+) -> Option<LocalOpenAiResponsesCandidatePayloadParts> {
+    let candidate = &eligible.candidate;
+    let effective_headers = input.effective_headers(&parts.headers);
+    let provider_request_body = match build_windsurf_cascade_request_body(
+        &openai_chat_request_body,
+        &mapped_model,
+        &auth_value,
+        transport.endpoint.body_rules.as_ref(),
+        Some(effective_headers),
+        upstream_is_stream,
+    ) {
+        Some(body) => body,
+        None => {
+            mark_skipped_local_openai_responses_candidate_with_failure_diagnostic(
+                state,
+                input,
+                trace_id,
+                candidate,
+                candidate_index,
+                candidate_id,
+                "provider_request_body_build_failed",
+                CandidateFailureDiagnostic::envelope_build_failed(
+                    client_api_format,
+                    provider_api_format,
+                    "openai_responses_windsurf_cascade",
+                ),
+            )
+            .await;
+            return None;
+        }
+    };
+    let upstream_url = match build_windsurf_cascade_upstream_url(
+        transport.endpoint.base_url.as_str(),
+        parts.uri.query(),
+    ) {
+        Some(url) => url,
+        None => {
+            mark_skipped_local_openai_responses_candidate_with_failure_diagnostic(
+                state,
+                input,
+                trace_id,
+                candidate,
+                candidate_index,
+                candidate_id,
+                "upstream_url_missing",
+                CandidateFailureDiagnostic::upstream_url_missing(
+                    client_api_format,
+                    provider_api_format,
+                    "openai_responses_windsurf_url",
+                ),
+            )
+            .await;
+            return None;
+        }
+    };
+    let provider_request_headers = match build_windsurf_cascade_headers(
+        effective_headers,
+        &provider_request_body,
+        original_body_json,
+        transport.endpoint.header_rules.as_ref(),
+        &auth_header,
+        &auth_value,
+        upstream_is_stream,
+    ) {
+        Some(headers) => headers,
+        None => {
+            mark_skipped_local_openai_responses_candidate_with_failure_diagnostic(
+                state,
+                input,
+                trace_id,
+                candidate,
+                candidate_index,
+                candidate_id,
+                "transport_header_rules_apply_failed",
+                CandidateFailureDiagnostic::header_rules_apply_failed(
+                    client_api_format,
+                    provider_api_format,
+                    "openai_responses_windsurf_headers",
+                ),
+            )
+            .await;
+            return None;
+        }
+    };
+    let (execution_strategy, conversion_mode) =
+        ai_local_execution_contract_for_formats(client_api_format, provider_api_format);
+
+    Some(LocalOpenAiResponsesCandidatePayloadParts {
+        auth_header,
+        auth_value,
+        mapped_model,
+        provider_api_format: provider_api_format.to_string(),
+        provider_request_body,
+        provider_request_headers,
+        upstream_url,
+        execution_strategy,
+        conversion_mode,
+        is_antigravity: false,
+        envelope_name: Some(WINDSURF_ENVELOPE_NAME),
+        upstream_is_stream,
+        transport: Arc::clone(transport),
+        transport_profile: None,
+        image_request_summary: None,
+    })
+}
+
 fn api_format_alias_matches(left: &str, right: &str) -> bool {
     crate::ai_serving::api_format_alias_matches(left, right)
 }
@@ -739,7 +891,11 @@ async fn resolve_openai_responses_to_openai_image_payload_parts(
     let upstream_url = if is_chatgpt_web {
         chatgpt_web_image_internal_url(&transport.endpoint.base_url)
     } else {
-        build_openai_image_upstream_url(transport, parts.uri.query())
+        build_openai_image_upstream_url(
+            transport,
+            Some("/v1/images/generations"),
+            parts.uri.query(),
+        )
     };
     let Some(mut provider_request_headers) =
         build_openai_image_headers(ProviderOpenAiImageHeadersInput {

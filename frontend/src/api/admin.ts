@@ -1,11 +1,15 @@
 import apiClient from './client'
 import type { ModelTestCapabilities } from './endpoints/types'
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
 import { cachedRequest, buildCacheKey } from '@/utils/cache'
 import type { BillingSummary } from './auth'
 import type { ApiKeyInstallSession, InstallSessionTargetSystem, InstallTargetCli } from './me'
 
 const SYSTEM_DATA_IMPORT_TIMEOUT_MS = 10 * 60 * 1000
+
+export interface SystemDataImportOptions {
+  onUploadProgress?: AxiosRequestConfig['onUploadProgress']
+}
 
 function extractConflictPayload(error: unknown): ManualUsageCleanupConflict | null {
   if (!axios.isAxiosError(error) || error.response?.status !== 409) {
@@ -367,9 +371,77 @@ export interface CheckUpdateResponse {
   current_version: string
   latest_version: string | null
   has_update: boolean
+  updatable: boolean
+  update_blocker: string | null
   release_url: string | null
   release_notes: string | null
   published_at: string | null
+  error: string | null
+}
+
+export interface SystemUpdateCapabilityResponse {
+  supported: boolean
+  build_type: string
+  update_strategy?: 'self' | 'docker' | 'manual' | string
+  strategy?: 'self' | 'docker' | 'manual' | string
+  deployment_topology?: 'single-node' | 'multi-node' | string
+  topology?: 'single-node' | 'multi-node' | string
+  enabled: boolean
+  rollback_available: boolean
+  task_status: string
+  task_error: string | null
+  install_root?: string
+  base_dir?: string
+  data_dir?: string
+  logs_dir?: string
+  docker_update_command?: string | null
+  message: string
+}
+
+export interface UpdateTaskStatusResponse {
+  phase: string
+  error: string | null
+  output: string | null
+  progress_label?: string | null
+  downloaded_bytes?: number | null
+  total_bytes?: number | null
+  progress_percent?: number | null
+}
+
+export interface UpdateHistoryEntry {
+  timestamp: string
+  operation: string
+  success: boolean
+  error: string | null
+  output_tail: string | null
+}
+
+export interface UpdateHistoryResponse {
+  entries: UpdateHistoryEntry[]
+}
+
+export interface ApplySystemUpdateResponse {
+  message: string
+  started: boolean
+  need_restart: boolean
+}
+
+export interface ReleaseEntry {
+  version: string
+  release_url: string | null
+  release_notes: string | null
+  published_at: string | null
+  tarball_url?: string | null
+  sha256sums_url?: string | null
+  is_current: boolean
+  is_newer: boolean
+  updatable: boolean
+  update_blocker: string | null
+}
+
+export interface ReleasesListResponse {
+  current_version: string
+  releases: ReleaseEntry[]
   error: string | null
 }
 
@@ -859,11 +931,11 @@ export const adminApi = {
   },
 
   // 导入配置
-  async importConfig(data: ConfigImportRequest): Promise<ConfigImportResponse> {
+  async importConfig(data: ConfigImportRequest, options: SystemDataImportOptions = {}): Promise<ConfigImportResponse> {
     const response = await apiClient.post<ConfigImportResponse>(
       '/api/admin/system/config/import',
       data,
-      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS }
+      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS, ...options }
     )
     return response.data
   },
@@ -875,27 +947,27 @@ export const adminApi = {
   },
 
   // 导入用户数据
-  async importUsers(data: UsersImportRequest): Promise<UsersImportResponse> {
+  async importUsers(data: UsersImportRequest, options: SystemDataImportOptions = {}): Promise<UsersImportResponse> {
     const response = await apiClient.post<UsersImportResponse>(
       '/api/admin/system/users/import',
       data,
-      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS }
+      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS, ...options }
     )
     return response.data
   },
 
-  // 导出聚合数据（配置数据 + 用户数据）
+  // 导出完整备份（配置数据 + 用户数据）
   async exportAggregateData(): Promise<AggregateExportData> {
     const response = await apiClient.get<AggregateExportData>('/api/admin/system/data/export')
     return response.data
   },
 
-  // 导入聚合数据（配置数据 + 用户数据）
-  async importAggregateData(data: AggregateImportRequest): Promise<AggregateImportResponse> {
+  // 导入完整备份（配置数据 + 用户数据）
+  async importAggregateData(data: AggregateImportRequest, options: SystemDataImportOptions = {}): Promise<AggregateImportResponse> {
     const response = await apiClient.post<AggregateImportResponse>(
       '/api/admin/system/data/import',
       data,
-      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS }
+      { timeout: SYSTEM_DATA_IMPORT_TIMEOUT_MS, ...options }
     )
     return response.data
   },
@@ -915,6 +987,23 @@ export const adminApi = {
       '/api/admin/system/smtp/test',
       config
     )
+    return response.data
+  },
+
+  async testImportantNotification(options: 'all' | 'email' | 'server_chan' | 'bark' | {
+    channel?: 'all' | 'email' | 'server_chan' | 'bark'
+    item_key?: string
+  } = 'all'): Promise<{
+    success: boolean
+    message: string
+    channels: Array<{ channel: string; success: boolean; message: string }>
+  }> {
+    const payload = typeof options === 'string' ? { channel: options } : options
+    const response = await apiClient.post<{
+      success: boolean
+      message: string
+      channels: Array<{ channel: string; success: boolean; message: string }>
+    }>('/api/admin/system/important-notification/test', payload)
     return response.data
   },
 
@@ -974,9 +1063,67 @@ export const adminApi = {
   },
 
   // 检查系统更新
-  async checkUpdate(): Promise<CheckUpdateResponse> {
+  async checkUpdate(force = false): Promise<CheckUpdateResponse> {
     const response = await apiClient.get<CheckUpdateResponse>(
-      '/api/admin/system/check-update'
+      '/api/admin/system/check-update',
+      force ? { params: { force: 'true' } } : undefined
+    )
+    return response.data
+  },
+
+  async getSystemReleases(force = false): Promise<ReleasesListResponse> {
+    const response = await apiClient.get<ReleasesListResponse>(
+      '/api/admin/system/releases',
+      force ? { params: { force: 'true' } } : undefined
+    )
+    return response.data
+  },
+
+  // 获取一键更新能力
+  async getSystemUpdateCapability(): Promise<SystemUpdateCapabilityResponse> {
+    const response = await apiClient.get<SystemUpdateCapabilityResponse>(
+      '/api/admin/system/update-capability'
+    )
+    return response.data
+  },
+
+  // 准备系统一键更新（下载并校验 release 包）
+  async prepareSystemUpdate(version?: string | null): Promise<ApplySystemUpdateResponse> {
+    const response = await apiClient.post<ApplySystemUpdateResponse>(
+      '/api/admin/system/prepare-update',
+      version ? { version } : undefined
+    )
+    return response.data
+  },
+
+  // 触发系统一键重启（切换 release 并退出等待进程管理器拉起）
+  async applySystemUpdate(version?: string | null): Promise<ApplySystemUpdateResponse> {
+    const response = await apiClient.post<ApplySystemUpdateResponse>(
+      '/api/admin/system/apply-update',
+      version ? { version } : undefined
+    )
+    return response.data
+  },
+
+  // 回滚到上一个版本
+  async rollbackSystemUpdate(): Promise<ApplySystemUpdateResponse> {
+    const response = await apiClient.post<ApplySystemUpdateResponse>(
+      '/api/admin/system/rollback'
+    )
+    return response.data
+  },
+
+  // 查询更新任务状态
+  async getUpdateStatus(): Promise<UpdateTaskStatusResponse> {
+    const response = await apiClient.get<UpdateTaskStatusResponse>(
+      '/api/admin/system/update-status'
+    )
+    return response.data
+  },
+
+  async getUpdateHistory(): Promise<UpdateHistoryResponse> {
+    const response = await apiClient.get<UpdateHistoryResponse>(
+      '/api/admin/system/update-history'
     )
     return response.data
   },
