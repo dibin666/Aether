@@ -943,9 +943,20 @@ pub fn build_stream_terminal_usage_seed(
         context_seed.client_contract.as_str(),
         context_seed.provider_contract.as_str(),
     );
-    let observed_stream_finish = observed_stream_finish.or_else(|| {
-        captured_terminal_state.map(|state| state != StreamCapturedTerminalState::Missing)
-    });
+    let empty_required_capture_missing_terminal = stream_empty_required_captures_missing_terminal(
+        report_kind.as_str(),
+        context_seed.client_contract.as_str(),
+        context_seed.provider_contract.as_str(),
+        provider_response_full.as_ref(),
+        provider_response_body_state,
+        client_response.as_ref(),
+        client_response_body_state,
+    );
+    let observed_stream_finish = observed_stream_finish
+        .or_else(|| {
+            captured_terminal_state.map(|state| state != StreamCapturedTerminalState::Missing)
+        })
+        .or_else(|| empty_required_capture_missing_terminal.then_some(false));
     let missing_observed_finish = matches!(observed_stream_finish, Some(false))
         && (requires_observed_terminal_event
             || !standardized_usage
@@ -1137,7 +1148,10 @@ fn captured_stream_terminal_state_from_body(
 fn stream_body_capture_can_prove_missing_terminal(
     body_state: Option<UsageBodyCaptureState>,
 ) -> bool {
-    matches!(body_state, None | Some(UsageBodyCaptureState::Inline))
+    matches!(
+        body_state,
+        None | Some(UsageBodyCaptureState::Inline) | Some(UsageBodyCaptureState::None)
+    )
 }
 
 fn combine_stream_capture_terminal_states(
@@ -1159,6 +1173,48 @@ fn combine_stream_capture_terminal_states(
         }
         (None, None) => None,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stream_empty_required_captures_missing_terminal(
+    report_kind: &str,
+    client_contract: &str,
+    provider_contract: &str,
+    provider_response: Option<&Value>,
+    provider_response_body_state: Option<UsageBodyCaptureState>,
+    client_response: Option<&Value>,
+    client_response_body_state: Option<UsageBodyCaptureState>,
+) -> bool {
+    let report_kind_requires_terminal_event =
+        stream_report_kind_requires_observed_terminal_event(report_kind);
+    let provider_contract_requires_terminal_event =
+        is_openai_responses_family_format_alias(provider_contract);
+    let client_contract_requires_terminal_event =
+        is_openai_responses_family_format_alias(client_contract);
+    let fallback_requires_terminal_event = report_kind_requires_terminal_event
+        && !provider_contract_requires_terminal_event
+        && !client_contract_requires_terminal_event;
+    let provider_requires_terminal =
+        provider_contract_requires_terminal_event || fallback_requires_terminal_event;
+    let client_requires_terminal =
+        client_contract_requires_terminal_event || fallback_requires_terminal_event;
+
+    let mut has_required_capture = false;
+    let mut all_required_captures_empty = true;
+
+    if provider_requires_terminal {
+        has_required_capture = true;
+        all_required_captures_empty &= provider_response.is_none()
+            && provider_response_body_state == Some(UsageBodyCaptureState::None);
+    }
+
+    if client_requires_terminal {
+        has_required_capture = true;
+        all_required_captures_empty &= client_response.is_none()
+            && client_response_body_state == Some(UsageBodyCaptureState::None);
+    }
+
+    has_required_capture && all_required_captures_empty
 }
 
 fn stream_report_kind_requires_observed_terminal_event(report_kind: &str) -> bool {
@@ -4071,6 +4127,80 @@ mod tests {
         );
         assert_eq!(event.data.input_tokens, None);
         assert_eq!(event.data.output_tokens, None);
+    }
+
+    #[test]
+    fn stream_terminal_usage_marks_empty_openai_responses_capture_as_missing_terminal() {
+        let plan = ExecutionPlan {
+            request_id: "req-stream-empty-capture-1".to_string(),
+            candidate_id: Some("cand-stream-empty-capture-1".to_string()),
+            provider_name: Some("OpenAI".to_string()),
+            provider_id: "provider-1".to_string(),
+            endpoint_id: "endpoint-1".to_string(),
+            key_id: "key-1".to_string(),
+            method: "POST".to_string(),
+            url: "https://example.com/v1/responses".to_string(),
+            headers: BTreeMap::new(),
+            content_type: None,
+            content_encoding: None,
+            body: RequestBody {
+                json_body: None,
+                body_bytes_b64: None,
+                body_ref: None,
+            },
+            stream: true,
+            client_api_format: "openai:responses".to_string(),
+            provider_api_format: "openai:responses".to_string(),
+            model_name: Some("gpt-5.5".to_string()),
+            proxy: None,
+            transport_profile: None,
+            timeouts: None,
+        };
+        let payload = GatewayStreamReportRequest {
+            trace_id: "trace-stream-empty-capture-1".to_string(),
+            report_kind: "openai_responses_stream_success".to_string(),
+            report_context: Some(json!({
+                "client_api_format": "openai:responses",
+                "provider_api_format": "openai:responses"
+            })),
+            status_code: 200,
+            headers: BTreeMap::new(),
+            provider_body_base64: None,
+            provider_body_state: Some(UsageBodyCaptureState::None),
+            client_body_base64: None,
+            client_body_state: Some(UsageBodyCaptureState::None),
+            terminal_summary: None,
+            telemetry: None,
+        };
+
+        let event =
+            build_stream_terminal_usage_event(&plan, payload.report_context.as_ref(), &payload)
+                .expect("usage event should build");
+
+        assert_eq!(event.event_type, UsageEventType::Failed);
+        assert_eq!(event.data.status_code, Some(200));
+        assert_eq!(
+            event.data.error_category.as_deref(),
+            Some("stream_missing_terminal_event")
+        );
+        assert_eq!(
+            event.data.error_message.as_deref(),
+            Some("execution runtime stream ended before provider terminal event")
+        );
+        assert_eq!(
+            event
+                .data
+                .client_response_body
+                .as_ref()
+                .and_then(|body| body.get("error"))
+                .and_then(|error| error.get("type"))
+                .and_then(Value::as_str),
+            Some("stream_missing_terminal_event")
+        );
+        assert_eq!(
+            event.data.client_response_body_state,
+            Some(UsageBodyCaptureState::Inline)
+        );
     }
 
     #[test]

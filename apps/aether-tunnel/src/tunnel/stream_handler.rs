@@ -597,7 +597,6 @@ fn remaining_timeout(deadline: Instant) -> Option<Duration> {
 fn resolve_request_timeouts(meta: &RequestMeta) -> RequestTimeouts {
     let first_byte_timeout = if meta.stream {
         meta.stream_first_byte_timeout_ms
-            .or(meta.request_timeout_ms)
             .map(timeout_duration_from_ms)
             .unwrap_or_else(|| timeout_duration_from_legacy_secs(meta.timeout))
     } else {
@@ -1917,6 +1916,20 @@ mod tests {
         let timeouts = resolve_request_timeouts(&meta);
 
         assert_eq!(timeouts.first_byte_timeout, Duration::from_millis(12_345));
+        assert!(timeouts.response_body_timeout.is_none());
+    }
+
+    #[test]
+    fn stream_request_timeouts_ignore_request_timeout_when_first_byte_missing() {
+        let mut meta = sample_request_meta();
+        meta.stream = true;
+        meta.request_timeout_ms = Some(90_000);
+        meta.stream_first_byte_timeout_ms = None;
+        meta.timeout = 7;
+
+        let timeouts = resolve_request_timeouts(&meta);
+
+        assert_eq!(timeouts.first_byte_timeout, Duration::from_secs(7));
         assert!(timeouts.response_body_timeout.is_none());
     }
 

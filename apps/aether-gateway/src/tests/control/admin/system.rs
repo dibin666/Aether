@@ -735,11 +735,11 @@ async fn gateway_handles_admin_system_config_export_locally_with_trusted_admin_p
     ));
     let global_model_repository = Arc::new(
         InMemoryGlobalModelReadRepository::seed(Vec::<StoredPublicGlobalModel>::new())
-            .with_admin_global_models(vec![sample_admin_global_model(
-                "global-gpt-5",
-                "gpt-5",
-                "GPT 5",
-            )])
+            .with_admin_global_models(vec![{
+                let mut model = sample_admin_global_model("global-gpt-5", "gpt-5", "GPT 5");
+                model.usage_count = 7;
+                model
+            }])
             .with_admin_provider_models(vec![sample_admin_provider_model(
                 "model-gpt-5",
                 &provider_id,
@@ -802,9 +802,10 @@ async fn gateway_handles_admin_system_config_export_locally_with_trusted_admin_p
 
     assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
-    assert_eq!(payload["version"], "2.2");
+    assert_eq!(payload["version"], "2.3");
     assert!(payload["exported_at"].as_str().is_some());
     assert_eq!(payload["global_models"][0]["name"], "gpt-5");
+    assert_eq!(payload["global_models"][0]["usage_count"], json!(7));
     assert_eq!(payload["providers"][0]["name"], "openai");
     assert_eq!(
         payload["providers"][0]["config"]["provider_ops"]["connector"]["credentials"]
@@ -1025,7 +1026,7 @@ async fn gateway_handles_admin_system_users_export_locally_with_trusted_admin_pr
 
     assert_eq!(response.status(), StatusCode::OK);
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
-    assert_eq!(payload["version"], "1.4");
+    assert_eq!(payload["version"], "1.5");
     assert!(payload["exported_at"].as_str().is_some());
     assert_eq!(payload["user_groups"][0]["name"], "Restricted GPT");
     assert!(payload["user_groups"][0].get("priority").is_none());
@@ -1043,6 +1044,9 @@ async fn gateway_handles_admin_system_users_export_locally_with_trusted_admin_pr
         payload["users"][0]["group_names"],
         json!(["Restricted GPT"])
     );
+    assert_eq!(payload["users"][0]["id"], json!("user-1"));
+    assert_eq!(payload["users"][0]["request_count"], json!(0));
+    assert_eq!(payload["users"][0]["total_tokens"], json!(0));
     assert_eq!(payload["users"][0]["wallet"]["balance"], json!(12.5));
     assert_eq!(
         payload["users"][0]["wallet"]["recharge_balance"],
@@ -1064,6 +1068,10 @@ async fn gateway_handles_admin_system_users_export_locally_with_trusted_admin_pr
         json!(false)
     );
     assert_eq!(
+        payload["users"][0]["api_keys"][0]["api_key_id"],
+        json!("key-user-1")
+    );
+    assert_eq!(
         payload["users"][0]["api_keys"][0]["total_tokens"],
         json!(420)
     );
@@ -1071,12 +1079,22 @@ async fn gateway_handles_admin_system_users_export_locally_with_trusted_admin_pr
         payload["standalone_keys"][0]["key"],
         json!("ak-standalone-live-1")
     );
+    assert_eq!(
+        payload["standalone_keys"][0]["api_key_id"],
+        json!("key-standalone-1")
+    );
     assert_eq!(payload["standalone_keys"][0]["total_tokens"], json!(84));
     assert_eq!(
         payload["standalone_keys"][0]["wallet"]["unlimited"],
         json!(true)
     );
     assert_eq!(payload["standalone_keys"][0].get("is_standalone"), None,);
+    assert_eq!(payload["usage_aggregates"]["stats_daily"], json!([]));
+    assert_eq!(payload["usage_aggregates"]["stats_user_daily"], json!([]));
+    assert_eq!(
+        payload["usage_aggregates"]["stats_daily_api_key"],
+        json!([])
+    );
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();

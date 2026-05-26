@@ -232,6 +232,27 @@ fn provider_query_request_body_model_uses_non_empty_string_only() {
 }
 
 #[test]
+fn provider_query_model_test_extracts_multiple_selected_key_ids() {
+    let payload = json!({
+        "api_key_ids": [" key-b ", "", "key-a", "key-b"],
+        "api_key_id": "key-c"
+    });
+
+    let ids = provider_query_extract_api_key_ids(&payload)
+        .expect("non-empty key selection should be extracted")
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    assert_eq!(ids, vec!["key-a", "key-b", "key-c"]);
+}
+
+#[test]
+fn provider_query_model_test_empty_selected_key_ids_keep_default_selection() {
+    assert!(provider_query_extract_api_key_ids(&json!({})).is_none());
+    assert!(provider_query_extract_api_key_ids(&json!({ "api_key_ids": [] })).is_none());
+}
+
+#[test]
 fn provider_query_standard_test_resolves_codex_responses_upstream_streaming() {
     assert!(provider_query_resolve_standard_test_upstream_is_stream(
         None,

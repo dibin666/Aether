@@ -2874,15 +2874,10 @@ async fn gateway_completes_admin_provider_oauth_key_locally_with_trusted_admin_p
     assert_eq!(payload["has_refresh_token"], true);
     assert_eq!(payload["expires_at"], 4_102_444_800u64);
     assert_eq!(payload["email"], "alice@example.com");
-    assert_eq!(payload["account_state_recheck_attempted"], true);
-    let account_state_recheck_error = payload["account_state_recheck_error"]
-        .as_str()
-        .expect("account_state_recheck_error should be string when recheck is attempted");
-    assert!(
-        account_state_recheck_error == "wham/usage API 返回状态码 401"
-            || account_state_recheck_error == "wham/usage API 返回状态码 403"
-            || account_state_recheck_error.starts_with("wham/usage 请求执行失败:"),
-        "unexpected account_state_recheck_error: {account_state_recheck_error}"
+    assert_eq!(payload["account_state_recheck_attempted"], false);
+    assert_eq!(
+        payload["account_state_recheck_error"],
+        serde_json::Value::Null
     );
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
     assert_eq!(*token_hits.lock().expect("mutex should lock"), 1);

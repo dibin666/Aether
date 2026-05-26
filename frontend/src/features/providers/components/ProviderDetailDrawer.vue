@@ -1056,7 +1056,7 @@
                       </div>
                       <div>
                         <div class="flex items-center justify-between text-[10px] mb-0.5">
-                          <span class="text-muted-foreground">使用额度</span>
+                          <span class="text-muted-foreground">剩余额度</span>
                           <span :class="getQuotaRemainingClass(getChatGPTWebQuotaUsedPercent(key))">
                             {{ getChatGPTWebQuotaRemainingPercent(key).toFixed(1) }}%
                           </span>
@@ -1070,7 +1070,7 @@
                         </div>
                         <div class="flex items-center justify-between text-[9px] text-muted-foreground/70 mt-0.5">
                           <span>
-                            {{ formatChatGPTWebUsage(getChatGPTWebQuotaDisplay(key)?.image_quota_used) }} /
+                            {{ formatChatGPTWebUsage(getChatGPTWebQuotaDisplay(key)?.image_quota_remaining) }} /
                             {{ formatChatGPTWebUsage(getChatGPTWebQuotaDisplay(key)?.image_quota_total) }}
                           </span>
                           <span v-if="getChatGPTWebQuotaDisplay(key)?.image_quota_reset_at">
@@ -1323,7 +1323,7 @@
     :open="batchAssignDialogOpen"
     :provider-id="provider.id"
     :provider-name="provider.name"
-    @update:open="batchAssignDialogOpen = $event"
+    @update:open="handleBatchAssignDialogOpenUpdate"
     @changed="handleBatchAssignChanged"
   />
 
@@ -3089,6 +3089,10 @@ function handleEditModel(model: Model) {
 // 处理打开批量关联对话框
 function handleBatchAssign() {
   batchAssignDialogOpen.value = true
+}
+
+function handleBatchAssignDialogOpenUpdate(value: boolean) {
+  batchAssignDialogOpen.value = value
 }
 
 // 处理批量关联完成

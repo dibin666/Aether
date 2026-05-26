@@ -196,6 +196,7 @@ export interface TestModelRequest {
   provider_id: string
   model_name: string
   api_key_id?: string
+  api_key_ids?: string[]
   endpoint_id?: string
   message?: string
   api_format?: string
@@ -249,6 +250,7 @@ export interface TestModelFailoverRequest {
   mode: 'global' | 'direct' | 'pool'
   model_name: string
   failover_models?: string[]
+  api_key_ids?: string[]
   api_format?: string
   endpoint_id?: string
   message?: string

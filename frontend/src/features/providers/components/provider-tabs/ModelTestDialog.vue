@@ -99,6 +99,33 @@
         </div>
       </div>
 
+      <div
+        v-if="showKeySelector"
+        class="space-y-2"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <div class="text-sm font-medium text-foreground">
+            测试 Key
+          </div>
+          <div class="text-xs text-muted-foreground">
+            {{ keySelectionStatus }}
+          </div>
+        </div>
+        <MultiSelect
+          :model-value="selectedKeyIds"
+          :options="keyOptions"
+          :placeholder="keySelectorPlaceholder"
+          search-placeholder="搜索 Key"
+          empty-text="暂无可选 Key"
+          no-results-text="未找到匹配 Key"
+          trigger-class="h-9 min-h-9 rounded-md border-border/60 text-xs"
+          dropdown-min-width="24rem"
+          :search-threshold="0"
+          :disabled="keyOptionsLoading && keyOptions.length === 0"
+          @update:model-value="emit('update:selectedKeyIds', $event)"
+        />
+      </div>
+
       <div class="grid gap-4 lg:grid-cols-2 lg:items-start">
         <div class="space-y-2">
           <div class="flex items-center justify-between gap-3">
@@ -772,9 +799,11 @@ import {
 } from '@/components/ui'
 import Button from '@/components/ui/button.vue'
 import Textarea from '@/components/ui/textarea.vue'
+import MultiSelect from '@/components/common/MultiSelect.vue'
 import { formatApiFormat } from '@/api/endpoints/types/api-format'
 import type { TestAttemptDetail, TestCandidateSummary, TestModelFailoverResponse } from '@/api/endpoints/providers'
 import type { CandidateRecord, RequestTrace } from '@/api/requestTrace'
+import type { MultiSelectOption } from '@/components/common/MultiSelect.vue'
 import JsonContent from '@/features/usage/components/RequestDetailDrawer/JsonContent.vue'
 import { useClipboard } from '@/composables/useClipboard'
 import { useDarkMode } from '@/composables/useDarkMode'
@@ -797,6 +826,8 @@ type TestModelMappingOption = {
   priority?: number
 }
 
+type TestKeyOption = MultiSelectOption
+
 const props = defineProps<{
   open: boolean
   result: TestModelFailoverResponse | null
@@ -818,6 +849,9 @@ const props = defineProps<{
   modelMappingAvailable?: boolean
   modelMappingOptions?: TestModelMappingOption[]
   selectedModelMapping?: string | null
+  keyOptions?: TestKeyOption[]
+  selectedKeyIds?: string[]
+  keyOptionsLoading?: boolean
   startDisabled?: boolean
 }>()
 
@@ -827,15 +861,30 @@ const emit = defineEmits<{
   start: []
   selectEndpoint: [endpointId: string]
   selectModelMapping: [modelName: string]
+  'update:selectedKeyIds': [value: string[]]
   'update:requestHeadersDraft': [value: string]
   'update:requestBodyDraft': [value: string]
 }>()
 
 const endpoints = computed(() => props.endpoints ?? [])
 const modelMappingOptions = computed(() => props.modelMappingOptions ?? [])
+const keyOptions = computed(() => props.keyOptions ?? [])
+const selectedKeyIds = computed(() => props.selectedKeyIds ?? [])
+const keyOptionsLoading = computed(() => props.keyOptionsLoading === true)
 const modelMappingAvailable = computed(
   () => props.modelMappingAvailable === true && modelMappingOptions.value.length > 0,
 )
+const showKeySelector = computed(() => (
+  keyOptionsLoading.value || keyOptions.value.length > 0 || selectedKeyIds.value.length > 0
+))
+const keySelectorPlaceholder = computed(() => (
+  keyOptionsLoading.value && keyOptions.value.length === 0 ? '正在加载 Key' : '默认调度（不指定 Key）'
+))
+const keySelectionStatus = computed(() => {
+  if (selectedKeyIds.value.length > 0) return `已选 ${selectedKeyIds.value.length}`
+  if (keyOptionsLoading.value) return '加载中'
+  return '默认'
+})
 const requestedModelName = computed(() => props.requestedModelName?.trim() || '')
 const selectedModelMapping = computed(() => props.selectedModelMapping?.trim() || '')
 const selectedModelMappingValue = computed(() => (

@@ -65,6 +65,7 @@ pub(crate) const TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER: &str =
     "x-aether-admin-management-token-id";
 pub(crate) const TRUSTED_RATE_LIMIT_PREFLIGHT_HEADER: &str = "x-aether-rate-limit-preflight";
 pub(crate) const DEFAULT_USER_GROUP_CONFIG_KEY: &str = "default_user_group_id";
+pub(crate) const ANTIGRAVITY_BEARER_BRIDGE_CONFIG_KEY: &str = "module.antigravity.bearer_bridge";
 pub(crate) const BUILTIN_DEFAULT_USER_GROUP_ID: &str = "00000000-0000-0000-0000-000000000001";
 
 pub(crate) const FRONTDOOR_REPLACEABLE_ROUTE_GROUPS: &[&str] = &["frontdoor_compat_router"];
@@ -136,6 +137,14 @@ pub(crate) const RUST_FRONTDOOR_OWNED_ROUTE_PATTERNS: &[&str] = &[
     "/upload/v1beta/files",
     "/v1beta/files",
     "/v1beta/files/{path...}",
+    "/v1internal:loadCodeAssist",
+    "/v1internal:fetchAvailableModels",
+    "/v1internal:fetchUserInfo",
+    "/v1internal:fetchAdminControls",
+    "/v1internal:setUserSettings",
+    "/v1internal:listExperiments",
+    "/v1internal:recordCodeAssistMetrics",
+    "/v1internal:streamGenerateContent",
     "/",
     "/{*path}",
 ];

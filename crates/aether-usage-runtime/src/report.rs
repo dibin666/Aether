@@ -407,7 +407,10 @@ fn is_openai_responses_family_format_alias(value: &str) -> bool {
 fn stream_report_captured_terminal_state(
     payload: &GatewayStreamReportRequest,
 ) -> Option<StreamCapturedTerminalState> {
-    let provider_state = stream_report_provider_capture_requires_terminal_event(payload)
+    let provider_requires_terminal =
+        stream_report_provider_capture_requires_terminal_event(payload);
+    let client_requires_terminal = stream_report_client_capture_requires_terminal_event(payload);
+    let provider_state = provider_requires_terminal
         .then(|| {
             stream_capture_terminal_state_from_base64(
                 payload.provider_body_base64.as_deref(),
@@ -415,7 +418,7 @@ fn stream_report_captured_terminal_state(
             )
         })
         .flatten();
-    let client_state = stream_report_client_capture_requires_terminal_event(payload)
+    let client_state = client_requires_terminal
         .then(|| {
             stream_capture_terminal_state_from_base64(
                 payload.client_body_base64.as_deref(),
@@ -423,7 +426,37 @@ fn stream_report_captured_terminal_state(
             )
         })
         .flatten();
-    combine_stream_terminal_states(provider_state, client_state)
+    combine_stream_terminal_states(provider_state, client_state).or_else(|| {
+        stream_report_required_captures_are_empty(
+            payload,
+            provider_requires_terminal,
+            client_requires_terminal,
+        )
+        .then_some(StreamCapturedTerminalState::Missing)
+    })
+}
+
+fn stream_report_required_captures_are_empty(
+    payload: &GatewayStreamReportRequest,
+    provider_requires_terminal: bool,
+    client_requires_terminal: bool,
+) -> bool {
+    let mut has_required_capture = false;
+    let mut all_required_captures_empty = true;
+
+    if provider_requires_terminal {
+        has_required_capture = true;
+        all_required_captures_empty &= payload.provider_body_base64.is_none()
+            && payload.provider_body_state == Some(UsageBodyCaptureState::None);
+    }
+
+    if client_requires_terminal {
+        has_required_capture = true;
+        all_required_captures_empty &= payload.client_body_base64.is_none()
+            && payload.client_body_state == Some(UsageBodyCaptureState::None);
+    }
+
+    has_required_capture && all_required_captures_empty
 }
 
 fn stream_report_provider_capture_requires_terminal_event(
@@ -524,7 +557,10 @@ fn filter_incomplete_capture_terminal_state(
 fn stream_body_capture_can_prove_missing_terminal(
     body_state: Option<UsageBodyCaptureState>,
 ) -> bool {
-    matches!(body_state, None | Some(UsageBodyCaptureState::Inline))
+    matches!(
+        body_state,
+        None | Some(UsageBodyCaptureState::Inline) | Some(UsageBodyCaptureState::None)
+    )
 }
 
 pub fn stream_capture_terminal_state(value: &Value) -> Option<StreamCapturedTerminalState> {

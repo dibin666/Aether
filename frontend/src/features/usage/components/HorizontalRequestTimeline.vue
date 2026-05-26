@@ -1220,13 +1220,16 @@ const normalizeUpstreamResponseDisplay = (value: unknown): Record<string, unknow
   const body = raw.body
   const bodyRef = readStringField(raw, 'body_ref') ?? readStringField(raw, 'bodyRef')
   const bodyState = readStringField(raw, 'body_state') ?? readStringField(raw, 'bodyState')
+  const meaningfulBodyState = bodyState && bodyState.toLowerCase() !== 'none'
+    ? bodyState
+    : ''
 
   if (
     statusCode == null &&
     !hasRenderableValue(headers) &&
     !hasRenderableValue(body) &&
     !bodyRef &&
-    !bodyState
+    !meaningfulBodyState
   ) {
     return null
   }
@@ -1236,7 +1239,7 @@ const normalizeUpstreamResponseDisplay = (value: unknown): Record<string, unknow
   if (hasRenderableValue(headers)) data.headers = headers
   if (hasRenderableValue(body)) data.body = body
   if (bodyRef) data.body_ref = bodyRef
-  if (bodyState) data.body_state = bodyState
+  if (meaningfulBodyState) data.body_state = meaningfulBodyState
 
   return data
 }

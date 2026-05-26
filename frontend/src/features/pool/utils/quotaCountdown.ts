@@ -15,6 +15,7 @@ const QUOTA_COUNTDOWN_WINDOWS: Record<string, number> = {
   Expert: DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS,
   Heavy: DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS,
   'Grok 4.3': DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS,
+  '生图': DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS,
 }
 
 export interface QuotaProgressItem {
@@ -329,10 +330,10 @@ function buildQuotaProgressItemsFromSnapshot(
     const remainingValue = typeof window?.remaining_value === 'number' ? window.remaining_value : null
     const limitValue = typeof window?.limit_value === 'number' ? window.limit_value : null
     const usedValue = typeof window?.used_value === 'number' ? window.used_value : null
-    const detail = usedValue != null && limitValue != null
-      ? `${formatQuotaValue(usedValue)}/${formatQuotaValue(limitValue)}`
-      : remainingValue != null && limitValue != null
-        ? `${formatQuotaValue(Math.max(limitValue - remainingValue, 0))}/${formatQuotaValue(limitValue)}`
+    const detail = remainingValue != null && limitValue != null
+      ? `${formatQuotaValue(remainingValue)}/${formatQuotaValue(limitValue)}`
+      : usedValue != null && limitValue != null
+        ? `${formatQuotaValue(Math.max(limitValue - usedValue, 0))}/${formatQuotaValue(limitValue)}`
         : remainingValue != null
           ? `剩余 ${formatQuotaValue(remainingValue)}`
           : undefined

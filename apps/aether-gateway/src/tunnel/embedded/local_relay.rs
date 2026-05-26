@@ -153,7 +153,6 @@ fn map_request_admission_error(error: super::RequestAdmissionError) -> String {
 fn relay_header_timeout(meta: &protocol::RequestMeta) -> Duration {
     let timeout_ms = if meta.stream {
         meta.stream_first_byte_timeout_ms
-            .or(meta.request_timeout_ms)
             .unwrap_or_else(|| meta.timeout.saturating_mul(1_000))
     } else {
         meta.request_timeout_ms
@@ -482,7 +481,10 @@ fn tunnel_error_response(status: StatusCode, kind: &str, message: &str) -> Respo
 mod tests {
     use super::super::hub::ProxyConn;
     use super::super::{protocol, AppState, ConnConfig, ControlPlaneClient};
-    use super::{relay_request, Body, Request, SocketAddr, StatusCode, TUNNEL_ERROR_HEADER};
+    use super::{
+        relay_header_timeout, relay_request, Body, Request, SocketAddr, StatusCode,
+        TUNNEL_ERROR_HEADER,
+    };
     use crate::data::GatewayDataState;
     use crate::maintenance::start_proxy_upgrade_rollout;
     use aether_contracts::tunnel::TUNNEL_RELAY_FORWARDED_BY_HEADER;
@@ -510,6 +512,27 @@ mod tests {
             },
             128,
         )
+    }
+
+    #[test]
+    fn relay_header_timeout_ignores_request_timeout_for_stream_requests() {
+        let meta = protocol::RequestMeta {
+            provider_id: None,
+            endpoint_id: None,
+            key_id: None,
+            method: "GET".to_string(),
+            url: "https://example.com/stream".to_string(),
+            headers: HashMap::new(),
+            stream: true,
+            request_timeout_ms: Some(90_000),
+            stream_first_byte_timeout_ms: None,
+            timeout: 7,
+            follow_redirects: None,
+            http1_only: false,
+            transport_profile: None,
+        };
+
+        assert_eq!(relay_header_timeout(&meta), Duration::from_secs(7));
     }
 
     fn sample_connected_proxy_node(node_id: &str) -> StoredProxyNode {

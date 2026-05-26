@@ -17,7 +17,7 @@ use crate::ai_serving::planner::common::{
 use crate::ai_serving::planner::spec_metadata::local_openai_responses_spec_metadata;
 use crate::ai_serving::planner::standard::{
     apply_codex_openai_responses_special_body_edits, apply_codex_openai_responses_special_headers,
-    build_cross_format_openai_responses_request_body,
+    apply_deepseek_tool_call_thinking_compat, build_cross_format_openai_responses_request_body,
     build_cross_format_openai_responses_upstream_url, build_local_openai_responses_request_body,
     build_local_openai_responses_upstream_url, request_body_build_failure_extra_data,
 };
@@ -375,6 +375,13 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
             request_requires_body_stream_field(body_json, force_body_stream_field),
         );
     }
+    apply_deepseek_tool_call_thinking_compat(
+        &mut base_provider_request_body,
+        transport.provider.provider_type.as_str(),
+        transport.endpoint.base_url.as_str(),
+        provider_api_format,
+        Some(body_json),
+    );
     let antigravity_auth = if is_antigravity {
         match classify_local_antigravity_request_support(
             transport,
@@ -1073,22 +1080,42 @@ fn build_chatgpt_web_image_provider_body_from_openai_responses_body(
         .unwrap_or("gpt-5-5-thinking");
     let image_urls = openai_image_inputs_as_urls(&images);
 
-    let body = json!({
+    let mut body = json!({
         "operation": operation,
         "model": if model.is_empty() { "gpt-image-2" } else { model },
         "web_model": web_model,
         "prompt": prompt,
         "size": size,
         "ratio": chatgpt_web_ratio_for_size(size),
+        "quality": quality,
         "output_format": output_format,
         "images": image_urls,
     });
-    let summary = json!({
+    if let Some(partial_images) = tool
+        .as_ref()
+        .and_then(|tool| tool.get("partial_images"))
+        .or_else(|| object.get("partial_images"))
+        .cloned()
+    {
+        body.as_object_mut()?
+            .insert("partial_images".to_string(), partial_images);
+    }
+    let mut summary = json!({
         "operation": operation,
         "output_format": output_format,
         "size": size,
         "quality": quality,
     });
+    if let Some(partial_images) = tool
+        .as_ref()
+        .and_then(|tool| tool.get("partial_images"))
+        .or_else(|| object.get("partial_images"))
+        .cloned()
+    {
+        summary
+            .as_object_mut()?
+            .insert("partial_images".to_string(), partial_images);
+    }
     Some((body, summary))
 }
 
@@ -1425,5 +1452,37 @@ mod tests {
         assert_eq!(provider_body["stream"], true);
         assert_eq!(summary["operation"], "generate");
         assert_eq!(summary["output_format"], "png");
+    }
+
+    #[test]
+    fn chatgpt_web_responses_image_body_preserves_usage_options() {
+        let body_json = json!({
+            "model": "gpt-image-2",
+            "input": "Draw a glass city",
+            "tools": [
+                {
+                    "type": "image_generation",
+                    "size": "1024x1024",
+                    "quality": "high",
+                    "output_format": "png",
+                    "partial_images": 2
+                }
+            ],
+            "tool_choice": {
+                "type": "image_generation"
+            }
+        });
+
+        let (provider_body, summary) =
+            build_chatgpt_web_image_provider_body_from_openai_responses_body(
+                &body_json,
+                "gpt-image-2",
+            )
+            .expect("responses image body should convert");
+
+        assert_eq!(provider_body["quality"], "high");
+        assert_eq!(provider_body["partial_images"], 2);
+        assert_eq!(summary["quality"], "high");
+        assert_eq!(summary["partial_images"], 2);
     }
 }
