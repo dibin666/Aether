@@ -2905,7 +2905,16 @@ const selectedProviderOverview = computed<PoolOverviewItem | null>(() => {
 })
 
 const showAdaptiveHotPoolMetricsButton = computed(() => {
-  return false
+  if (!selectedProviderId.value) return false
+  const overview = selectedProviderOverview.value
+  const config = selectedProviderConfig.value
+  if (config?.probing_enabled === true) return true
+  if (!overview || overview.pool_enabled === false) return false
+  return normalizeDemandMetricNumber(overview.provider_hot_count) > 0
+    || normalizeDemandMetricNumber(overview.provider_desired_hot) > 0
+    || normalizeDemandMetricNumber(overview.provider_in_flight) > 0
+    || normalizeDemandMetricNumber(overview.provider_ema_in_flight) > 0
+    || overview.provider_burst_pending === true
 })
 
 function normalizeDemandMetricNumber(value: unknown): number {
@@ -3067,9 +3076,17 @@ const selectedProviderDemandMetaText = computed(() => {
   const overview = selectedProviderOverview.value
   if (!overview) return ''
   const segments: string[] = []
+  const hotCount = Math.floor(normalizeDemandMetricNumber(overview.provider_hot_count))
+  const desiredHot = Math.floor(normalizeDemandMetricNumber(overview.provider_desired_hot))
+  if (hotCount > 0 || desiredHot > 0) {
+    segments.push(`热池 ${hotCount}/${desiredHot}`)
+  }
   const inFlight = Number(overview.provider_in_flight ?? 0)
   if (Number.isFinite(inFlight) && inFlight > 0) {
     segments.push(`in-flight ${inFlight}`)
+  }
+  if (overview.provider_burst_pending === true) {
+    segments.push('补热中')
   }
   return segments.join(' | ')
 })

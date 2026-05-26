@@ -854,7 +854,7 @@ describe('PoolManagement Codex cycle stats mode', () => {
     expect(root.textContent).toContain('$1.25')
   })
 
-  it('keeps the adaptive hot pool metrics entry hidden while the retained UI disables it', async () => {
+  it('shows adaptive hot pool metrics when probing or demand metrics are available', async () => {
     endpointMocks.getPoolOverview.mockResolvedValue({
       items: [{ ...createOverview('codex'), provider_desired_hot: 4, provider_in_flight: 2, provider_ema_in_flight: 1.8 }],
     })
@@ -868,13 +868,17 @@ describe('PoolManagement Codex cycle stats mode', () => {
     const enabledRoot = mountPoolManagement()
     await settle()
 
-    expect(enabledRoot.querySelector('[data-testid="pool-demand-metrics-button"]')).toBeNull()
+    expect(enabledRoot.querySelector('[data-testid="pool-demand-metrics-button"]')).not.toBeNull()
+    expect(enabledRoot.textContent).toContain('热池 0/4')
 
     for (const { app, root } of mountedApps.splice(0)) {
       app.unmount()
       root.remove()
     }
 
+    endpointMocks.getPoolOverview.mockResolvedValue({
+      items: [createOverview('codex')],
+    })
     endpointMocks.getProvider.mockResolvedValue(createProvider('codex', {
       pool_advanced: {
         probing_enabled: false,
