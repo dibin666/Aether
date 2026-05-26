@@ -1,5 +1,6 @@
 export type PoolHealthToggleKey =
   | 'health_policy_enabled'
+  | 'probing_enabled'
   | 'account_self_check_enabled'
   | 'auto_remove_banned_keys'
   | 'skip_exhausted_accounts'
@@ -30,6 +31,11 @@ export function buildPoolHealthToggleCards(): PoolHealthToggleCard[] {
       key: 'health_policy_enabled',
       label: '健康策略',
       description: '按上游错误自动冷却并跳过异常账号。',
+    },
+    {
+      key: 'probing_enabled',
+      label: '自适应热池',
+      description: '自动维护热池，缺口时异步补位。',
     },
     {
       key: 'account_self_check_enabled',

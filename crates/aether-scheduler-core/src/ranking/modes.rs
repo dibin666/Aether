@@ -44,10 +44,10 @@ fn compare_cache_affinity(
 ) -> Ordering {
     left.capability_priority
         .cmp(&right.capability_priority)
+        .then_with(|| right.cached_affinity_match.cmp(&left.cached_affinity_match))
         .then_with(|| compare_cross_format_demotion(left, right))
         .then_with(|| compare_demoted_format_preference(left, right))
         .then_with(|| compare_candidate_priority_slot(left, right, context.priority_mode))
-        .then_with(|| right.cached_affinity_match.cmp(&left.cached_affinity_match))
         .then(left.tunnel_bucket.cmp(&right.tunnel_bucket))
         .then_with(|| compare_format_preference(left, right))
         .then_with(|| compare_health(left, right, context.include_health))

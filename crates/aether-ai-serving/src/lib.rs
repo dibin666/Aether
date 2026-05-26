@@ -24,8 +24,16 @@ pub mod surface_spec;
 
 pub use aether_ai_formats::UPSTREAM_IS_STREAM_KEY;
 pub use aether_pool_core::{
-    normalize_enabled_ai_pool_presets, run_pool_scheduler as run_ai_pool_scheduler,
-    PoolCandidateFacts as AiPoolCandidateFacts, PoolCandidateInput as AiPoolCandidateInput,
+    normalize_enabled_pool_presets, run_pool_scheduler, PoolCandidateFacts, PoolCandidateInput,
+    PoolCandidateOrchestration, PoolMemberSignals, PoolRuntimeState, PoolScheduledCandidate,
+    PoolSchedulerOutcome, PoolSchedulingConfig, PoolSchedulingPreset, PoolSkippedCandidate,
+    POOL_ACCOUNT_BLOCKED_SKIP_REASON, POOL_ACCOUNT_EXHAUSTED_SKIP_REASON,
+    POOL_COOLDOWN_SKIP_REASON, POOL_COST_LIMIT_REACHED_SKIP_REASON,
+};
+pub use aether_pool_core::{
+    normalize_enabled_pool_presets as normalize_enabled_ai_pool_presets,
+    run_pool_scheduler as run_ai_pool_scheduler, PoolCandidateFacts as AiPoolCandidateFacts,
+    PoolCandidateInput as AiPoolCandidateInput,
     PoolCandidateOrchestration as AiPoolCandidateOrchestration,
     PoolMemberSignals as AiPoolCatalogKeyContext, PoolRuntimeState as AiPoolRuntimeState,
     PoolScheduledCandidate as AiPoolScheduledCandidate,
@@ -35,15 +43,6 @@ pub use aether_pool_core::{
     POOL_ACCOUNT_EXHAUSTED_SKIP_REASON as AI_POOL_ACCOUNT_EXHAUSTED_SKIP_REASON,
     POOL_COOLDOWN_SKIP_REASON as AI_POOL_COOLDOWN_SKIP_REASON,
     POOL_COST_LIMIT_REACHED_SKIP_REASON as AI_POOL_COST_LIMIT_REACHED_SKIP_REASON,
-    POOL_PLAN_NOT_SELECTED_SKIP_REASON as AI_POOL_PLAN_NOT_SELECTED_SKIP_REASON,
-};
-pub use aether_pool_core::{
-    normalize_enabled_pool_presets, run_pool_scheduler, PoolCandidateFacts, PoolCandidateInput,
-    PoolCandidateOrchestration, PoolMemberSignals, PoolRuntimeState, PoolScheduledCandidate,
-    PoolSchedulerOutcome, PoolSchedulingConfig, PoolSchedulingPreset, PoolSkippedCandidate,
-    POOL_ACCOUNT_BLOCKED_SKIP_REASON, POOL_ACCOUNT_EXHAUSTED_SKIP_REASON,
-    POOL_COOLDOWN_SKIP_REASON, POOL_COST_LIMIT_REACHED_SKIP_REASON,
-    POOL_PLAN_NOT_SELECTED_SKIP_REASON,
 };
 pub use aether_pool_core::{
     probe_freshness_score, probe_freshness_score_with_ttl, score_pool_member,

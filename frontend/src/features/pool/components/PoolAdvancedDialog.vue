@@ -18,7 +18,7 @@
             </span>
           </div>
           <p class="text-xs leading-5 text-muted-foreground">
-            控制自动冷却、额度刷新、异常清理和全局调度优先级。
+            控制自动冷却、自适应热池、异常清理和全局调度优先级。
           </p>
         </div>
 
@@ -239,7 +239,7 @@
               </span>
             </div>
             <p class="text-xs leading-5 text-muted-foreground">
-              控制手动批量操作和后台额度刷新时的并行请求数。
+              控制刷新 OAuth、自适应热池和批量额度处理时的并行请求数。
             </p>
           </div>
 
@@ -262,7 +262,7 @@
             </div>
             <div class="space-y-1.5">
               <Label>
-                额度刷新并发
+                探测并发
               </Label>
               <Input
                 :model-value="form.probe_concurrency ?? ''"
