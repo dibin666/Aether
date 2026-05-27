@@ -5,6 +5,7 @@
 #   构建/更新镜像:  ./deploy.sh
 #   强制重建镜像:  ./deploy.sh --force
 #   追加自定义 tag: ./deploy.sh --tag v20260427
+#   下载上游 tunnel: AETHER_TUNNEL_MODE=release AETHER_TUNNEL_RELEASE_TAG=tunnel-v0.3.13 ./deploy.sh
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -13,6 +14,9 @@ IMAGE_NAME="${IMAGE_NAME:-aether-app}"
 DEFAULT_IMAGE_TAG="${DEFAULT_IMAGE_TAG:-latest}"
 LOCAL_APP_IMAGE="${LOCAL_APP_IMAGE:-${IMAGE_NAME}:${DEFAULT_IMAGE_TAG}}"
 CUSTOM_IMAGE_TAG=""
+AETHER_TUNNEL_MODE="${AETHER_TUNNEL_MODE:-source}"
+AETHER_TUNNEL_RELEASE_REPO="${AETHER_TUNNEL_RELEASE_REPO:-fawney19/Aether}"
+AETHER_TUNNEL_RELEASE_TAG="${AETHER_TUNNEL_RELEASE_TAG:-}"
 export LOCAL_APP_IMAGE
 
 # 缓存文件
@@ -25,10 +29,20 @@ Usage: ./deploy.sh [options]
 Options:
   --force, -f             强制重建镜像
   --tag, -t TAG           额外打自定义 tag（始终保留 latest）
+  --tunnel-mode MODE      aether-tunnel 打包方式：source/release/none，默认 source
+  --tunnel-release-tag TAG
+                          release 模式下载的上游 tag，例如 tunnel-v0.3.13
+  --tunnel-release-repo REPO
+                          release 模式下载的仓库，默认 fawney19/Aether
   -h, --help              显示帮助
 
 Environment:
   LOCAL_APP_IMAGE          本地构建镜像名，默认 aether-app:latest
+  AETHER_TUNNEL_MODE       source 从当前源码构建；release 下载上游二进制；none 不打包
+  AETHER_TUNNEL_RELEASE_TAG
+                           release 模式必填，例如 tunnel-v0.3.13
+  AETHER_TUNNEL_RELEASE_REPO
+                           release 模式下载仓库，默认 fawney19/Aether
 EOF
 }
 
@@ -60,9 +74,30 @@ apply_custom_tag() {
     docker tag "$LOCAL_APP_IMAGE" "$custom_ref"
 }
 
+validate_tunnel_mode() {
+    case "$AETHER_TUNNEL_MODE" in
+        source|release|none) ;;
+        *)
+            echo "Invalid AETHER_TUNNEL_MODE: ${AETHER_TUNNEL_MODE}"
+            echo "Allowed values: source, release, none"
+            exit 1
+            ;;
+    esac
+
+    if [ "$AETHER_TUNNEL_MODE" = "release" ] && [ -z "$AETHER_TUNNEL_RELEASE_TAG" ]; then
+        echo "AETHER_TUNNEL_RELEASE_TAG is required when AETHER_TUNNEL_MODE=release"
+        echo "Example: AETHER_TUNNEL_MODE=release AETHER_TUNNEL_RELEASE_TAG=tunnel-v0.3.13 ./deploy.sh"
+        exit 1
+    fi
+}
+
 print_result() {
     echo ">>> Done!"
     echo ">>> Built image: ${LOCAL_APP_IMAGE}"
+    echo ">>> Aether tunnel mode: ${AETHER_TUNNEL_MODE}"
+    if [ "$AETHER_TUNNEL_MODE" = "release" ]; then
+        echo ">>> Aether tunnel release: ${AETHER_TUNNEL_RELEASE_REPO}@${AETHER_TUNNEL_RELEASE_TAG}"
+    fi
     if [ -n "$CUSTOM_IMAGE_TAG" ] && [ "$CUSTOM_IMAGE_TAG" != "$DEFAULT_IMAGE_TAG" ]; then
         echo ">>> Additional tag: $(custom_image_ref)"
     fi
@@ -86,6 +121,33 @@ while [ $# -gt 0 ]; do
             validate_tag "$CUSTOM_IMAGE_TAG"
             shift 2
             ;;
+        --tunnel-mode)
+            if [ $# -lt 2 ]; then
+                echo "Missing value for $1"
+                usage
+                exit 1
+            fi
+            AETHER_TUNNEL_MODE="$2"
+            shift 2
+            ;;
+        --tunnel-release-tag)
+            if [ $# -lt 2 ]; then
+                echo "Missing value for $1"
+                usage
+                exit 1
+            fi
+            AETHER_TUNNEL_RELEASE_TAG="$2"
+            shift 2
+            ;;
+        --tunnel-release-repo)
+            if [ $# -lt 2 ]; then
+                echo "Missing value for $1"
+                usage
+                exit 1
+            fi
+            AETHER_TUNNEL_RELEASE_REPO="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -97,6 +159,8 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+validate_tunnel_mode
 
 require_file() {
     if [ ! -f "$1" ]; then
@@ -120,6 +184,12 @@ emit_file_for_hash() {
     cat "$path"
 }
 
+emit_value_for_hash() {
+    local name="$1"
+    local value="$2"
+    printf '\n>>> %s\n%s\n' "$name" "$value"
+}
+
 emit_tree_for_hash() {
     local root="$1"
     [ -d "$root" ] || return 0
@@ -137,6 +207,10 @@ emit_tree_for_hash() {
 # 计算代码文件的哈希值
 calc_code_hash() {
     {
+        emit_value_for_hash AETHER_TUNNEL_MODE "$AETHER_TUNNEL_MODE"
+        emit_value_for_hash AETHER_TUNNEL_RELEASE_REPO "$AETHER_TUNNEL_RELEASE_REPO"
+        emit_value_for_hash AETHER_TUNNEL_RELEASE_TAG "$AETHER_TUNNEL_RELEASE_TAG"
+
         for file in \
             Dockerfile.app.local \
             docker-compose.yml \
@@ -183,7 +257,12 @@ save_code_hash() { calc_code_hash > "$CODE_HASH_FILE"; }
 build_app() {
     require_file Dockerfile.app.local
     echo ">>> Building app image: $LOCAL_APP_IMAGE"
-    DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}" docker build --pull=false -f Dockerfile.app.local -t "$LOCAL_APP_IMAGE" .
+    local build_args=(
+        --build-arg "AETHER_TUNNEL_MODE=${AETHER_TUNNEL_MODE}"
+        --build-arg "AETHER_TUNNEL_RELEASE_REPO=${AETHER_TUNNEL_RELEASE_REPO}"
+        --build-arg "AETHER_TUNNEL_RELEASE_TAG=${AETHER_TUNNEL_RELEASE_TAG}"
+    )
+    DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}" docker build --pull=false "${build_args[@]}" -f Dockerfile.app.local -t "$LOCAL_APP_IMAGE" .
     apply_custom_tag
     save_code_hash
 }

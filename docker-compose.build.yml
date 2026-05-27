@@ -68,6 +68,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.app.local
+      args:
+        AETHER_TUNNEL_MODE: ${AETHER_TUNNEL_MODE:-source}
+        AETHER_TUNNEL_RELEASE_REPO: ${AETHER_TUNNEL_RELEASE_REPO:-fawney19/Aether}
+        AETHER_TUNNEL_RELEASE_TAG: ${AETHER_TUNNEL_RELEASE_TAG:-}
     image: aether-app:latest
     container_name: aether-app
     env_file:
