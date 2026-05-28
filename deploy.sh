@@ -17,6 +17,9 @@ CUSTOM_IMAGE_TAG=""
 AETHER_TUNNEL_MODE="${AETHER_TUNNEL_MODE:-source}"
 AETHER_TUNNEL_RELEASE_REPO="${AETHER_TUNNEL_RELEASE_REPO:-fawney19/Aether}"
 AETHER_TUNNEL_RELEASE_TAG="${AETHER_TUNNEL_RELEASE_TAG:-}"
+DOCKER_BUILD_CACHE="${DOCKER_BUILD_CACHE:-1}"
+DOCKER_BUILD_CACHE_DIR="${DOCKER_BUILD_CACHE_DIR:-.docker-cache/app}"
+DOCKER_BUILD_CACHE_MODE="${DOCKER_BUILD_CACHE_MODE:-max}"
 export LOCAL_APP_IMAGE
 
 # 缓存文件
@@ -34,6 +37,8 @@ Options:
                           release 模式下载的上游 tag，例如 tunnel-v0.3.13
   --tunnel-release-repo REPO
                           release 模式下载的仓库，默认 fawney19/Aether
+  --no-build-cache        禁用 Docker BuildKit 本地缓存导入/导出
+  --build-cache-dir DIR   Docker BuildKit 本地缓存目录，默认 .docker-cache/app
   -h, --help              显示帮助
 
 Environment:
@@ -43,6 +48,9 @@ Environment:
                            release 模式必填，例如 tunnel-v0.3.13
   AETHER_TUNNEL_RELEASE_REPO
                            release 模式下载仓库，默认 fawney19/Aether
+  DOCKER_BUILD_CACHE       是否启用 Docker BuildKit 本地缓存，默认 1；设为 0 禁用
+  DOCKER_BUILD_CACHE_DIR   Docker BuildKit 本地缓存目录，默认 .docker-cache/app
+  DOCKER_BUILD_CACHE_MODE  缓存导出模式，默认 max；可设为 min/max
 EOF
 }
 
@@ -146,6 +154,19 @@ while [ $# -gt 0 ]; do
                 exit 1
             fi
             AETHER_TUNNEL_RELEASE_REPO="$2"
+            shift 2
+            ;;
+        --no-build-cache)
+            DOCKER_BUILD_CACHE=0
+            shift
+            ;;
+        --build-cache-dir)
+            if [ $# -lt 2 ]; then
+                echo "Missing value for $1"
+                usage
+                exit 1
+            fi
+            DOCKER_BUILD_CACHE_DIR="$2"
             shift 2
             ;;
         -h|--help)
@@ -253,16 +274,97 @@ check_code_changed() {
 
 save_code_hash() { calc_code_hash > "$CODE_HASH_FILE"; }
 
+docker_build_cache_enabled() {
+    case "${DOCKER_BUILD_CACHE}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        0|false|FALSE|no|NO|off|OFF) return 1 ;;
+        *)
+            echo "Invalid DOCKER_BUILD_CACHE: ${DOCKER_BUILD_CACHE}"
+            echo "Allowed values: 1/0, true/false, yes/no, on/off"
+            exit 1
+            ;;
+    esac
+}
+
+validate_docker_build_cache_mode() {
+    case "${DOCKER_BUILD_CACHE_MODE}" in
+        min|max) ;;
+        *)
+            echo "Invalid DOCKER_BUILD_CACHE_MODE: ${DOCKER_BUILD_CACHE_MODE}"
+            echo "Allowed values: min, max"
+            exit 1
+            ;;
+    esac
+}
+
+prepare_docker_build_cache_args() {
+    local -n out_args=$1
+    local -n out_tmp=$2
+    out_args=()
+    out_tmp=""
+
+    docker_build_cache_enabled || return 0
+    validate_docker_build_cache_mode
+
+    if ! docker buildx version >/dev/null 2>&1; then
+        echo ">>> Docker buildx not found; external BuildKit cache is disabled for this build."
+        if docker image inspect "$LOCAL_APP_IMAGE" >/dev/null 2>&1; then
+            out_args+=(--cache-from "$LOCAL_APP_IMAGE")
+        fi
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$DOCKER_BUILD_CACHE_DIR")"
+    out_tmp="${DOCKER_BUILD_CACHE_DIR}.tmp"
+    rm -rf "$out_tmp"
+
+    if [ -d "$DOCKER_BUILD_CACHE_DIR" ]; then
+        out_args+=(--cache-from "type=local,src=${DOCKER_BUILD_CACHE_DIR}")
+    fi
+    if docker image inspect "$LOCAL_APP_IMAGE" >/dev/null 2>&1; then
+        out_args+=(--cache-from "$LOCAL_APP_IMAGE")
+    fi
+    out_args+=(--cache-to "type=local,dest=${out_tmp},mode=${DOCKER_BUILD_CACHE_MODE}")
+    echo ">>> Docker BuildKit cache: ${DOCKER_BUILD_CACHE_DIR} (mode=${DOCKER_BUILD_CACHE_MODE})"
+}
+
+docker_build_command() {
+    if docker_build_cache_enabled && docker buildx version >/dev/null 2>&1; then
+        printf '%s\n' "docker" "buildx" "build" "--load"
+    else
+        printf '%s\n' "docker" "build"
+    fi
+}
+
+promote_docker_build_cache() {
+    local cache_tmp="$1"
+    [ -n "$cache_tmp" ] || return 0
+    [ -d "$cache_tmp" ] || return 0
+    rm -rf "$DOCKER_BUILD_CACHE_DIR"
+    mv "$cache_tmp" "$DOCKER_BUILD_CACHE_DIR"
+}
+
 # 构建应用镜像
 build_app() {
     require_file Dockerfile.app.local
     echo ">>> Building app image: $LOCAL_APP_IMAGE"
     local build_args=(
+        --build-arg "BUILDKIT_INLINE_CACHE=1"
         --build-arg "AETHER_TUNNEL_MODE=${AETHER_TUNNEL_MODE}"
         --build-arg "AETHER_TUNNEL_RELEASE_REPO=${AETHER_TUNNEL_RELEASE_REPO}"
         --build-arg "AETHER_TUNNEL_RELEASE_TAG=${AETHER_TUNNEL_RELEASE_TAG}"
     )
-    DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}" docker build --pull=false "${build_args[@]}" -f Dockerfile.app.local -t "$LOCAL_APP_IMAGE" .
+    local cache_args=()
+    local cache_tmp=""
+    local docker_cmd=()
+    prepare_docker_build_cache_args cache_args cache_tmp
+    mapfile -t docker_cmd < <(docker_build_command)
+
+    if ! DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}" "${docker_cmd[@]}" --pull=false "${cache_args[@]}" "${build_args[@]}" -f Dockerfile.app.local -t "$LOCAL_APP_IMAGE" .; then
+        [ -n "$cache_tmp" ] && rm -rf "$cache_tmp"
+        return 1
+    fi
+    promote_docker_build_cache "$cache_tmp"
     apply_custom_tag
     save_code_hash
 }

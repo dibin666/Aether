@@ -45,6 +45,7 @@ logs/
 data/
 
 # Docker
+.docker-cache/
 docker-compose.override.yml
 Dockerfile.*
 
