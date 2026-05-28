@@ -55,6 +55,7 @@ pub(crate) fn normalize_feature_settings(value: Option<Value>) -> Result<Option<
         Value::Object(ref mut settings) => {
             normalize_chat_pii_redaction_feature_settings(settings)?;
             normalize_notification_push_service_feature_settings(settings)?;
+            normalize_usage_request_detail_feature_settings(settings)?;
             if settings.is_empty() {
                 Ok(None)
             } else {
@@ -70,34 +71,58 @@ pub(crate) fn normalize_user_self_feature_settings_update(
     current: Option<Value>,
 ) -> Result<Option<Value>, String> {
     let mut normalized = normalize_feature_settings(value)?;
-    let current_notification_push_service = current
-        .and_then(|value| match value {
-            Value::Object(mut settings) => settings.remove("notification_push_service"),
-            _ => None,
-        })
-        .and_then(|value| {
-            let mut wrapper = Map::new();
-            wrapper.insert("notification_push_service".to_string(), value);
-            normalize_notification_push_service_feature_settings(&mut wrapper)
-                .ok()
-                .and_then(|_| wrapper.remove("notification_push_service"))
-        });
+    let current_settings = current.as_ref().and_then(Value::as_object);
+    let protected_features: [(&str, fn(&mut Map<String, Value>) -> Result<(), String>); 2] = [
+        (
+            "notification_push_service",
+            normalize_notification_push_service_feature_settings,
+        ),
+        (
+            "usage_request_detail",
+            normalize_usage_request_detail_feature_settings,
+        ),
+    ];
 
-    match (&mut normalized, current_notification_push_service) {
+    for (feature_name, normalize_feature) in protected_features {
+        let current_value =
+            normalize_current_protected_feature(current_settings, feature_name, normalize_feature);
+        preserve_protected_feature(&mut normalized, feature_name, current_value);
+    }
+    Ok(normalized)
+}
+
+fn normalize_current_protected_feature(
+    current_settings: Option<&Map<String, Value>>,
+    feature_name: &str,
+    normalize_feature: fn(&mut Map<String, Value>) -> Result<(), String>,
+) -> Option<Value> {
+    let value = current_settings?.get(feature_name)?.clone();
+    let mut wrapper = Map::new();
+    wrapper.insert(feature_name.to_string(), value);
+    normalize_feature(&mut wrapper)
+        .ok()
+        .and_then(|_| wrapper.remove(feature_name))
+}
+
+fn preserve_protected_feature(
+    normalized: &mut Option<Value>,
+    feature_name: &str,
+    current_value: Option<Value>,
+) {
+    match (normalized.as_mut(), current_value) {
         (Some(Value::Object(settings)), Some(value)) => {
-            settings.insert("notification_push_service".to_string(), value);
+            settings.insert(feature_name.to_string(), value);
         }
         (Some(Value::Object(settings)), None) => {
-            settings.remove("notification_push_service");
+            settings.remove(feature_name);
         }
         (None, Some(value)) => {
             let mut settings = Map::new();
-            settings.insert("notification_push_service".to_string(), value);
-            normalized = Some(Value::Object(settings));
+            settings.insert(feature_name.to_string(), value);
+            *normalized = Some(Value::Object(settings));
         }
         _ => {}
     }
-    Ok(normalized)
 }
 
 pub(crate) fn normalize_ip_rules(
@@ -391,6 +416,41 @@ fn normalize_notification_push_service_feature_object(
         if let Some(value) = feature.get(key) {
             if !value.is_boolean() {
                 return Err(format!("notification_push_service.{key} 必须是布尔值"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn normalize_usage_request_detail_feature_settings(
+    settings: &mut Map<String, Value>,
+) -> Result<(), String> {
+    let Some(value) = settings.get_mut("usage_request_detail") else {
+        return Ok(());
+    };
+    match value {
+        Value::Null => {
+            settings.remove("usage_request_detail");
+            Ok(())
+        }
+        Value::Object(feature) => {
+            normalize_usage_request_detail_feature_object(feature)?;
+            if feature.is_empty() {
+                settings.remove("usage_request_detail");
+            }
+            Ok(())
+        }
+        _ => Err("usage_request_detail 必须是对象".to_string()),
+    }
+}
+
+fn normalize_usage_request_detail_feature_object(
+    feature: &mut Map<String, Value>,
+) -> Result<(), String> {
+    for key in ["enabled"] {
+        if let Some(value) = feature.get(key) {
+            if !value.is_boolean() {
+                return Err(format!("usage_request_detail.{key} 必须是布尔值"));
             }
         }
     }

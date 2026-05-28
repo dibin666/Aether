@@ -414,15 +414,19 @@ export const dashboardApi = {
   // NOTE: This method now calls the new RESTful API at /api/admin/usage/{id}
   async getRequestDetail(
     requestId: string,
-    options: { includeBodies?: boolean, cacheTtlMs?: number } = {}
+    options: { includeBodies?: boolean, cacheTtlMs?: number; scope?: 'admin' | 'self' } = {}
   ): Promise<RequestDetail> {
     const includeBodies = options.includeBodies ?? true
     const cacheTtlMs = options.cacheTtlMs ?? 0
-    const cacheKey = buildCacheKey('dashboard:request-detail', { requestId, includeBodies })
+    const scope = options.scope ?? 'admin'
+    const cacheKey = buildCacheKey('dashboard:request-detail', { requestId, includeBodies, scope })
     return cachedRequest(
       cacheKey,
       async () => {
-        const response = await apiClient.get<RequestDetail>(`/api/admin/usage/${requestId}`, {
+        const endpoint = scope === 'self'
+          ? `/api/users/me/usage/${requestId}`
+          : `/api/admin/usage/${requestId}`
+        const response = await apiClient.get<RequestDetail>(endpoint, {
           params: { include_bodies: includeBodies },
         })
         return response.data
@@ -431,10 +435,11 @@ export const dashboardApi = {
     )
   },
 
-  async prefetchRequestDetail(requestId: string): Promise<void> {
+  async prefetchRequestDetail(requestId: string, scope: 'admin' | 'self' = 'admin'): Promise<void> {
     await dashboardApi.getRequestDetail(requestId, {
       includeBodies: false,
-      cacheTtlMs: REQUEST_DETAIL_PREFETCH_TTL_MS
+      cacheTtlMs: REQUEST_DETAIL_PREFETCH_TTL_MS,
+      scope,
     })
   },
 

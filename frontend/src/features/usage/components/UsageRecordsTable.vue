@@ -232,8 +232,8 @@
         v-else
         :key="record.id"
         class="border-b border-border/40 py-2.5 px-2"
-        :class="isAdmin ? 'cursor-pointer active:bg-muted/30 transition-colors' : ''"
-        @click="isAdmin && emit('showDetail', record.id)"
+        :class="canViewDetail ? 'cursor-pointer active:bg-muted/30 transition-colors' : ''"
+        @click="canViewDetail && emit('showDetail', record.id)"
       >
         <!-- 第一行：模型 + 费用 -->
         <div class="flex items-center justify-between gap-2">
@@ -654,7 +654,7 @@
           v-for="record in records"
           v-else
           :key="record.id"
-          :class="isAdmin ? 'cursor-pointer border-b border-border/40 hover:bg-muted/30 transition-colors h-[72px]' : 'border-b border-border/40 hover:bg-muted/30 transition-colors h-[72px]'"
+          :class="canViewDetail ? 'cursor-pointer border-b border-border/40 hover:bg-muted/30 transition-colors h-[72px]' : 'border-b border-border/40 hover:bg-muted/30 transition-colors h-[72px]'"
           @mousedown="handleRowMouseDown($event, record.id)"
           @click="handleRowClick($event, record.id)"
         >
@@ -1117,6 +1117,7 @@ interface UsageRecordColumnOption {
 const props = defineProps<{
   records: UsageRecord[]
   isAdmin: boolean
+  canViewDetail: boolean
   showActualCost: boolean
   loading: boolean
   // 时间范围
@@ -1396,14 +1397,14 @@ function streamBadgeVariant(isStream: boolean): 'secondary' | 'outline' {
 
 function handleRowMouseDown(event: MouseEvent, id: string) {
   handleMouseDown(event)
-  if (!props.isAdmin) return
+  if (!props.canViewDetail) return
   if (event.button !== 0) return
   emit('prefetchDetail', id)
 }
 
 // 处理行点击，排除文本选择操作
 function handleRowClick(event: MouseEvent, id: string) {
-  if (!props.isAdmin) return
+  if (!props.canViewDetail) return
   if (!shouldTriggerRowClick(event)) return
   emit('showDetail', id)
 }

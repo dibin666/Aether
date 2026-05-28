@@ -71,6 +71,16 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
+    pub(crate) async fn resolve_request_usage_body_ref(
+        &self,
+        body_ref: &str,
+    ) -> Result<Option<serde_json::Value>, GatewayError> {
+        self.data
+            .resolve_request_usage_body_ref(body_ref)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
     pub(crate) async fn list_usage_audits(
         &self,
         query: &usage::UsageAuditListQuery,

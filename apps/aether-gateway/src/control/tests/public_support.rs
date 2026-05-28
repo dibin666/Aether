@@ -402,6 +402,27 @@ fn classifies_users_me_routes_as_public_support_route() {
             "/api/users/me/api-keys/key-1/capabilities",
             "api_key_capabilities_update",
         ),
+        (http::Method::GET, "/api/users/me/usage", "usage"),
+        (
+            http::Method::GET,
+            "/api/users/me/usage/usage-1",
+            "usage_detail",
+        ),
+        (
+            http::Method::GET,
+            "/api/users/me/usage/active",
+            "usage_active",
+        ),
+        (
+            http::Method::GET,
+            "/api/users/me/usage/interval-timeline",
+            "usage_interval_timeline",
+        ),
+        (
+            http::Method::GET,
+            "/api/users/me/usage/heatmap",
+            "usage_heatmap",
+        ),
         (
             http::Method::GET,
             "/api/users/me/available-models",

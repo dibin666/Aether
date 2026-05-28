@@ -547,6 +547,16 @@ pub(super) fn classify_public_support_route(
             false,
         ))
     } else if method == http::Method::GET
+        && has_single_segment_after_prefix(normalized_path, "/api/users/me/usage/")
+    {
+        Some(classified(
+            "public_support",
+            "users_me",
+            "usage_detail",
+            "user:self",
+            false,
+        ))
+    } else if method == http::Method::GET
         && matches!(
             normalized_path,
             "/api/me/management-tokens" | "/api/me/management-tokens/"

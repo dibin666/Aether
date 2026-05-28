@@ -5,6 +5,7 @@ import apiClient from '@/api/client'
 import { log } from '@/utils/logger'
 import { parseApiError } from '@/utils/errorParser'
 import { getErrorStatus } from '@/types/api-error'
+import { readUsageRequestDetailFeatureSettings } from '@/utils/featureSettings'
 
 export const useAuthStore = defineStore('auth', () => {
   // 初始化时从 localStorage 恢复 token
@@ -35,6 +36,10 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuditAdmin = computed(() => user.value?.role === 'audit_admin')
   const canAccessAdmin = computed(() => isAdmin.value || isAuditAdmin.value)
   const canOperateAdmin = computed(() => isAdmin.value)
+  const canViewRequestDetail = computed(() => {
+    if (canAccessAdmin.value) return true
+    return readUsageRequestDetailFeatureSettings(user.value?.feature_settings).enabled
+  })
 
   async function login(email: string, password: string, authType: 'local' | 'ldap' = 'local') {
     loading.value = true
@@ -120,6 +125,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuditAdmin,
     canAccessAdmin,
     canOperateAdmin,
+    canViewRequestDetail,
     login,
     logout,
     applyExternalLogout,

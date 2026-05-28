@@ -81,6 +81,7 @@
     <UsageRecordsTable
       :records="displayRecords"
       :is-admin="isAdminPage"
+      :can-view-detail="authStore.canViewRequestDetail"
       :show-actual-cost="authStore.canAccessAdmin"
       :loading="isLoadingRecords"
       :time-range="timeRange"
@@ -118,11 +119,12 @@
       @show-detail="showRequestDetail"
     />
 
-    <!-- 请求详情抽屉 - 仅管理员可见 -->
+    <!-- 请求详情抽屉 -->
     <RequestDetailDrawer
-      v-if="isAdminPage"
+      v-if="authStore.canViewRequestDetail"
       :is-open="detailModalOpen"
       :request-id="selectedRequestId"
+      :detail-scope="isAdminPage ? 'admin' : 'self'"
       @close="detailModalOpen = false"
       @request-state="handleDetailRequestState"
     />
@@ -980,7 +982,7 @@ async function handleManualRefresh() {
 
 // 显示请求详情
 function showRequestDetail(id: string) {
-  if (!isAdminPage.value) return
+  if (!authStore.canViewRequestDetail) return
   selectedRequestId.value = id
   detailModalOpen.value = true
 }
@@ -1063,8 +1065,8 @@ function resolveDetailUpdateStatus(update: {
 }
 
 function prefetchRequestDetail(id: string) {
-  if (!isAdminPage.value) return
-  void dashboardApi.prefetchRequestDetail(id).catch(error => {
+  if (!authStore.canViewRequestDetail) return
+  void dashboardApi.prefetchRequestDetail(id, isAdminPage.value ? 'admin' : 'self').catch(error => {
     log.debug('预取请求详情失败', error)
   })
 }

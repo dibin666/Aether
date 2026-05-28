@@ -76,6 +76,7 @@
               </div>
               <div class="flex items-center gap-1 shrink-0">
                 <Button
+                  v-if="isAdminDetail"
                   variant="ghost"
                   size="icon"
                   class="h-8 w-8"
@@ -535,7 +536,7 @@
                       <template #toolbar-actions-before>
                         <!-- 区域1：条件性按钮（cURL、视图切换、对比） -->
                         <!-- cURL 复制（仅在请求头/请求体 Tab） -->
-                        <template v-if="['request-headers', 'request-body'].includes(activeTab)">
+                        <template v-if="isAdminDetail && ['request-headers', 'request-body'].includes(activeTab)">
                           <button
                             :title="curlCopied ? '已复制 cURL' : '复制 cURL'"
                             class="p-1 rounded transition-colors text-muted-foreground hover:bg-muted"
@@ -718,6 +719,7 @@
 
   <!-- 请求回放对话框 -->
   <ReplayDialog
+    v-if="isAdminDetail"
     :is-open="replayDialogOpen"
     :request-id="requestId"
     :detail="detail"
@@ -776,10 +778,13 @@ import {
 
 type RequestStateStatus = 'pending' | 'streaming' | 'completed' | 'failed' | 'cancelled'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   isOpen: boolean
   requestId: string | null
-}>()
+  detailScope?: 'admin' | 'self'
+}>(), {
+  detailScope: 'admin',
+})
 
 const emit = defineEmits<{
   close: []
@@ -822,6 +827,8 @@ const historicalPricing = ref<{
   cache_read_price: string
   request_price: string
 } | null>(null)
+
+const isAdminDetail = computed(() => props.detailScope === 'admin')
 
 type CacheTTLPriceEntry = {
   ttl_minutes?: number | null
@@ -2030,7 +2037,10 @@ async function ensureBodyContentLoaded() {
   const requestId = ++bodyLoadRequestId
   bodyLoading.value = true
   try {
-    const response = await dashboardApi.getRequestDetail(props.requestId, { includeBodies: true })
+    const response = await dashboardApi.getRequestDetail(props.requestId, {
+      includeBodies: true,
+      scope: props.detailScope,
+    })
     if (requestId !== bodyLoadRequestId || !detail.value) return
     detail.value = {
       ...detail.value,
@@ -2081,7 +2091,8 @@ async function loadDetail(id: string, silent = false) {
   try {
     const response = await dashboardApi.getRequestDetail(id, {
       includeBodies: false,
-      cacheTtlMs: silent ? 0 : 5_000
+      cacheTtlMs: silent ? 0 : 5_000,
+      scope: props.detailScope,
     })
     if (requestId !== loadDetailRequestId) return
 
@@ -2461,7 +2472,7 @@ function toggleContentView() {
 
 // 复制 cURL 命令
 async function copyCurlCommand() {
-  if (!props.requestId || curlCopying.value) return
+  if (!props.requestId || !isAdminDetail.value || curlCopying.value) return
   curlCopying.value = true
   try {
     const data = await dashboardApi.getCurlData(props.requestId)
@@ -2479,6 +2490,7 @@ async function copyCurlCommand() {
 
 // 打开请求回放对话框
 function openReplayDialog() {
+  if (!isAdminDetail.value) return
   replayDialogOpen.value = true
 }
 

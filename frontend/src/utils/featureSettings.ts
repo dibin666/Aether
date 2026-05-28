@@ -7,6 +7,10 @@ export interface NotificationPushServiceFeatureSettings {
   enabled: boolean
 }
 
+export interface UsageRequestDetailFeatureSettings {
+  enabled: boolean
+}
+
 export type FeatureSettingsMap = Record<string, unknown>
 
 const DEFAULT_CHAT_PII_REDACTION_FEATURE_SETTINGS: ChatPiiRedactionFeatureSettings = {
@@ -15,6 +19,10 @@ const DEFAULT_CHAT_PII_REDACTION_FEATURE_SETTINGS: ChatPiiRedactionFeatureSettin
 }
 
 const DEFAULT_NOTIFICATION_PUSH_SERVICE_FEATURE_SETTINGS: NotificationPushServiceFeatureSettings = {
+  enabled: false,
+}
+
+const DEFAULT_USAGE_REQUEST_DETAIL_FEATURE_SETTINGS: UsageRequestDetailFeatureSettings = {
   enabled: false,
 }
 
@@ -81,6 +89,33 @@ export function mergeNotificationPushServiceFeatureSettings(
     : {}
   settings.notification_push_service = {
     enabled: notificationPushService.enabled,
+  }
+  return Object.keys(settings).length > 0 ? settings : null
+}
+
+export function readUsageRequestDetailFeatureSettings(
+  featureSettings: unknown,
+): UsageRequestDetailFeatureSettings {
+  const feature = isRecord(featureSettings)
+    ? featureSettings.usage_request_detail
+    : null
+  if (!isRecord(feature)) {
+    return { ...DEFAULT_USAGE_REQUEST_DETAIL_FEATURE_SETTINGS }
+  }
+  return {
+    enabled: feature.enabled === true,
+  }
+}
+
+export function mergeUsageRequestDetailFeatureSettings(
+  featureSettings: unknown,
+  usageRequestDetail: UsageRequestDetailFeatureSettings,
+): FeatureSettingsMap | null {
+  const settings: FeatureSettingsMap = isRecord(featureSettings)
+    ? { ...featureSettings }
+    : {}
+  settings.usage_request_detail = {
+    enabled: usageRequestDetail.enabled,
   }
   return Object.keys(settings).length > 0 ? settings : null
 }

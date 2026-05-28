@@ -6,9 +6,9 @@ use aether_billing::{
 };
 use aether_data_contracts::repository::usage::{
     StoredRequestUsageAudit, StoredUsageBreakdownSummaryRow, StoredUsageDailySummary,
-    UsageAuditKeywordSearchQuery, UsageAuditListQuery, UsageBreakdownGroupBy,
-    UsageBreakdownSummaryQuery, UsageCacheAffinityIntervalGroupBy, UsageCacheAffinityIntervalQuery,
-    UsageDashboardSummaryQuery,
+    UsageAuditKeywordSearchQuery, UsageAuditListQuery, UsageBodyCaptureState, UsageBodyField,
+    UsageBreakdownGroupBy, UsageBreakdownSummaryQuery, UsageCacheAffinityIntervalGroupBy,
+    UsageCacheAffinityIntervalQuery, UsageDashboardSummaryQuery,
 };
 use axum::{
     body::Body,
@@ -17,7 +17,7 @@ use axum::{
     Json,
 };
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::GatewayError;
 
@@ -35,6 +35,14 @@ fn build_users_me_usage_reader_unavailable_response() -> Response<Body> {
         USERS_ME_USAGE_DATA_UNAVAILABLE_DETAIL,
         false,
     )
+}
+
+fn build_users_me_usage_not_found_response() -> Response<Body> {
+    (
+        http::StatusCode::NOT_FOUND,
+        Json(json!({ "detail": "Usage record not found" })),
+    )
+        .into_response()
 }
 
 fn parse_users_me_usage_limit(query: Option<&str>) -> Result<usize, String> {
@@ -94,6 +102,47 @@ fn parse_users_me_usage_ids(query: Option<&str>) -> Option<BTreeSet<String>> {
         .map(ToOwned::to_owned)
         .collect::<BTreeSet<_>>();
     (!values.is_empty()).then_some(values)
+}
+
+fn parse_users_me_usage_include_bodies(query: Option<&str>) -> bool {
+    query_param_value(query, "include_bodies")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(true)
+}
+
+fn users_me_usage_id_from_path(request_path: &str) -> Option<String> {
+    let value = request_path
+        .strip_prefix("/api/users/me/usage/")?
+        .trim()
+        .trim_matches('/');
+    if value.is_empty() || value.contains('/') {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+pub(super) fn users_me_usage_detail_path_matches(request_path: &str) -> bool {
+    users_me_usage_id_from_path(request_path).is_some()
+}
+
+fn users_me_usage_request_detail_enabled(feature_settings: Option<&Value>) -> bool {
+    feature_settings
+        .and_then(Value::as_object)
+        .and_then(|settings| settings.get("usage_request_detail"))
+        .and_then(Value::as_object)
+        .and_then(|feature| feature.get("enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn users_me_usage_role_can_view_detail(role: &str) -> bool {
+    role.eq_ignore_ascii_case("admin") || role.eq_ignore_ascii_case("audit_admin")
 }
 
 fn users_me_usage_cache_creation_tokens(item: &StoredRequestUsageAudit) -> u64 {
@@ -569,6 +618,195 @@ fn build_users_me_usage_active_payload(item: &StoredRequestUsageAudit) -> serde_
     }
     if let Some(service_tier) = item.provider_service_tier() {
         payload["service_tier"] = json!(service_tier);
+    }
+    payload
+}
+
+fn users_me_usage_is_sensitive_header(name: &str) -> bool {
+    let normalized = name.trim().to_ascii_lowercase();
+    normalized == "authorization"
+        || normalized == "proxy-authorization"
+        || normalized == "cookie"
+        || normalized == "set-cookie"
+        || normalized == "x-api-key"
+        || normalized == "api-key"
+        || normalized == "x-goog-api-key"
+        || normalized.contains("api-key")
+        || normalized.contains("api_key")
+}
+
+fn users_me_usage_safe_headers(headers: Option<&Value>) -> Value {
+    let Some(object) = headers.and_then(Value::as_object) else {
+        return Value::Null;
+    };
+    let mut safe_headers = serde_json::Map::new();
+    for (name, value) in object {
+        let safe_value = if users_me_usage_is_sensitive_header(name) {
+            json!("[已隐藏]")
+        } else {
+            value.clone()
+        };
+        safe_headers.insert(name.clone(), safe_value);
+    }
+    if safe_headers.is_empty() {
+        Value::Null
+    } else {
+        Value::Object(safe_headers)
+    }
+}
+
+fn users_me_usage_has_body_value(
+    item: &StoredRequestUsageAudit,
+    body: Option<&Value>,
+    field: UsageBodyField,
+) -> bool {
+    item.body_capture_result(field, body).available
+}
+
+fn build_users_me_usage_safe_metadata(item: &StoredRequestUsageAudit) -> Value {
+    let mut metadata = serde_json::Map::new();
+    for key in [
+        "client_ip",
+        "user_agent",
+        "request_path",
+        "request_path_and_query",
+        "trace_id",
+    ] {
+        if let Some(value) = users_me_usage_metadata_string(item, key) {
+            metadata.insert(key.to_string(), json!(value));
+        }
+    }
+    if let Some(client_family) = users_me_usage_client_family(item) {
+        metadata.insert("client_family".to_string(), json!(client_family));
+    }
+    if metadata.is_empty() {
+        Value::Null
+    } else {
+        Value::Object(metadata)
+    }
+}
+
+fn build_users_me_usage_failure_summary(item: &StoredRequestUsageAudit) -> Value {
+    let Some(message) = item
+        .error_message
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Value::Null;
+    };
+    json!({
+        "source": "usage_summary",
+        "status_code": item.status_code,
+        "type": item.error_category,
+        "message": message,
+        "category": item.error_category,
+    })
+}
+
+async fn users_me_usage_resolve_body_value(
+    state: &AppState,
+    item: &StoredRequestUsageAudit,
+    inline_body: Option<&Value>,
+    field: UsageBodyField,
+) -> Result<Option<Value>, GatewayError> {
+    match item.body_state(field) {
+        Some(UsageBodyCaptureState::Disabled)
+        | Some(UsageBodyCaptureState::Unavailable)
+        | Some(UsageBodyCaptureState::None) => return Ok(None),
+        Some(UsageBodyCaptureState::Inline) | Some(UsageBodyCaptureState::Truncated) => {
+            return Ok(inline_body.cloned());
+        }
+        Some(UsageBodyCaptureState::Reference) | None => {}
+    }
+    let resolved_ref_body = match item.body_ref(field) {
+        Some(body_ref) => state.resolve_request_usage_body_ref(body_ref).await?,
+        None => None,
+    };
+    Ok(resolved_ref_body.or_else(|| inline_body.cloned()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_users_me_usage_detail_payload(
+    item: &StoredRequestUsageAudit,
+    user_id: &str,
+    username: &str,
+    email: Option<&str>,
+    include_actual_cost: bool,
+    api_key_names: &BTreeMap<String, String>,
+    auth_api_key_reader_available: bool,
+    include_bodies: bool,
+    request_body: Option<Value>,
+    client_response_body: Option<Value>,
+) -> Value {
+    let mut payload = build_users_me_usage_record_payload(
+        item,
+        include_actual_cost,
+        api_key_names,
+        auth_api_key_reader_available,
+    );
+    let request_body_value = request_body.unwrap_or(Value::Null);
+    let client_response_body_value = client_response_body.unwrap_or(Value::Null);
+    let failure_summary = build_users_me_usage_failure_summary(item);
+
+    payload["user"] = json!({
+        "id": user_id,
+        "username": username,
+        "email": email.unwrap_or_default(),
+    });
+    payload["request_id"] = json!(item.request_id);
+    payload["billing_status"] = json!(item.billing_status);
+    payload["request_type"] = json!(item.request_type);
+    payload["provider"] = Value::Null;
+    payload["request_cost"] = json!(round_to(item.total_cost_usd, 6));
+    payload["cache_creation_cost"] = json!(round_to(item.cache_creation_cost_usd, 6));
+    payload["cache_read_cost"] = json!(round_to(item.cache_read_cost_usd, 6));
+    payload["request_headers"] = users_me_usage_safe_headers(item.request_headers.as_ref());
+    payload["provider_request_headers"] = Value::Null;
+    payload["response_headers"] = Value::Null;
+    payload["client_response_headers"] =
+        users_me_usage_safe_headers(item.client_response_headers.as_ref());
+    payload["metadata"] = build_users_me_usage_safe_metadata(item);
+    payload["routing"] = Value::Null;
+    payload["settlement"] = Value::Null;
+    payload["trace"] = Value::Null;
+    payload["body_capture"] = item.body_capture_json_for_fields(&[
+        UsageBodyField::RequestBody,
+        UsageBodyField::ClientResponseBody,
+    ]);
+    payload["request_error"] = Value::Null;
+    payload["upstream_error"] = Value::Null;
+    payload["client_error"] = Value::Null;
+    payload["failure_summary"] = failure_summary.clone();
+    payload["errors"] = json!({
+        "request_error": Value::Null,
+        "upstream_error": Value::Null,
+        "client_error": Value::Null,
+        "failure_summary": failure_summary,
+    });
+    payload["error_flow"] = Value::Null;
+    payload["scheduling_failure"] = Value::Null;
+    payload["has_request_body"] = json!(users_me_usage_has_body_value(
+        item,
+        item.request_body.as_ref(),
+        UsageBodyField::RequestBody,
+    ));
+    payload["has_provider_request_body"] = json!(false);
+    payload["has_response_body"] = json!(false);
+    payload["has_client_response_body"] = json!(users_me_usage_has_body_value(
+        item,
+        item.client_response_body.as_ref(),
+        UsageBodyField::ClientResponseBody,
+    ));
+    payload["tiered_pricing"] = Value::Null;
+    payload["provider_request_body"] = Value::Null;
+    payload["response_body"] = Value::Null;
+    if include_bodies {
+        payload["request_body"] = request_body_value;
+        payload["client_response_body"] = client_response_body_value;
+    } else {
+        payload["request_body"] = Value::Null;
+        payload["client_response_body"] = Value::Null;
     }
     payload
 }
@@ -1094,6 +1332,132 @@ pub(super) async fn handle_users_me_usage_get(
             &summary_by_provider
         ));
     }
+    Json(payload).into_response()
+}
+
+pub(super) async fn handle_users_me_usage_detail_get(
+    state: &AppState,
+    request_context: &GatewayPublicRequestContext,
+    headers: &http::HeaderMap,
+) -> Response<Body> {
+    if !state.has_usage_data_reader() {
+        return build_users_me_usage_reader_unavailable_response();
+    }
+
+    let auth = match resolve_authenticated_local_user(state, request_context, headers).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+
+    let can_view_detail = if users_me_usage_role_can_view_detail(&auth.user.role) {
+        true
+    } else {
+        match state.read_user_feature_settings(&auth.user.id).await {
+            Ok(settings) => users_me_usage_request_detail_enabled(settings.as_ref()),
+            Err(err) => {
+                return build_auth_error_response(
+                    http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("user feature settings lookup failed: {err:?}"),
+                    false,
+                );
+            }
+        }
+    };
+    if !can_view_detail {
+        return build_auth_error_response(
+            http::StatusCode::FORBIDDEN,
+            "没有查看请求详情权限",
+            false,
+        );
+    }
+
+    let Some(usage_id) = users_me_usage_id_from_path(&request_context.request_path) else {
+        return admin_stats_bad_request_response("usage_id 无效".to_string());
+    };
+
+    let item = match state.find_request_usage_by_id(&usage_id).await {
+        Ok(Some(item)) if item.user_id.as_deref() == Some(auth.user.id.as_str()) => item,
+        Ok(_) => return build_users_me_usage_not_found_response(),
+        Err(err) => {
+            return build_auth_error_response(
+                http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("user usage detail lookup failed: {err:?}"),
+                false,
+            );
+        }
+    };
+
+    let include_bodies =
+        parse_users_me_usage_include_bodies(request_context.request_query_string.as_deref());
+    let api_key_names =
+        match resolve_users_me_api_key_names(state, std::slice::from_ref(&item)).await {
+            Ok(value) => value,
+            Err(err) => {
+                return build_auth_error_response(
+                    http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("user api key name lookup failed: {err:?}"),
+                    false,
+                );
+            }
+        };
+    let auth_api_key_reader_available = state.has_auth_api_key_data_reader();
+    let include_actual_cost = auth.user.role.eq_ignore_ascii_case("admin");
+
+    let mut detail_item = item.clone();
+    let (request_body, client_response_body) = if include_bodies {
+        let request_body = match users_me_usage_resolve_body_value(
+            state,
+            &item,
+            item.request_body.as_ref(),
+            UsageBodyField::RequestBody,
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                return build_auth_error_response(
+                    http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("user usage request body lookup failed: {err:?}"),
+                    false,
+                );
+            }
+        };
+        let client_response_body = match users_me_usage_resolve_body_value(
+            state,
+            &item,
+            item.client_response_body.as_ref(),
+            UsageBodyField::ClientResponseBody,
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                return build_auth_error_response(
+                    http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("user usage response body lookup failed: {err:?}"),
+                    false,
+                );
+            }
+        };
+        detail_item.request_body = request_body.clone();
+        detail_item.client_response_body = client_response_body.clone();
+        (request_body, client_response_body)
+    } else {
+        (None, None)
+    };
+
+    let payload = build_users_me_usage_detail_payload(
+        &detail_item,
+        &auth.user.id,
+        &auth.user.username,
+        auth.user.email.as_deref(),
+        include_actual_cost,
+        &api_key_names,
+        auth_api_key_reader_available,
+        include_bodies,
+        request_body,
+        client_response_body,
+    );
     Json(payload).into_response()
 }
 

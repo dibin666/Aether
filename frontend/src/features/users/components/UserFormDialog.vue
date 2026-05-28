@@ -237,6 +237,15 @@
             </div>
             <Switch v-model="form.notification_push_service_enabled" />
           </div>
+          <div class="mt-3 flex items-center justify-between gap-3 border-t border-border/60 pt-3">
+            <div>
+              <Label class="text-sm font-medium">查看请求详情</Label>
+              <p class="mt-1 text-xs text-muted-foreground">
+                允许普通用户在自己的使用记录中打开请求详情
+              </p>
+            </div>
+            <Switch v-model="form.usage_request_detail_enabled" />
+          </div>
         </div>
       </div>
     </form>
@@ -284,8 +293,10 @@ import { parseNumberInput } from '@/utils/form'
 import {
   mergeChatPiiRedactionFeatureSettings,
   mergeNotificationPushServiceFeatureSettings,
+  mergeUsageRequestDetailFeatureSettings,
   readNotificationPushServiceFeatureSettings,
   readChatPiiRedactionFeatureSettings,
+  readUsageRequestDetailFeatureSettings,
 } from '@/utils/featureSettings'
 import {
   getPasswordPolicyHint,
@@ -302,7 +313,7 @@ export interface UserFormData {
   email: string
   initial_gift_usd?: number | null
   unlimited?: boolean
-  role: 'admin' | 'user'
+  role: 'admin' | 'audit_admin' | 'user'
   is_active?: boolean
   group_ids?: string[]
   feature_settings?: Record<string, unknown> | null
@@ -331,13 +342,14 @@ const form = ref({
   confirmPassword: '',
   email: '',
   initial_gift_usd: 10 as number | undefined,
-  role: 'user' as 'admin' | 'user',
+  role: 'user' as 'admin' | 'audit_admin' | 'user',
   unlimited: false,
   is_active: true,
   group_ids: [] as string[],
   chat_pii_redaction_enabled: false,
   chat_pii_redaction_placeholder_notice: true,
   notification_push_service_enabled: false,
+  usage_request_detail_enabled: false,
 })
 
 const groupOptions = computed(() => (props.groups || []).map((group) => ({
@@ -364,6 +376,7 @@ function resetForm() {
     chat_pii_redaction_enabled: false,
     chat_pii_redaction_placeholder_notice: true,
     notification_push_service_enabled: false,
+    usage_request_detail_enabled: false,
   }
 }
 
@@ -372,6 +385,7 @@ function loadUserData() {
   formNonce.value = createFieldNonce()
   const redactionFeature = readChatPiiRedactionFeatureSettings(props.user.feature_settings)
   const notificationPushFeature = readNotificationPushServiceFeatureSettings(props.user.feature_settings)
+  const requestDetailFeature = readUsageRequestDetailFeatureSettings(props.user.feature_settings)
   // 创建数组副本，避免与 props 数据共享引用
   form.value = {
     username: props.user.username,
@@ -386,6 +400,7 @@ function loadUserData() {
     chat_pii_redaction_enabled: redactionFeature.enabled,
     chat_pii_redaction_placeholder_notice: redactionFeature.inject_model_instruction,
     notification_push_service_enabled: notificationPushFeature.enabled,
+    usage_request_detail_enabled: requestDetailFeature.enabled,
   }
 }
 
@@ -492,8 +507,11 @@ function buildFeatureSettingsPayload(): Record<string, unknown> | null {
     enabled: form.value.chat_pii_redaction_enabled,
     inject_model_instruction: form.value.chat_pii_redaction_placeholder_notice,
   })
-  return mergeNotificationPushServiceFeatureSettings(withRedaction, {
+  const withNotification = mergeNotificationPushServiceFeatureSettings(withRedaction, {
     enabled: form.value.notification_push_service_enabled,
+  })
+  return mergeUsageRequestDetailFeatureSettings(withNotification, {
+    enabled: form.value.usage_request_detail_enabled,
   })
 }
 
