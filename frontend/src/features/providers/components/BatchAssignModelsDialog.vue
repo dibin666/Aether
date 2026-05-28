@@ -357,8 +357,8 @@ async function applyAutoMatchFromKey(key: AutoMatchKey) {
     const result = await fetchCachedModels(props.providerId, key.id, true)
     if (!props.open) return
 
-    if (result.error && result.models.length > 0) {
-      showWarning(`部分格式获取失败: ${result.error}`)
+    if (result.warning) {
+      showWarning(`部分格式获取失败: ${result.warning}`)
     }
 
     if (result.models.length === 0) {

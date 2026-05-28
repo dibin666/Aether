@@ -3,6 +3,55 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+pub const PROVIDER_REASONING_EFFORT_METADATA_KEY: &str = "provider_reasoning_effort";
+pub const PROVIDER_SERVICE_TIER_METADATA_KEY: &str = "provider_service_tier";
+
+pub fn extract_provider_reasoning_effort_from_body(value: Option<&Value>) -> Option<String> {
+    let object = value.and_then(Value::as_object)?;
+    object
+        .get("reasoning_effort")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            object
+                .get("reasoning")
+                .and_then(Value::as_object)
+                .and_then(|reasoning| reasoning.get("effort"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            object
+                .get("output_config")
+                .and_then(Value::as_object)
+                .and_then(|output_config| output_config.get("effort"))
+                .and_then(Value::as_str)
+        })
+        .and_then(normalize_provider_reasoning_effort)
+}
+
+fn normalize_provider_reasoning_effort(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() || normalized.len() > 64 {
+        return None;
+    }
+    Some(normalized)
+}
+
+pub fn extract_provider_service_tier_from_body(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_object)
+        .and_then(|object| object.get("service_tier"))
+        .and_then(Value::as_str)
+        .and_then(normalize_provider_service_tier)
+}
+
+fn normalize_provider_service_tier(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() || normalized.len() > 64 {
+        return None;
+    }
+    Some(normalized)
+}
+
 /// Joined usage read model assembled from the accounting row plus the newer audit/snapshot
 /// satellite tables.
 ///
@@ -374,6 +423,36 @@ impl StoredRequestUsageAudit {
 
     pub fn trace_id(&self) -> Option<&str> {
         self.request_metadata_string("trace_id")
+    }
+
+    pub fn provider_reasoning_effort(&self) -> Option<String> {
+        if self
+            .provider_request_body
+            .as_ref()
+            .and_then(Value::as_object)
+            .is_some()
+        {
+            return extract_provider_reasoning_effort_from_body(
+                self.provider_request_body.as_ref(),
+            );
+        }
+
+        self.request_metadata_string(PROVIDER_REASONING_EFFORT_METADATA_KEY)
+            .and_then(normalize_provider_reasoning_effort)
+    }
+
+    pub fn provider_service_tier(&self) -> Option<String> {
+        if self
+            .provider_request_body
+            .as_ref()
+            .and_then(Value::as_object)
+            .is_some()
+        {
+            return extract_provider_service_tier_from_body(self.provider_request_body.as_ref());
+        }
+
+        self.request_metadata_string(PROVIDER_SERVICE_TIER_METADATA_KEY)
+            .and_then(normalize_provider_service_tier)
     }
 
     pub fn body_ref(&self, field: UsageBodyField) -> Option<&str> {
@@ -925,6 +1004,7 @@ pub struct UsageBreakdownSummaryQuery {
     pub created_from_unix_secs: u64,
     pub created_until_unix_secs: u64,
     pub user_id: Option<String>,
+    pub provider_name: Option<String>,
     pub group_by: UsageBreakdownGroupBy,
 }
 
@@ -2365,6 +2445,56 @@ mod tests {
         assert_eq!(result.storage, UsageBodyCaptureStorage::Inline);
         assert_eq!(result.state_label(), "legacy_unknown");
         assert_eq!(result.request_capture_source(), "stored_original");
+    }
+
+    #[test]
+    fn provider_reasoning_effort_prefers_provider_request_body_over_metadata() {
+        let mut usage = sample_usage();
+        usage.provider_request_body = Some(json!({
+            "reasoning": { "effort": "XHigh" },
+            "service_tier": "Priority"
+        }));
+
+        assert_eq!(usage.provider_reasoning_effort().as_deref(), Some("xhigh"));
+        assert_eq!(usage.provider_service_tier().as_deref(), Some("priority"));
+
+        usage.request_metadata = Some(json!({
+            "provider_reasoning_effort": "max",
+            "provider_service_tier": "standard"
+        }));
+
+        assert_eq!(usage.provider_reasoning_effort().as_deref(), Some("xhigh"));
+        assert_eq!(usage.provider_service_tier().as_deref(), Some("priority"));
+
+        usage.provider_request_body = None;
+        assert_eq!(usage.provider_reasoning_effort().as_deref(), Some("max"));
+        assert_eq!(usage.provider_service_tier().as_deref(), Some("standard"));
+
+        usage.request_metadata = None;
+        usage.provider_request_body = Some(json!({
+            "output_config": { "effort": "High" },
+            "service_tier": "priority"
+        }));
+
+        assert_eq!(usage.provider_reasoning_effort().as_deref(), Some("high"));
+        assert_eq!(usage.provider_service_tier().as_deref(), Some("priority"));
+
+        usage.provider_request_body = Some(json!({
+            "reasoning_effort": "medium"
+        }));
+
+        assert_eq!(usage.provider_reasoning_effort().as_deref(), Some("medium"));
+
+        usage.request_metadata = Some(json!({
+            "provider_reasoning_effort": "max",
+            "provider_service_tier": "standard"
+        }));
+        usage.provider_request_body = Some(json!({
+            "model": "gpt-5"
+        }));
+
+        assert_eq!(usage.provider_reasoning_effort(), None);
+        assert_eq!(usage.provider_service_tier(), None);
     }
 
     #[test]

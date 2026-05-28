@@ -371,7 +371,7 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "candidate/mod.rs should not own the core selectable-candidate collector anymore"
     );
     assert!(
-        !candidate_mod.contains("auth_api_key_concurrency_limit_reached"),
+        !candidate_mod.contains("auth_api_key_concurrency_limit_reached("),
         "candidate/mod.rs should not own the core auth api key concurrency helper anymore"
     );
     assert!(
@@ -463,7 +463,7 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "read_provider_key_rpm_states(",
         "candidate_is_selectable_with_runtime_state",
         "collect_selectable_candidates_from_keys",
-        "auth_api_key_concurrency_limit_reached",
+        "auth_api_key_concurrency_limit_reached(",
         "build_provider_concurrent_limit_map(",
         "reorder_candidates_by_scheduler_health",
     ] {
@@ -487,7 +487,7 @@ fn scheduler_candidate_runtime_paths_depend_on_scheduler_core_and_state_trait() 
         "candidate/runtime.rs should keep affinity out of runtime eligibility checks"
     );
     assert!(
-        runtime.contains("auth_api_key_concurrency_limit_reached"),
+        runtime.contains("auth_api_key_concurrency_limit_reached("),
         "candidate/runtime.rs should depend on core auth api key concurrency helper"
     );
     assert!(

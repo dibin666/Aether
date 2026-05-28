@@ -68,6 +68,7 @@ fn sample_transport(base_url: &str, api_format: &str) -> GatewayProviderTranspor
             expires_at_unix_secs: None,
             proxy: None,
             fingerprint: None,
+            upstream_metadata: None,
             decrypted_api_key: "__placeholder__".to_string(),
             decrypted_auth_config: None,
         },
@@ -292,6 +293,47 @@ fn strips_metadata_for_codex_openai_responses_requests() {
 }
 
 #[test]
+fn openai_chat_to_codex_responses_preserves_json_mode_chat_messages() {
+    let body_json = json!({
+        "model": "gpt-5.5",
+        "messages": [
+            {"role": "system", "content": "Return a JSON object."},
+            {"role": "user", "content": "Why did this JSON request fail?"}
+        ],
+        "response_format": {"type": "json_object"}
+    });
+
+    let provider_request_body = build_cross_format_openai_responses_request_body(
+        &body_json,
+        "gpt-5.5-upstream",
+        "openai:chat",
+        "openai:responses",
+        false,
+        false,
+        "codex",
+        None,
+        None,
+        &http::HeaderMap::new(),
+        false,
+    )
+    .expect("openai chat to codex responses request should build");
+
+    assert_eq!(
+        provider_request_body["text"]["format"]["type"],
+        "json_object"
+    );
+    assert_eq!(provider_request_body["input"][0]["role"], "user");
+    assert_eq!(
+        provider_request_body["input"][0]["content"][0]["text"],
+        "Why did this JSON request fail?"
+    );
+    assert_eq!(
+        provider_request_body["instructions"],
+        "Return a JSON object."
+    );
+}
+
+#[test]
 fn applies_codex_defaults_unless_body_rules_handle_the_field() {
     let body_json = json!({
         "model": "claude-sonnet-4-5",
@@ -355,7 +397,7 @@ fn injects_codex_prompt_cache_key_for_openai_responses_cross_format_requests() {
 
     assert_eq!(
         provider_request_body["prompt_cache_key"],
-        "b4dfeb75-b105-544c-a706-39b92f0bddb0"
+        "4ee6ea6e-3ac6-5a18-8cb8-1f8b956419e5"
     );
 }
 

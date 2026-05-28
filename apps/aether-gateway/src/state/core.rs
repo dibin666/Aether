@@ -574,12 +574,14 @@ impl AppState {
 
     pub(crate) fn invalidate_provider_routing_caches(&self) {
         self.data.clear_minimal_candidate_selection_cache();
+        self.data.clear_provider_catalog_cache();
         self.clear_provider_transport_snapshot_cache();
         self.invalidate_scheduler_affinity_cache();
     }
 
     pub(crate) fn invalidate_provider_health_routing_caches(&self) {
         self.data.clear_minimal_candidate_selection_cache();
+        self.data.clear_provider_catalog_cache();
         self.clear_provider_transport_snapshot_cache();
     }
 
@@ -1272,6 +1274,10 @@ impl AppState {
         supervise_worker(
             crate::task_runtime::TASK_KEY_VIDEO_TASK_POLLER,
             spawn_video_task_poller(self.clone()),
+        );
+        supervise_worker(
+            crate::backup::worker::S3_BACKUP_WORKER_TASK_KEY,
+            crate::backup::worker::spawn_s3_backup_worker(self.clone()),
         );
 
         supervisor

@@ -17,8 +17,8 @@ use serde_json::{json, Value};
 use sha2::Sha256;
 
 use crate::logic::{
-    extract_error_message, parse_models_response_page, parse_windsurf_model_configs_response,
-    preset_models_for_provider,
+    aggregate_models_for_cache, extract_error_message, parse_models_response_page,
+    parse_windsurf_model_configs_response, preset_models_for_provider,
 };
 use crate::transport::{
     build_antigravity_fetch_available_models_plan, build_gemini_cli_load_code_assist_plan,
@@ -204,7 +204,8 @@ async fn fetch_standard_models(
         }
     }
 
-    Ok(build_success_outcome(all_models, None, has_success).with_errors(errors))
+    let merged_models = aggregate_models_for_cache(&all_models);
+    Ok(build_success_outcome(merged_models, None, has_success).with_errors(errors))
 }
 
 async fn fetch_standard_models_for_transport(
@@ -334,6 +335,11 @@ async fn fetch_gemini_cli_models(
                     if let Some(plan_type) = extract_gemini_cli_plan_type(&body_json) {
                         provider_meta.insert("plan_type".to_string(), Value::String(plan_type));
                     }
+                    for key in ["paidTier", "currentTier"] {
+                        if let Some(value) = extract_gemini_cli_tier_metadata(&body_json, key) {
+                            provider_meta.insert(key.to_string(), value);
+                        }
+                    }
                     if let Some(project_id) =
                         extract_gemini_cli_project_id(&body_json).or_else(|| {
                             transport_auth_config(transport)
@@ -433,7 +439,7 @@ async fn fetch_vertex_api_key_models(
 
     for base_url in iter_vertex_base_urls(transports) {
         let url = build_vertex_google_list_url(&base_url, api_key, None);
-        let outcome = fetch_vertex_models_from_url(
+        let outcome = match fetch_vertex_models_from_url(
             runtime,
             reference_transport,
             &url,
@@ -442,7 +448,14 @@ async fn fetch_vertex_api_key_models(
             "gemini:generate_content",
             None,
         )
-        .await?;
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                hard_errors.push(format!("{base_url}: {err}"));
+                continue;
+            }
+        };
         has_success |= outcome.has_success;
         if let Some(error) = outcome.error {
             if is_soft_not_found(&error) {
@@ -507,7 +520,7 @@ async fn fetch_vertex_service_account_models(
             ("anthropic", claude_transport, "claude:messages"),
         ] {
             let url = build_vertex_service_account_list_url(&base, publisher, None);
-            let outcome = fetch_vertex_models_from_url(
+            let outcome = match fetch_vertex_models_from_url(
                 runtime,
                 transport,
                 &url,
@@ -516,7 +529,14 @@ async fn fetch_vertex_service_account_models(
                 api_format,
                 Some(("authorization".to_string(), format!("Bearer {token}"))),
             )
-            .await?;
+            .await
+            {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    hard_errors.push(format!("{url}: {err}"));
+                    continue;
+                }
+            };
             has_success |= outcome.has_success;
             if let Some(error) = outcome.error {
                 let labeled = format!("{url}: {error}");
@@ -1218,7 +1238,9 @@ fn normalize_api_format(value: &str) -> String {
 
 fn extract_gemini_cli_plan_type(body: &Value) -> Option<String> {
     for key in ["paidTier", "currentTier"] {
-        let tier = body.get(key)?;
+        let Some(tier) = body.get(key) else {
+            continue;
+        };
         let raw = if let Some(value) = tier.as_str() {
             value.trim().to_string()
         } else if let Some(value) = tier
@@ -1242,6 +1264,40 @@ fn extract_gemini_cli_plan_type(body: &Value) -> Option<String> {
         }
     }
     None
+}
+
+fn extract_gemini_cli_tier_metadata(body: &Value, key: &str) -> Option<Value> {
+    let tier = body.get(key)?;
+    if let Some(text) = tier
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(Value::String(text.to_string()));
+    }
+
+    let object = tier.as_object()?;
+    let mut out = serde_json::Map::new();
+    for field in [
+        "id",
+        "tierType",
+        "name",
+        "displayName",
+        "availableCredits",
+        "remainingCredits",
+        "consumedCredits",
+        "totalCredits",
+        "unlimited",
+        "hasCredits",
+    ] {
+        let Some(value) = object.get(field) else {
+            continue;
+        };
+        if value.is_string() || value.is_number() || value.is_boolean() || value.is_null() {
+            out.insert(field.to_string(), value.clone());
+        }
+    }
+    (!out.is_empty()).then_some(Value::Object(out))
 }
 
 fn extract_gemini_cli_project_id(body: &Value) -> Option<String> {
@@ -1298,10 +1354,18 @@ mod tests {
     use crate::fetch_models_from_transports;
     use crate::transport::ModelFetchTransportRuntime;
 
+    type RouteResult = Result<(u16, Value), String>;
+    type ModelFetchRoute = (String, RouteResult);
+
     struct TestRuntime {
         executed_urls: Arc<Mutex<Vec<String>>>,
         response_body: Value,
         status_code: u16,
+    }
+
+    struct RoutingTestRuntime {
+        executed_urls: Arc<Mutex<Vec<String>>>,
+        routes: Vec<ModelFetchRoute>,
     }
 
     #[async_trait]
@@ -1336,6 +1400,57 @@ mod tests {
                 headers: BTreeMap::new(),
                 body: Some(ResponseBody {
                     json_body: Some(self.response_body.clone()),
+                    body_bytes_b64: None,
+                }),
+                telemetry: None,
+                error: None,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl ModelFetchTransportRuntime for RoutingTestRuntime {
+        async fn resolve_local_oauth_request_auth(
+            &self,
+            _transport: &GatewayProviderTransportSnapshot,
+        ) -> Result<Option<aether_provider_transport::LocalResolvedOAuthRequestAuth>, String>
+        {
+            Ok(None)
+        }
+
+        async fn resolve_model_fetch_proxy(
+            &self,
+            _transport: &GatewayProviderTransportSnapshot,
+        ) -> Option<aether_contracts::ProxySnapshot> {
+            None
+        }
+
+        async fn execute_model_fetch_execution_plan(
+            &self,
+            plan: &aether_contracts::ExecutionPlan,
+        ) -> Result<ExecutionResult, String> {
+            self.executed_urls
+                .lock()
+                .expect("executed_urls lock")
+                .push(plan.url.clone());
+            let Some((_, route_result)) = self
+                .routes
+                .iter()
+                .find(|(url_part, _)| plan.url.contains(url_part))
+            else {
+                return Err(format!("unexpected models fetch URL {}", plan.url));
+            };
+            let (status_code, response_body) = match route_result {
+                Ok((status_code, response_body)) => (*status_code, response_body.clone()),
+                Err(err) => return Err(err.clone()),
+            };
+            Ok(ExecutionResult {
+                request_id: plan.request_id.clone(),
+                candidate_id: plan.candidate_id.clone(),
+                status_code,
+                headers: BTreeMap::new(),
+                body: Some(ResponseBody {
+                    json_body: Some(response_body),
                     body_bytes_b64: None,
                 }),
                 telemetry: None,
@@ -1394,6 +1509,7 @@ mod tests {
                 expires_at_unix_secs: None,
                 proxy: None,
                 fingerprint: None,
+                upstream_metadata: None,
                 decrypted_api_key: "vertex-secret".to_string(),
                 decrypted_auth_config: None,
             },
@@ -1439,6 +1555,16 @@ mod tests {
         transport
     }
 
+    fn sample_gemini_cli_transport() -> GatewayProviderTransportSnapshot {
+        let mut transport = sample_custom_aiplatform_transport();
+        transport.provider.provider_type = "gemini_cli".to_string();
+        transport.provider.name = "Gemini CLI".to_string();
+        transport.endpoint.base_url = "https://cloudcode-pa.googleapis.com".to_string();
+        transport.key.auth_type = "bearer".to_string();
+        transport.key.decrypted_api_key = "gemini-cli-access-token".to_string();
+        transport
+    }
+
     fn sample_windsurf_transport() -> GatewayProviderTransportSnapshot {
         let mut transport = sample_custom_aiplatform_transport();
         transport.provider.provider_type = "windsurf".to_string();
@@ -1452,6 +1578,27 @@ mod tests {
         transport.key.api_formats = Some(vec!["openai:chat".to_string()]);
         transport.key.decrypted_api_key = "devin-session-token$abc".to_string();
         transport.key.decrypted_auth_config = Some(r#"{"provider_type":"windsurf"}"#.to_string());
+        transport
+    }
+
+    fn sample_openai_transport(
+        endpoint_id: &str,
+        api_format: &str,
+        base_url: &str,
+    ) -> GatewayProviderTransportSnapshot {
+        let mut transport = sample_custom_aiplatform_transport();
+        transport.provider.provider_type = "custom".to_string();
+        transport.provider.name = "OpenAI Compat".to_string();
+        transport.endpoint.id = endpoint_id.to_string();
+        transport.endpoint.api_format = api_format.to_string();
+        transport.endpoint.api_family = Some("openai".to_string());
+        transport.endpoint.endpoint_kind = api_format
+            .split_once(':')
+            .map(|(_, endpoint_kind)| endpoint_kind.to_string());
+        transport.endpoint.base_url = base_url.to_string();
+        transport.endpoint.custom_path = None;
+        transport.key.api_formats = Some(vec![api_format.to_string()]);
+        transport.key.decrypted_api_key = "openai-secret".to_string();
         transport
     }
 
@@ -1523,6 +1670,115 @@ mod tests {
             outcome.cached_models[0]["api_formats"][0].as_str(),
             Some("gemini:generate_content")
         );
+    }
+
+    #[tokio::test]
+    async fn standard_transport_merges_successful_endpoint_models_when_one_endpoint_fails() {
+        let executed_urls = Arc::new(Mutex::new(Vec::new()));
+        let runtime = RoutingTestRuntime {
+            executed_urls: Arc::clone(&executed_urls),
+            routes: vec![
+                (
+                    "https://bad.example.com/v1/models".to_string(),
+                    Err("connection reset".to_string()),
+                ),
+                (
+                    "https://chat.example.com/v1/models".to_string(),
+                    Ok((
+                        200,
+                        json!({
+                            "data": [{ "id": "shared-model" }]
+                        }),
+                    )),
+                ),
+                (
+                    "https://responses.example.com/v1/models".to_string(),
+                    Ok((
+                        200,
+                        json!({
+                            "data": [
+                                { "id": "shared-model" },
+                                { "id": "responses-only" }
+                            ]
+                        }),
+                    )),
+                ),
+            ],
+        };
+        let transports = vec![
+            sample_openai_transport("endpoint-bad", "openai:chat", "https://bad.example.com"),
+            sample_openai_transport("endpoint-chat", "openai:chat", "https://chat.example.com"),
+            sample_openai_transport(
+                "endpoint-responses",
+                "openai:responses",
+                "https://responses.example.com",
+            ),
+        ];
+
+        let outcome = fetch_models_from_transports(&runtime, &transports)
+            .await
+            .expect("models fetch should keep successful endpoint results");
+
+        assert!(outcome.has_success);
+        assert_eq!(
+            outcome.fetched_model_ids,
+            vec!["responses-only", "shared-model"]
+        );
+        assert_eq!(outcome.cached_models.len(), 2);
+        assert_eq!(outcome.errors.len(), 1);
+        assert!(outcome.errors[0].contains("connection reset"));
+        let shared_model = outcome
+            .cached_models
+            .iter()
+            .find(|model| model.get("id").and_then(Value::as_str) == Some("shared-model"))
+            .expect("shared model should be cached once");
+        assert_eq!(
+            shared_model.get("api_formats"),
+            Some(&json!(["openai:chat", "openai:responses"]))
+        );
+    }
+
+    #[tokio::test]
+    async fn vertex_models_fetch_continues_when_one_base_url_errors() {
+        let executed_urls = Arc::new(Mutex::new(Vec::new()));
+        let runtime = RoutingTestRuntime {
+            executed_urls: Arc::clone(&executed_urls),
+            routes: vec![
+                (
+                    "https://us-central1-aiplatform.googleapis.com/v1beta1/publishers/google/models"
+                        .to_string(),
+                    Err("connect timeout".to_string()),
+                ),
+                (
+                    "https://aiplatform.googleapis.com/v1beta1/publishers/google/models".to_string(),
+                    Ok((
+                        200,
+                        json!({
+                            "models": [{
+                                "name": "publishers/google/models/gemini-3.1-pro-preview"
+                            }]
+                        }),
+                    )),
+                ),
+            ],
+        };
+        let mut failing_transport = sample_custom_aiplatform_transport();
+        failing_transport.endpoint.base_url =
+            "https://us-central1-aiplatform.googleapis.com".to_string();
+        let mut successful_transport = sample_custom_aiplatform_transport();
+        successful_transport.endpoint.id = "endpoint-2".to_string();
+        successful_transport.endpoint.base_url = "https://aiplatform.googleapis.com".to_string();
+
+        let outcome =
+            fetch_models_from_transports(&runtime, &[failing_transport, successful_transport])
+                .await
+                .expect("vertex models fetch should keep successful base URL results");
+
+        assert!(outcome.has_success);
+        assert_eq!(outcome.fetched_model_ids, vec!["gemini-3.1-pro-preview"]);
+        assert_eq!(outcome.cached_models.len(), 1);
+        assert_eq!(outcome.errors.len(), 1);
+        assert!(outcome.errors[0].contains("connect timeout"));
     }
 
     #[test]
@@ -1614,6 +1870,67 @@ mod tests {
         );
         assert_eq!(outcome.fetched_model_ids, vec!["gpt-5.4-upstream"]);
         assert_eq!(outcome.cached_models.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn gemini_cli_load_code_assist_preserves_paid_tier_credits() {
+        let executed_urls = Arc::new(Mutex::new(Vec::new()));
+        let runtime = TestRuntime {
+            executed_urls: Arc::clone(&executed_urls),
+            response_body: json!({
+                "cloudaicompanionProject": {
+                    "id": "project-from-load-code-assist"
+                },
+                "currentTier": {
+                    "id": "free-tier"
+                },
+                "paidTier": {
+                    "id": "g1-pro-tier",
+                    "availableCredits": 123.5,
+                    "consumedCredits": 7,
+                    "totalCredits": 200,
+                    "privateField": {
+                        "ignored": true
+                    }
+                }
+            }),
+            status_code: 200,
+        };
+        let outcome = fetch_models_from_transports(&runtime, &[sample_gemini_cli_transport()])
+            .await
+            .expect("models fetch should succeed");
+
+        let urls = executed_urls.lock().expect("executed_urls lock");
+        assert_eq!(
+            urls.as_slice(),
+            &["https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"]
+        );
+        assert_eq!(
+            outcome
+                .upstream_metadata
+                .as_ref()
+                .and_then(|value| value.pointer("/gemini_cli/project_id")),
+            Some(&json!("project-from-load-code-assist"))
+        );
+        assert_eq!(
+            outcome
+                .upstream_metadata
+                .as_ref()
+                .and_then(|value| value.pointer("/gemini_cli/plan_type")),
+            Some(&json!("g1-pro-tier"))
+        );
+        assert_eq!(
+            outcome
+                .upstream_metadata
+                .as_ref()
+                .and_then(|value| value.pointer("/gemini_cli/paidTier/availableCredits")),
+            Some(&json!(123.5))
+        );
+        assert!(outcome
+            .upstream_metadata
+            .as_ref()
+            .and_then(|value| value.pointer("/gemini_cli/paidTier/privateField"))
+            .is_none());
     }
 
     #[tokio::test]

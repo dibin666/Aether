@@ -35,7 +35,10 @@
                   停用
                 </Badge>
               </div>
-              <div class="flex items-center gap-1.5">
+              <div
+                v-if="!isEndpointConfigReadOnly"
+                class="flex items-center gap-1.5"
+              >
                 <!-- 格式转换按钮 -->
                 <span
                   class="mr-1"
@@ -153,15 +156,21 @@
                     <Label class="text-xs text-muted-foreground">自定义路径</Label>
                     <Input
                       :model-value="getDisplayedPath(endpoint)"
-                      :placeholder="getDefaultPath(endpoint.api_format, endpoint.base_url) || '留空使用默认'"
-                      :disabled="isFixedProvider"
+                      :placeholder="getEndpointDefaultPath(endpoint) || '留空使用默认'"
                       @update:model-value="(v) => updateEndpointField(endpoint.id, 'path', v)"
                     />
+                    <p
+                      v-if="getEndpointDefaultPath(endpoint)"
+                      class="text-[10px] text-muted-foreground truncate"
+                      :title="getEndpointDefaultPath(endpoint)"
+                    >
+                      当前默认路径：{{ getEndpointDefaultPath(endpoint) }}
+                    </p>
                   </div>
                 </div>
                 <!-- 保存/撤销按钮（URL/路径有修改时显示） -->
                 <div
-                  v-if="hasUrlChanges(endpoint)"
+                  v-if="!isEndpointConfigReadOnly && hasUrlChanges(endpoint)"
                   class="flex items-center gap-1 shrink-0"
                 >
                   <Button
@@ -187,7 +196,10 @@
               </div>
 
               <!-- 请求/响应规则（请求头、请求体和响应头规则） -->
-              <Collapsible v-model:open="endpointRulesExpanded[endpoint.id]">
+              <Collapsible
+                v-if="!isEndpointConfigReadOnly"
+                v-model:open="endpointRulesExpanded[endpoint.id]"
+              >
                 <div class="flex items-center gap-2">
                   <!-- 有规则时显示可折叠的触发器 -->
                   <CollapsibleTrigger
@@ -963,6 +975,13 @@
                   size="sm"
                   :placeholder="newEndpointDefaultPath || '留空使用默认'"
                 />
+                <p
+                  v-if="newEndpointDefaultPath"
+                  class="text-[10px] text-muted-foreground truncate"
+                  :title="newEndpointDefaultPath"
+                >
+                  当前默认路径：{{ newEndpointDefaultPath }}
+                </p>
               </div>
             </div>
           </div>
@@ -1778,6 +1797,10 @@ const isFixedProvider = computed(() => {
   return !!t && t !== 'custom'
 })
 
+const isEndpointConfigReadOnly = computed(() => {
+  return (props.provider?.provider_type || '').trim().toLowerCase() === 'gemini_cli'
+})
+
 // 新端点表单
 const newEndpoint = ref({
   api_format: '',
@@ -1859,10 +1882,11 @@ function getDefaultPath(apiFormat: string, baseUrl?: string): string {
   })
 }
 
+function getEndpointDefaultPath(endpoint: ProviderEndpoint): string {
+  return getDefaultPath(endpoint.api_format, getEndpointEditState(endpoint.id)?.url ?? endpoint.base_url)
+}
+
 function getDisplayedPath(endpoint: ProviderEndpoint): string {
-  if (isFixedProvider.value) {
-    return getDefaultPath(endpoint.api_format, endpoint.base_url)
-  }
   return getEndpointEditState(endpoint.id)?.path ?? (endpoint.custom_path || '')
 }
 
@@ -3170,6 +3194,8 @@ watch(() => props.endpoints, (endpoints) => {
 
 // 保存端点
 async function saveEndpoint(endpoint: ProviderEndpoint) {
+  if (isEndpointConfigReadOnly.value) return
+
   if (isEndpointRulesJsonMode(endpoint.id) && endpointRulesJsonDirty.value[endpoint.id]) {
     if (!applyEndpointRulesJsonDraft(endpoint.id, { notify: false })) return
   }
@@ -3199,13 +3225,13 @@ async function saveEndpoint(endpoint: ProviderEndpoint) {
 
   savingEndpointId.value = endpoint.id
   try {
-    // 仅提交变更字段，避免 fixed provider 因 base_url/custom_path 被锁定而更新失败
+    // 仅提交变更字段；fixed provider 锁定 base_url，但允许覆盖 custom_path。
     const payload: Record<string, unknown> = {}
 
     if (!isFixedProvider.value) {
       if (state.url !== endpoint.base_url) payload.base_url = state.url
-      if (state.path !== (endpoint.custom_path || '')) payload.custom_path = state.path || null
     }
+    if (state.path !== (endpoint.custom_path || '')) payload.custom_path = state.path || null
 
     if (hasRulesChanges(endpoint)) payload.header_rules = rulesToHeaderRules(state.rules)
     if (hasResponseHeaderRulesChanges(endpoint)) {

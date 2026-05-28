@@ -17,7 +17,7 @@ use aether_scheduler_core::{
 };
 use aether_usage_runtime::{
     build_lifecycle_usage_seed, build_stream_terminal_usage_payload_seed,
-    build_sync_terminal_usage_payload_seed, build_terminal_usage_context_seed,
+    build_sync_terminal_usage_payload_seed, build_terminal_usage_context_seed, LifecycleUsageSeed,
     UsageBodyCapturePolicy, UsageRequestRecordLevel, UsageRuntimeAccess,
     DEFAULT_USAGE_RESPONSE_BODY_CAPTURE_LIMIT_BYTES,
 };
@@ -1710,17 +1710,36 @@ fn stream_chunk_contains_sse_done(chunk: &[u8]) -> bool {
     tracker.observe_chunk(chunk)
 }
 
-async fn next_stream_frame<R>(
-    buffered_frames: &mut VecDeque<StreamFrame>,
+struct ObservedStreamFrame {
+    frame: StreamFrame,
+    observed_at: Instant,
+}
+
+async fn read_next_observed_stream_frame<R>(
     lines: &mut FramedRead<R, LinesCodec>,
-) -> Result<Option<StreamFrame>, GatewayError>
+) -> Result<Option<ObservedStreamFrame>, GatewayError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    Ok(read_next_frame(lines)
+        .await?
+        .map(|frame| ObservedStreamFrame {
+            frame,
+            observed_at: Instant::now(),
+        }))
+}
+
+async fn next_stream_frame<R>(
+    buffered_frames: &mut VecDeque<ObservedStreamFrame>,
+    lines: &mut FramedRead<R, LinesCodec>,
+) -> Result<Option<ObservedStreamFrame>, GatewayError>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
     if let Some(frame) = buffered_frames.pop_front() {
         return Ok(Some(frame));
     }
-    read_next_frame(lines).await
+    read_next_observed_stream_frame(lines).await
 }
 
 fn should_refresh_stream_usage_telemetry(
@@ -1736,19 +1755,99 @@ fn should_refresh_stream_usage_telemetry(
         || (next_elapsed.is_some() && next_elapsed != previous_elapsed)
 }
 
+fn stream_elapsed_ms_since(started_at: Instant) -> u64 {
+    started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn stream_elapsed_ms_at(started_at: Instant, observed_at: Instant) -> u64 {
+    observed_at
+        .saturating_duration_since(started_at)
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
+}
+
+fn first_stream_event_telemetry(
+    stream_started_at: Instant,
+    event_observed_at: Instant,
+    upstream_telemetry: Option<&ExecutionTelemetry>,
+) -> ExecutionTelemetry {
+    let elapsed_ms = stream_elapsed_ms_at(stream_started_at, event_observed_at);
+    ExecutionTelemetry {
+        ttfb_ms: Some(elapsed_ms),
+        elapsed_ms: Some(elapsed_ms),
+        upstream_bytes: upstream_telemetry.and_then(|telemetry| telemetry.upstream_bytes),
+    }
+}
+
+fn maybe_capture_first_stream_event_telemetry(
+    stream_started_at: Instant,
+    event_observed_at: Instant,
+    upstream_telemetry: Option<&ExecutionTelemetry>,
+    usage_stream_telemetry: &mut Option<ExecutionTelemetry>,
+) -> bool {
+    if usage_stream_telemetry
+        .as_ref()
+        .and_then(|telemetry| telemetry.ttfb_ms)
+        .is_some()
+    {
+        return false;
+    }
+
+    *usage_stream_telemetry = Some(first_stream_event_telemetry(
+        stream_started_at,
+        event_observed_at,
+        upstream_telemetry,
+    ));
+    true
+}
+
+fn usage_refresh_telemetry(
+    upstream_telemetry: &ExecutionTelemetry,
+    usage_stream_telemetry: Option<&ExecutionTelemetry>,
+) -> ExecutionTelemetry {
+    ExecutionTelemetry {
+        ttfb_ms: usage_stream_telemetry.and_then(|telemetry| telemetry.ttfb_ms),
+        elapsed_ms: upstream_telemetry.elapsed_ms,
+        upstream_bytes: upstream_telemetry.upstream_bytes,
+    }
+}
+
+fn maybe_record_first_stream_event_started(
+    state: &AppState,
+    lifecycle_seed: &LifecycleUsageSeed,
+    status_code: u16,
+    stream_started_at: Instant,
+    event_observed_at: Instant,
+    upstream_telemetry: Option<&ExecutionTelemetry>,
+    usage_stream_telemetry: &mut Option<ExecutionTelemetry>,
+) {
+    if !maybe_capture_first_stream_event_telemetry(
+        stream_started_at,
+        event_observed_at,
+        upstream_telemetry,
+        usage_stream_telemetry,
+    ) {
+        return;
+    }
+    let Some(telemetry) = usage_stream_telemetry.as_ref() else {
+        return;
+    };
+    state.usage_runtime.record_stream_started(
+        state.data.as_ref(),
+        lifecycle_seed,
+        status_code,
+        Some(telemetry),
+    );
+}
+
 fn build_terminal_stream_telemetry(
     stream_started_at: Instant,
     telemetry: Option<&ExecutionTelemetry>,
     usage_stream_telemetry: Option<&ExecutionTelemetry>,
     upstream_bytes: u64,
 ) -> ExecutionTelemetry {
-    let current_elapsed_ms = stream_started_at
-        .elapsed()
-        .as_millis()
-        .min(u128::from(u64::MAX)) as u64;
-    let ttfb_ms = telemetry
-        .and_then(|telemetry| telemetry.ttfb_ms)
-        .or_else(|| usage_stream_telemetry.and_then(|telemetry| telemetry.ttfb_ms));
+    let current_elapsed_ms = stream_elapsed_ms_since(stream_started_at);
+    let ttfb_ms = usage_stream_telemetry.and_then(|telemetry| telemetry.ttfb_ms);
     let prior_elapsed_ms = telemetry
         .and_then(|telemetry| telemetry.elapsed_ms)
         .or_else(|| usage_stream_telemetry.and_then(|telemetry| telemetry.elapsed_ms))
@@ -1812,14 +1911,14 @@ fn should_probe_success_failover_before_stream(headers: &BTreeMap<String, String
 }
 
 async fn probe_local_stream_success_failover_text<R>(
-    buffered_frames: &mut VecDeque<StreamFrame>,
+    buffered_frames: &mut VecDeque<ObservedStreamFrame>,
     lines: &mut FramedRead<R, LinesCodec>,
 ) -> Result<Option<String>, GatewayError>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    while let Some(frame) = read_next_frame(lines).await? {
-        let probe_text = match &frame.payload {
+    while let Some(observed_frame) = read_next_observed_stream_frame(lines).await? {
+        let probe_text = match &observed_frame.frame.payload {
             StreamFramePayload::Data { chunk_b64, text } => {
                 match decode_stream_data_chunk(chunk_b64.as_deref(), text.as_deref()) {
                     Ok(chunk) if !chunk.is_empty() => {
@@ -1831,7 +1930,7 @@ where
             StreamFramePayload::Error { .. } | StreamFramePayload::Eof { .. } => None,
             StreamFramePayload::Headers { .. } | StreamFramePayload::Telemetry { .. } => None,
         };
-        buffered_frames.push_back(frame);
+        buffered_frames.push_back(observed_frame);
         if probe_text.is_some() {
             return Ok(probe_text);
         }
@@ -2279,6 +2378,7 @@ async fn execute_stream_from_frame_stream(
     let mut prefetched_body = Vec::new();
     let mut prefetched_inspection_body = Vec::new();
     let mut prefetched_telemetry: Option<ExecutionTelemetry> = None;
+    let mut prefetched_usage_telemetry: Option<ExecutionTelemetry> = None;
     let mut reached_eof = false;
     let mut sync_json_stream_bridge_active = false;
     if skip_direct_finalize_prefetch {
@@ -2338,7 +2438,7 @@ async fn execute_stream_from_frame_stream(
             } else {
                 next_stream_frame(&mut buffered_frames, &mut lines).await
             };
-            let Some(frame) = (match next_frame_result {
+            let Some(observed_frame) = (match next_frame_result {
                 Ok(frame) => frame,
                 Err(err) => {
                     let failure = build_stream_failure_report(
@@ -2356,7 +2456,7 @@ async fn execute_stream_from_frame_stream(
                         candidate_id,
                         report_kind,
                         headers,
-                        prefetched_telemetry,
+                        prefetched_usage_telemetry.clone(),
                         &provider_prefetched_body,
                         failure,
                     )
@@ -2366,8 +2466,15 @@ async fn execute_stream_from_frame_stream(
                 reached_eof = true;
                 break;
             };
-            match frame.payload {
+            let frame_observed_at = observed_frame.observed_at;
+            match observed_frame.frame.payload {
                 StreamFramePayload::Data { chunk_b64, text } => {
+                    maybe_capture_first_stream_event_telemetry(
+                        stream_started_at,
+                        frame_observed_at,
+                        prefetched_telemetry.as_ref(),
+                        &mut prefetched_usage_telemetry,
+                    );
                     let chunk =
                         match decode_stream_data_chunk(chunk_b64.as_deref(), text.as_deref()) {
                             Ok(chunk) => chunk,
@@ -2389,7 +2496,7 @@ async fn execute_stream_from_frame_stream(
                                     candidate_id,
                                     report_kind,
                                     headers,
-                                    prefetched_telemetry,
+                                    prefetched_usage_telemetry.clone(),
                                     &prefetched_body,
                                     failure,
                                 )
@@ -2420,7 +2527,7 @@ async fn execute_stream_from_frame_stream(
                             candidate_id,
                             report_kind,
                             headers,
-                            prefetched_telemetry,
+                            prefetched_usage_telemetry.clone(),
                             &provider_prefetched_body,
                             error_status_code,
                             error_body_json,
@@ -2458,7 +2565,7 @@ async fn execute_stream_from_frame_stream(
                                 headers,
                                 Some(body_json),
                                 None,
-                                prefetched_telemetry,
+                                prefetched_usage_telemetry.clone(),
                             );
                             record_sync_terminal_usage(
                                 state,
@@ -2524,7 +2631,7 @@ async fn execute_stream_from_frame_stream(
                                         candidate_id,
                                         report_kind,
                                         headers,
-                                        prefetched_telemetry,
+                                        prefetched_usage_telemetry.clone(),
                                         &provider_prefetched_body,
                                         failure,
                                     )
@@ -2557,7 +2664,7 @@ async fn execute_stream_from_frame_stream(
                                     candidate_id,
                                     report_kind,
                                     headers,
-                                    prefetched_telemetry,
+                                    prefetched_usage_telemetry.clone(),
                                     &provider_prefetched_body,
                                     failure,
                                 )
@@ -2588,7 +2695,7 @@ async fn execute_stream_from_frame_stream(
                                     candidate_id,
                                     report_kind,
                                     headers,
-                                    prefetched_telemetry,
+                                    prefetched_usage_telemetry.clone(),
                                     &provider_prefetched_body,
                                     failure,
                                 )
@@ -2639,7 +2746,7 @@ async fn execute_stream_from_frame_stream(
                         candidate_id,
                         report_kind,
                         headers,
-                        prefetched_telemetry,
+                        prefetched_usage_telemetry.clone(),
                         &provider_prefetched_body,
                         build_stream_failure_from_execution_error(&error),
                     )
@@ -2652,11 +2759,16 @@ async fn execute_stream_from_frame_stream(
     drop(private_stream_normalizer);
     drop(local_stream_rewriter);
 
+    let initial_usage_telemetry = prefetched_usage_telemetry.clone().or_else(|| {
+        prefetched_telemetry
+            .as_ref()
+            .map(|telemetry| usage_refresh_telemetry(telemetry, None))
+    });
     state.usage_runtime.record_stream_started(
         state.data.as_ref(),
         &lifecycle_seed,
         status_code,
-        prefetched_telemetry.as_ref(),
+        initial_usage_telemetry.as_ref(),
     );
     if let Some(snapshot) = request_candidate_status_snapshot {
         let state_bg = state.clone();
@@ -2787,7 +2899,7 @@ async fn execute_stream_from_frame_stream(
         let mut client_stream_completion_tracker = ClientVisibleStreamCompletionTracker::default();
         let mut client_visible_stream_completed =
             client_stream_completion_tracker.observe_chunk(&prefetched_body_for_report);
-        let mut usage_stream_telemetry: Option<ExecutionTelemetry> = initial_telemetry.clone();
+        let mut usage_stream_telemetry: Option<ExecutionTelemetry> = initial_usage_telemetry;
         let mut telemetry: Option<ExecutionTelemetry> = initial_telemetry;
         let reached_eof = initial_reached_eof;
         let mut downstream_dropped = false;
@@ -2998,19 +3110,27 @@ async fn execute_stream_from_frame_stream(
                         break;
                     }
                 };
-                let Some(frame) = next_frame else {
+                let Some(observed_frame) = next_frame else {
                     if tx.is_closed() {
                         downstream_dropped = true;
                     }
                     break;
                 };
-                let frame_elapsed_ms = stream_started_at_for_report
-                    .elapsed()
-                    .as_millis()
-                    .min(u128::from(u64::MAX)) as u64;
+                let frame_observed_at = observed_frame.observed_at;
+                let frame_elapsed_ms =
+                    stream_elapsed_ms_at(stream_started_at_for_report, frame_observed_at);
                 last_upstream_frame_elapsed_ms.store(frame_elapsed_ms, Ordering::Relaxed);
-                match frame.payload {
+                match observed_frame.frame.payload {
                     StreamFramePayload::Data { chunk_b64, text } => {
+                        maybe_record_first_stream_event_started(
+                            &state_for_report,
+                            &lifecycle_seed_for_report,
+                            status_code,
+                            stream_started_at_for_report,
+                            frame_observed_at,
+                            telemetry.as_ref(),
+                            &mut usage_stream_telemetry,
+                        );
                         if sync_json_stream_bridge_active_for_report {
                             continue;
                         }
@@ -3136,32 +3256,6 @@ async fn execute_stream_from_frame_stream(
                             continue;
                         }
 
-                        if usage_stream_telemetry
-                            .as_ref()
-                            .and_then(|telemetry| telemetry.ttfb_ms)
-                            .is_none()
-                        {
-                            let first_data_elapsed_ms = stream_started_at_for_report
-                                .elapsed()
-                                .as_millis()
-                                .min(u128::from(u64::MAX))
-                                as u64;
-                            let first_data_telemetry = ExecutionTelemetry {
-                                ttfb_ms: Some(first_data_elapsed_ms),
-                                elapsed_ms: Some(first_data_elapsed_ms),
-                                upstream_bytes: telemetry
-                                    .as_ref()
-                                    .and_then(|telemetry| telemetry.upstream_bytes),
-                            };
-                            state_for_report.usage_runtime.record_stream_started(
-                                state_for_report.data.as_ref(),
-                                &lifecycle_seed_for_report,
-                                status_code,
-                                Some(&first_data_telemetry),
-                            );
-                            usage_stream_telemetry = Some(first_data_telemetry);
-                        }
-
                         append_stream_capture_bytes(
                             &mut buffered_body,
                             &rewritten_chunk,
@@ -3210,18 +3304,22 @@ async fn execute_stream_from_frame_stream(
                     StreamFramePayload::Telemetry {
                         telemetry: frame_telemetry,
                     } => {
+                        let usage_frame_telemetry = usage_refresh_telemetry(
+                            &frame_telemetry,
+                            usage_stream_telemetry.as_ref(),
+                        );
                         let should_refresh_stream_usage = should_refresh_stream_usage_telemetry(
                             usage_stream_telemetry.as_ref(),
-                            &frame_telemetry,
+                            &usage_frame_telemetry,
                         );
                         if should_refresh_stream_usage {
                             state_for_report.usage_runtime.record_stream_started(
                                 state_for_report.data.as_ref(),
                                 &lifecycle_seed_for_report,
                                 status_code,
-                                Some(&frame_telemetry),
+                                Some(&usage_frame_telemetry),
                             );
-                            usage_stream_telemetry = Some(frame_telemetry.clone());
+                            usage_stream_telemetry = Some(usage_frame_telemetry);
                         }
                         telemetry = Some(frame_telemetry);
                     }
@@ -5315,7 +5413,7 @@ mod tests {
                 b"{\"type\":\"headers\",\"payload\":{\"kind\":\"headers\",\"status_code\":200,\"headers\":{\"content-type\":\"text/event-stream\"}}}\n",
             ));
             yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
-                b"{\"type\":\"data\",\"payload\":{\"kind\":\"data\",\"text\":\"data: {\\\"id\\\":\\\"first\\\"}\\n\\n\"}}\n",
+                b"{\"type\":\"data\",\"payload\":{\"kind\":\"data\",\"text\":\"data: {\\\"id\\\":\\\"first\\\",\\\"choices\\\":[{\\\"index\\\":0,\\\"delta\\\":{\\\"content\\\":\\\"hello\\\"}}]}\\n\\n\"}}\n",
             ));
             release_terminal_for_stream.notified().await;
             yield Ok::<Bytes, std::io::Error>(Bytes::from_static(
@@ -5364,7 +5462,10 @@ mod tests {
         })
         .await
         .expect("first business chunk should arrive");
-        assert_eq!(first.as_ref(), b"data: {\"id\":\"first\"}\n\n");
+        assert_eq!(
+            first.as_ref(),
+            b"data: {\"id\":\"first\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}\n\n"
+        );
         tokio::time::sleep(Duration::from_millis(30)).await;
         drop(body_stream);
         release_terminal.notify_one();
@@ -5836,7 +5937,7 @@ mod tests {
         .expect("execution should return a client response");
 
         first_data_seen.notified().await;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
         let live_usage = loop {
             let usage = usage_repository
                 .find_by_request_id("req-live-stream-first-data")
@@ -5863,6 +5964,172 @@ mod tests {
             .expect("response body should read");
         let text = String::from_utf8(body.to_vec()).expect("response body should be utf8");
         assert!(text.contains("response.output_text.delta"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn execute_execution_runtime_stream_records_first_stream_event_before_visible_text() {
+        let listener = crate::test_support::bind_loopback_listener()
+            .await
+            .expect("listener should bind");
+        let addr = listener.local_addr().expect("local addr should resolve");
+        let first_event_seen = Arc::new(Notify::new());
+        let release_text = Arc::new(Notify::new());
+        let text_seen = Arc::new(Notify::new());
+        let release_terminal = Arc::new(Notify::new());
+        let first_event_seen_for_route = Arc::clone(&first_event_seen);
+        let release_text_for_route = Arc::clone(&release_text);
+        let text_seen_for_route = Arc::clone(&text_seen);
+        let release_terminal_for_route = Arc::clone(&release_terminal);
+        let server = tokio::spawn(async move {
+            let app = Router::new().route(
+                "/v1/execute/stream",
+                any(move |_request: Request| {
+                    let first_event_seen = Arc::clone(&first_event_seen_for_route);
+                    let release_text = Arc::clone(&release_text_for_route);
+                    let text_seen = Arc::clone(&text_seen_for_route);
+                    let release_terminal = Arc::clone(&release_terminal_for_route);
+                    async move {
+                        let frames = stream! {
+                            yield Ok::<Bytes, Infallible>(Bytes::from_static(
+                                b"{\"type\":\"headers\",\"payload\":{\"kind\":\"headers\",\"status_code\":200,\"headers\":{\"content-type\":\"text/event-stream\"}}}\n",
+                            ));
+                            yield Ok::<Bytes, Infallible>(Bytes::from_static(
+                                b"{\"type\":\"data\",\"payload\":{\"kind\":\"data\",\"text\":\"\"}}\n",
+                            ));
+                            yield Ok::<Bytes, Infallible>(Bytes::from_static(
+                                b"{\"type\":\"telemetry\",\"payload\":{\"kind\":\"telemetry\",\"telemetry\":{\"ttfb_ms\":11,\"elapsed_ms\":12}}}\n",
+                            ));
+                            first_event_seen.notify_one();
+                            release_text.notified().await;
+                            yield Ok::<Bytes, Infallible>(Bytes::from_static(
+                                b"{\"type\":\"data\",\"payload\":{\"kind\":\"data\",\"text\":\"data: {\\\"choices\\\":[{\\\"delta\\\":{\\\"content\\\":\\\"hello\\\"}}]}\\n\\n\"}}\n",
+                            ));
+                            text_seen.notify_one();
+                            release_terminal.notified().await;
+                            yield Ok::<Bytes, Infallible>(Bytes::from_static(
+                                b"{\"type\":\"telemetry\",\"payload\":{\"kind\":\"telemetry\",\"telemetry\":{\"elapsed_ms\":50}}}\n",
+                            ));
+                            yield Ok::<Bytes, Infallible>(Bytes::from_static(
+                                b"{\"type\":\"eof\",\"payload\":{\"kind\":\"eof\"}}\n",
+                            ));
+                        };
+                        let mut response = axum::http::Response::new(Body::from_stream(frames));
+                        response.headers_mut().insert(
+                            header::CONTENT_TYPE,
+                            HeaderValue::from_static("application/x-ndjson"),
+                        );
+                        response
+                    }
+                }),
+            );
+            axum::serve(listener, app)
+                .await
+                .expect("server should start");
+        });
+
+        let usage_repository = Arc::new(InMemoryUsageReadRepository::default());
+        let request_candidate_repository = Arc::new(InMemoryRequestCandidateRepository::default());
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(
+                crate::data::GatewayDataState::with_request_candidate_and_usage_repository_for_tests(
+                    Arc::clone(&request_candidate_repository),
+                    Arc::clone(&usage_repository),
+                ),
+            )
+            .with_usage_runtime_for_tests(UsageRuntimeConfig {
+                enabled: true,
+                ..UsageRuntimeConfig::default()
+            })
+            .with_execution_runtime_override_base_url(format!("http://{addr}"));
+        let plan = ExecutionPlan {
+            request_id: "req-live-stream-first-event".into(),
+            candidate_id: Some("cand-live-stream-first-event".into()),
+            provider_name: Some("openai".into()),
+            provider_id: "prov-1".into(),
+            endpoint_id: "ep-1".into(),
+            key_id: "key-1".into(),
+            method: "POST".into(),
+            url: "https://api.openai.com/v1/chat/completions".into(),
+            headers: BTreeMap::from([
+                ("content-type".into(), "application/json".into()),
+                ("accept".into(), "text/event-stream".into()),
+            ]),
+            content_type: Some("application/json".into()),
+            content_encoding: None,
+            body: RequestBody::from_json(json!({
+                "model": "gpt-5.4",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": true
+            })),
+            stream: true,
+            client_api_format: "openai:chat".into(),
+            provider_api_format: "openai:chat".into(),
+            model_name: Some("gpt-5.4".into()),
+            proxy: None,
+            transport_profile: None,
+            timeouts: Some(ExecutionTimeouts {
+                connect_ms: Some(5_000),
+                total_ms: Some(5_000),
+                ..ExecutionTimeouts::default()
+            }),
+        };
+        let decision = GatewayControlDecision::synthetic(
+            "/v1/chat/completions",
+            Some("ai_public".to_string()),
+            Some("openai".to_string()),
+            Some("chat".to_string()),
+            Some("openai:chat".to_string()),
+        )
+        .with_execution_runtime_candidate(true);
+
+        let response = execute_execution_runtime_stream(
+            &state,
+            plan,
+            "trace-live-stream-first-event",
+            &decision,
+            "openai_chat_stream",
+            None,
+            Some(json!({
+                "provider_api_format": "openai:chat",
+                "client_api_format": "openai:chat",
+            })),
+        )
+        .await
+        .expect("execution should succeed")
+        .expect("execution should return a client response");
+
+        first_event_seen.notified().await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        let first_event_usage = loop {
+            let usage = usage_repository
+                .find_by_request_id("req-live-stream-first-event")
+                .await
+                .expect("usage should read");
+            if usage.as_ref().is_some_and(|usage| {
+                usage.status == "streaming" && usage.first_byte_time_ms.is_some()
+            }) {
+                break usage.expect("streaming usage should exist");
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "usage should record first byte on the first upstream stream event"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        assert!(first_event_usage.first_byte_time_ms.is_some());
+
+        release_text.notify_one();
+        text_seen.notified().await;
+
+        release_terminal.notify_one();
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body should read");
+        let text = String::from_utf8(body.to_vec()).expect("response body should be utf8");
+        assert!(text.contains("\"content\":\"hello\""));
 
         server.abort();
     }

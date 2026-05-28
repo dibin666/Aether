@@ -4825,6 +4825,12 @@ WITH filtered_usage AS (
                 .push("\"usage\".user_id = ")
                 .push_bind(user_id.to_string());
         }
+        if let Some(provider_name) = query.provider_name.as_deref() {
+            builder.push(if has_where { " AND " } else { " WHERE " });
+            builder
+                .push("\"usage\".provider_name = ")
+                .push_bind(provider_name.to_string());
+        }
         builder.push(filtered_extra_where);
         builder.push(
             r#"
@@ -4917,6 +4923,9 @@ ORDER BY request_count DESC, group_key ASC
         &self,
         query: &UsageBreakdownSummaryQuery,
     ) -> Result<Vec<StoredUsageBreakdownSummaryRow>, DataLayerError> {
+        if query.provider_name.is_some() {
+            return self.summarize_usage_breakdown_raw(query).await;
+        }
         let Some(user_id) = query.user_id.as_deref() else {
             return self.summarize_usage_breakdown_raw(query).await;
         };
@@ -4938,6 +4947,7 @@ ORDER BY request_count DESC, group_key ASC
                     created_from_unix_secs: dashboard_utc_to_unix_secs(raw_start),
                     created_until_unix_secs: dashboard_utc_to_unix_secs(raw_end),
                     user_id: Some(user_id.to_string()),
+                    provider_name: None,
                     group_by: query.group_by,
                 })
                 .await?;
@@ -4960,6 +4970,7 @@ ORDER BY request_count DESC, group_key ASC
                     created_from_unix_secs: dashboard_utc_to_unix_secs(raw_start),
                     created_until_unix_secs: dashboard_utc_to_unix_secs(raw_end),
                     user_id: Some(user_id.to_string()),
+                    provider_name: None,
                     group_by: query.group_by,
                 })
                 .await?;

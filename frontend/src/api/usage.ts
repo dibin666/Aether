@@ -14,6 +14,8 @@ export interface UsageRecord {
   provider_id?: string // UUID
   provider_name?: string
   model: string
+  reasoning_effort?: string | null
+  service_tier?: string | null
   input_tokens: number
   effective_input_tokens?: number
   output_tokens: number
@@ -470,6 +472,7 @@ export const usageApi = {
     provider?: string
     api_format?: string  // API 格式筛选（如 openai:chat, claude:messages）
     status?: string // 'stream' | 'standard' | 'error'
+    hide_unknown?: boolean
     limit?: number
     offset?: number
   }): Promise<{
@@ -522,6 +525,8 @@ export const usageApi = {
       has_format_conversion?: boolean | null
       has_fallback?: boolean | null
       target_model?: string | null
+      reasoning_effort?: string | null
+      service_tier?: string | null
       image_progress?: ImageProgress | null
     }>
   }> {

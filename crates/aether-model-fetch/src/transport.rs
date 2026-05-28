@@ -22,7 +22,7 @@ use aether_provider_transport::{
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::build_models_fetch_url;
+use crate::{build_models_fetch_url, deepseek_anthropic_models_fetch_uses_openai_auth};
 
 const OPENAI_RESPONSES_USER_AGENT: &str = "openai-codex/1.0";
 const CLAUDE_CLI_USER_AGENT: &str = "claude-code/1.0.1";
@@ -98,19 +98,29 @@ pub async fn build_standard_models_fetch_execution_plan(
     let provider_type = transport.provider.provider_type.trim().to_ascii_lowercase();
     let is_codex_openai_models_fetch =
         provider_type == "codex" && api_format.starts_with("openai:");
+    let is_deepseek_anthropic_models_fetch = api_format.starts_with("claude:")
+        && deepseek_anthropic_models_fetch_uses_openai_auth(&transport.endpoint.base_url);
     let mut headers = standard_models_fetch_headers(&api_format, &provider_type);
     if is_codex_openai_models_fetch {
+        headers.insert("accept".to_string(), "application/json".to_string());
+    }
+    if is_deepseek_anthropic_models_fetch {
+        headers.remove("anthropic-version");
         headers.insert("accept".to_string(), "application/json".to_string());
     }
     let mut protected_headers = Vec::<String>::new();
 
     if api_format.starts_with("openai:") || api_format.starts_with("claude:") {
-        let (auth_header_name, auth_header_value) =
-            resolve_standard_header_auth(runtime, transport)
+        let resolved_auth = if is_deepseek_anthropic_models_fetch {
+            resolve_oauth_header_auth(runtime, transport)
                 .await?
-                .ok_or_else(|| {
-                    "Rust models fetch auth resolution is not supported for this key".to_string()
-                })?;
+                .or_else(|| resolve_local_openai_bearer_auth(transport))
+        } else {
+            resolve_standard_header_auth(runtime, transport).await?
+        };
+        let (auth_header_name, auth_header_value) = resolved_auth.ok_or_else(|| {
+            "Rust models fetch auth resolution is not supported for this key".to_string()
+        })?;
         insert_non_empty_auth_header(
             &mut headers,
             &mut protected_headers,
@@ -590,7 +600,9 @@ fn build_standard_models_fetch_url(
     )
     .ok_or_else(|| "Rust models fetch does not support this provider format yet".to_string())?;
 
-    if api_format.starts_with("claude:") {
+    if api_format.starts_with("claude:")
+        && !deepseek_anthropic_models_fetch_uses_openai_auth(&transport.endpoint.base_url)
+    {
         url = append_query_param(url, "limit", "100");
         if let Some(after_id) = after_id.map(str::trim).filter(|value| !value.is_empty()) {
             url = append_query_param(url, "after_id", after_id);
@@ -756,6 +768,7 @@ mod tests {
                 expires_at_unix_secs: None,
                 proxy: None,
                 fingerprint: None,
+                upstream_metadata: None,
                 decrypted_api_key: "secret".to_string(),
                 decrypted_auth_config: Some(
                     r#"{"project_id":"project-1","client_version":"1.2.3","session_id":"sess-1"}"#
@@ -801,6 +814,49 @@ mod tests {
             .expect("plan");
 
         assert_eq!(plan.url, "https://example.com/v1/models");
+        assert_eq!(
+            plan.headers.get("authorization").map(String::as_str),
+            Some("Bearer secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn builds_bigmodel_coding_models_fetch_plan() {
+        let runtime = TestRuntime {
+            oauth_auth: None,
+            proxy: None,
+        };
+        let mut transport = sample_transport("openai", "openai:chat", "api_key");
+        transport.endpoint.base_url = "https://open.bigmodel.cn/api/coding/paas/v4".to_string();
+        transport.key.decrypted_auth_config = None;
+        let plan = build_models_fetch_execution_plan(&runtime, &transport)
+            .await
+            .expect("plan");
+
+        assert_eq!(
+            plan.url,
+            "https://open.bigmodel.cn/api/coding/paas/v4/models"
+        );
+        assert_eq!(
+            plan.headers.get("authorization").map(String::as_str),
+            Some("Bearer secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn builds_unversioned_api_root_models_fetch_plan() {
+        let runtime = TestRuntime {
+            oauth_auth: None,
+            proxy: None,
+        };
+        let mut transport = sample_transport("openai", "openai:chat", "api_key");
+        transport.endpoint.base_url = "https://proxy.example.com/api".to_string();
+        transport.key.decrypted_auth_config = None;
+        let plan = build_models_fetch_execution_plan(&runtime, &transport)
+            .await
+            .expect("plan");
+
+        assert_eq!(plan.url, "https://proxy.example.com/api/models");
         assert_eq!(
             plan.headers.get("authorization").map(String::as_str),
             Some("Bearer secret")
@@ -869,6 +925,28 @@ mod tests {
             plan.headers.get("x-api-key").map(String::as_str),
             Some("secret")
         );
+    }
+
+    #[tokio::test]
+    async fn builds_deepseek_anthropic_models_fetch_plan_with_openai_models_endpoint() {
+        let runtime = TestRuntime {
+            oauth_auth: None,
+            proxy: None,
+        };
+        let mut transport = sample_transport("custom", "claude:messages", "api_key");
+        transport.endpoint.base_url = "https://api.deepseek.com/anthropic".to_string();
+        transport.key.decrypted_auth_config = None;
+        let plan = build_models_fetch_execution_plan(&runtime, &transport)
+            .await
+            .expect("plan");
+
+        assert_eq!(plan.url, "https://api.deepseek.com/models");
+        assert_eq!(
+            plan.headers.get("authorization").map(String::as_str),
+            Some("Bearer secret")
+        );
+        assert!(!plan.headers.contains_key("x-api-key"));
+        assert!(!plan.headers.contains_key("anthropic-version"));
     }
 
     #[tokio::test]

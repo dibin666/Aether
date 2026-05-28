@@ -1356,15 +1356,22 @@ const currentAttemptKeyFormatsDisplay = computed(() => {
     .map(format => formatApiFormat(format))
     .join(' / ')
 })
+const SKIP_REASON_LABELS: Record<string, string> = {
+  auth_api_key_concurrency_limit_reached: '调用方 API Key 并发已达上限',
+  api_key_concurrency_limit_reached: '调用方 API Key 并发已达上限',
+  pool_key_lease_busy: '池内账号正被其他请求占用',
+  provider_concurrency_limit_reached: '上游提供商并发已达上限',
+  provider_key_concurrency_limit_reached: '上游账号并发已达上限',
+  provider_request_body_build_failed: '上游请求体转换失败',
+  provider_request_body_missing: '无法构建上游请求体',
+}
 const currentAttemptSkipReasonDisplay = computed(() => {
   const attempt = currentAttempt.value
   if (!attempt?.skip_reason) return ''
 
-  if (attempt.skip_reason === 'provider_request_body_build_failed') {
-    return '上游请求体转换失败'
-  }
-  if (attempt.skip_reason === 'provider_request_body_missing') {
-    return '无法构建上游请求体'
+  const skipReasonLabel = SKIP_REASON_LABELS[attempt.skip_reason]
+  if (skipReasonLabel) {
+    return skipReasonLabel
   }
 
   if (attempt.skip_reason !== 'transport_unsupported') {

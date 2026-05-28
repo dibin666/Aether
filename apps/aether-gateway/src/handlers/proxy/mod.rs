@@ -55,6 +55,10 @@ use crate::headers::{
     should_skip_request_header, RequestBodyNormalizationError,
 };
 use crate::router::RequestAdmissionError;
+use crate::scheduler::candidate::{
+    is_auth_api_key_concurrency_limit_skip_reason, AUTH_API_KEY_CONCURRENCY_LIMIT_SKIP_REASON,
+    LEGACY_API_KEY_CONCURRENCY_LIMIT_SKIP_REASON,
+};
 use crate::scheduler::config::{read_scheduler_ordering_config, SchedulerSchedulingMode};
 use crate::{
     AppState, FrontdoorUserRpmOutcome, GatewayError, GatewayFallbackMetricKind,
@@ -92,7 +96,7 @@ const LOCAL_PROXY_PASSTHROUGH_REMOVED_DETAIL: &str =
 const LOCAL_EXECUTION_LOOP_DETECTED_DETAIL: &str =
     "Gateway detected an execution runtime request loop back into the local frontdoor";
 const AUTH_API_KEY_CONCURRENCY_LIMIT_REACHED_DETAIL: &str =
-    "当前 API Key 并发请求数已达上限，请稍后重试";
+    "当前调用方 API Key 并发请求数已达上限，请稍后重试";
 const REQUEST_BODY_READ_TIMEOUT_DETAIL: &str =
     "Request body read timed out before the gateway could route the request";
 const REQUEST_BODY_READ_FAILED_DETAIL: &str = "Failed to read request body";
@@ -1790,7 +1794,9 @@ pub(crate) async fn proxy_request(
         let auth_api_key_concurrency_limited = diagnostic_is_auth_api_key_concurrency_limited(
             local_execution_runtime_miss_diagnostic.as_ref(),
         ) || local_execution_runtime_miss_context
-            .all_candidates_skipped_for_reason("api_key_concurrency_limit_reached");
+            .all_candidates_skipped_for_reason(AUTH_API_KEY_CONCURRENCY_LIMIT_SKIP_REASON)
+            || local_execution_runtime_miss_context
+                .all_candidates_skipped_for_reason(LEGACY_API_KEY_CONCURRENCY_LIMIT_SKIP_REASON);
         let local_execution_runtime_miss_detail = local_execution_runtime_miss_detail(
             control_decision,
             local_execution_runtime_miss_diagnostic.as_ref(),
@@ -1917,7 +1923,7 @@ pub(crate) async fn proxy_request(
             .map(ToOwned::to_owned)
             .or_else(|| {
                 auth_api_key_concurrency_limited
-                    .then_some("api_key_concurrency_limit_reached".to_string())
+                    .then_some(AUTH_API_KEY_CONCURRENCY_LIMIT_SKIP_REASON.to_string())
             });
         if let Some(reason) = local_execution_runtime_miss_reason {
             response.headers_mut().insert(
@@ -2142,7 +2148,9 @@ fn local_execution_runtime_miss_skip_reasons_summary(
 
 fn local_execution_runtime_miss_skip_reason_label(reason: &str) -> &str {
     match reason {
-        "api_key_concurrency_limit_reached" => "API Key 并发已达上限",
+        "auth_api_key_concurrency_limit_reached" | "api_key_concurrency_limit_reached" => {
+            "调用方 API Key 并发已达上限"
+        }
         "auth_channel_mismatch" => "认证通道不匹配",
         "auth_snapshot_missing" => "API Key 本地执行配置缺失",
         "endpoint_api_format_changed" => "端点 API 格式已变更",
@@ -2157,7 +2165,9 @@ fn local_execution_runtime_miss_skip_reason_label(reason: &str) -> &str {
         "pool_cost_limit_reached" => "池内账号成本额度已用尽",
         "pool_group_exhausted" => "池化提供商没有可调度账号",
         "pool_key_lease_busy" => "池内账号正被其他请求占用",
+        "provider_concurrency_limit_reached" => "上游提供商并发已达上限",
         "provider_inactive" => "提供商未启用",
+        "provider_key_concurrency_limit_reached" => "上游账号并发已达上限",
         "provider_request_body_missing" => "无法构建上游请求体",
         "provider_request_body_build_failed" => "上游请求体转换失败",
         "transport_api_format_mismatch" => "传输层 API 格式不匹配",
@@ -2217,15 +2227,12 @@ fn diagnostic_is_auth_api_key_concurrency_limited(
     let Some(diagnostic) = diagnostic else {
         return false;
     };
-    diagnostic.reason == "api_key_concurrency_limit_reached"
+    is_auth_api_key_concurrency_limit_skip_reason(diagnostic.reason.as_str())
         || (diagnostic.reason == "all_candidates_skipped"
             && diagnostic.skip_reasons.len() == 1
-            && diagnostic
-                .skip_reasons
-                .get("api_key_concurrency_limit_reached")
-                .copied()
-                .unwrap_or(0)
-                > 0)
+            && diagnostic.skip_reasons.iter().any(|(reason, count)| {
+                is_auth_api_key_concurrency_limit_skip_reason(reason.as_str()) && *count > 0
+            }))
 }
 
 fn local_execution_runtime_miss_route_detail(
@@ -2514,7 +2521,7 @@ mod tests {
         let diagnostic = LocalExecutionRuntimeMissDiagnostic {
             reason: "all_candidates_skipped".to_string(),
             skip_reasons: std::collections::BTreeMap::from([(
-                "api_key_concurrency_limit_reached".to_string(),
+                "auth_api_key_concurrency_limit_reached".to_string(),
                 1,
             )]),
             requested_model: Some("gpt-5.4".to_string()),
@@ -2526,7 +2533,7 @@ mod tests {
 
         assert_eq!(
             detail.as_deref(),
-            Some("当前 API Key 并发请求数已达上限，请稍后重试")
+            Some("当前调用方 API Key 并发请求数已达上限，请稍后重试")
         );
         assert!(diagnostic_is_auth_api_key_concurrency_limited(Some(
             &diagnostic
@@ -2557,7 +2564,7 @@ mod tests {
 
         assert_eq!(
             detail.as_deref(),
-            Some("当前 API Key 并发请求数已达上限，请稍后重试")
+            Some("当前调用方 API Key 并发请求数已达上限，请稍后重试")
         );
     }
 }

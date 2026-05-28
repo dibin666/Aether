@@ -499,6 +499,12 @@ fn build_users_me_usage_record_payload(
     if item.target_model.is_some() {
         payload["target_model"] = json!(item.target_model.clone());
     }
+    if let Some(reasoning_effort) = item.provider_reasoning_effort() {
+        payload["reasoning_effort"] = json!(reasoning_effort);
+    }
+    if let Some(service_tier) = item.provider_service_tier() {
+        payload["service_tier"] = json!(service_tier);
+    }
     if include_actual_cost {
         payload["actual_cost"] = json!(round_to(item.actual_total_cost_usd, 6));
         payload["rate_multiplier"] = json!(rate_multiplier);
@@ -557,6 +563,12 @@ fn build_users_me_usage_active_payload(item: &StoredRequestUsageAudit) -> serde_
             .as_object_mut()
             .expect("object")
             .remove("target_model");
+    }
+    if let Some(reasoning_effort) = item.provider_reasoning_effort() {
+        payload["reasoning_effort"] = json!(reasoning_effort);
+    }
+    if let Some(service_tier) = item.provider_service_tier() {
+        payload["service_tier"] = json!(service_tier);
     }
     payload
 }
@@ -835,6 +847,7 @@ pub(super) async fn handle_users_me_usage_get(
                 created_from_unix_secs,
                 created_until_unix_secs,
                 user_id: Some(auth.user.id.clone()),
+                provider_name: None,
                 group_by: UsageBreakdownGroupBy::Model,
             })
             .await
@@ -854,6 +867,7 @@ pub(super) async fn handle_users_me_usage_get(
                     created_from_unix_secs,
                     created_until_unix_secs,
                     user_id: Some(auth.user.id.clone()),
+                    provider_name: None,
                     group_by: UsageBreakdownGroupBy::Provider,
                 })
                 .await
@@ -873,6 +887,7 @@ pub(super) async fn handle_users_me_usage_get(
                 created_from_unix_secs,
                 created_until_unix_secs,
                 user_id: Some(auth.user.id.clone()),
+                provider_name: None,
                 group_by: UsageBreakdownGroupBy::ApiFormat,
             })
             .await

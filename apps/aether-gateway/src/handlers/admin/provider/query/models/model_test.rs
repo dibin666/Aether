@@ -123,6 +123,7 @@ const ADMIN_PROVIDER_QUERY_NO_ACTIVE_TEST_CANDIDATE_DETAIL: &str =
     "No active endpoint or API key found";
 const ADMIN_PROVIDER_QUERY_INVALID_MAPPED_MODEL_DETAIL: &str =
     "mapped_model_name is not valid for the selected model and endpoint";
+const PROVIDER_QUERY_KEY_MODEL_NOT_ALLOWED_SKIP_REASON: &str = "key_model_not_allowed";
 const ANTIGRAVITY_PROVIDER_CACHE_KEY_PREFIX: &str = "upstream_models_provider:";
 const DEFAULT_PROVIDER_QUERY_TEST_MESSAGE: &str = "Hello! This is a test message.";
 static PROVIDER_QUERY_POOL_LOAD_BALANCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -933,6 +934,35 @@ fn provider_query_selected_key_ids_all_exist(
         .all(|id| keys.iter().any(|key| key.id == *id))
 }
 
+fn provider_query_model_name_matches(left: &str, right: &str) -> bool {
+    let left = left.trim();
+    let right = right.trim();
+    !left.is_empty() && !right.is_empty() && left.eq_ignore_ascii_case(right)
+}
+
+fn provider_query_key_allows_effective_test_model(
+    key: &StoredProviderCatalogKey,
+    requested_model: &str,
+    effective_model: &str,
+) -> bool {
+    let allowed_models = json_string_list(key.allowed_models.as_ref());
+    if key.allowed_models.is_none() || allowed_models.is_empty() {
+        return true;
+    }
+
+    let requested_base_model = crate::ai_serving::model_directive_base_model(requested_model);
+    allowed_models
+        .iter()
+        .map(String::as_str)
+        .any(|allowed_model| {
+            provider_query_model_name_matches(allowed_model, requested_model)
+                || provider_query_model_name_matches(allowed_model, effective_model)
+                || requested_base_model.as_deref().is_some_and(|base_model| {
+                    provider_query_model_name_matches(allowed_model, base_model)
+                })
+        })
+}
+
 fn provider_query_test_key_sort_key(
     provider_type: &str,
     key: &StoredProviderCatalogKey,
@@ -1382,17 +1412,43 @@ async fn provider_query_build_kiro_test_candidates(
         .unwrap_or(requested_model.clone())
     };
 
-    let mut keys = all_keys
+    let now_unix_secs = current_unix_ms() / 1000;
+    let mut keys = Vec::new();
+    let mut model_skipped_candidates = Vec::new();
+
+    for key in all_keys
         .into_iter()
         .filter(|key| key.is_active)
         .filter(|key| provider_query_selected_key_ids_allow_key(selected_key_ids.as_ref(), &key.id))
         .filter(|key| {
             provider_query_key_supports_endpoint(key, &provider.provider_type, &endpoint.api_format)
         })
-        .collect::<Vec<_>>();
-    let now_unix_secs = current_unix_ms() / 1000;
+    {
+        if provider_query_key_allows_effective_test_model(&key, &requested_model, &effective_model)
+        {
+            keys.push(key);
+        } else {
+            model_skipped_candidates.push(ProviderQueryTestCandidate {
+                endpoint: endpoint.clone(),
+                key,
+                effective_model: effective_model.clone(),
+                scheduler_skip_reason: Some(
+                    PROVIDER_QUERY_KEY_MODEL_NOT_ALLOWED_SKIP_REASON.to_string(),
+                ),
+            });
+        }
+    }
 
-    let candidates = if test_mode.eq_ignore_ascii_case("pool") {
+    model_skipped_candidates.sort_by_key(|candidate| {
+        provider_query_test_key_sort_key(
+            provider.provider_type.as_str(),
+            &candidate.key,
+            &endpoint.api_format,
+            now_unix_secs,
+        )
+    });
+
+    let scheduled_candidates = if test_mode.eq_ignore_ascii_case("pool") {
         if let Some(pool_config) =
             admin_provider_pool_config_from_config_value(provider.config.as_ref())
         {
@@ -1442,6 +1498,8 @@ async fn provider_query_build_kiro_test_candidates(
             })
             .collect::<Vec<_>>()
     };
+    let mut candidates = model_skipped_candidates;
+    candidates.extend(scheduled_candidates);
 
     if candidates.is_empty() {
         return Err(build_admin_provider_query_not_found_response(
@@ -1518,12 +1576,18 @@ fn provider_query_aggregate_standard_stream_sync_response(
 fn provider_query_standard_execution_response_body(
     provider_api_format: &str,
     result: &aether_contracts::ExecutionResult,
+    report_context: Option<&Value>,
 ) -> Option<Value> {
     let body = provider_query_execution_json_body(result).or_else(|| {
         provider_query_decode_execution_body(result).and_then(|body| {
             provider_query_aggregate_standard_stream_sync_response(provider_api_format, &body)
         })
     })?;
+    let body = report_context
+        .and_then(|context| {
+            crate::ai_serving::api::normalize_provider_private_response_value(body.clone(), context)
+        })
+        .unwrap_or(body);
     if result.status_code < 400
         && provider_query_normalize_api_format_alias(provider_api_format)
             == "gemini:generate_content"
@@ -2692,7 +2756,7 @@ async fn provider_query_execute_standard_test_candidate(
     route_path: &str,
     trace_id: &str,
 ) -> Result<ProviderQueryExecutionOutcome, GatewayError> {
-    let Some(transport) = state
+    let Some(mut transport) = state
         .read_provider_transport_snapshot(&provider.id, &candidate.endpoint.id, &candidate.key.id)
         .await?
     else {
@@ -2905,6 +2969,69 @@ async fn provider_query_execute_standard_test_candidate(
         upstream_is_stream,
         require_body_stream_field,
     );
+    if crate::provider_transport::is_gemini_cli_provider_transport(&transport)
+        && normalized_provider_api_format == "gemini:generate_content"
+    {
+        let mut gemini_cli_auth =
+            match crate::provider_transport::resolve_local_gemini_cli_request_auth(&transport) {
+                crate::provider_transport::GeminiCliRequestAuthSupport::Supported(auth) => auth,
+                crate::provider_transport::GeminiCliRequestAuthSupport::Unsupported(_) => {
+                    crate::provider_transport::GeminiCliRequestAuth::default()
+                }
+            };
+        if gemini_cli_auth.project_id.is_none() {
+            gemini_cli_auth = state
+                .app()
+                .hydrate_gemini_cli_project_metadata_for_transport(&transport)
+                .await
+                .and_then(|hydrated| {
+                    transport = hydrated;
+                    match crate::provider_transport::resolve_local_gemini_cli_request_auth(
+                        &transport,
+                    ) {
+                        crate::provider_transport::GeminiCliRequestAuthSupport::Supported(auth) => {
+                            Some(auth)
+                        }
+                        crate::provider_transport::GeminiCliRequestAuthSupport::Unsupported(_) => {
+                            None
+                        }
+                    }
+                })
+                .unwrap_or_default();
+        }
+        if gemini_cli_auth.project_id.is_none() {
+            return Ok(provider_query_skipped_execution_outcome(
+                provider_request_body,
+                "Gemini CLI project_id is unavailable for v1internal request",
+            ));
+        }
+        provider_request_body = match crate::provider_transport::build_gemini_cli_v1internal_request(
+            &gemini_cli_auth,
+            trace_id,
+            request_model,
+            &provider_request_body,
+        ) {
+            crate::provider_transport::GeminiCliRequestEnvelopeSupport::Supported(envelope) => {
+                envelope
+            }
+            crate::provider_transport::GeminiCliRequestEnvelopeSupport::Unsupported(_) => {
+                return Ok(provider_query_skipped_execution_outcome(
+                    provider_request_body,
+                    "Gemini CLI v1internal envelope could not be built",
+                ));
+            }
+        };
+    }
+    let private_report_context =
+        (crate::provider_transport::is_gemini_cli_provider_transport(&transport)
+            && normalized_provider_api_format == "gemini:generate_content")
+            .then(|| {
+                json!({
+                    "has_envelope": true,
+                    "envelope_name": crate::provider_transport::GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME,
+                    "provider_api_format": provider_api_format,
+                })
+            });
 
     let uses_vertex_query_auth =
         crate::provider_transport::uses_vertex_api_key_query_auth(&transport, provider_api_format);
@@ -3025,6 +3152,13 @@ async fn provider_query_execute_standard_test_candidate(
     request_headers
         .entry("content-type".to_string())
         .or_insert_with(|| "application/json".to_string());
+    if crate::provider_transport::is_gemini_cli_provider_transport(&transport)
+        && normalized_provider_api_format == "gemini:generate_content"
+    {
+        request_headers
+            .entry("user-agent".to_string())
+            .or_insert_with(|| crate::provider_transport::GEMINI_CLI_USER_AGENT.to_string());
+    }
     let protected_headers = if uses_vertex_query_auth {
         vec!["content-type"]
     } else {
@@ -3102,7 +3236,11 @@ async fn provider_query_execute_standard_test_candidate(
         .execute_execution_runtime_sync_plan(Some(trace_id), &plan)
         .await?;
     let response_body = if result.status_code < 400 {
-        provider_query_standard_execution_response_body(provider_api_format, &result)
+        provider_query_standard_execution_response_body(
+            provider_api_format,
+            &result,
+            private_report_context.as_ref(),
+        )
     } else {
         result.body.as_ref().and_then(|body| body.json_body.clone())
     };

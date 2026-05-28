@@ -343,9 +343,11 @@ pub(crate) struct PoolKeyCursor<'a> {
     pool_key_order: StoredPoolKeyCandidateOrder,
     next_offset: u32,
     scanned_keys: u32,
+    budget_scanned_keys: u32,
     window_size: u32,
     page_size: u32,
     max_scanned_keys: u32,
+    absolute_max_scanned_keys: u32,
     score_top_n: u32,
     score_phase_loaded: bool,
     skip_reason_counts: BTreeMap<&'static str, u32>,
@@ -393,13 +395,14 @@ impl<'a> PoolKeyCursor<'a> {
             .map(|config| config.score_top_n)
             .unwrap_or(u64::from(aether_dispatch_core::DEFAULT_POOL_PAGE_SIZE))
             .clamp(1, u64::from(u32::MAX)) as u32;
-        let max_scanned_keys = pool_config
+        let configured_max_scanned_keys = pool_config
             .as_ref()
             .map(|config| config.score_fallback_scan_limit)
             .unwrap_or(u64::from(aether_dispatch_core::DEFAULT_POOL_MAX_SCAN))
             .clamp(1, u64::from(u32::MAX)) as u32;
         let window_config = crate::dispatch::pool::default_pool_window_config().normalized();
-        let max_scanned_keys = max_scanned_keys.min(window_config.max_scan);
+        let max_scanned_keys = configured_max_scanned_keys.min(window_config.max_scan);
+        let absolute_max_scanned_keys = configured_max_scanned_keys.max(max_scanned_keys);
         Self {
             state,
             group,
@@ -412,9 +415,11 @@ impl<'a> PoolKeyCursor<'a> {
             pool_key_order,
             next_offset: 0,
             scanned_keys: 0,
+            budget_scanned_keys: 0,
             window_size: window_config.window_size,
             page_size: window_config.page_size,
             max_scanned_keys: max_scanned_keys.max(window_config.window_size),
+            absolute_max_scanned_keys: absolute_max_scanned_keys.max(window_config.window_size),
             score_top_n,
             score_phase_loaded: false,
             skip_reason_counts: BTreeMap::new(),
@@ -486,6 +491,7 @@ impl<'a> PoolKeyCursor<'a> {
             extra_data: Some(serde_json::json!({
                 "pool_group_exhaustion": {
                     "scanned_keys": self.scanned_keys,
+                    "budget_scanned_keys": self.budget_scanned_keys,
                     "skip_reason_counts": skip_reason_counts,
                 }
             })),
@@ -504,6 +510,9 @@ impl<'a> PoolKeyCursor<'a> {
             endpoint_id = %self.group.candidate.endpoint_id,
             model_id = %self.group.candidate.model_id,
             scanned_keys = self.scanned_keys,
+            budget_scanned_keys = self.budget_scanned_keys,
+            max_scanned_keys = self.max_scanned_keys,
+            absolute_max_scanned_keys = self.absolute_max_scanned_keys,
             skip_reason_counts = ?self.skip_reason_counts,
             "gateway pool scheduler exhausted pool group without a schedulable key"
         );
@@ -548,13 +557,16 @@ impl<'a> PoolKeyCursor<'a> {
             }
         }
 
-        if self.scanned_keys >= self.max_scanned_keys {
+        if self.budget_scanned_keys >= self.max_scanned_keys
+            || self.scanned_keys >= self.absolute_max_scanned_keys
+        {
             return None;
         }
 
         let limit = self
             .page_size
-            .min(self.max_scanned_keys - self.scanned_keys);
+            .min(self.max_scanned_keys - self.budget_scanned_keys)
+            .min(self.absolute_max_scanned_keys - self.scanned_keys);
         let query = StoredPoolKeyCandidateRowsQuery {
             api_format: self.group.candidate.endpoint_api_format.clone(),
             provider_id: self.group.candidate.provider_id.clone(),
@@ -593,11 +605,21 @@ impl<'a> PoolKeyCursor<'a> {
         }
 
         self.scanned_keys += rows.len() as u32;
+        self.budget_scanned_keys += rows.len() as u32;
         self.next_offset = self.next_offset.saturating_add(rows.len() as u32);
         Some(self.build_page_eligible_candidates(rows).await)
     }
 
     async fn next_score_candidates(&mut self) -> Option<Vec<EligibleLocalExecutionCandidate>> {
+        if self.scanned_keys >= self.absolute_max_scanned_keys {
+            return None;
+        }
+        let limit = self
+            .score_top_n
+            .min(self.absolute_max_scanned_keys - self.scanned_keys);
+        if limit == 0 {
+            return None;
+        }
         let scope = provider_key_pool_score_scope();
         let query = ListRankedPoolMembersQuery {
             pool_kind: POOL_KIND_PROVIDER_KEY_POOL.to_string(),
@@ -608,7 +630,7 @@ impl<'a> PoolKeyCursor<'a> {
             hard_states: vec![PoolMemberHardState::Available, PoolMemberHardState::Unknown],
             probe_statuses: None,
             offset: 0,
-            limit: self.score_top_n as usize,
+            limit: limit as usize,
         };
         let scores = match self.state.app().data.list_ranked_pool_members(&query).await {
             Ok(scores) => scores,
@@ -666,7 +688,18 @@ impl<'a> PoolKeyCursor<'a> {
                 return None;
             }
         };
-        self.scanned_keys = self.scanned_keys.saturating_add(scores.len() as u32);
+        let materialized_row_count = rows.len() as u32;
+        let missing_score_count = scores.len().saturating_sub(rows.len());
+        if missing_score_count > 0 {
+            *self
+                .skip_reason_counts
+                .entry("pool_score_member_missing")
+                .or_insert(0) += u32::try_from(missing_score_count).unwrap_or(u32::MAX);
+        }
+        self.scanned_keys = self.scanned_keys.saturating_add(materialized_row_count);
+        self.budget_scanned_keys = self
+            .budget_scanned_keys
+            .saturating_add(materialized_row_count);
         Some(self.build_page_eligible_candidates(rows).await)
     }
 
@@ -761,6 +794,10 @@ impl<'a> PoolKeyCursor<'a> {
             }
             if self.skip_candidate_if_runtime_cooldown(&candidate).await {
                 continue;
+            }
+            if candidate.orchestration.candidate_group_id.is_none() {
+                candidate.orchestration.candidate_group_id =
+                    Some(pool_cursor_candidate_group_id(&self.group));
             }
             candidate.orchestration.pool_key_index = Some(self.next_pool_key_index);
             self.next_pool_key_index = self.next_pool_key_index.saturating_add(1);
@@ -1010,7 +1047,21 @@ impl<'a> PoolKeyCursor<'a> {
         for skipped_candidate in skipped_candidates {
             self.record_skip_reason(skipped_candidate.skip_reason);
         }
+        let prefiltered_count = skipped_candidates
+            .iter()
+            .filter(|candidate| pool_skip_reason_releases_scan_budget(candidate.skip_reason))
+            .count();
+        self.budget_scanned_keys = self
+            .budget_scanned_keys
+            .saturating_sub(u32::try_from(prefiltered_count).unwrap_or(u32::MAX));
     }
+}
+
+fn pool_skip_reason_releases_scan_budget(skip_reason: &str) -> bool {
+    matches!(
+        skip_reason,
+        POOL_ACCOUNT_EXHAUSTED_SKIP_REASON | POOL_ACCOUNT_BLOCKED_SKIP_REASON
+    )
 }
 
 fn pool_candidate_transport_policy_facts(
@@ -1492,6 +1543,17 @@ fn pool_candidate_facts(candidate: &EligibleLocalExecutionCandidate) -> PoolCand
     }
 }
 
+fn pool_cursor_candidate_group_id(group: &EligibleLocalExecutionCandidate) -> String {
+    format!(
+        "provider={}|endpoint={}|model={}|selected_model={}|api_format={}|singleton_key=*",
+        group.candidate.provider_id,
+        group.candidate.endpoint_id,
+        group.candidate.model_id,
+        group.candidate.selected_provider_model_name,
+        group.provider_api_format,
+    )
+}
+
 fn pool_scheduling_config(
     config: AdminProviderPoolConfig,
     provider_type: &str,
@@ -1553,7 +1615,8 @@ mod tests {
         ROUTING_PROFILE_DISALLOWED_KEY_SKIP_REASON,
     };
     use crate::ai_serving::{
-        apply_local_runtime_candidate_terminal_reason, EligibleLocalExecutionCandidate,
+        apply_local_runtime_candidate_terminal_reason, provider_key_pool_score_id,
+        provider_key_pool_score_scope, EligibleLocalExecutionCandidate,
         LocalExecutionCandidateKind, PlannerAppState,
     };
     use crate::data::GatewayDataState;
@@ -1563,9 +1626,13 @@ mod tests {
     use crate::orchestration::LocalExecutionCandidateMetadata;
     use crate::{AppState, LocalExecutionRuntimeMissDiagnostic};
     use aether_data::repository::candidate_selection::InMemoryMinimalCandidateSelectionReadRepository;
+    use aether_data::repository::pool_scores::InMemoryPoolMemberScoreRepository;
     use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
     use aether_data_contracts::repository::candidate_selection::{
         StoredMinimalCandidateSelectionRow, StoredPoolKeyCandidateOrder,
+    };
+    use aether_data_contracts::repository::pool_scores::{
+        PoolMemberHardState, PoolMemberIdentity, PoolMemberProbeStatus, StoredPoolMemberScore,
     };
     use aether_data_contracts::repository::provider_catalog::{
         StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
@@ -2762,6 +2829,12 @@ mod tests {
         assert_eq!(candidate.candidate.key_id, "key-b");
         assert_eq!(candidate.orchestration.pool_key_index, Some(0));
         assert_eq!(
+            candidate.orchestration.candidate_group_id.as_deref(),
+            Some(
+                "provider=provider-pool|endpoint=endpoint-1|model=model-1|selected_model=gpt-5|api_format=openai:chat|singleton_key=*"
+            )
+        );
+        assert_eq!(
             cursor
                 .skip_reason_counts
                 .get(ROUTING_PROFILE_DISALLOWED_KEY_SKIP_REASON),
@@ -2965,6 +3038,212 @@ mod tests {
         assert!(skipped.iter().all(|candidate| {
             candidate.skip_reason == aether_pool_core::POOL_ACCOUNT_EXHAUSTED_SKIP_REASON
         }));
+    }
+
+    #[tokio::test]
+    async fn pool_key_cursor_does_not_spend_effective_scan_budget_on_exhausted_accounts() {
+        let provider_config = Some(json!({
+            "pool_advanced": {
+                "skip_exhausted_accounts": true
+            }
+        }));
+        let (provider, endpoint, mut keys, rows) = large_pool_fixture(700, provider_config.clone());
+        for key in keys.iter_mut().take(600) {
+            key.status_snapshot = Some(json!({
+                "quota": {
+                    "provider_type": "openai",
+                    "exhausted": true,
+                    "usage_ratio": 1.0,
+                    "windows": [
+                        {
+                            "code": "daily",
+                            "used_ratio": 1.0,
+                            "remaining_ratio": 0.0
+                        }
+                    ]
+                }
+            }));
+        }
+
+        let data_state =
+            GatewayDataState::with_provider_catalog_and_minimal_candidate_selection_for_tests(
+                Arc::new(InMemoryProviderCatalogReadRepository::seed(
+                    vec![provider],
+                    vec![endpoint],
+                    keys,
+                )),
+                Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(rows)),
+            )
+            .with_encryption_key_for_tests(aether_crypto::DEVELOPMENT_ENCRYPTION_KEY);
+        let app = AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data_state);
+        let group = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "pool-group",
+            10,
+            provider_config,
+        );
+
+        let mut cursor = PoolKeyCursor::new(PlannerAppState::new(&app), group, None, None, None);
+        assert_eq!(
+            cursor.max_scanned_keys,
+            aether_dispatch_core::DEFAULT_POOL_MAX_SCAN
+        );
+        assert!(
+            cursor.absolute_max_scanned_keys > cursor.max_scanned_keys,
+            "pool config scan limit should be retained as the absolute cap"
+        );
+
+        let candidate = cursor
+            .next_key()
+            .await
+            .expect("cursor should scan past exhausted accounts within the absolute cap");
+        let key_index = candidate
+            .candidate
+            .key_id
+            .strip_prefix("key-")
+            .and_then(|value| value.parse::<usize>().ok())
+            .expect("fixture key id should contain a numeric suffix");
+        assert!(
+            key_index >= 600,
+            "cursor should not return one of the exhausted leading keys"
+        );
+        assert_eq!(candidate.orchestration.pool_key_index, Some(0));
+        assert_eq!(cursor.scanned_keys, 640);
+        assert_eq!(cursor.budget_scanned_keys, 40);
+        assert_eq!(
+            cursor
+                .skip_reason_counts
+                .get(aether_pool_core::POOL_ACCOUNT_EXHAUSTED_SKIP_REASON),
+            Some(&600)
+        );
+    }
+
+    #[tokio::test]
+    async fn pool_key_cursor_does_not_spend_effective_scan_budget_on_blocked_accounts() {
+        const BLOCKED_COUNT: usize = 1_600;
+        let provider_config = Some(json!({ "pool_advanced": {} }));
+        let (provider, endpoint, mut keys, rows) =
+            large_pool_fixture(BLOCKED_COUNT + 100, provider_config.clone());
+        for key in keys.iter_mut().take(BLOCKED_COUNT) {
+            key.oauth_invalid_reason = Some("blocked account".to_string());
+        }
+
+        let data_state =
+            GatewayDataState::with_provider_catalog_and_minimal_candidate_selection_for_tests(
+                Arc::new(InMemoryProviderCatalogReadRepository::seed(
+                    vec![provider],
+                    vec![endpoint],
+                    keys,
+                )),
+                Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(rows)),
+            )
+            .with_encryption_key_for_tests(aether_crypto::DEVELOPMENT_ENCRYPTION_KEY);
+        let app = AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data_state);
+        let group = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "pool-group",
+            10,
+            provider_config,
+        );
+
+        let mut cursor = PoolKeyCursor::new(PlannerAppState::new(&app), group, None, None, None);
+        assert_eq!(
+            cursor.max_scanned_keys,
+            aether_dispatch_core::DEFAULT_POOL_MAX_SCAN
+        );
+        assert!(
+            cursor.absolute_max_scanned_keys >= u32::try_from(BLOCKED_COUNT + 1).unwrap(),
+            "default absolute scan cap should allow scanning past a large blocked prefix"
+        );
+
+        let candidate = cursor
+            .next_key()
+            .await
+            .expect("cursor should scan past blocked accounts within the absolute cap");
+        let key_index = candidate
+            .candidate
+            .key_id
+            .strip_prefix("key-")
+            .and_then(|value| value.parse::<usize>().ok())
+            .expect("fixture key id should contain a numeric suffix");
+        assert!(
+            key_index >= BLOCKED_COUNT,
+            "cursor should not return one of the blocked leading keys"
+        );
+        assert_eq!(candidate.orchestration.pool_key_index, Some(0));
+        assert!(
+            cursor.budget_scanned_keys <= aether_dispatch_core::DEFAULT_POOL_PAGE_SIZE,
+            "blocked accounts should not consume effective scan budget"
+        );
+        assert_eq!(
+            cursor
+                .skip_reason_counts
+                .get(aether_pool_core::POOL_ACCOUNT_BLOCKED_SKIP_REASON),
+            Some(&(BLOCKED_COUNT as u32))
+        );
+    }
+
+    #[tokio::test]
+    async fn pool_key_cursor_does_not_spend_scan_budget_on_missing_score_rows() {
+        let provider_config = Some(json!({
+            "pool_advanced": {
+                "score_top_n": 128
+            }
+        }));
+        let (provider, endpoint, keys, rows) = large_pool_fixture(1, provider_config.clone());
+        let scores = (0..128)
+            .map(|index| {
+                sample_provider_key_pool_score(
+                    "provider-pool",
+                    &format!("missing-key-{index:03}"),
+                    1_000.0 - index as f64,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let data_state =
+            GatewayDataState::with_provider_catalog_and_minimal_candidate_selection_for_tests(
+                Arc::new(InMemoryProviderCatalogReadRepository::seed(
+                    vec![provider],
+                    vec![endpoint],
+                    keys,
+                )),
+                Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(rows)),
+            )
+            .with_pool_score_repository_for_tests(Arc::new(
+                InMemoryPoolMemberScoreRepository::seed(scores),
+            ))
+            .with_encryption_key_for_tests(aether_crypto::DEVELOPMENT_ENCRYPTION_KEY);
+        let app = AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data_state);
+        let group = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "pool-group",
+            10,
+            provider_config,
+        );
+
+        let mut cursor = PoolKeyCursor::new(PlannerAppState::new(&app), group, None, None, None);
+        let candidate = cursor
+            .next_key()
+            .await
+            .expect("cursor should fall back to catalog rows after stale scores");
+
+        assert_eq!(candidate.candidate.key_id, "key-00000");
+        assert_eq!(cursor.scanned_keys, 1);
+        assert_eq!(cursor.budget_scanned_keys, 1);
+        assert_eq!(
+            cursor.skip_reason_counts.get("pool_score_member_missing"),
+            Some(&128)
+        );
     }
 
     #[tokio::test]
@@ -3651,6 +3930,40 @@ mod tests {
         (provider, endpoint, keys, rows)
     }
 
+    fn sample_provider_key_pool_score(
+        provider_id: &str,
+        key_id: &str,
+        score: f64,
+    ) -> StoredPoolMemberScore {
+        let identity = PoolMemberIdentity::provider_api_key(provider_id, key_id);
+        let scope = provider_key_pool_score_scope();
+        StoredPoolMemberScore {
+            id: provider_key_pool_score_id(&identity, &scope),
+            pool_kind: identity.pool_kind,
+            pool_id: identity.pool_id,
+            member_kind: identity.member_kind,
+            member_id: identity.member_id,
+            capability: scope.capability,
+            scope_kind: scope.scope_kind,
+            scope_id: scope.scope_id,
+            score,
+            hard_state: PoolMemberHardState::Available,
+            score_version: 1,
+            score_reason: json!({}),
+            last_ranked_at: Some(1_000),
+            last_scheduled_at: None,
+            last_success_at: None,
+            last_failure_at: None,
+            failure_count: 0,
+            last_probe_attempt_at: None,
+            last_probe_success_at: None,
+            last_probe_failure_at: None,
+            probe_failure_count: 0,
+            probe_status: PoolMemberProbeStatus::Ok,
+            updated_at: 1_000,
+        }
+    }
+
     fn sample_codex_pool_provider(
         provider_id: &str,
         provider_priority: i32,
@@ -3847,6 +4160,7 @@ mod tests {
                     expires_at_unix_secs: None,
                     proxy: None,
                     fingerprint: None,
+                    upstream_metadata: None,
                     decrypted_api_key: "secret".to_string(),
                     decrypted_auth_config: None,
                 },
@@ -3960,6 +4274,7 @@ mod tests {
                     expires_at_unix_secs: None,
                     proxy: None,
                     fingerprint: None,
+                    upstream_metadata: None,
                     decrypted_api_key: "secret".to_string(),
                     decrypted_auth_config: None,
                 },

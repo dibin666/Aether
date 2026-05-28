@@ -118,18 +118,6 @@
                 variant="ghost"
                 size="icon"
                 class="h-8 w-8 shrink-0"
-                data-testid="pool-refresh-worker-button"
-                title="自动刷新配置和日志"
-                @click="openRefreshWorkerDialog"
-              >
-                <History class="w-3.5 h-3.5" />
-              </Button>
-            </div>
-            <div class="min-w-0 flex-1 flex justify-center">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-8 w-8 shrink-0"
                 title="账号批量操作"
                 @click="showAccountBatchDialog = true"
               >
@@ -332,16 +320,6 @@
               <Activity class="w-3.5 h-3.5" />
             </Button>
             <Button
-              variant="ghost"
-              size="icon"
-              class="h-8 w-8"
-              data-testid="pool-refresh-worker-button"
-              title="自动刷新配置和日志"
-              @click="openRefreshWorkerDialog"
-            >
-              <History class="w-3.5 h-3.5" />
-            </Button>
-            <Button
               v-if="selectedProviderId"
               variant="ghost"
               size="icon"
@@ -381,58 +359,6 @@
           </div>
         </div>
       </div>
-      <div
-        v-if="selectedProviderId && poolQuotaSummary && poolQuotaSummary.total > 0"
-        class="border-b border-border/60 bg-muted/10 px-4 py-3 sm:px-6"
-      >
-        <div class="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-          <div class="flex flex-wrap items-center gap-2 text-xs">
-            <span class="font-medium text-foreground">额度概览</span>
-            <button
-              type="button"
-              class="rounded-md border px-2 py-1 transition-colors"
-              :class="getQuotaFilterChipClass('quota_available')"
-              :aria-pressed="selectedQuotaFilter === 'quota_available'"
-              @click="toggleQuotaFilter('quota_available')"
-            >
-              有额度 {{ poolQuotaSummary.with_quota }}
-            </button>
-            <button
-              type="button"
-              class="rounded-md border px-2 py-1 transition-colors"
-              :class="getQuotaFilterChipClass('quota_exhausted')"
-              :aria-pressed="selectedQuotaFilter === 'quota_exhausted'"
-              @click="toggleQuotaFilter('quota_exhausted')"
-            >
-              无额度 {{ poolQuotaSummary.without_quota }}
-            </button>
-          </div>
-          <div class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-            <button
-              v-for="item in poolQuotaPlanSummaryItems"
-              :key="item.planType"
-              type="button"
-              class="inline-flex items-center gap-1 rounded-md border px-2 py-1 transition-colors"
-              :class="getPlanFilterChipClass(item.selector)"
-              :aria-pressed="selectedPlanFilter === item.selector"
-              @click="togglePlanFilter(item.selector)"
-            >
-              <Badge
-                variant="outline"
-                class="h-4 px-1 py-0 text-[10px]"
-                :class="selectedPlanFilter === item.selector ? 'border-primary-foreground/30 bg-primary-foreground/15 text-primary-foreground' : item.planClass"
-              >
-                {{ item.planLabel }}
-              </Badge>
-              <span>有 {{ item.withQuota }}</span>
-              <span class="text-muted-foreground/60">/</span>
-              <span>无 {{ item.withoutQuota }}</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-
 
       <!-- Loading (initial) -->
       <div
@@ -592,7 +518,7 @@
                 v-for="key in keyPage.keys"
                 :key="key.key_id"
                 class="border-b border-border/40 last:border-b-0 hover:bg-muted/30 transition-colors"
-                :class="getKeyUiState(key.key_id)?.rowClass || ''"
+                :class="keyUiStateMap[key.key_id]?.rowClass || ''"
               >
                 <TableCell
                   class="py-3"
@@ -654,8 +580,8 @@
                           variant="ghost"
                           size="icon"
                           class="h-4 w-4 shrink-0"
-                          :disabled="refreshingOAuthKeyId === key.key_id || !getKeyUiState(key.key_id)?.canRefreshToken"
-                          :title="getKeyUiState(key.key_id)?.oauthRefreshButtonTitle || ''"
+                          :disabled="refreshingOAuthKeyId === key.key_id || !keyUiStateMap[key.key_id]?.canRefreshToken"
+                          :title="keyUiStateMap[key.key_id]?.oauthRefreshButtonTitle || ''"
                           @click.stop="handleRefreshOAuth(key)"
                         >
                           <RefreshCw
@@ -664,33 +590,33 @@
                           />
                         </Button>
                         <span
-                          v-if="getKeyUiState(key.key_id)?.visibleOAuthState"
+                          v-if="keyUiStateMap[key.key_id]?.visibleOAuthState"
                           class="text-[10px]"
                           :class="{
-                            'text-destructive': getKeyUiState(key.key_id)?.visibleOAuthState?.isInvalid || getKeyUiState(key.key_id)?.visibleOAuthState?.isExpired,
-                            'text-warning': getKeyUiState(key.key_id)?.visibleOAuthState?.isExpiringSoon && !getKeyUiState(key.key_id)?.visibleOAuthState?.isExpired && !getKeyUiState(key.key_id)?.visibleOAuthState?.isInvalid,
-                            'text-muted-foreground': !getKeyUiState(key.key_id)?.visibleOAuthState?.isExpired && !getKeyUiState(key.key_id)?.visibleOAuthState?.isExpiringSoon && !getKeyUiState(key.key_id)?.visibleOAuthState?.isInvalid
+                            'text-destructive': keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid || keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired,
+                            'text-warning': keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpiringSoon && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid,
+                            'text-muted-foreground': !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpiringSoon && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid
                           }"
-                          :title="getKeyUiState(key.key_id)?.oauthStatusTitle || ''"
+                          :title="keyUiStateMap[key.key_id]?.oauthStatusTitle || ''"
                         >
-                          {{ getKeyUiState(key.key_id)?.visibleOAuthState?.text }}
+                          {{ keyUiStateMap[key.key_id]?.visibleOAuthState?.text }}
                         </span>
                       </template>
                       <Badge
                         v-if="keyUiStateMap[key.key_id]?.planLabel"
                         variant="outline"
                         class="text-[9px] px-1 py-0 h-4 shrink-0"
-                        :class="getKeyUiState(key.key_id)?.planClass || ''"
+                        :class="keyUiStateMap[key.key_id]?.planClass || ''"
                       >
-                        {{ getKeyUiState(key.key_id)?.planLabel }}
+                        {{ keyUiStateMap[key.key_id]?.planLabel }}
                       </Badge>
                       <Badge
-                        v-if="getKeyUiState(key.key_id)?.oauthOrgBadge"
+                        v-if="keyUiStateMap[key.key_id]?.oauthOrgBadge"
                         variant="secondary"
                         class="text-[9px] px-1 py-0 h-4 shrink-0"
-                        :title="getKeyUiState(key.key_id)?.oauthOrgBadge?.title"
+                        :title="keyUiStateMap[key.key_id]?.oauthOrgBadge?.title"
                       >
-                        {{ getKeyUiState(key.key_id)?.oauthOrgBadge?.label }}
+                        {{ keyUiStateMap[key.key_id]?.oauthOrgBadge?.label }}
                       </Badge>
                     </div>
                   </div>
@@ -700,11 +626,11 @@
                   class="py-3 align-middle"
                 >
                   <div
-                    v-if="getQuotaProgressItems(key.key_id).length"
+                    v-if="quotaProgressMap[key.key_id]?.length"
                     class="max-w-[208px] space-y-2"
                   >
                     <div
-                      v-for="(item, idx) in getQuotaProgressItems(key.key_id)"
+                      v-for="(item, idx) in quotaProgressMap[key.key_id]"
                       :key="`${key.key_id}-quota-${idx}`"
                       class="flex flex-col gap-1 min-w-[140px] max-w-[208px]"
                     >
@@ -732,12 +658,18 @@
                         >{{ getQuotaProgressMeterDisplayText(item) }}</span>
                       </div>
                     </div>
+                    <div
+                      v-if="keyUiStateMap[key.key_id]?.accountQuotaText"
+                      class="text-[10px] leading-none text-muted-foreground tabular-nums"
+                    >
+                      {{ keyUiStateMap[key.key_id]?.accountQuotaText }}
+                    </div>
                   </div>
                   <span
-                    v-else-if="getKeyUiState(key.key_id)?.quotaFallbackText"
-                    :class="getKeyUiState(key.key_id)?.quotaTextClass || ''"
+                    v-else-if="keyUiStateMap[key.key_id]?.accountQuotaText || keyUiStateMap[key.key_id]?.quotaFallbackText"
+                    :class="keyUiStateMap[key.key_id]?.quotaTextClass || ''"
                   >
-                    {{ getKeyUiState(key.key_id)?.quotaFallbackText }}
+                    {{ keyUiStateMap[key.key_id]?.accountQuotaText || keyUiStateMap[key.key_id]?.quotaFallbackText }}
                   </span>
                   <span
                     v-else
@@ -814,12 +746,12 @@
                 </TableCell>
                 <TableCell class="py-3 text-center">
                   <span class="text-[10px] text-muted-foreground whitespace-nowrap">
-                    {{ getKeyUiState(key.key_id)?.importedAtRelative || '-' }}
+                    {{ keyUiStateMap[key.key_id]?.importedAtRelative || '-' }}
                   </span>
                 </TableCell>
                 <TableCell class="py-3 text-center">
                   <span class="text-[10px] text-muted-foreground whitespace-nowrap">
-                    {{ getKeyUiState(key.key_id)?.lastUsedRelative || '-' }}
+                    {{ keyUiStateMap[key.key_id]?.lastUsedRelative || '-' }}
                   </span>
                 </TableCell>
                 <TableCell class="py-3 text-center align-middle">
@@ -885,11 +817,11 @@
                 </TableCell>
                 <TableCell class="py-3 text-center">
                   <Badge
-                    :variant="getKeyUiState(key.key_id)?.schedulingBadgeVariant || 'default'"
+                    :variant="keyUiStateMap[key.key_id]?.schedulingBadgeVariant || 'default'"
                     class="text-[10px]"
-                    :title="getKeyUiState(key.key_id)?.schedulingTitle || ''"
+                    :title="keyUiStateMap[key.key_id]?.schedulingTitle || ''"
                   >
-                    {{ getKeyUiState(key.key_id)?.schedulingBadgeLabel }}
+                    {{ keyUiStateMap[key.key_id]?.schedulingBadgeLabel }}
                   </Badge>
                 </TableCell>
                 <TableCell class="py-3 px-2 align-middle">
@@ -1020,7 +952,7 @@
             v-for="key in keyPage.keys"
             :key="key.key_id"
             class="p-4 sm:p-5 hover:bg-muted/30 transition-colors"
-            :class="getKeyUiState(key.key_id)?.rowClass || ''"
+            :class="keyUiStateMap[key.key_id]?.rowClass || ''"
           >
             <div class="space-y-3">
               <div class="text-sm font-medium truncate">
@@ -1029,11 +961,11 @@
 
               <div class="flex flex-wrap items-center gap-1.5">
                 <Badge
-                  :variant="getKeyUiState(key.key_id)?.schedulingBadgeVariant || 'default'"
+                  :variant="keyUiStateMap[key.key_id]?.schedulingBadgeVariant || 'default'"
                   class="text-[10px] shrink-0"
-                  :title="getKeyUiState(key.key_id)?.schedulingTitle || ''"
+                  :title="keyUiStateMap[key.key_id]?.schedulingTitle || ''"
                 >
-                  {{ getKeyUiState(key.key_id)?.schedulingBadgeLabel }}
+                  {{ keyUiStateMap[key.key_id]?.schedulingBadgeLabel }}
                 </Badge>
                 <span
                   v-if="key.cooldown_ttl_seconds"
@@ -1042,7 +974,7 @@
                   冷却 {{ formatTTL(key.cooldown_ttl_seconds) }}
                 </span>
                 <template
-                  v-for="item in getKeyUiState(key.key_id)?.mobileTagItems || []"
+                  v-for="item in keyUiStateMap[key.key_id]?.mobileTagItems || []"
                   :key="`${key.key_id}-${item.key}`"
                 >
                   <button
@@ -1059,7 +991,7 @@
                     v-else-if="item.key === 'plan'"
                     variant="outline"
                     class="text-[9px] px-1 py-0 h-4 shrink-0"
-                    :class="getKeyUiState(key.key_id)?.planClass || ''"
+                    :class="keyUiStateMap[key.key_id]?.planClass || ''"
                   >
                     {{ item.label }}
                   </Badge>
@@ -1067,7 +999,7 @@
                     v-else-if="item.key === 'org'"
                     variant="secondary"
                     class="text-[9px] px-1 py-0 h-4 shrink-0"
-                    :title="getKeyUiState(key.key_id)?.oauthOrgBadge?.title"
+                    :title="keyUiStateMap[key.key_id]?.oauthOrgBadge?.title"
                   >
                     {{ item.label }}
                   </Badge>
@@ -1219,22 +1151,22 @@
                   配额
                 </div>
                 <div
-                  v-if="getQuotaProgressItems(key.key_id).length"
+                  v-if="quotaProgressMap[key.key_id]?.length"
                   class="space-y-2"
                 >
                   <div
-                    v-for="(item, idx) in getQuotaProgressItems(key.key_id)"
+                    v-for="(item, idx) in quotaProgressMap[key.key_id]"
                     :key="`${key.key_id}-quota-mobile-${idx}`"
                     class="flex flex-col gap-1 min-w-0"
                   >
                     <div class="flex items-center justify-between text-[10px] leading-none">
                       <span class="text-muted-foreground font-medium shrink-0">{{ getQuotaProgressLabel(item.label) }}</span>
-                        <span
-                          v-if="getQuotaProgressResetDisplayText(item)"
-                          data-testid="pool-quota-reset-text"
-                          class="text-muted-foreground/80 tabular-nums truncate"
-                          :title="getQuotaProgressResetDisplayText(item)"
-                        >{{ getQuotaProgressResetDisplayText(item) }}</span>
+                      <span
+                        v-if="getQuotaProgressResetDisplayText(item)"
+                        data-testid="pool-quota-reset-text"
+                        class="text-muted-foreground/80 tabular-nums truncate"
+                        :title="getQuotaProgressResetDisplayText(item)"
+                      >{{ getQuotaProgressResetDisplayText(item) }}</span>
                     </div>
                     <div class="flex items-center gap-1.5">
                       <div class="relative flex-1 h-1.5 rounded-full bg-border overflow-hidden">
@@ -1251,12 +1183,18 @@
                       >{{ getQuotaProgressMeterDisplayText(item) }}</span>
                     </div>
                   </div>
+                  <div
+                    v-if="keyUiStateMap[key.key_id]?.accountQuotaText"
+                    class="text-[10px] leading-none text-muted-foreground tabular-nums"
+                  >
+                    {{ keyUiStateMap[key.key_id]?.accountQuotaText }}
+                  </div>
                 </div>
                 <div
-                  v-else-if="getKeyUiState(key.key_id)?.quotaFallbackText"
-                  :class="getKeyUiState(key.key_id)?.quotaTextClass || ''"
+                  v-else-if="keyUiStateMap[key.key_id]?.accountQuotaText || keyUiStateMap[key.key_id]?.quotaFallbackText"
+                  :class="keyUiStateMap[key.key_id]?.quotaTextClass || ''"
                 >
-                  {{ getKeyUiState(key.key_id)?.quotaFallbackText }}
+                  {{ keyUiStateMap[key.key_id]?.accountQuotaText || keyUiStateMap[key.key_id]?.quotaFallbackText }}
                 </div>
                 <div
                   v-else
@@ -1268,7 +1206,7 @@
 
               <div class="flex items-center gap-0.5">
                 <div
-                  v-for="actionId in getKeyUiState(key.key_id)?.mobileActionIds || []"
+                  v-for="actionId in keyUiStateMap[key.key_id]?.mobileActionIds || []"
                   :key="`${key.key_id}-${actionId}`"
                   class="min-w-0 flex-1 flex justify-center"
                 >
@@ -1297,8 +1235,8 @@
                     variant="ghost"
                     size="icon"
                     class="h-7 w-7 shrink-0"
-                    :disabled="refreshingOAuthKeyId === key.key_id || !getKeyUiState(key.key_id)?.canRefreshToken"
-                    :title="getKeyUiState(key.key_id)?.oauthRefreshButtonTitle || ''"
+                    :disabled="refreshingOAuthKeyId === key.key_id || !keyUiStateMap[key.key_id]?.canRefreshToken"
+                    :title="keyUiStateMap[key.key_id]?.oauthRefreshButtonTitle || ''"
                     @click.stop="handleRefreshOAuth(key)"
                   >
                     <RefreshCw
@@ -1472,372 +1410,6 @@
     </Card>
 
     <!-- Dialogs -->
-    <Dialog
-      :model-value="showRefreshWorkerDialog"
-      :no-padding="true"
-      size="5xl"
-      @update:model-value="showRefreshWorkerDialog = $event"
-    >
-      <template #header>
-        <div class="border-b border-border px-4 py-4 sm:px-6">
-          <div class="flex items-start gap-3">
-            <div class="min-w-0 flex-1">
-              <h3 class="text-lg font-semibold leading-tight text-foreground">
-                自动刷新
-              </h3>
-              <p class="text-xs text-muted-foreground">
-                OAuth 与额度后台任务
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              class="h-8 w-8 shrink-0"
-              title="关闭"
-              @click="showRefreshWorkerDialog = false"
-            >
-              <X class="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      </template>
-
-      <div class="grid max-h-[calc(100dvh-13rem)] overflow-y-auto overscroll-contain lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)]">
-        <section class="border-b border-border/60 p-4 sm:p-6 lg:border-b-0 lg:border-r">
-          <div class="flex items-center justify-between gap-3">
-            <h3 class="text-sm font-semibold">
-              OAuth 配置
-            </h3>
-            <Button
-              variant="outline"
-              size="sm"
-              :disabled="refreshWorkerSettingsLoading || refreshWorkerSettingsSaving"
-              @click="loadRefreshWorkerSettings"
-            >
-              <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
-              读取配置
-            </Button>
-          </div>
-
-          <div class="mt-4 grid gap-3 sm:grid-cols-2">
-            <div class="space-y-1.5">
-              <label class="text-xs font-medium text-muted-foreground">提前刷新（秒）</label>
-              <Input
-                :model-value="refreshWorkerSettings.lookaheadSeconds"
-                type="number"
-                min="0"
-                class="h-9"
-                @update:model-value="(value) => refreshWorkerSettings.lookaheadSeconds = Number(value || 0)"
-              />
-            </div>
-            <div class="space-y-1.5">
-              <label class="text-xs font-medium text-muted-foreground">扫描间隔（秒）</label>
-              <Input
-                :model-value="refreshWorkerSettings.intervalSeconds"
-                type="number"
-                min="15"
-                class="h-9"
-                @update:model-value="(value) => refreshWorkerSettings.intervalSeconds = Number(value || 0)"
-              />
-            </div>
-            <div class="space-y-1.5">
-              <label class="text-xs font-medium text-muted-foreground">并发（账号）</label>
-              <Input
-                :model-value="refreshWorkerSettings.concurrency"
-                type="number"
-                min="1"
-                max="64"
-                class="h-9"
-                @update:model-value="(value) => refreshWorkerSettings.concurrency = Number(value || 0)"
-              />
-            </div>
-            <div class="space-y-1.5">
-              <label class="text-xs font-medium text-muted-foreground">每轮最多（账号）</label>
-              <Input
-                :model-value="refreshWorkerSettings.maxPerRun"
-                type="number"
-                min="1"
-                max="10000"
-                class="h-9"
-                @update:model-value="(value) => refreshWorkerSettings.maxPerRun = Number(value || 0)"
-              />
-            </div>
-            <div class="space-y-1.5 sm:col-span-2">
-              <label class="text-xs font-medium text-muted-foreground">OAuth 代理</label>
-              <Select v-model="oauthRefreshProxySelectValue">
-                <SelectTrigger class="h-9 border-border/60">
-                  <SelectValue placeholder="选择代理" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem :value="OAUTH_PROXY_AUTO_VALUE">
-                    跟随账号/系统
-                  </SelectItem>
-                  <SelectItem :value="OAUTH_PROXY_DIRECT_VALUE">
-                    直连
-                  </SelectItem>
-                  <SelectItem
-                    v-for="node in proxyNodesStore.onlineNodes"
-                    :key="node.id"
-                    :value="node.id"
-                  >
-                    {{ node.name }}{{ node.region ? ` · ${node.region}` : '' }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div class="mt-6 border-t border-border/60 pt-5">
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <h3 class="text-sm font-semibold">
-                Provider 覆盖
-              </h3>
-              <Select v-model="refreshWorkerProviderId">
-                <SelectTrigger class="h-8 w-full border-border/60 text-xs sm:w-48">
-                  <SelectValue placeholder="选择 Provider" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem
-                    v-for="item in poolProviders"
-                    :key="item.provider_id"
-                    :value="item.provider_id"
-                  >
-                    {{ item.provider_name }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div
-              v-if="!refreshWorkerProviderId"
-              class="mt-4 rounded-lg border border-dashed border-border/70 py-8 text-center text-xs text-muted-foreground"
-            >
-              请选择 Provider
-            </div>
-            <div
-              v-else
-              class="mt-4 space-y-4"
-            >
-              <div class="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
-                <div class="min-w-0">
-                  <div class="text-sm font-medium">
-                    使用单独配置
-                  </div>
-                  <div class="text-xs text-muted-foreground">
-                    关闭时继承全局设置
-                  </div>
-                </div>
-                <Switch v-model="refreshWorkerProviderOverrideEnabled" />
-              </div>
-
-              <div class="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
-                <div class="min-w-0">
-                  <div class="text-sm font-medium">
-                    参与 OAuth 自动刷新
-                  </div>
-                  <div class="text-xs text-muted-foreground">
-                    关闭后该 Provider 不会被后台 OAuth 刷新任务处理
-                  </div>
-                </div>
-                <Switch
-                  v-model="refreshWorkerProviderSettings.enabled"
-                  :disabled="!refreshWorkerProviderOverrideEnabled"
-                />
-              </div>
-
-              <div class="grid gap-3 sm:grid-cols-2">
-                <div class="space-y-1.5">
-                  <label class="text-xs font-medium text-muted-foreground">提前刷新（秒）</label>
-                  <Input
-                    :model-value="optionalNumberInput(refreshWorkerProviderSettings.lookaheadSeconds)"
-                    type="number"
-                    min="0"
-                    placeholder="继承全局"
-                    class="h-9"
-                    :disabled="!refreshWorkerProviderOverrideEnabled"
-                    @update:model-value="(value) => refreshWorkerProviderSettings.lookaheadSeconds = parseOptionalNumber(value)"
-                  />
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-medium text-muted-foreground">扫描间隔（秒）</label>
-                  <Input
-                    :model-value="optionalNumberInput(refreshWorkerProviderSettings.intervalSeconds)"
-                    type="number"
-                    min="15"
-                    placeholder="继承全局"
-                    class="h-9"
-                    :disabled="!refreshWorkerProviderOverrideEnabled"
-                    @update:model-value="(value) => refreshWorkerProviderSettings.intervalSeconds = parseOptionalNumber(value)"
-                  />
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-medium text-muted-foreground">并发（账号）</label>
-                  <Input
-                    :model-value="optionalNumberInput(refreshWorkerProviderSettings.concurrency)"
-                    type="number"
-                    min="1"
-                    max="64"
-                    placeholder="继承全局"
-                    class="h-9"
-                    :disabled="!refreshWorkerProviderOverrideEnabled"
-                    @update:model-value="(value) => refreshWorkerProviderSettings.concurrency = parseOptionalNumber(value)"
-                  />
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-medium text-muted-foreground">每轮最多（账号）</label>
-                  <Input
-                    :model-value="optionalNumberInput(refreshWorkerProviderSettings.maxPerRun)"
-                    type="number"
-                    min="1"
-                    max="10000"
-                    placeholder="继承全局"
-                    class="h-9"
-                    :disabled="!refreshWorkerProviderOverrideEnabled"
-                    @update:model-value="(value) => refreshWorkerProviderSettings.maxPerRun = parseOptionalNumber(value)"
-                  />
-                </div>
-                <div class="space-y-1.5 sm:col-span-2">
-                  <label class="text-xs font-medium text-muted-foreground">OAuth 代理</label>
-                  <Select
-                    v-model="providerOauthRefreshProxySelectValue"
-                    :disabled="!refreshWorkerProviderOverrideEnabled"
-                  >
-                    <SelectTrigger class="h-9 border-border/60">
-                      <SelectValue placeholder="选择代理" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem :value="OAUTH_PROXY_INHERIT_VALUE">
-                        继承全局
-                      </SelectItem>
-                      <SelectItem :value="OAUTH_PROXY_AUTO_VALUE">
-                        跟随账号/系统
-                      </SelectItem>
-                      <SelectItem :value="OAUTH_PROXY_DIRECT_VALUE">
-                        直连
-                      </SelectItem>
-                      <SelectItem
-                        v-for="node in proxyNodesStore.onlineNodes"
-                        :key="node.id"
-                        :value="node.id"
-                      >
-                        {{ node.name }}{{ node.region ? ` · ${node.region}` : '' }}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="min-h-[24rem] p-4 sm:p-6">
-          <div class="flex items-center justify-between gap-3">
-            <h3 class="text-sm font-semibold">
-              刷新日志
-            </h3>
-            <Button
-              variant="ghost"
-              size="sm"
-              class="h-8 px-2"
-              :disabled="refreshWorkerLogsLoading"
-              @click="loadRefreshWorkerLogs"
-            >
-              <RefreshCw class="h-3.5 w-3.5" />
-            </Button>
-          </div>
-
-          <div class="mt-4 flex items-center gap-2">
-            <button
-              v-for="tab in refreshWorkerLogTabs"
-              :key="tab.value"
-              type="button"
-              class="inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs transition-colors"
-              :class="refreshWorkerLogKind === tab.value
-                ? 'border-primary bg-primary text-primary-foreground'
-                : 'border-border/60 bg-background text-muted-foreground hover:text-foreground'"
-              :aria-pressed="refreshWorkerLogKind === tab.value"
-              @click="refreshWorkerLogKind = tab.value"
-            >
-              <span>{{ tab.label }}</span>
-              <span class="tabular-nums">{{ tab.count }}</span>
-            </button>
-          </div>
-
-          <div class="mt-3 max-h-[min(62vh,34rem)] overflow-auto rounded-lg border border-border/60 bg-muted/10">
-            <div
-              v-if="refreshWorkerLogsLoading"
-              class="py-10 text-center text-xs text-muted-foreground"
-            >
-              加载中...
-            </div>
-            <div
-              v-else-if="filteredRefreshWorkerLogs.length === 0"
-              class="py-10 text-center text-xs text-muted-foreground"
-            >
-              {{ refreshWorkerLogEmptyText }}
-            </div>
-            <template v-else>
-              <div
-                v-for="item in filteredRefreshWorkerLogs"
-                :key="item.id"
-                class="border-b border-border/50 px-3 py-3 last:border-b-0"
-              >
-                <div class="flex items-start justify-between gap-3 text-xs">
-                  <div class="min-w-0 flex-1 space-y-1.5">
-                    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span class="font-medium text-foreground">{{ refreshLogSubject(item) }}</span>
-                      <Badge
-                        variant="outline"
-                        class="h-5 px-1.5 py-0 text-[11px]"
-                        :class="refreshLogStatusClass(item)"
-                      >
-                        {{ refreshLogStatusLabel(item) }}
-                      </Badge>
-                    </div>
-                    <div class="text-xs leading-5 text-muted-foreground break-words">
-                      {{ refreshLogDetail(item) }}
-                    </div>
-                    <div
-                      v-if="refreshLogMetaItems(item).length > 0"
-                      class="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground"
-                    >
-                      <span
-                        v-for="meta in refreshLogMetaItems(item)"
-                        :key="meta"
-                      >
-                        {{ meta }}
-                      </span>
-                    </div>
-                  </div>
-                  <span class="shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
-                    {{ formatBrowserDateTime(item.createdAt) }}
-                  </span>
-                </div>
-              </div>
-            </template>
-          </div>
-        </section>
-      </div>
-
-      <template #footer>
-        <Button
-          variant="outline"
-          class="min-w-[96px] flex-1 sm:flex-none"
-          :disabled="refreshWorkerSettingsSaving || refreshWorkerProviderSaving"
-          @click="showRefreshWorkerDialog = false"
-        >
-          关闭
-        </Button>
-        <Button
-          class="min-w-[96px] flex-1 sm:flex-none"
-          :disabled="refreshWorkerSettingsSaving || refreshWorkerProviderSaving"
-          @click="saveRefreshWorkerDialogSettings"
-        >
-          {{ refreshWorkerSettingsSaving || refreshWorkerProviderSaving ? '保存中...' : '保存' }}
-        </Button>
-      </template>
-    </Dialog>
-
     <OAuthAccountDialog
       v-if="selectedProviderId"
       :open="showImportDialog"
@@ -1926,7 +1498,6 @@ import {
   Upload,
   ChevronDown,
   RefreshCw,
-  History,
   Activity,
   Power,
   Database,
@@ -1945,16 +1516,13 @@ import {
   CircleHelp,
   Edit,
   Plug,
-  X,
 } from 'lucide-vue-next'
 
 import {
   Card,
-  Dialog,
   Badge,
   Button,
   Input,
-  Switch,
   Select,
   SelectTrigger,
   SelectValue,
@@ -1976,7 +1544,7 @@ import {
 import RefreshButton from '@/components/ui/refresh-button.vue'
 import { useToast } from '@/composables/useToast'
 import { useClipboard } from '@/composables/useClipboard'
-import { useCountdownTimer } from '@/composables/useCountdownTimer'
+import { useCountdownTimer, getCodexResetCountdown } from '@/composables/useCountdownTimer'
 import { useConfirm } from '@/composables/useConfirm'
 import { useRouteQuery } from '@/composables/useRouteQuery'
 import { parseApiError } from '@/utils/errorParser'
@@ -2006,12 +1574,10 @@ import type {
   EndpointAPIKey,
   ProviderEndpoint,
   PoolAdvancedConfig,
-  OAuthTokenRefreshProviderConfig,
   ProviderWithEndpointsSummary,
 } from '@/api/endpoints/types/provider'
-import { getProvider, updateProvider } from '@/api/endpoints'
-import { adminApi } from '@/api/admin'
-import { asyncTasksApi, type AsyncTaskEvent } from '@/api/async-tasks'
+import type { QuotaStatusSnapshot, QuotaWindowSnapshot } from '@/api/endpoints/types'
+import { getProvider, getProviderEndpoints, updateProvider } from '@/api/endpoints'
 import { useProxyNodesStore } from '@/stores/proxy-nodes'
 import PoolSchedulingDialog from '@/features/pool/components/PoolSchedulingDialog.vue'
 import PoolAdvancedDialog from '@/features/pool/components/PoolAdvancedDialog.vue'
@@ -2043,18 +1609,6 @@ import {
   writePoolManagementViewState,
 } from '@/features/pool/utils/poolManagementState'
 import {
-  formatPoolStatInteger as formatStatInteger,
-  formatPoolStatUsd as formatStatUsd,
-  formatPoolTokenCount as formatTokenCount,
-} from '@/features/pool/utils/display'
-import {
-  formatCompactQuotaCountdownText,
-  getQuotaCountdownStatus,
-  parsePoolQuotaProgressItems,
-  shouldHideQuotaProgressDetailText,
-  type QuotaProgressItem,
-} from '@/features/pool/utils/quotaCountdown'
-import {
   buildPoolStatsDisplay,
   type PoolCodexCycleStatsGroup,
   type PoolStatsDisplay,
@@ -2080,9 +1634,9 @@ import {
   getOAuthStatusTitle as resolveOAuthStatusTitle,
 } from '@/utils/providerKeyStatus'
 import {
+  getGeminiCliAccountCreditsText,
   getLegacyAccountQuotaText,
   getQuotaDisplayText,
-  getQuotaSnapshot,
 } from '@/utils/providerKeyQuota'
 
 type PoolKeyScore = NonNullable<PoolKeyDetail['pool_score']>
@@ -2093,40 +1647,6 @@ const { copyToClipboard } = useClipboard()
 const { tick: countdownTick, start: startCountdownTimer } = useCountdownTimer()
 const proxyNodesStore = useProxyNodesStore()
 const { getQueryValue, patchQuery } = useRouteQuery()
-
-const DEFAULT_REFRESH_WORKER_SETTINGS = {
-  lookaheadSeconds: 120,
-  intervalSeconds: 60,
-  concurrency: 4,
-  maxPerRun: 50,
-  proxyNodeId: '',
-} satisfies RefreshWorkerSettings
-const DEFAULT_PROVIDER_REFRESH_WORKER_SETTINGS = {
-  enabled: true,
-  lookaheadSeconds: null,
-  intervalSeconds: null,
-  concurrency: null,
-  maxPerRun: null,
-  proxyNodeId: null,
-} satisfies ProviderRefreshWorkerSettings
-
-const showRefreshWorkerDialog = ref(false)
-const refreshWorkerSettings = ref<RefreshWorkerSettings>({
-  ...DEFAULT_REFRESH_WORKER_SETTINGS,
-})
-const refreshWorkerSettingsLoading = ref(false)
-const refreshWorkerSettingsSaving = ref(false)
-const refreshWorkerLogs = ref<PoolRefreshLogItem[]>([])
-const refreshWorkerLogsLoading = ref(false)
-const refreshWorkerLogKind = ref<RefreshWorkerLogKind>('oauth')
-const refreshWorkerProviderId = ref('')
-const refreshWorkerProviderOverrideEnabled = ref(false)
-const refreshWorkerProviderSettings = ref<ProviderRefreshWorkerSettings>({
-  ...DEFAULT_PROVIDER_REFRESH_WORKER_SETTINGS,
-})
-const refreshWorkerProviderLoading = ref(false)
-const refreshWorkerProviderSaving = ref(false)
-let refreshWorkerProviderRequestId = 0
 
 const poolManagementViewStorage = typeof window === 'undefined' ? undefined : window.sessionStorage
 const restoredViewState = readPoolManagementViewState(
@@ -2160,59 +1680,6 @@ const POOL_KEYS_CACHE_TTL_MS = 10 * 1000
 const POOL_SCHEDULING_PRESETS_CACHE_TTL_MS = 5 * 60 * 1000
 const POOL_DEMAND_METRICS_SAMPLES_LIMIT = 120
 const POOL_DEMAND_METRICS_POLL_INTERVAL_MS = 10 * 1000
-const OAUTH_REFRESH_CONFIG_KEYS = {
-  lookaheadSeconds: 'oauth_token_refresh_lookahead_seconds',
-  intervalSeconds: 'oauth_token_refresh_interval_seconds',
-  concurrency: 'oauth_token_refresh_concurrency',
-  maxPerRun: 'oauth_token_refresh_max_per_run',
-  proxyNodeId: 'oauth_token_refresh_proxy_node_id',
-} as const
-const REFRESH_TASK_KEYS = [
-  'maintenance.oauth.token.refresh',
-  'pool.quota.probe.worker',
-] as const
-const REFRESH_LOG_RUNS_PER_TASK = 4
-const REFRESH_LOG_EVENTS_PER_RUN = 100
-const REFRESH_LOG_MAX_ITEMS = 160
-const OAUTH_PROXY_AUTO_VALUE = '__auto'
-const OAUTH_PROXY_INHERIT_VALUE = '__inherit'
-const OAUTH_PROXY_DIRECT_VALUE = 'direct'
-
-type RefreshWorkerLogKind = 'oauth' | 'quota'
-
-interface RefreshWorkerSettings {
-  lookaheadSeconds: number
-  intervalSeconds: number
-  concurrency: number
-  maxPerRun: number
-  proxyNodeId: string
-}
-
-interface ProviderRefreshWorkerSettings {
-  enabled: boolean
-  lookaheadSeconds: number | null
-  intervalSeconds: number | null
-  concurrency: number | null
-  maxPerRun: number | null
-  proxyNodeId: string | null
-}
-
-interface PoolRefreshLogItem {
-  id: string
-  taskKey: string
-  runId: string
-  eventType: string
-  message: string
-  createdAt: string
-  payload: unknown
-  providerName?: string
-  providerType?: string
-  keyId?: string
-  keyName?: string
-  status?: string
-  detail?: string
-  action?: string
-}
 
 interface PoolDemandMetricSample {
   providerId: string
@@ -2222,511 +1689,6 @@ interface PoolDemandMetricSample {
   inFlight: number
   emaInFlight: number
   burstPending: boolean
-}
-
-const oauthRefreshProxySelectValue = computed({
-  get: () => refreshWorkerSettings.value.proxyNodeId || OAUTH_PROXY_AUTO_VALUE,
-  set: (value: string) => {
-    refreshWorkerSettings.value.proxyNodeId = value === OAUTH_PROXY_AUTO_VALUE ? '' : value
-  },
-})
-
-const providerOauthRefreshProxySelectValue = computed({
-  get: () => {
-    const proxyNodeId = refreshWorkerProviderSettings.value.proxyNodeId
-    if (proxyNodeId === null) return OAUTH_PROXY_INHERIT_VALUE
-    return proxyNodeId || OAUTH_PROXY_AUTO_VALUE
-  },
-  set: (value: string) => {
-    refreshWorkerProviderSettings.value.proxyNodeId = value === OAUTH_PROXY_INHERIT_VALUE
-      ? null
-      : value === OAUTH_PROXY_AUTO_VALUE
-        ? ''
-        : value
-  },
-})
-
-const oauthRefreshWorkerLogs = computed(() =>
-  refreshWorkerLogs.value.filter(item => refreshLogKind(item) === 'oauth'),
-)
-
-const quotaRefreshWorkerLogs = computed(() =>
-  refreshWorkerLogs.value.filter(item => refreshLogKind(item) === 'quota'),
-)
-
-const filteredRefreshWorkerLogs = computed(() =>
-  refreshWorkerLogKind.value === 'oauth'
-    ? oauthRefreshWorkerLogs.value
-    : quotaRefreshWorkerLogs.value,
-)
-
-const refreshWorkerLogTabs = computed<Array<{ value: RefreshWorkerLogKind, label: string, count: number }>>(() => [
-  {
-    value: 'oauth',
-    label: 'OAuth',
-    count: oauthRefreshWorkerLogs.value.length,
-  },
-  {
-    value: 'quota',
-    label: '额度',
-    count: quotaRefreshWorkerLogs.value.length,
-  },
-])
-
-const refreshWorkerLogEmptyText = computed(() =>
-  refreshWorkerLogKind.value === 'oauth' ? '暂无 OAuth 日志' : '暂无额度日志',
-)
-
-function configNumber(value: unknown, fallback: number): number {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : fallback
-}
-
-function configString(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : ''
-}
-
-function optionalNumberInput(value: number | null): string {
-  return value === null ? '' : String(value)
-}
-
-function parseOptionalNumber(value: unknown): number | null {
-  const raw = String(value ?? '').trim()
-  if (!raw) return null
-  const parsed = Number(raw)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-async function loadRefreshWorkerSettings() {
-  refreshWorkerSettingsLoading.value = true
-  try {
-    const configs = await adminApi.getAllSystemConfigs()
-    const valuesByKey = new Map(configs.map(item => [item.key, item.value]))
-    const configValue = (key: string, fallback: unknown) => (
-      valuesByKey.has(key) ? valuesByKey.get(key) : fallback
-    )
-    refreshWorkerSettings.value = {
-      lookaheadSeconds: configNumber(
-        configValue(
-          OAUTH_REFRESH_CONFIG_KEYS.lookaheadSeconds,
-          DEFAULT_REFRESH_WORKER_SETTINGS.lookaheadSeconds,
-        ),
-        DEFAULT_REFRESH_WORKER_SETTINGS.lookaheadSeconds,
-      ),
-      intervalSeconds: configNumber(
-        configValue(
-          OAUTH_REFRESH_CONFIG_KEYS.intervalSeconds,
-          DEFAULT_REFRESH_WORKER_SETTINGS.intervalSeconds,
-        ),
-        DEFAULT_REFRESH_WORKER_SETTINGS.intervalSeconds,
-      ),
-      concurrency: configNumber(
-        configValue(
-          OAUTH_REFRESH_CONFIG_KEYS.concurrency,
-          DEFAULT_REFRESH_WORKER_SETTINGS.concurrency,
-        ),
-        DEFAULT_REFRESH_WORKER_SETTINGS.concurrency,
-      ),
-      maxPerRun: configNumber(
-        configValue(
-          OAUTH_REFRESH_CONFIG_KEYS.maxPerRun,
-          DEFAULT_REFRESH_WORKER_SETTINGS.maxPerRun,
-        ),
-        DEFAULT_REFRESH_WORKER_SETTINGS.maxPerRun,
-      ),
-      proxyNodeId: configString(
-        configValue(
-          OAUTH_REFRESH_CONFIG_KEYS.proxyNodeId,
-          DEFAULT_REFRESH_WORKER_SETTINGS.proxyNodeId,
-        ),
-      ),
-    }
-  } catch (err) {
-    showError(parseApiError(err, '加载刷新配置失败'))
-  } finally {
-    refreshWorkerSettingsLoading.value = false
-  }
-}
-
-async function saveRefreshWorkerSettings(options: { silent?: boolean } = {}) {
-  refreshWorkerSettingsSaving.value = true
-  try {
-    const settings = refreshWorkerSettings.value
-    const normalized = {
-      lookaheadSeconds: Math.max(0, Math.floor(configNumber(settings.lookaheadSeconds, 120))),
-      intervalSeconds: Math.max(15, Math.floor(configNumber(settings.intervalSeconds, 60))),
-      concurrency: Math.min(64, Math.max(1, Math.floor(configNumber(settings.concurrency, 4)))),
-      maxPerRun: Math.min(10000, Math.max(1, Math.floor(configNumber(settings.maxPerRun, 50)))),
-      proxyNodeId: configString(settings.proxyNodeId),
-    }
-    await Promise.all([
-      adminApi.updateSystemConfig(
-        OAUTH_REFRESH_CONFIG_KEYS.lookaheadSeconds,
-        normalized.lookaheadSeconds,
-        'OAuth 自动刷新提前量（秒）',
-      ),
-      adminApi.updateSystemConfig(
-        OAUTH_REFRESH_CONFIG_KEYS.intervalSeconds,
-        normalized.intervalSeconds,
-        'OAuth 自动刷新扫描间隔（秒）',
-      ),
-      adminApi.updateSystemConfig(
-        OAUTH_REFRESH_CONFIG_KEYS.concurrency,
-        normalized.concurrency,
-        'OAuth 自动刷新并发数',
-      ),
-      adminApi.updateSystemConfig(
-        OAUTH_REFRESH_CONFIG_KEYS.maxPerRun,
-        normalized.maxPerRun,
-        'OAuth 自动刷新每轮最多处理账号数',
-      ),
-      adminApi.updateSystemConfig(
-        OAUTH_REFRESH_CONFIG_KEYS.proxyNodeId,
-        normalized.proxyNodeId,
-        'OAuth 自动刷新代理节点；为空时跟随账号、端点、Provider 或系统代理',
-      ),
-    ])
-    refreshWorkerSettings.value = normalized
-    if (!options.silent) success('刷新配置已保存')
-  } catch (err) {
-    showError(parseApiError(err, '保存刷新配置失败'))
-    throw err
-  } finally {
-    refreshWorkerSettingsSaving.value = false
-  }
-}
-
-function normalizeProviderRefreshSettings(config: OAuthTokenRefreshProviderConfig | null | undefined): {
-  overrideEnabled: boolean
-  settings: ProviderRefreshWorkerSettings
-} {
-  if (!config || typeof config !== 'object') {
-    return {
-      overrideEnabled: false,
-      settings: { ...DEFAULT_PROVIDER_REFRESH_WORKER_SETTINGS },
-    }
-  }
-  return {
-    overrideEnabled: true,
-    settings: {
-      enabled: config.enabled ?? true,
-      lookaheadSeconds: parseOptionalNumber(config.lookahead_seconds),
-      intervalSeconds: parseOptionalNumber(config.interval_seconds),
-      concurrency: parseOptionalNumber(config.concurrency),
-      maxPerRun: parseOptionalNumber(config.max_per_run),
-      proxyNodeId: typeof config.proxy_node_id === 'string' ? config.proxy_node_id.trim() : null,
-    },
-  }
-}
-
-function applyProviderRefreshSettings(config: OAuthTokenRefreshProviderConfig | null | undefined) {
-  const normalized = normalizeProviderRefreshSettings(config)
-  refreshWorkerProviderOverrideEnabled.value = normalized.overrideEnabled
-  refreshWorkerProviderSettings.value = normalized.settings
-}
-
-async function loadRefreshWorkerProviderSettings(providerId = refreshWorkerProviderId.value) {
-  if (!providerId) {
-    applyProviderRefreshSettings(null)
-    return
-  }
-  const requestId = ++refreshWorkerProviderRequestId
-  refreshWorkerProviderLoading.value = true
-  try {
-    const provider = await getProvider(providerId)
-    if (requestId !== refreshWorkerProviderRequestId || refreshWorkerProviderId.value !== providerId) return
-    if (selectedProviderId.value === providerId) {
-      selectedProviderData.value = provider
-    }
-    applyProviderRefreshSettings(provider.oauth_token_refresh)
-  } catch (err) {
-    if (requestId === refreshWorkerProviderRequestId) {
-      showError(parseApiError(err, '加载 Provider 刷新配置失败'))
-    }
-  } finally {
-    if (requestId === refreshWorkerProviderRequestId) {
-      refreshWorkerProviderLoading.value = false
-    }
-  }
-}
-
-function buildProviderRefreshConfigPayload(): OAuthTokenRefreshProviderConfig | null {
-  if (!refreshWorkerProviderOverrideEnabled.value) return null
-  const settings = refreshWorkerProviderSettings.value
-  const payload: OAuthTokenRefreshProviderConfig = {
-    enabled: settings.enabled,
-  }
-  if (settings.lookaheadSeconds !== null) {
-    payload.lookahead_seconds = Math.max(0, Math.floor(configNumber(settings.lookaheadSeconds, 120)))
-  }
-  if (settings.intervalSeconds !== null) {
-    payload.interval_seconds = Math.max(15, Math.floor(configNumber(settings.intervalSeconds, 60)))
-  }
-  if (settings.concurrency !== null) {
-    payload.concurrency = Math.min(64, Math.max(1, Math.floor(configNumber(settings.concurrency, 4))))
-  }
-  if (settings.maxPerRun !== null) {
-    payload.max_per_run = Math.min(10000, Math.max(1, Math.floor(configNumber(settings.maxPerRun, 50))))
-  }
-  if (settings.proxyNodeId !== null) {
-    payload.proxy_node_id = configString(settings.proxyNodeId)
-  }
-  return payload
-}
-
-async function saveRefreshWorkerProviderSettings(options: { silent?: boolean } = {}) {
-  const providerId = refreshWorkerProviderId.value
-  if (!providerId) return
-  refreshWorkerProviderSaving.value = true
-  try {
-    const payload = buildProviderRefreshConfigPayload()
-    const provider = await updateProvider(providerId, {
-      config: {
-        oauth_token_refresh: payload,
-      },
-    })
-    if (selectedProviderId.value === providerId) {
-      selectedProviderData.value = provider
-    }
-    applyProviderRefreshSettings(provider.oauth_token_refresh)
-    if (!options.silent) success('Provider 刷新配置已保存')
-  } catch (err) {
-    showError(parseApiError(err, '保存 Provider 刷新配置失败'))
-    throw err
-  } finally {
-    refreshWorkerProviderSaving.value = false
-  }
-}
-
-async function saveRefreshWorkerDialogSettings() {
-  try {
-    await saveRefreshWorkerSettings({ silent: true })
-    await saveRefreshWorkerProviderSettings({ silent: true })
-    success('刷新配置已保存')
-  } catch {
-    // individual save handlers have already shown the failure
-  }
-}
-
-function refreshTaskLabel(taskKey: string): string {
-  if (taskKey === 'maintenance.oauth.token.refresh') return 'OAuth'
-  if (taskKey === 'pool.quota.probe.worker') return '额度'
-  return taskKey
-}
-
-function refreshLogKind(item: PoolRefreshLogItem): RefreshWorkerLogKind {
-  return item.taskKey === 'pool.quota.probe.worker' ? 'quota' : 'oauth'
-}
-
-function eventLabel(eventType: string): string {
-  if (eventType.includes('refreshed')) return '已刷新'
-  if (eventType.includes('checked')) return '已检查'
-  if (eventType.includes('skipped')) return '跳过'
-  if (eventType.includes('succeeded')) return '成功'
-  if (eventType.includes('failed')) return '失败'
-  if (eventType.includes('completed')) return '完成'
-  if (eventType.includes('boot')) return '启动'
-  return eventType
-}
-
-function payloadRecord(payload: unknown): Record<string, unknown> | null {
-  return payload && typeof payload === 'object' && !Array.isArray(payload)
-    ? payload as Record<string, unknown>
-    : null
-}
-
-function payloadString(payload: Record<string, unknown> | null, key: string): string {
-  const value = payload?.[key]
-  return typeof value === 'string' ? value.trim() : ''
-}
-
-function payloadNumber(payload: Record<string, unknown> | null, key: string): number | null {
-  const value = payload?.[key]
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-function buildRefreshLogItem(taskKey: string, event: AsyncTaskEvent): PoolRefreshLogItem {
-  const payload = payloadRecord(event.payload)
-  const detail = payloadString(payload, 'message')
-    || payloadString(payload, 'error')
-    || formatRefreshLogPayload(event.payload)
-    || event.message
-  return {
-    id: `${taskKey}:${event.id}`,
-    taskKey,
-    runId: event.run_id,
-    eventType: event.event_type,
-    message: event.message,
-    createdAt: event.created_at,
-    payload: event.payload,
-    providerName: payloadString(payload, 'provider_name'),
-    providerType: payloadString(payload, 'provider_type'),
-    keyId: payloadString(payload, 'key_id'),
-    keyName: payloadString(payload, 'key_name'),
-    status: payloadString(payload, 'status'),
-    detail,
-    action: payloadString(payload, 'action'),
-  }
-}
-
-function refreshLogSubject(item: PoolRefreshLogItem): string {
-  const accountName = item.keyName || (item.keyId ? `Key ${item.keyId.slice(0, 8)}` : '')
-  if (accountName && item.providerName) return `${item.providerName} / ${accountName}`
-  return accountName || item.providerName || '后台任务'
-}
-
-function refreshLogStatusLabel(item: PoolRefreshLogItem): string {
-  const status = item.status?.trim()
-  if (status === 'refreshed') return '已刷新'
-  if (status === 'checked') return '已检查'
-  if (status === 'skipped') return '跳过'
-  if (status === 'success') return '成功'
-  if (status === 'failed' || status === 'error' || status === 'worker_error' || status === 'missing_result') return '失败'
-  if (status === 'auto_removed') return '已删除'
-  return eventLabel(item.eventType)
-}
-
-function refreshLogStatusClass(item: PoolRefreshLogItem): string {
-  const label = refreshLogStatusLabel(item)
-  if (label === '失败' || label === '已删除') {
-    return 'border-destructive/30 bg-destructive/10 text-destructive'
-  }
-  if (label === '跳过') {
-    return 'border-border/60 bg-muted text-muted-foreground'
-  }
-  return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-}
-
-function refreshLogDetail(item: PoolRefreshLogItem): string {
-  const payload = payloadRecord(item.payload)
-  const statusCode = payloadNumber(payload, 'status_code')
-  const reason = payloadString(payload, 'reason')
-  const autoRemoved = payload?.auto_removed === true ? '已自动删除' : ''
-  const parts = [item.detail || formatRefreshLogPayload(item.payload) || item.message]
-  if (statusCode !== null) parts.push(`HTTP ${statusCode}`)
-  if (reason) parts.push(reason)
-  if (autoRemoved) parts.push(autoRemoved)
-  return parts.filter(Boolean).join(' · ')
-}
-
-function refreshLogMetaItems(item: PoolRefreshLogItem): string[] {
-  const payload = payloadRecord(item.payload)
-  const items: string[] = []
-  items.push(`任务：${refreshTaskLabel(item.taskKey)}`)
-  if (item.providerName) items.push(`Provider：${item.providerName}`)
-  if (item.providerType) items.push(`类型：${item.providerType}`)
-  if (item.keyName) items.push(`账号：${item.keyName}`)
-  if (item.keyId) items.push(`Key：${shortRefreshLogId(item.keyId)}`)
-  const summary = formatRefreshLogPayload(payload)
-  if (summary) items.push(summary)
-  items.push(`事件：${eventLabel(item.eventType)}`)
-  return items
-}
-
-function shortRefreshLogId(value: string): string {
-  const trimmed = value.trim()
-  if (trimmed.length <= 12) return trimmed
-  return `${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`
-}
-
-function formatBrowserDateTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat(undefined, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-    timeZoneName: 'short',
-  }).format(date)
-}
-
-function formatRefreshLogPayload(payload: unknown): string {
-  const record = payloadRecord(payload)
-  if (!record) return ''
-  const parts: string[] = []
-  const labels: Record<string, string> = {
-    scanned: '扫描',
-    eligible: '待刷新',
-    resolved: '已处理',
-    refreshed: '已刷新',
-    skipped: '跳过',
-    selected_keys: '选中账号',
-    succeeded: '成功',
-    failed: '失败',
-    auto_removed: '自动删除',
-    max_per_run: '每轮最多',
-    account_events_recorded: '账号日志',
-    account_event_limit: '日志上限',
-    providers_checked: '检查 Provider',
-    providers_probed: '刷新 Provider',
-    providers_skipped: '跳过 Provider',
-    providers_busy: '忙碌 Provider',
-    scan_interval_seconds: '扫描间隔',
-    refresh_interval_seconds: '刷新间隔',
-    interval_seconds: '任务间隔',
-    lookahead_seconds: '提前刷新',
-    concurrency: '并发',
-    global_concurrency: '全局并发',
-    max_keys_per_provider: 'Provider 上限',
-  }
-  for (const key of Object.keys(labels)) {
-    const value = record[key]
-    if (value !== undefined && value !== null) {
-      parts.push(`${labels[key]}：${formatRefreshLogPayloadValue(key, value)}`)
-    }
-  }
-  if (typeof record.error === 'string' && record.error.trim()) {
-    parts.push(record.error.trim())
-  }
-  return parts.join(' · ')
-}
-
-function formatRefreshLogPayloadValue(key: string, value: unknown): string {
-  if (typeof value === 'boolean') return value ? '是' : '否'
-  if (typeof value === 'number' && key.endsWith('_seconds')) return `${value} 秒`
-  return String(value)
-}
-
-async function loadRefreshWorkerLogs() {
-  refreshWorkerLogsLoading.value = true
-  try {
-    const eventGroups = await Promise.all(REFRESH_TASK_KEYS.map(async (taskKey) => {
-      const runs = await asyncTasksApi.list({ task_key: taskKey, page_size: REFRESH_LOG_RUNS_PER_TASK })
-      const eventsByRun = await Promise.all(runs.items.map(async (run) => {
-        const events = await asyncTasksApi.getEvents(run.id, {
-          page_size: REFRESH_LOG_EVENTS_PER_RUN,
-          order: 'desc',
-        })
-        return events.items.map((event: AsyncTaskEvent) => buildRefreshLogItem(taskKey, event))
-      }))
-      return eventsByRun.flat()
-    }))
-    refreshWorkerLogs.value = eventGroups
-      .flat()
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-      .slice(0, REFRESH_LOG_MAX_ITEMS)
-  } catch (err) {
-    showError(parseApiError(err, '加载刷新日志失败'))
-  } finally {
-    refreshWorkerLogsLoading.value = false
-  }
-}
-
-async function openRefreshWorkerDialog() {
-  showRefreshWorkerDialog.value = true
-  if (!refreshWorkerProviderId.value) {
-    refreshWorkerProviderId.value = selectedProviderId.value || poolProviders.value[0]?.provider_id || ''
-  }
-  await Promise.allSettled([
-    loadRefreshWorkerSettings(),
-    refreshWorkerProviderId.value ? loadRefreshWorkerProviderSettings(refreshWorkerProviderId.value) : Promise.resolve(),
-    loadRefreshWorkerLogs(),
-  ])
 }
 
 const showDemandMetricsDialog = ref(false)
@@ -2906,15 +1868,7 @@ const selectedProviderOverview = computed<PoolOverviewItem | null>(() => {
 
 const showAdaptiveHotPoolMetricsButton = computed(() => {
   if (!selectedProviderId.value) return false
-  const overview = selectedProviderOverview.value
-  const config = selectedProviderConfig.value
-  if (config?.probing_enabled === true) return true
-  if (!overview || overview.pool_enabled === false) return false
-  return normalizeDemandMetricNumber(overview.provider_hot_count) > 0
-    || normalizeDemandMetricNumber(overview.provider_desired_hot) > 0
-    || normalizeDemandMetricNumber(overview.provider_in_flight) > 0
-    || normalizeDemandMetricNumber(overview.provider_ema_in_flight) > 0
-    || overview.provider_burst_pending === true
+  return selectedProviderConfig.value?.probing_enabled === true
 })
 
 function normalizeDemandMetricNumber(value: unknown): number {
@@ -3072,20 +2026,27 @@ const selectedProviderStatusText = computed(() => {
   return ''
 })
 
+function formatDemandEma(value: number | undefined): string {
+  const normalized = Number(value ?? 0)
+  if (!Number.isFinite(normalized) || normalized <= 0) return '0.0'
+  return normalized.toFixed(1)
+}
+
 const selectedProviderDemandMetaText = computed(() => {
   const overview = selectedProviderOverview.value
   if (!overview) return ''
   const segments: string[] = []
-  const hotCount = Math.floor(normalizeDemandMetricNumber(overview.provider_hot_count))
-  const desiredHot = Math.floor(normalizeDemandMetricNumber(overview.provider_desired_hot))
-  if (hotCount > 0 || desiredHot > 0) {
-    segments.push(`热池 ${hotCount}/${desiredHot}`)
-  }
+  const desiredHot = Number(overview.provider_desired_hot ?? 0)
+  const hotCount = Number(overview.provider_hot_count ?? 0)
   const inFlight = Number(overview.provider_in_flight ?? 0)
+  if (Number.isFinite(desiredHot) && desiredHot > 0) {
+    segments.push(`热池 ${hotCount} / ${desiredHot}`)
+    segments.push(`EMA ${formatDemandEma(overview.provider_ema_in_flight)}`)
+  }
   if (Number.isFinite(inFlight) && inFlight > 0) {
     segments.push(`in-flight ${inFlight}`)
   }
-  if (overview.provider_burst_pending === true) {
+  if (overview.provider_burst_pending) {
     segments.push('补热中')
   }
   return segments.join(' | ')
@@ -3114,10 +2075,6 @@ watch(selectedProviderId, () => {
   }
 })
 
-watch(refreshWorkerProviderId, (providerId) => {
-  void loadRefreshWorkerProviderSettings(providerId)
-})
-
 watch(selectedProviderOverview, (overview) => {
   appendDemandMetricSample(overview)
 })
@@ -3132,11 +2089,11 @@ const showAccountQuotaColumn = computed(() => {
   return selectedProviderType.value === 'codex'
     || selectedProviderType.value === 'gemini_cli'
     || selectedProviderType.value === 'kiro'
+    || selectedProviderType.value === 'windsurf'
     || selectedProviderType.value === 'antigravity'
     || selectedProviderType.value === 'grok'
     || selectedProviderType.value === 'chatgpt_web'
 })
-
 
 const desktopColumnWidths = computed(() => {
   if (showAccountQuotaColumn.value) {
@@ -3198,8 +2155,6 @@ async function selectProvider(
   if (!options.preserveStatus) {
     statusFilter.value = 'all'
   }
-  selectedQuotaFilter.value = null
-  selectedPlanFilter.value = null
   suppressFiltersWatch = false
   if (keysSearchDebounceTimer !== null) {
     clearTimeout(keysSearchDebounceTimer)
@@ -3236,33 +2191,6 @@ function createEmptyKeyPage(page = 1, pageSizeValue = 50): PoolKeysPageResponse 
 }
 
 const keyPage = ref<PoolKeysPageResponse>(createEmptyKeyPage())
-const poolQuotaSummary = computed(() => keyPage.value.quota_summary ?? null)
-const PLAN_SUMMARY_ORDER = ['plus', 'team', 'pro', 'free', 'enterprise', 'business', 'paid', 'unknown']
-const POOL_KEY_FREE_PLAN_DISPLAY_RANK = 8
-const POOL_KEY_UNKNOWN_PLAN_DISPLAY_RANK = 9
-type PoolQuotaFilter = 'quota_available' | 'quota_exhausted'
-
-const poolQuotaPlanSummaryItems = computed(() => {
-  const plans = poolQuotaSummary.value?.plans ?? []
-  return [...plans]
-    .filter(item => item.total > 0)
-    .sort((a, b) => {
-      const ai = PLAN_SUMMARY_ORDER.indexOf(a.plan_type.toLowerCase())
-      const bi = PLAN_SUMMARY_ORDER.indexOf(b.plan_type.toLowerCase())
-      const ar = ai === -1 ? 999 : ai
-      const br = bi === -1 ? 999 : bi
-      return ar - br || a.plan_type.localeCompare(b.plan_type)
-    })
-    .map(item => ({
-      planType: item.plan_type,
-      selector: getPoolPlanQuickSelector(item.plan_type),
-      planLabel: formatPoolQuotaPlanLabel(item.plan_type),
-      planClass: getOAuthPlanTypeClass(item.plan_type),
-      withQuota: item.with_quota,
-      withoutQuota: item.without_quota,
-      total: item.total,
-    }))
-})
 const keysLoading = ref(false)
 const keysLoadedOnce = ref(false)
 const refreshingCurrentPageQuota = ref(false)
@@ -3287,8 +2215,6 @@ const togglingKeyId = ref<string | null>(null)
 const editingPriorityKeyId = ref<string | null>(null)
 const editingPriorityValue = ref<number>(0)
 const prioritySavingKeyId = ref<string | null>(null)
-const selectedQuotaFilter = ref<PoolQuotaFilter | null>(null)
-const selectedPlanFilter = ref<string | null>(null)
 
 const keyPermissionsDialogOpen = ref(false)
 const keyFormDialogOpen = ref(false)
@@ -3410,6 +2336,16 @@ watch(
   },
   { immediate: true },
 )
+interface QuotaProgressItem {
+  label: string
+  remainingPercent: number
+  detail?: string
+  resetAtSeconds?: number | null
+  resetSeconds?: number | null
+  updatedAtSeconds?: number | null
+  allowDynamicReset?: boolean
+}
+
 interface PoolCodexCycleStatsRow {
   key: PoolStatsMetric['key']
   label: string
@@ -3437,6 +2373,7 @@ type PoolKeyUiState = {
   canRefreshToken: boolean
   planLabel: string
   planClass: string
+  accountQuotaText: string | null
   quotaFallbackText: string | null
   quotaTextClass: string
   importedAtRelative: string
@@ -3460,6 +2397,7 @@ const keyUiStateMap = computed<Record<string, PoolKeyUiState>>(() => {
   for (const key of keyPage.value.keys) {
     const visibleOAuthState = getVisibleOAuthState(key)
     const oauthOrgBadge = getOAuthOrgBadge(key)
+    const accountQuotaText = getAccountQuotaText(key)
     const quotaFallbackText = getQuotaFallbackText(key)
     const planType = resolvePoolKeyPlanType(key)
     const canRefreshToken = canRefreshOAuthCredential(key)
@@ -3478,8 +2416,11 @@ const keyUiStateMap = computed<Record<string, PoolKeyUiState>>(() => {
       canRefreshToken,
       planLabel: planType ? formatOAuthPlanType(planType) : '',
       planClass: planType ? getOAuthPlanTypeClass(planType) : '',
+      accountQuotaText,
       quotaFallbackText,
-      quotaTextClass: quotaFallbackText ? getQuotaTextClass(quotaFallbackText) : '',
+      quotaTextClass: accountQuotaText || quotaFallbackText
+        ? getQuotaTextClass(accountQuotaText || quotaFallbackText || '')
+        : '',
       importedAtRelative: formatPoolKeyImportedAt(key),
       lastUsedRelative: key.last_used_at ? formatRelativeTime(key.last_used_at) : '-',
       statsDisplay: buildPoolStatsDisplay(key, selectedProviderType.value, poolStatsMode.value),
@@ -3496,14 +2437,6 @@ const keyUiStateMap = computed<Record<string, PoolKeyUiState>>(() => {
 
   return map
 })
-
-function getQuotaProgressItems(keyId: string): QuotaProgressItem[] {
-  return quotaProgressMap.value[keyId] ?? []
-}
-
-function getKeyUiState(keyId: string): PoolKeyUiState | null {
-  return keyUiStateMap.value[keyId] ?? null
-}
 
 function getPoolKeyStatsDisplay(key: PoolKeyDetail): PoolStatsDisplay {
   return keyUiStateMap.value[key.key_id]?.statsDisplay
@@ -3562,6 +2495,8 @@ function getPoolKeyAccountStatsMetrics(key: PoolKeyDetail): PoolStatsMetric[] {
 const quotaRefreshSupported = computed(() => {
   return selectedProviderType.value === 'codex'
     || selectedProviderType.value === 'kiro'
+    || selectedProviderType.value === 'gemini_cli'
+    || selectedProviderType.value === 'windsurf'
     || selectedProviderType.value === 'antigravity'
     || selectedProviderType.value === 'grok'
     || selectedProviderType.value === 'chatgpt_web'
@@ -3724,66 +2659,6 @@ async function refreshCurrentPage() {
     await refresh()
   }
 }
-const activePoolQuickSelectors = computed(() => {
-  const selectors: string[] = []
-  if (selectedQuotaFilter.value) {
-    selectors.push(selectedQuotaFilter.value)
-  }
-  if (selectedPlanFilter.value) {
-    selectors.push(selectedPlanFilter.value)
-  }
-  return selectors
-})
-
-function getPoolPlanQuickSelector(planType: string | null | undefined): string {
-  const normalized = (planType || '').trim().toLowerCase()
-  if (normalized.includes('plus')) return 'plan_plus'
-  if (normalized.includes('team')) return 'plan_team'
-  if (normalized.includes('pro')) return 'plan_pro'
-  if (normalized.includes('paid')) return 'plan_paid'
-  if (normalized.includes('enterprise')) return 'plan_enterprise'
-  if (normalized.includes('business')) return 'plan_business'
-  if (normalized.includes('ultra')) return 'plan_ultra'
-  if (normalized.includes('power')) return 'plan_power'
-  if (normalized.includes('free')) return 'plan_free'
-  return 'plan_unknown'
-}
-
-function reloadKeysForSummaryFilterChange(): void {
-  if (suppressFiltersWatch || !selectedProviderId.value) return
-  if (currentPage.value !== 1) {
-    currentPage.value = 1
-    return
-  }
-  void loadKeys()
-}
-
-function toggleQuotaFilter(filter: PoolQuotaFilter): void {
-  selectedQuotaFilter.value = selectedQuotaFilter.value === filter ? null : filter
-}
-
-function togglePlanFilter(selector: string): void {
-  selectedPlanFilter.value = selectedPlanFilter.value === selector ? null : selector
-}
-
-function getQuotaFilterChipClass(filter: PoolQuotaFilter): string {
-  if (selectedQuotaFilter.value === filter) {
-    return filter === 'quota_available'
-      ? 'border-emerald-600 bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 dark:border-emerald-500 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400'
-      : 'border-destructive bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90'
-  }
-  return 'border-border/60 bg-background/70 text-muted-foreground hover:bg-muted/40 hover:text-foreground'
-}
-
-function getPlanFilterChipClass(selector: string): string {
-  if (selectedPlanFilter.value === selector) {
-    return 'border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/90'
-  }
-  return 'border-border/60 bg-background/70 text-muted-foreground hover:bg-muted/40 hover:text-foreground'
-}
-
-watch([selectedQuotaFilter, selectedPlanFilter], reloadKeysForSummaryFilterChange, { flush: 'sync' })
-
 
 async function loadKeys(options: { cacheTtlMs?: number } = {}) {
   if (!selectedProviderId.value) return
@@ -3793,7 +2668,6 @@ async function loadKeys(options: { cacheTtlMs?: number } = {}) {
   const pageSizeValue = pageSize.value
   const search = searchQuery.value || undefined
   const status = statusFilter.value as 'all' | 'active' | 'cooldown' | 'inactive'
-  const quickSelectors = activePoolQuickSelectors.value
   const sortByValue = sortBy.value || undefined
   keysLoading.value = true
   try {
@@ -3802,7 +2676,6 @@ async function loadKeys(options: { cacheTtlMs?: number } = {}) {
       page_size: pageSizeValue,
       search,
       status,
-      quick_selectors: quickSelectors,
       sort_by: sortByValue || undefined,
       sort_order: sortByValue ? sortOrder.value : undefined,
     }, {
@@ -3818,12 +2691,7 @@ async function loadKeys(options: { cacheTtlMs?: number } = {}) {
       currentPage.value = resolvedPage
       return
     }
-    keyPage.value = sortByValue
-      ? nextPage
-      : {
-          ...nextPage,
-          keys: sortPoolKeysByDisplayOrder(nextPage.keys),
-        }
+    keyPage.value = nextPage
     keysLoadedOnce.value = true
   } catch (err) {
     if (requestId !== keysRequestId || selectedProviderId.value !== providerId) return
@@ -3934,44 +2802,13 @@ const editingKey = computed<EndpointAPIKey | null>(() => {
   return toEndpointApiKey(editingKeyDetail.value)
 })
 
-function getPoolKeyPlanDisplayRank(planType: string | null | undefined): number {
-  const normalized = (planType || '').trim().toLowerCase()
-  if (normalized.includes('plus')) return 0
-  if (normalized.includes('team')) return 1
-  if (normalized.includes('pro')) return 2
-  if (normalized.includes('paid')) return 3
-  if (normalized.includes('enterprise')) return 4
-  if (normalized.includes('business')) return 5
-  if (normalized.includes('ultra')) return 6
-  if (normalized.includes('power')) return 7
-  if (normalized.includes('free')) return POOL_KEY_FREE_PLAN_DISPLAY_RANK
-  return POOL_KEY_UNKNOWN_PLAN_DISPLAY_RANK
-}
-
-function comparePoolKeysByDisplayOrder(a: PoolKeyDetail, b: PoolKeyDetail): number {
-  const planRankA = getPoolKeyPlanDisplayRank(a.oauth_plan_type)
-  const planRankB = getPoolKeyPlanDisplayRank(b.oauth_plan_type)
-  if (planRankA !== planRankB) return planRankA - planRankB
-
-  const createdOrder = (a.created_at || '').localeCompare(b.created_at || '')
-  if (createdOrder !== 0) return createdOrder
-
-  const priorityA = Number(a.internal_priority ?? 50)
-  const priorityB = Number(b.internal_priority ?? 50)
-  if (priorityA !== priorityB) return priorityA - priorityB
-
-  const nameOrder = (a.key_name || '').localeCompare(b.key_name || '')
-  if (nameOrder !== 0) return nameOrder
-
-  return a.key_id.localeCompare(b.key_id)
-}
-
-function sortPoolKeysByDisplayOrder(keys: PoolKeyDetail[]): PoolKeyDetail[] {
-  return [...keys].sort(comparePoolKeysByDisplayOrder)
-}
-
-function sortCurrentPageKeysByDisplayOrder() {
-  keyPage.value.keys = sortPoolKeysByDisplayOrder(keyPage.value.keys)
+function sortCurrentPageKeysByPriority() {
+  keyPage.value.keys = [...keyPage.value.keys].sort((a, b) => {
+    const pa = Number(a.internal_priority ?? 50)
+    const pb = Number(b.internal_priority ?? 50)
+    if (pa !== pb) return pa - pb
+    return (a.created_at || '').localeCompare(b.created_at || '')
+  })
 }
 
 function handleTableSort(payload: { key: string, direction: PoolManagementSortOrder }) {
@@ -3998,7 +2835,7 @@ async function applyInternalPriority(key: PoolKeyDetail, nextPriority: number) {
   try {
     await updateProviderKey(key.key_id, { internal_priority: normalized })
     key.internal_priority = normalized
-    sortCurrentPageKeysByDisplayOrder()
+    sortCurrentPageKeysByPriority()
     success('账号优先级已更新')
   } catch (err) {
     showError(parseApiError(err, '更新优先级失败'))
@@ -4316,7 +3153,6 @@ async function toggleKeyActive(key: PoolKeyDetail) {
   }
 }
 
-// --- Dialogs ---
 // --- Dialogs ---
 const showImportDialog = ref(false)
 const showSchedulingDialog = ref(false)
@@ -4753,13 +3589,6 @@ function getMobileTagClass(item: PoolMobileTagItem): string {
   return 'border-border/60 bg-background/80 text-foreground/80'
 }
 
-function formatPoolQuotaPlanLabel(planType: string): string {
-  const normalized = planType.trim().toLowerCase()
-  if (!normalized || normalized === 'unknown') return '未知订阅'
-  if (normalized === 'business') return 'Business'
-  return formatOAuthPlanType(normalized)
-}
-
 function formatOAuthPlanType(planType: string): string {
   const labelMap: Record<string, string> = {
     plus: 'Plus',
@@ -4815,11 +3644,15 @@ function getQuotaAlertSnapshotState(key: PoolKeyDetail): { label: string, title:
   if (!quota) return null
 
   const code = String(quota.code || '').trim().toLowerCase()
-  if (code !== 'banned' && code !== 'forbidden') return null
+  if (!['banned', 'forbidden', 'quarantined', 'rate_limited', 'exhausted'].includes(code)) return null
 
   let label = String(quota.label || '').trim()
   if (!label) {
-    label = code === 'banned' ? '账号封禁' : '访问受限'
+    if (code === 'banned') label = '账号封禁'
+    else if (code === 'forbidden') label = '访问受限'
+    else if (code === 'quarantined') label = '账号隔离'
+    else if (code === 'rate_limited') label = '速率受限'
+    else label = '额度耗尽'
   } else if (label === '账号已封禁' || label === '封禁') {
     label = '账号封禁'
   }
@@ -4863,7 +3696,20 @@ function getAccountAlertTitle(key: PoolKeyDetail): string {
   return label
 }
 
+function normalizeQuotaLabel(label: string): string {
+  const normalized = label.trim()
+  if (!normalized) return '额度'
+  if (/spark\s*5h/i.test(normalized) || normalized.includes('Spark5H')) return 'Spark5H'
+  if (/spark/i.test(normalized) && normalized.includes('周')) return 'Spark周'
+  if (normalized.includes('5H')) return '5H'
+  if (normalized.includes('周')) return '周'
+  if (normalized.includes('最低剩余')) return '最低'
+  if (normalized === '剩余' || normalized.includes('剩余')) return '剩余'
+  return normalized
+}
+
 function getQuotaProgressLabel(label: string): string {
+  if (label === '日') return '日'
   if (label === '5H') return '5H'
   if (label === '周') return '周'
   if (label === 'Spark5H') return 'Spark5H'
@@ -4873,11 +3719,42 @@ function getQuotaProgressLabel(label: string): string {
   return label
 }
 
+function getQuotaProgressCountdown(item: QuotaProgressItem) {
+  const staticResetLabels = ['日', '5H', '周', 'Spark5H', 'Spark周', 'Auto', 'Fast', 'Expert', 'Heavy', 'Grok 4.3', '生图']
+  if (!item.allowDynamicReset && !staticResetLabels.includes(item.label)) return null
+  if (item.resetAtSeconds == null && item.resetSeconds == null) return null
+  return getCodexResetCountdown(
+    item.resetAtSeconds,
+    item.resetSeconds,
+    item.updatedAtSeconds,
+    countdownTick.value,
+    item.remainingPercent
+  )
+}
+
+function getQuotaProgressCountdownText(item: QuotaProgressItem): string {
+  const status = getQuotaProgressCountdown(item)
+  if (!status) return ''
+  return status.isExpired ? '' : `${status.text} 后重置`
+}
+
+function formatCompactQuotaCountdownText(text: string): string {
+  const normalized = text.trim()
+  const dayMatch = normalized.match(/^(\d+)天\s+(.+?)(?:\s+后重置)?$/)
+  if (dayMatch) {
+    return `${dayMatch[1]}天 ${dayMatch[2]}`
+  }
+  return normalized.replace(/\s+后重置$/, '')
+}
+
+function shouldHideQuotaProgressDetailText(text: string | null | undefined): boolean {
+  return (text ?? '').trim().includes('已重置')
+}
+
 function getQuotaProgressResetDisplayText(item: QuotaProgressItem): string {
-  const status = getQuotaCountdownStatus(item, countdownTick.value)
-  return status && !status.isExpired
-    ? formatCompactQuotaCountdownText(`${status.text} 后重置`)
-    : ''
+  const countdownText = getQuotaProgressCountdownText(item)
+  if (countdownText) return formatCompactQuotaCountdownText(countdownText)
+  return ''
 }
 
 function getQuotaProgressMeterDisplayText(item: QuotaProgressItem): string {
@@ -4890,6 +3767,154 @@ function getQuotaFallbackText(key: PoolKeyDetail): string | null {
   return getQuotaDisplayText(key, selectedProviderType.value)
 }
 
+function getAccountQuotaText(key: PoolKeyDetail): string | null {
+  return getGeminiCliAccountCreditsText(key, selectedProviderType.value)
+}
+
+
+
+function getQuotaLabelOrder(label: string): number {
+  if (label === 'Auto') return 0
+  if (label === 'Fast') return 1
+  if (label === 'Expert') return 2
+  if (label === 'Heavy') return 3
+  if (label === 'Grok 4.3') return 4
+  if (label === '日') return 5
+  if (label === '5H') return 6
+  if (label === '周') return 7
+  if (label === 'Spark5H') return 8
+  if (label === 'Spark周') return 9
+  if (label === 'Prompt') return 10
+  if (label === 'Flex') return 11
+  if (label === '剩余') return 12
+  if (label === '最低') return 13
+  if (label === '生图') return 14
+  if (label === '速率') return 15
+  if (label === '模型') return 16
+  return 20
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0
+  if (value < 0) return 0
+  if (value > 100) return 100
+  return value
+}
+
+function normalizeUnixSeconds(raw: number | null | undefined): number | null {
+  const value = Number(raw ?? 0)
+  if (!Number.isFinite(value) || value <= 0) return null
+  if (value > 1_000_000_000_000) return Math.floor(value / 1000)
+  return Math.floor(value)
+}
+
+function normalizeRemainingSeconds(raw: number | null | undefined): number | null {
+  const value = Number(raw ?? NaN)
+  if (!Number.isFinite(value) || value < 0) return null
+  return Math.floor(value)
+}
+
+function getQuotaSnapshot(key: PoolKeyDetail): QuotaStatusSnapshot | null {
+  const quota = key.status_snapshot?.quota
+  if (!quota) return null
+  return quota
+}
+
+function getQuotaSnapshotProviderType(key: PoolKeyDetail): string {
+  const snapshotProviderType = String(getQuotaSnapshot(key)?.provider_type || '').trim().toLowerCase()
+  if (snapshotProviderType) return snapshotProviderType
+  return selectedProviderType.value
+}
+
+function getCodexQuotaSnapshot(key: PoolKeyDetail): QuotaStatusSnapshot | null {
+  const quota = getQuotaSnapshot(key)
+  if (!quota) return null
+  return getQuotaSnapshotProviderType(key) === 'codex' ? quota : null
+}
+
+function getQuotaSnapshotUpdatedAtSeconds(quota: QuotaStatusSnapshot | null | undefined): number | null {
+  return normalizeUnixSeconds(quota?.updated_at ?? quota?.observed_at ?? null)
+}
+
+function getQuotaSnapshotResetAtSeconds(quota: QuotaStatusSnapshot | null | undefined): number | null {
+  return normalizeUnixSeconds(quota?.reset_at ?? null)
+}
+
+function getQuotaSnapshotResetSeconds(quota: QuotaStatusSnapshot | null | undefined): number | null {
+  return normalizeRemainingSeconds(quota?.reset_seconds ?? null)
+}
+
+function getQuotaSnapshotWindow(
+  quota: QuotaStatusSnapshot | null | undefined,
+  code: string,
+): QuotaWindowSnapshot | null {
+  const windows = quota?.windows
+  if (!Array.isArray(windows)) return null
+
+  const normalizedCode = code.trim().toLowerCase()
+  return windows.find(window => String(window?.code || '').trim().toLowerCase() === normalizedCode) ?? null
+}
+
+function getQuotaSnapshotWindowsByScope(
+  quota: QuotaStatusSnapshot | null | undefined,
+  scope: string,
+): QuotaWindowSnapshot[] {
+  const windows = quota?.windows
+  if (!Array.isArray(windows)) return []
+
+  const normalizedScope = scope.trim().toLowerCase()
+  return windows.filter(window => String(window?.scope || '').trim().toLowerCase() === normalizedScope)
+}
+
+function getQuotaWindowUsedPercent(window: QuotaWindowSnapshot | null | undefined): number | null {
+  if (!window) return null
+  if (typeof window.used_ratio === 'number') {
+    return clampPercent(window.used_ratio * 100)
+  }
+  if (typeof window.remaining_ratio === 'number') {
+    return clampPercent((1 - window.remaining_ratio) * 100)
+  }
+  if (typeof window.limit_value === 'number' && window.limit_value > 0) {
+    if (typeof window.remaining_value === 'number') {
+      return clampPercent((1 - (window.remaining_value / window.limit_value)) * 100)
+    }
+    if (typeof window.used_value === 'number') {
+      return clampPercent((window.used_value / window.limit_value) * 100)
+    }
+  }
+  return null
+}
+
+function getQuotaWindowRemainingPercent(window: QuotaWindowSnapshot | null | undefined): number | null {
+  if (!window) return null
+  if (typeof window.remaining_ratio === 'number') {
+    return clampPercent(window.remaining_ratio * 100)
+  }
+  const usedPercent = getQuotaWindowUsedPercent(window)
+  return usedPercent == null ? null : clampPercent(100 - usedPercent)
+}
+
+function formatQuotaValue(value: number | null | undefined): string {
+  const normalized = Number(value)
+  if (!Number.isFinite(normalized)) return '0'
+  const rounded = Math.round(normalized)
+  if (Math.abs(normalized - rounded) < 1e-6) {
+    return String(rounded)
+  }
+  return normalized.toFixed(1)
+}
+
+function getQuotaWindowValueText(window: QuotaWindowSnapshot | null | undefined): string | undefined {
+  if (!window || typeof window.limit_value !== 'number' || window.limit_value <= 0) return undefined
+  if (typeof window.remaining_value === 'number') {
+    return `${formatQuotaValue(window.remaining_value)}/${formatQuotaValue(window.limit_value)}`
+  }
+  if (typeof window.used_value === 'number') {
+    return `${formatQuotaValue(Math.max(window.limit_value - window.used_value, 0))}/${formatQuotaValue(window.limit_value)}`
+  }
+  return undefined
+}
+
 function resolvePoolKeyPlanType(key: PoolKeyDetail): string | null {
   const direct = key.oauth_plan_type?.trim()
   if (direct) return direct
@@ -4900,8 +3925,353 @@ function resolvePoolKeyPlanType(key: PoolKeyDetail): string | null {
   return quotaPoolTier || null
 }
 
+const GROK_QUOTA_MODE_LABELS: Record<string, string> = {
+  quota_auto: 'Auto',
+  auto: 'Auto',
+  quota_fast: 'Fast',
+  fast: 'Fast',
+  quota_expert: 'Expert',
+  expert: 'Expert',
+  quota_heavy: 'Heavy',
+  heavy: 'Heavy',
+  quota_grok_4_3: 'Grok 4.3',
+  'grok-420-computer-use-sa': 'Grok 4.3',
+}
+
+function getGrokQuotaWindowLabel(window: QuotaWindowSnapshot): string {
+  const code = String(window.code || '').trim().replace(/^model:/i, '')
+  const label = String(window.label || window.model || code).trim()
+  const normalized = (label || code).toLowerCase()
+  return GROK_QUOTA_MODE_LABELS[normalized] || GROK_QUOTA_MODE_LABELS[code.toLowerCase()] || label || code || '模式'
+}
+
+function getGeminiCliQuotaWindowLabel(window: QuotaWindowSnapshot): string {
+  const code = String(window.code || '').trim().replace(/^model:/i, '')
+  const label = String(window.label || window.model || code).trim()
+  return label || code || '模型'
+}
+
+function buildQuotaProgressItemsFromSnapshot(key: PoolKeyDetail): QuotaProgressItem[] {
+  const quota = getQuotaSnapshot(key)
+  if (!quota) return []
+
+  const providerType = getQuotaSnapshotProviderType(key)
+
+  if (providerType === 'codex') {
+    const items: QuotaProgressItem[] = []
+    const quotaResetAtSeconds = getQuotaSnapshotResetAtSeconds(quota)
+    const quotaResetSeconds = getQuotaSnapshotResetSeconds(quota)
+    for (const [label, code] of [
+      ['5H', '5h'],
+      ['周', 'weekly'],
+      ['Spark5H', 'spark_5h'],
+      ['Spark周', 'spark_weekly'],
+    ] as const) {
+      const window = getQuotaSnapshotWindow(quota, code)
+      const remainingPercent = getQuotaWindowRemainingPercent(window)
+      if (remainingPercent == null) continue
+      items.push({
+        label,
+        remainingPercent,
+        resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? quotaResetAtSeconds ?? null),
+        resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? quotaResetSeconds ?? null),
+        updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+      })
+    }
+    return items
+  }
+
+  if (providerType === 'kiro') {
+    const quotaResetAtSeconds = getQuotaSnapshotResetAtSeconds(quota)
+    const quotaResetSeconds = getQuotaSnapshotResetSeconds(quota)
+    const window = getQuotaSnapshotWindow(quota, 'usage')
+      ?? getQuotaSnapshotWindowsByScope(quota, 'account')[0]
+      ?? null
+    const remainingPercent = getQuotaWindowRemainingPercent(window)
+    if (remainingPercent == null) return []
+
+    const detail = typeof window?.used_value === 'number' && typeof window?.limit_value === 'number'
+      ? `${formatQuotaValue(window.used_value)}/${formatQuotaValue(window.limit_value)}`
+      : undefined
+
+    return [{
+      label: '剩余',
+      remainingPercent,
+      detail,
+      resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? quotaResetAtSeconds ?? null),
+      resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? quotaResetSeconds ?? null),
+      updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+    }]
+  }
+
+  if (providerType === 'grok') {
+    const quotaResetAtSeconds = getQuotaSnapshotResetAtSeconds(quota)
+    const quotaResetSeconds = getQuotaSnapshotResetSeconds(quota)
+    const modelWindows = getQuotaSnapshotWindowsByScope(quota, 'model')
+    if (modelWindows.length > 0) {
+      return modelWindows
+        .map((window): QuotaProgressItem | null => {
+          const remainingPercent = getQuotaWindowRemainingPercent(window)
+          if (remainingPercent == null) return null
+          return {
+            label: getGrokQuotaWindowLabel(window),
+            remainingPercent,
+            detail: getQuotaWindowValueText(window),
+            resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? quotaResetAtSeconds ?? null),
+            resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? quotaResetSeconds ?? null),
+            updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+          }
+        })
+        .filter((item): item is QuotaProgressItem => item != null)
+    }
+
+    const window = getQuotaSnapshotWindow(quota, 'usage')
+      ?? getQuotaSnapshotWindowsByScope(quota, 'account')[0]
+      ?? null
+    const remainingPercent = getQuotaWindowRemainingPercent(window)
+    if (remainingPercent == null) return []
+
+    return [{
+      label: '剩余',
+      remainingPercent,
+      detail: getQuotaWindowValueText(window),
+      resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? quotaResetAtSeconds ?? null),
+      resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? quotaResetSeconds ?? null),
+      updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+    }]
+  }
+
+  if (providerType === 'windsurf') {
+    const items: QuotaProgressItem[] = []
+    for (const [label, code] of [
+      ['日', 'daily'],
+      ['周', 'weekly'],
+      ['Prompt', 'prompt'],
+      ['Flex', 'flex'],
+    ] as const) {
+      const window = getQuotaSnapshotWindow(quota, code)
+      const remainingPercent = getQuotaWindowRemainingPercent(window)
+      if (remainingPercent == null) continue
+      const detail = typeof window?.used_value === 'number' && typeof window?.limit_value === 'number'
+        ? `${formatQuotaValue(window.used_value)}/${formatQuotaValue(window.limit_value)}`
+        : typeof window?.remaining_value === 'number' && typeof window?.limit_value === 'number'
+          ? `剩余 ${formatQuotaValue(window.remaining_value)}/${formatQuotaValue(window.limit_value)}`
+          : undefined
+      items.push({
+        label,
+        remainingPercent,
+        detail,
+        resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? null),
+        resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? null),
+        updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+      })
+    }
+
+    const rateLimitWindow = getQuotaSnapshotWindow(quota, 'rate_limit')
+    if (rateLimitWindow) {
+      items.push({
+        label: '速率',
+        remainingPercent: rateLimitWindow.is_exhausted ? 0 : 100,
+        resetAtSeconds: normalizeUnixSeconds(rateLimitWindow.reset_at ?? null),
+        resetSeconds: normalizeRemainingSeconds(rateLimitWindow.reset_seconds ?? null),
+        updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+      })
+    }
+
+    if (typeof quota.allowed_models_count === 'number' && Number.isFinite(quota.allowed_models_count)) {
+      items.push({
+        label: '模型',
+        remainingPercent: 100,
+        detail: `${quota.allowed_models_count} 个`,
+        resetAtSeconds: null,
+        resetSeconds: null,
+        updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+      })
+    }
+
+    return items
+  }
+
+  if (providerType === 'antigravity') {
+    const windows = getQuotaSnapshotWindowsByScope(quota, 'model')
+    if (windows.length === 0) return []
+
+    const remainingPercents = windows
+      .map(getQuotaWindowRemainingPercent)
+      .filter((value): value is number => value != null)
+    if (remainingPercents.length === 0) return []
+
+    return [{
+      label: '最低',
+      remainingPercent: Math.min(...remainingPercents),
+      detail: `${windows.length} 模型`,
+      resetAtSeconds: null,
+      resetSeconds: null,
+      updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+    }]
+  }
+
+  if (providerType === 'gemini_cli') {
+    const windows = getQuotaSnapshotWindowsByScope(quota, 'model')
+    if (windows.length === 0) return []
+
+    const quotaResetAtSeconds = getQuotaSnapshotResetAtSeconds(quota)
+    const quotaResetSeconds = getQuotaSnapshotResetSeconds(quota)
+    return windows
+      .map((window): QuotaProgressItem | null => {
+        const remainingPercent = getQuotaWindowRemainingPercent(window)
+          ?? (window?.is_exhausted === true ? 0 : null)
+        if (remainingPercent == null) return null
+        return {
+          label: getGeminiCliQuotaWindowLabel(window),
+          remainingPercent,
+          detail: getQuotaWindowValueText(window),
+          resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? quotaResetAtSeconds ?? null),
+          resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? quotaResetSeconds ?? null),
+          updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+          allowDynamicReset: true,
+        }
+      })
+      .filter((item): item is QuotaProgressItem => item != null)
+  }
+
+  if (providerType === 'chatgpt_web') {
+    const window = getQuotaSnapshotWindow(quota, 'image_gen')
+      ?? getQuotaSnapshotWindowsByScope(quota, 'account')[0]
+      ?? null
+    const remainingPercent = getQuotaWindowRemainingPercent(window)
+    if (remainingPercent == null) return []
+
+    const remainingValue = typeof window?.remaining_value === 'number' ? window.remaining_value : null
+    const limitValue = typeof window?.limit_value === 'number' ? window.limit_value : null
+    const usedValue = typeof window?.used_value === 'number' ? window.used_value : null
+    const detail = remainingValue != null && limitValue != null
+      ? `${formatQuotaValue(remainingValue)}/${formatQuotaValue(limitValue)}`
+      : usedValue != null && limitValue != null
+        ? `${formatQuotaValue(Math.max(limitValue - usedValue, 0))}/${formatQuotaValue(limitValue)}`
+        : remainingValue != null
+          ? `剩余 ${formatQuotaValue(remainingValue)}`
+          : undefined
+
+    return [{
+      label: '生图',
+      remainingPercent,
+      detail,
+      resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? null),
+      resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? null),
+      updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+    }]
+  }
+
+  return []
+}
+
+function resolveCodexQuotaCountdown(
+  key: PoolKeyDetail,
+  label: string
+): Pick<QuotaProgressItem, 'resetAtSeconds' | 'resetSeconds' | 'updatedAtSeconds'> | null {
+  const codexWindowCodeByLabel: Record<string, string> = {
+    '5H': '5h',
+    '周': 'weekly',
+    Spark5H: 'spark_5h',
+    Spark周: 'spark_weekly',
+  }
+  const windowCode = codexWindowCodeByLabel[label]
+  if (!windowCode) return null
+
+  const codexSnapshot = getCodexQuotaSnapshot(key)
+  const snapshotWindow = getQuotaSnapshotWindow(codexSnapshot, windowCode)
+  if (!snapshotWindow) return null
+
+  const resetAtSeconds = normalizeUnixSeconds(snapshotWindow.reset_at ?? null)
+  const resetSeconds = normalizeRemainingSeconds(snapshotWindow.reset_seconds ?? null)
+  const updatedAtSeconds = getQuotaSnapshotUpdatedAtSeconds(codexSnapshot)
+
+  if (resetAtSeconds == null && resetSeconds == null) return null
+  return { resetAtSeconds, resetSeconds, updatedAtSeconds }
+}
+
+function parseQuotaResetRemainingSeconds(detail: string | undefined): number | null {
+  if (!detail) return null
+  const text = detail.replace(/\s+/g, '')
+
+  if (text.includes('已重置')) return 0
+  if (text.includes('即将重置')) return 1
+  if (!text.includes('后重置')) return null
+
+  const dayMatch = text.match(/(\d+)天/)
+  const hourMatch = text.match(/(\d+)小时/)
+  const minuteMatch = text.match(/(\d+)分钟/)
+  const secondMatch = text.match(/(\d+)秒/)
+
+  const days = dayMatch ? Number(dayMatch[1]) : 0
+  const hours = hourMatch ? Number(hourMatch[1]) : 0
+  const minutes = minuteMatch ? Number(minuteMatch[1]) : 0
+  const seconds = secondMatch ? Number(secondMatch[1]) : 0
+  const total = days * 86400 + hours * 3600 + minutes * 60 + seconds
+
+  if (total <= 0) return 1
+  return total
+}
+
 function parseQuotaProgressItems(key: PoolKeyDetail): QuotaProgressItem[] {
-  return parsePoolQuotaProgressItems(key, selectedProviderType.value)
+  const snapshotItems = buildQuotaProgressItemsFromSnapshot(key)
+  if (snapshotItems.length > 0) {
+    return snapshotItems.sort((a, b) => {
+      const orderDiff = getQuotaLabelOrder(a.label) - getQuotaLabelOrder(b.label)
+      if (orderDiff !== 0) return orderDiff
+      return a.label.localeCompare(b.label, 'zh-Hans-CN')
+    })
+  }
+
+  if (getQuotaSnapshot(key)) return []
+
+  const quotaText = getLegacyAccountQuotaText(key)
+  if (!quotaText) return []
+
+  const segments = quotaText
+    .split('|')
+    .map(s => s.trim())
+    .filter(Boolean)
+
+  const items: QuotaProgressItem[] = []
+  for (const segment of segments) {
+    const match = segment.match(/^(.*?)(-?\d+(?:\.\d+)?)%\s*(.*)$/)
+    if (!match) continue
+
+    const [, rawLabel, rawPercent, rawTail] = match
+    const remainingPercent = clampPercent(Number(rawPercent))
+    const label = normalizeQuotaLabel(rawLabel)
+    const detail = rawTail.trim().replace(/^[()]+|[()]+$/g, '').trim()
+    const codexCountdown = resolveCodexQuotaCountdown(key, label)
+    let resetAtSeconds = codexCountdown?.resetAtSeconds ?? null
+    let resetSeconds = codexCountdown?.resetSeconds ?? null
+    let updatedAtSeconds = codexCountdown?.updatedAtSeconds ?? null
+
+    if (resetAtSeconds == null && resetSeconds == null) {
+      const resetRemainingSeconds = parseQuotaResetRemainingSeconds(detail || undefined)
+      resetAtSeconds = resetRemainingSeconds == null
+        ? null
+        : Math.floor(Date.now() / 1000) + resetRemainingSeconds
+      resetSeconds = null
+      updatedAtSeconds = null
+    }
+
+    items.push({
+      label,
+      remainingPercent,
+      detail: detail || undefined,
+      resetAtSeconds,
+      resetSeconds,
+      updatedAtSeconds,
+    })
+  }
+
+  return items.sort((a, b) => {
+    const orderDiff = getQuotaLabelOrder(a.label) - getQuotaLabelOrder(b.label)
+    if (orderDiff !== 0) return orderDiff
+    return a.label.localeCompare(b.label, 'zh-Hans-CN')
+  })
 }
 
 function getQuotaRemainingClassByRemaining(remaining: number): string {
@@ -4972,7 +4342,6 @@ function formatPoolKeyImportedAt(key: PoolKeyDetail): string {
 // --- Init ---
 onMounted(() => {
   startCountdownTimer()
-  void proxyNodesStore.ensureLoaded()
   void loadSchedulingPresetMetas({ cacheTtlMs: POOL_SCHEDULING_PRESETS_CACHE_TTL_MS })
   void loadOverview({ cacheTtlMs: POOL_OVERVIEW_CACHE_TTL_MS })
 })

@@ -3,6 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
 };
+use aether_provider_transport::provider_types::is_codex_cli_backend_url;
+use aether_provider_transport::url::{
+    build_bigmodel_coding_models_url, build_openai_compatible_models_url,
+    openai_compatible_base_includes_unversioned_api_root,
+};
 use regex::Regex;
 use serde_json::{json, Value};
 
@@ -69,8 +74,10 @@ pub fn build_models_fetch_url(
     let provider_type = provider_type.trim().to_ascii_lowercase();
     let url = if provider_type == "codex" && api_format.starts_with("openai:") {
         build_codex_models_url(base_url)
-    } else if api_format.starts_with("openai:") || api_format.starts_with("claude:") {
+    } else if api_format.starts_with("openai:") {
         build_v1_models_url(base_url)
+    } else if api_format.starts_with("claude:") {
+        build_claude_models_url(base_url)
     } else if api_format.starts_with("gemini:") {
         build_gemini_models_url(base_url)
     } else {
@@ -600,17 +607,48 @@ pub fn aggregate_models_for_cache(models: &[Value]) -> Vec<Value> {
 }
 
 fn build_v1_models_url(base_url: &str) -> Option<String> {
-    let (trimmed_base_url, query) = split_url_query(base_url);
+    build_openai_compatible_models_url(base_url)
+}
+
+fn build_claude_models_url(base_url: &str) -> Option<String> {
+    if let Some(url) = build_deepseek_anthropic_models_url(base_url) {
+        return Some(url);
+    }
+
+    let (trimmed_base_url, base_query) = split_url_query(base_url);
     let trimmed_base_url = trimmed_base_url.trim_end_matches('/');
     if trimmed_base_url.is_empty() {
         return None;
     }
+
     let mut url = if trimmed_base_url.ends_with("/v1") {
         format!("{trimmed_base_url}/models")
     } else {
         format!("{trimmed_base_url}/v1/models")
     };
-    if let Some(query) = query.filter(|value| !value.trim().is_empty()) {
+    if let Some(query) = base_query.filter(|value| !value.trim().is_empty()) {
+        url.push('?');
+        url.push_str(query);
+    }
+    Some(url)
+}
+
+pub fn deepseek_anthropic_models_fetch_uses_openai_auth(base_url: &str) -> bool {
+    build_deepseek_anthropic_models_url(base_url).is_some()
+}
+
+fn build_deepseek_anthropic_models_url(base_url: &str) -> Option<String> {
+    let (trimmed_base_url, base_query) = split_url_query(base_url);
+    let trimmed_base_url = trimmed_base_url.trim_end_matches('/');
+    let normalized = trimmed_base_url.to_ascii_lowercase();
+    if normalized != "https://api.deepseek.com/anthropic"
+        && normalized != "https://api.deepseek.com/anthropic/v1"
+    {
+        return None;
+    }
+
+    let mut url = "https://api.deepseek.com/models".to_string();
+    if let Some(query) = base_query.filter(|value| !value.trim().is_empty()) {
         url.push('?');
         url.push_str(query);
     }
@@ -618,10 +656,20 @@ fn build_v1_models_url(base_url: &str) -> Option<String> {
 }
 
 fn build_codex_models_url(base_url: &str) -> Option<String> {
+    if let Some(url) = build_bigmodel_coding_models_url(base_url) {
+        return Some(url);
+    }
+
     let (trimmed_base_url, query) = split_url_query(base_url);
     let trimmed_base_url = trimmed_base_url.trim_end_matches('/');
     if trimmed_base_url.is_empty() {
         return None;
+    }
+    let is_codex_backend = is_codex_cli_backend_url(trimmed_base_url)
+        || trimmed_base_url.ends_with("/codex")
+        || trimmed_base_url.ends_with("/models");
+    if !is_codex_backend && openai_compatible_base_includes_unversioned_api_root(base_url) {
+        return build_openai_compatible_models_url(base_url);
     }
     let mut url = if trimmed_base_url.ends_with("/models") {
         trimmed_base_url.to_string()
@@ -961,6 +1009,90 @@ mod tests {
                 "https://chatgpt.com/backend-api/codex/models?client_version=0.128.0-alpha.1"
                     .to_string(),
                 "openai:responses".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn build_models_fetch_url_supports_bigmodel_coding_paas_root() {
+        assert_eq!(
+            build_models_fetch_url(
+                "openai",
+                "openai:chat",
+                "https://open.bigmodel.cn/api/coding/paas/v4"
+            ),
+            Some((
+                "https://open.bigmodel.cn/api/coding/paas/v4/models".to_string(),
+                "openai:chat".to_string()
+            ))
+        );
+        assert_eq!(
+            build_models_fetch_url(
+                "codex",
+                "openai:responses",
+                "https://open.bigmodel.cn/api/coding/paas/v4"
+            ),
+            Some((
+                "https://open.bigmodel.cn/api/coding/paas/v4/models".to_string(),
+                "openai:responses".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn build_models_fetch_url_preserves_unversioned_api_root() {
+        assert_eq!(
+            build_models_fetch_url("openai", "openai:chat", "https://proxy.example.com/api"),
+            Some((
+                "https://proxy.example.com/api/models".to_string(),
+                "openai:chat".to_string()
+            ))
+        );
+        assert_eq!(
+            build_models_fetch_url("openai", "openai:chat", "https://proxy.example.com/openai"),
+            Some((
+                "https://proxy.example.com/openai/models".to_string(),
+                "openai:chat".to_string()
+            ))
+        );
+        assert_eq!(
+            build_models_fetch_url("openai", "openai:chat", "https://proxy.example.com"),
+            Some((
+                "https://proxy.example.com/v1/models".to_string(),
+                "openai:chat".to_string()
+            ))
+        );
+        assert_eq!(
+            build_models_fetch_url("codex", "openai:responses", "https://proxy.example.com/api"),
+            Some((
+                "https://proxy.example.com/api/models".to_string(),
+                "openai:responses".to_string()
+            ))
+        );
+        assert_eq!(
+            build_models_fetch_url(
+                "anthropic",
+                "claude:messages",
+                "https://proxy.example.com/api"
+            ),
+            Some((
+                "https://proxy.example.com/api/v1/models".to_string(),
+                "claude:messages".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn build_models_fetch_url_uses_deepseek_openai_models_for_anthropic_base() {
+        assert_eq!(
+            build_models_fetch_url(
+                "custom",
+                "claude:messages",
+                "https://api.deepseek.com/anthropic"
+            ),
+            Some((
+                "https://api.deepseek.com/models".to_string(),
+                "claude:messages".to_string()
             ))
         );
     }

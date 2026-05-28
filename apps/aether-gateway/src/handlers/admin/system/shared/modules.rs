@@ -1,3 +1,4 @@
+use crate::backup::config::S3BackupConfig;
 use crate::bark_push::bark_push_configured;
 use crate::handlers::admin::request::AdminAppState;
 use crate::handlers::shared::{module_available_from_env, system_config_bool};
@@ -112,7 +113,7 @@ pub(crate) const ADMIN_MODULE_DEFINITIONS: &[AdminModuleDefinition] = &[
     AdminModuleDefinition {
         name: "model_directives",
         display_name: "模型后缀参数",
-        description: "允许通过模型名后缀覆盖推理参数",
+        description: "允许通过模型名后缀覆盖推理参数或服务层级",
         category: "integration",
         env_key: "MODEL_DIRECTIVES_AVAILABLE",
         default_available: true,
@@ -120,6 +121,18 @@ pub(crate) const ADMIN_MODULE_DEFINITIONS: &[AdminModuleDefinition] = &[
         admin_menu_icon: Some("SlidersHorizontal"),
         admin_menu_group: None,
         admin_menu_order: 59,
+    },
+    AdminModuleDefinition {
+        name: "s3_backup",
+        display_name: "S3 备份",
+        description: "将配置、用户或完整数据定期备份到 S3-compatible 对象存储",
+        category: "integration",
+        env_key: "S3_BACKUP_AVAILABLE",
+        default_available: true,
+        admin_route: Some("/admin/modules/s3-backup"),
+        admin_menu_icon: Some("CloudUpload"),
+        admin_menu_group: None,
+        admin_menu_order: 60,
     },
     AdminModuleDefinition {
         name: "gemini_files",
@@ -183,6 +196,7 @@ pub(crate) struct AdminModuleRuntimeState {
     important_notification_configured: bool,
     server_chan_push_configured: bool,
     bark_push_configured: bool,
+    s3_backup_configured: bool,
 }
 
 pub(crate) fn admin_module_by_name(name: &str) -> Option<&'static AdminModuleDefinition> {
@@ -209,6 +223,8 @@ pub(crate) fn admin_module_enabled_config_key(module: &AdminModuleDefinition) ->
         ENABLE_MODEL_DIRECTIVES_CONFIG_KEY.to_string()
     } else if module.name == "important_notification" {
         IMPORTANT_NOTIFICATION_ENABLED_KEY.to_string()
+    } else if module.name == "s3_backup" {
+        crate::backup::S3_BACKUP_ENABLED_KEY.to_string()
     } else {
         format!("module.{}.enabled", module.name)
     }
@@ -272,6 +288,7 @@ pub(crate) async fn build_admin_module_runtime_state(
     let notification_configured = important_notification_configured(state.app()).await?;
     let server_chan_configured = server_chan_push_configured(state.app()).await?;
     let bark_configured = bark_push_configured(state.app()).await?;
+    let backup_configured = s3_backup_configured(state.app()).await;
 
     Ok(AdminModuleRuntimeState {
         oauth_providers,
@@ -280,7 +297,19 @@ pub(crate) async fn build_admin_module_runtime_state(
         important_notification_configured: notification_configured,
         server_chan_push_configured: server_chan_configured,
         bark_push_configured: bark_configured,
+        s3_backup_configured: backup_configured,
     })
+}
+
+async fn s3_backup_configured(app: &crate::AppState) -> bool {
+    let Ok(mut values) = crate::backup::task::load_s3_backup_config_values(app).await else {
+        return false;
+    };
+    values.insert(
+        crate::backup::S3_BACKUP_ENABLED_KEY.to_string(),
+        json!(true),
+    );
+    S3BackupConfig::from_json_map(&values).is_ok()
 }
 
 pub(crate) fn build_admin_module_validation_result(
@@ -288,13 +317,16 @@ pub(crate) fn build_admin_module_validation_result(
     runtime: &AdminModuleRuntimeState,
 ) -> (bool, Option<String>) {
     admin_system_kernel::build_admin_module_validation_result(
-        module.name,
-        &runtime.oauth_providers,
-        runtime.ldap_config.as_ref(),
-        runtime.gemini_files_has_capable_key,
-        runtime.important_notification_configured,
-        runtime.server_chan_push_configured,
-        runtime.bark_push_configured,
+        admin_system_kernel::AdminModuleValidationInput {
+            module_name: module.name,
+            oauth_providers: &runtime.oauth_providers,
+            ldap_config: runtime.ldap_config.as_ref(),
+            gemini_files_has_capable_key: runtime.gemini_files_has_capable_key,
+            important_notification_configured: runtime.important_notification_configured,
+            server_chan_push_configured: runtime.server_chan_push_configured,
+            bark_push_configured: runtime.bark_push_configured,
+            s3_backup_configured: runtime.s3_backup_configured,
+        },
     )
 }
 

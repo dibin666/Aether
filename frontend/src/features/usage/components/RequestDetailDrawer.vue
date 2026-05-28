@@ -18,13 +18,13 @@
           <!-- 固定头部 - 整合基本信息 -->
           <div class="sticky top-0 z-10 bg-background border-b px-3 sm:px-6 py-3 sm:py-4 flex-shrink-0">
             <!-- 第一行：标题、模型、状态、操作按钮 -->
-            <div class="flex items-center justify-between gap-4 mb-3">
-              <div class="flex items-center gap-3 flex-wrap">
+            <div class="flex items-center justify-between gap-2 sm:gap-4 mb-3">
+              <div class="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 flex-wrap">
                 <h3 class="text-lg font-semibold">
                   请求详情
                 </h3>
-                <div class="flex items-center gap-1 text-sm font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                  <span>{{ detail?.model || '-' }}</span>
+                <div class="flex min-w-0 max-w-[10rem] items-center gap-1 text-sm font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded sm:max-w-none">
+                  <span class="truncate">{{ detail?.model || '-' }}</span>
                   <template v-if="detail?.target_model && detail.target_model !== detail.model">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
@@ -38,7 +38,7 @@
                         clip-rule="evenodd"
                       />
                     </svg>
-                    <span>{{ detail.target_model }}</span>
+                    <span class="truncate">{{ detail.target_model }}</span>
                   </template>
                 </div>
                 <Badge
@@ -55,8 +55,8 @@
                 </Badge>
                 <Badge
                   v-if="detail && resolveUsageStreamLabelSegments(detail).hasConversion"
-                  :variant="resolveUsageStreamLabelSegments(detail).client === '流式' ? 'secondary' : 'outline'"
-                  :class="resolveUsageStreamLabelSegments(detail).client === '流式'
+                  :variant="streamBadgeVariant(resolveUsageStreamLabelSegments(detail).client === '流式')"
+                  :class="streamBadgeVariant(resolveUsageStreamLabelSegments(detail).client === '流式') === 'secondary'
                     ? 'text-xs inline-flex items-center gap-1'
                     : 'text-xs inline-flex items-center gap-1 border-border/60 text-muted-foreground'"
                 >
@@ -66,8 +66,8 @@
                 </Badge>
                 <Badge
                   v-else-if="detail"
-                  :variant="isUsageUpstreamStream(detail) ? 'secondary' : 'outline'"
-                  :class="isUsageUpstreamStream(detail)
+                  :variant="streamBadgeVariant(isUsageUpstreamStream(detail))"
+                  :class="streamBadgeVariant(isUsageUpstreamStream(detail)) === 'secondary'
                     ? 'text-xs'
                     : 'text-xs border-border/60 text-muted-foreground'"
                 >
@@ -112,20 +112,20 @@
             <!-- 第二行：关键元信息 -->
             <div
               v-if="detail"
-              class="flex items-center flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"
+              class="flex items-center flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground sm:gap-x-4"
             >
-              <span class="flex items-center gap-1">
+              <span class="flex min-w-0 items-center gap-1">
                 <span class="font-medium text-foreground">ID:</span>
                 <span
                   class="font-mono"
                   :title="fullRequestId"
                 >{{ displayRequestId }}</span>
               </span>
-              <span class="opacity-40">|</span>
+              <span class="hidden opacity-40 sm:inline">|</span>
               <span>{{ formatDateTime(detail.created_at) }}</span>
-              <span class="opacity-40">|</span>
+              <span class="hidden opacity-40 sm:inline">|</span>
               <span>{{ formatApiFormat(detail.api_format) }}</span>
-              <span class="opacity-40">|</span>
+              <span class="hidden opacity-40 sm:inline">|</span>
               <span>用户: {{ detail.user?.username || 'Unknown' }}</span>
             </div>
           </div>
@@ -203,88 +203,33 @@
               <!-- 费用与性能概览 -->
               <Card>
                 <div class="p-3 sm:p-4">
-                  <!-- 总费用和响应时间（独立显示） -->
-                  <div class="flex items-center mb-4">
-                    <div class="flex items-center">
-                      <span class="text-xs text-muted-foreground w-[56px]">总费用</span>
-                      <span class="text-lg font-bold text-green-600 dark:text-green-400">
+                  <div class="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                    <span class="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground/70">{{ priceSourceLabel }}</span>
+                    <span class="text-muted-foreground">|</span>
+                    <span class="whitespace-nowrap">
+                      <span class="text-muted-foreground">总费用</span>
+                      <span class="ml-1 font-bold text-green-600 dark:text-green-400">
                         ${{ ((typeof detail.cost === 'object' ? detail.cost?.total : detail.cost) || detail.total_cost || 0).toFixed(6) }}
                       </span>
-                    </div>
-                    <Separator
-                      orientation="vertical"
-                      class="h-6 mx-6"
-                    />
-                    <div class="flex items-center">
-                      <span class="text-xs text-muted-foreground w-[56px]">响应时间</span>
-                      <span class="text-lg font-bold">{{ detail.response_time_ms ? formatResponseTime(detail.response_time_ms).value : 'N/A' }}</span>
-                      <span class="text-sm text-muted-foreground ml-1">{{ detail.response_time_ms ? formatResponseTime(detail.response_time_ms).unit : '' }}</span>
-                    </div>
-                    <template v-if="detailOutputRate != null">
-                      <Separator
-                        orientation="vertical"
-                        class="h-6 mx-6"
-                      />
-                      <div class="flex items-center">
-                        <span class="text-xs text-muted-foreground w-[56px]">输出速度</span>
-                        <span class="text-lg font-bold text-primary">{{ formatOutputRateValue(detailOutputRate) }}</span>
-                        <span class="text-sm text-muted-foreground ml-1">tps</span>
-                      </div>
-                    </template>
-                  </div>
-
-                  <div
-                    v-if="hasDetailPerformanceBreakdown"
-                    class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4 text-xs"
-                  >
-                    <div class="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-                      <div class="text-muted-foreground mb-1">
-                        首字时间
-                      </div>
-                      <div class="font-mono text-foreground">
-                        {{ formatDurationMs(detail.first_byte_time_ms) }}
-                      </div>
-                    </div>
-                    <div class="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-                      <div class="text-muted-foreground mb-1">
-                        生成耗时
-                      </div>
-                      <div class="font-mono text-foreground">
-                        {{ formatDurationMs(detailGenerationTimeMs) }}
-                      </div>
-                    </div>
-                    <div class="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-                      <div class="text-muted-foreground mb-1">
-                        输出 Tokens
-                      </div>
-                      <div class="font-mono text-foreground">
-                        {{ formatNumber(detailOutputTokens) }}
-                      </div>
-                    </div>
+                    </span>
+                    <span class="text-muted-foreground">|</span>
+                    <span class="whitespace-nowrap">
+                      <span class="text-muted-foreground">耗时</span>
+                      <span class="ml-1 font-bold">
+                        {{ formatDurationMs(detail.first_byte_time_ms) }} / {{ formatDurationMs(detail.response_time_ms) }}
+                      </span>
+                    </span>
+                    <span class="text-muted-foreground">|</span>
+                    <span class="whitespace-nowrap">
+                      <span class="text-muted-foreground">输出速度</span>
+                      <span class="ml-1 font-bold text-primary">{{ formatOutputRateValue(detailOutputRate) }}tps</span>
+                    </span>
                   </div>
 
                   <!-- 分隔线 -->
                   <Separator class="mb-4" />
 
-                  <!-- ========== 1. 费用聚合计算 ========== -->
-                  <div class="text-xs text-muted-foreground mb-3 flex items-center gap-2 flex-wrap">
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground/70">{{ priceSourceLabel }}</span>
-                    <span class="text-foreground">|</span>
-                    <span class="font-mono text-foreground">
-                      总费用 = Token费用 <span class="font-medium">${{ tokenCostTotal.toFixed(6) }}</span>
-                      <template v-if="perRequestCost > 0">
-                        + 按次费用 <span class="font-medium">${{ perRequestCost.toFixed(6) }}</span>
-                      </template>
-                      <template v-if="imageOutputCostTotal > 0">
-                        + 图片输出费用 <span class="font-medium">${{ imageOutputCostTotal.toFixed(6) }}</span>
-                      </template>
-                      <template v-if="videoCostTotal > 0">
-                        + {{ detail.video_billing?.task_type === 'image' ? '图像' : detail.video_billing?.task_type === 'audio' ? '音频' : '视频' }}费用 <span class="font-medium">${{ videoCostTotal.toFixed(6) }}</span>
-                      </template>
-                    </span>
-                  </div>
-
-                  <!-- ========== 2. Token分阶段成本 ========== -->
+                  <!-- ========== 1. Token分阶段成本 ========== -->
                   <div
                     v-if="hasTokenCost"
                     class="space-y-2 mb-3"
@@ -292,6 +237,7 @@
                     <!-- 阶梯标题 -->
                     <div class="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
                       <span class="font-medium text-foreground">Token 计费</span>
+                      <span class="font-mono font-medium text-foreground">${{ tokenCostTotal.toFixed(6) }}</span>
                       <span class="text-muted-foreground/60">(输入 {{ formatNumber(displayInputTokens) }} + 缓存创建 {{ cacheCreationSummaryText }} + 缓存读取 {{ formatNumber(detail.cache_read_input_tokens || 0) }})</span>
                       <Badge
                         v-if="displayTiers.length > 1"
@@ -409,8 +355,9 @@
                     v-if="perRequestCost > 0 && !detail.video_billing"
                     class="space-y-2 mb-3"
                   >
-                    <div class="flex items-center justify-between text-xs">
+                    <div class="flex items-center gap-2 text-xs">
                       <span class="font-medium text-foreground">按次计费</span>
+                      <span class="font-mono font-medium text-foreground">${{ perRequestCost.toFixed(6) }}</span>
                     </div>
                     <div class="rounded-lg p-3 bg-primary/5 border border-primary/30 space-y-2">
                       <div
@@ -802,7 +749,6 @@ import {
   formatOutputRate,
   formatOutputRateValue,
   getDisplayOutputRate,
-  getGenerationTimeMs,
 } from '../performance'
 import {
   formatUsageStreamLabel,
@@ -830,14 +776,6 @@ import {
 
 type RequestStateStatus = 'pending' | 'streaming' | 'completed' | 'failed' | 'cancelled'
 
-const REQUEST_STATE_STATUSES = new Set<RequestStateStatus>([
-  'pending',
-  'streaming',
-  'completed',
-  'failed',
-  'cancelled',
-])
-
 const props = defineProps<{
   isOpen: boolean
   requestId: string | null
@@ -855,6 +793,14 @@ const emit = defineEmits<{
     errorMessage?: string | null
   }]
 }>()
+
+const REQUEST_STATE_STATUSES = new Set<RequestStateStatus>([
+  'pending',
+  'streaming',
+  'completed',
+  'failed',
+  'cancelled',
+])
 
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -1113,16 +1059,6 @@ const detailOutputTokens = computed(() => {
   return detail.value.tokens?.output ?? detail.value.output_tokens ?? 0
 })
 
-const detailGenerationTimeMs = computed(() => {
-  if (!detail.value) return null
-  return getGenerationTimeMs({
-    response_time_ms: detail.value.response_time_ms,
-    first_byte_time_ms: detail.value.first_byte_time_ms,
-    is_stream: detail.value.is_stream,
-    upstream_is_stream: detail.value.upstream_is_stream,
-  })
-})
-
 const detailOutputRate = computed(() => {
   if (!detail.value) return null
   return getDisplayOutputRate({
@@ -1132,11 +1068,6 @@ const detailOutputRate = computed(() => {
     is_stream: detail.value.is_stream,
     upstream_is_stream: detail.value.upstream_is_stream,
   })
-})
-
-const hasDetailPerformanceBreakdown = computed(() => {
-  if (!detail.value) return false
-  return detail.value.first_byte_time_ms != null || detailGenerationTimeMs.value != null || detailOutputTokens.value > 0
 })
 
 // 监听标签页切换
@@ -1156,6 +1087,13 @@ watch(activeTab, (newTab) => {
 })
 
 const { isDark } = useDarkMode()
+
+function streamBadgeVariant(isStream: boolean): 'secondary' | 'outline' {
+  if (isDark.value) {
+    return isStream ? 'outline' : 'secondary'
+  }
+  return isStream ? 'secondary' : 'outline'
+}
 
 const traceRequestMetadata = computed<Record<string, unknown> | null>(() => {
   const meta = detail.value?.metadata
@@ -2381,14 +2319,6 @@ function formatImagePriceBucket(bucket: string): string {
 
 function formatPixels(value: number): string {
   return `${formatCompactNumber(value)} px`
-}
-
-// 格式化响应时间，自动选择合适的单位
-function formatResponseTime(ms: number): { value: string; unit: string } {
-  if (ms >= 1_000) {
-    return { value: (ms / 1_000).toFixed(2), unit: 's' }
-  }
-  return { value: ms.toString(), unit: 'ms' }
 }
 
 // 格式化价格，修复浮点数精度问题

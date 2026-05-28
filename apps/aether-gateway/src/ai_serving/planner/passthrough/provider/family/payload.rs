@@ -56,9 +56,14 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
     let Some(resolved) = resolve_local_same_format_provider_candidate_payload_parts(
         state, parts, trace_id, body_json, input, &attempt, spec,
     )
-    .await
+    .await?
     else {
         return Ok(None);
+    };
+    let original_request_body_json = if resolved.request_redacted {
+        Some(&resolved.provider_request_body)
+    } else {
+        Some(body_json)
     };
 
     let prompt_cache_key = resolved
@@ -96,6 +101,11 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
             super::super::ANTIGRAVITY_ENVELOPE_NAME,
             parts.uri.path(),
         );
+    } else if resolved.is_gemini_cli {
+        extra_fields.insert(
+            "envelope_name".to_string(),
+            json!(crate::ai_serving::transport::GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME),
+        );
     }
     let provider_api_format = resolved.provider_api_format.clone();
     let effective_headers = input.effective_headers(&parts.headers);
@@ -130,7 +140,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
                 request_path: Some(parts.uri.path()),
                 request_query_string: parts.uri.query(),
                 request_origin: Some(crate::ai_serving::request_origin_from_parts(parts)),
-                original_request_body_json: Some(body_json),
+                original_request_body_json,
                 original_request_body_base64: None,
                 client_session_affinity: input.client_session_affinity.as_ref(),
                 scheduler_affinity_epoch: eligible.orchestration.scheduler_affinity_epoch,
@@ -139,7 +149,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
                 upstream_is_stream: resolved.upstream_is_stream,
-                has_envelope: resolved.is_kiro || resolved.is_antigravity,
+                has_envelope: resolved.is_kiro || resolved.is_antigravity || resolved.is_gemini_cli,
                 needs_conversion: false,
                 extra_fields,
             }),
@@ -153,6 +163,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
     let super::request::LocalSameFormatProviderCandidatePayloadParts {
         transport,
         is_antigravity: _,
+        is_gemini_cli: _,
         is_kiro: _,
         auth_header,
         auth_value,
@@ -164,6 +175,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         provider_request_headers,
         provider_request_body,
         transport_profile: _,
+        request_redacted: _,
     } = resolved;
 
     let mut decision = build_ai_execution_decision_response(AiExecutionDecisionResponseParts {

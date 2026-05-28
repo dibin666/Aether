@@ -139,6 +139,20 @@ function generateHealthEvents(
   return events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
 }
 
+function generateHealthTimeline(
+  healthyRate: number,
+  warningRate: number,
+  segments = 60
+) {
+  return Array.from({ length: segments }, () => {
+    const rand = Math.random()
+    if (rand < healthyRate) return 'healthy'
+    if (rand < healthyRate + warningRate) return 'warning'
+    if (rand < 0.96) return 'unknown'
+    return 'unhealthy'
+  })
+}
+
 // Mock 端点健康数据
 // 注意：success_rate 使用 0-1 之间的小数，前端会乘以 100 显示为百分比
 // 事件的成功/失败/跳过比例必须与 success_rate 保持一致
@@ -242,6 +256,154 @@ const MOCK_ENDPOINT_STATUS = {
       key_count: 1,
       last_event_at: new Date().toISOString(),
       events: generateHealthEvents(40, 0.987, 0.01, 0.003, 320, 140)
+    }
+  ]
+}
+
+const MOCK_MODEL_STATUS = {
+  generated_at: new Date().toISOString(),
+  models: [
+    {
+      model: 'gpt-5.5',
+      display_name: 'gpt-5.5',
+      total_attempts: 2021,
+      success_count: 2000,
+      failed_count: 21,
+      success_rate: 0.9896,
+      avg_latency_ms: 1736,
+      avg_first_byte_ms: 176,
+      provider_count: 3,
+      last_event_at: new Date().toISOString(),
+      events: generateHealthEvents(60, 0.989, 0.008, 0.003, 1600, 460),
+      timeline: generateHealthTimeline(0.9, 0.05),
+      time_range_start: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+      time_range_end: new Date().toISOString()
+    },
+    {
+      model: 'claude-sonnet-4-5-20250929',
+      display_name: 'Claude Sonnet 4.5',
+      total_attempts: 1684,
+      success_count: 1642,
+      failed_count: 42,
+      success_rate: 0.9751,
+      avg_latency_ms: 1280,
+      avg_first_byte_ms: 221,
+      provider_count: 2,
+      last_event_at: new Date().toISOString(),
+      events: generateHealthEvents(60, 0.975, 0.02, 0.005, 1200, 520),
+      timeline: generateHealthTimeline(0.84, 0.09),
+      time_range_start: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+      time_range_end: new Date().toISOString()
+    },
+    {
+      model: 'gemini-3-pro-preview',
+      display_name: 'Gemini 3 Pro Preview',
+      total_attempts: 932,
+      success_count: 887,
+      failed_count: 45,
+      success_rate: 0.9517,
+      avg_latency_ms: 940,
+      avg_first_byte_ms: 184,
+      provider_count: 2,
+      last_event_at: new Date().toISOString(),
+      events: generateHealthEvents(55, 0.952, 0.04, 0.008, 860, 300),
+      timeline: generateHealthTimeline(0.78, 0.14),
+      time_range_start: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+      time_range_end: new Date().toISOString()
+    },
+    {
+      model: 'gpt-5.1-codex-mini',
+      display_name: 'gpt-5.1-codex-mini',
+      total_attempts: 418,
+      success_count: 349,
+      failed_count: 69,
+      success_rate: 0.835,
+      avg_latency_ms: 2310,
+      avg_first_byte_ms: 420,
+      provider_count: 1,
+      last_event_at: new Date().toISOString(),
+      events: generateHealthEvents(45, 0.835, 0.145, 0.02, 2200, 780),
+      timeline: generateHealthTimeline(0.58, 0.24),
+      time_range_start: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+      time_range_end: new Date().toISOString()
+    }
+  ]
+}
+
+const MOCK_PROVIDER_HEALTH_STATUS = {
+  generated_at: new Date().toISOString(),
+  providers: [
+    {
+      provider_id: 'provider-001',
+      provider_name: 'OpenAI Official',
+      provider_type: 'codex',
+      is_active: true,
+      total_attempts: 2021,
+      success_count: 2000,
+      failed_count: 21,
+      success_rate: 0.9896,
+      avg_latency_ms: 1736,
+      avg_first_byte_ms: 176,
+      model_count: 2,
+      last_event_at: new Date().toISOString(),
+      timeline: generateHealthTimeline(0.9, 0.05),
+      time_range_start: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+      time_range_end: new Date().toISOString(),
+      models: [MOCK_MODEL_STATUS.models[0], MOCK_MODEL_STATUS.models[3]]
+    },
+    {
+      provider_id: 'provider-002',
+      provider_name: 'Anthropic Official',
+      provider_type: 'claude_code',
+      is_active: true,
+      total_attempts: 1684,
+      success_count: 1642,
+      failed_count: 42,
+      success_rate: 0.9751,
+      avg_latency_ms: 1280,
+      avg_first_byte_ms: 221,
+      model_count: 1,
+      last_event_at: new Date().toISOString(),
+      timeline: generateHealthTimeline(0.84, 0.09),
+      time_range_start: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+      time_range_end: new Date().toISOString(),
+      models: [MOCK_MODEL_STATUS.models[1]]
+    },
+    {
+      provider_id: 'provider-003',
+      provider_name: 'Google AI',
+      provider_type: 'gemini_cli',
+      is_active: true,
+      total_attempts: 932,
+      success_count: 887,
+      failed_count: 45,
+      success_rate: 0.9517,
+      avg_latency_ms: 940,
+      avg_first_byte_ms: 184,
+      model_count: 1,
+      last_event_at: new Date().toISOString(),
+      timeline: generateHealthTimeline(0.78, 0.14),
+      time_range_start: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+      time_range_end: new Date().toISOString(),
+      models: [MOCK_MODEL_STATUS.models[2]]
+    },
+    {
+      provider_id: 'provider-004',
+      provider_name: 'AWS Bedrock',
+      provider_type: 'custom',
+      is_active: true,
+      total_attempts: 0,
+      success_count: 0,
+      failed_count: 0,
+      success_rate: 1,
+      avg_latency_ms: null,
+      avg_first_byte_ms: null,
+      model_count: 0,
+      last_event_at: null,
+      timeline: Array.from({ length: 60 }, () => 'unknown'),
+      time_range_start: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+      time_range_end: new Date().toISOString(),
+      models: []
     }
   ]
 }
@@ -1026,6 +1188,18 @@ const mockHandlers: Record<string, (config: AxiosRequestConfig) => Promise<Axios
     return createMockResponse(MOCK_ENDPOINT_STATUS)
   },
 
+  'GET /api/admin/endpoints/health/models': async () => {
+    await delay()
+    requireAdmin()
+    return createMockResponse(MOCK_MODEL_STATUS)
+  },
+
+  'GET /api/admin/endpoints/health/providers': async () => {
+    await delay()
+    requireAdmin()
+    return createMockResponse(MOCK_PROVIDER_HEALTH_STATUS)
+  },
+
   'GET /api/admin/endpoints/keys': async () => {
     await delay()
     requireAdmin()
@@ -1385,6 +1559,28 @@ const mockHandlers: Record<string, (config: AxiosRequestConfig) => Promise<Axios
         success_rate: f.success_rate,
         last_event_at: f.last_event_at,
         events: f.events.slice(0, 10)
+      }))
+    })
+  },
+
+  'GET /api/public/health/models': async () => {
+    await delay()
+    return createMockResponse({
+      generated_at: new Date().toISOString(),
+      models: MOCK_MODEL_STATUS.models.map(model => ({
+        model: model.model,
+        display_name: model.display_name,
+        total_attempts: model.total_attempts,
+        success_count: model.success_count,
+        failed_count: model.failed_count,
+        success_rate: model.success_rate,
+        avg_latency_ms: model.avg_latency_ms,
+        avg_first_byte_ms: model.avg_first_byte_ms,
+        last_event_at: model.last_event_at,
+        events: model.events.slice(0, 10),
+        timeline: model.timeline,
+        time_range_start: model.time_range_start,
+        time_range_end: model.time_range_end
       }))
     })
   }
@@ -1796,6 +1992,42 @@ function generateMockModelsForProvider(providerId: string) {
 
 // ========== 注册动态路由 ==========
 
+const WRITE_ONLY_SYSTEM_CONFIG_KEYS = new Set([
+  'module.server_chan_push.send_key',
+  'module.bark_push.device_key',
+  'backup_s3_secret_access_key',
+])
+
+function mockSystemConfigValue(key: string) {
+  return MOCK_SYSTEM_CONFIGS.find(item => item.key === key)?.value
+}
+
+function mockS3BackupConfigValidated() {
+  return [
+    'backup_s3_endpoint',
+    'backup_s3_bucket',
+    'backup_s3_access_key_id',
+    'backup_s3_secret_access_key',
+  ].every(key => {
+    const value = mockSystemConfigValue(key)
+    return typeof value === 'string' && value.trim() !== ''
+  })
+}
+
+function refreshMockS3BackupModuleStatus() {
+  const moduleStatus = MOCK_MODULE_STATUSES.s3_backup
+  if (!moduleStatus) return
+  const enabled = mockSystemConfigValue('backup_s3_enabled') === true
+  const configValidated = mockS3BackupConfigValidated()
+  MOCK_MODULE_STATUSES.s3_backup = {
+    ...moduleStatus,
+    enabled,
+    config_validated: configValidated,
+    config_error: configValidated ? null : '请先完成 S3 备份配置',
+    active: moduleStatus.available && enabled && configValidated,
+  }
+}
+
 // 系统配置详情
 registerDynamicRoute('GET', '/api/admin/system/configs/:configKey', async (_config, params) => {
   await delay()
@@ -1805,7 +2037,7 @@ registerDynamicRoute('GET', '/api/admin/system/configs/:configKey', async (_conf
   if (!entry) {
     throw { response: createMockResponse({ detail: `配置项 '${key}' 不存在` }, 404) }
   }
-  if (key === 'module.server_chan_push.send_key' || key === 'module.bark_push.device_key') {
+  if (WRITE_ONLY_SYSTEM_CONFIG_KEYS.has(key)) {
     return createMockResponse({
       key: entry.key,
       value: null,
@@ -1836,7 +2068,24 @@ registerDynamicRoute('PUT', '/api/admin/system/configs/:configKey', async (confi
       ...entry,
     }
   }
+  if (key.startsWith('backup_s3_')) {
+    refreshMockS3BackupModuleStatus()
+  }
   return createMockResponse(entry)
+})
+
+registerDynamicRoute('POST', '/api/admin/system/backups/s3/run', async () => {
+  await delay()
+  requireAdmin()
+  return createMockResponse({
+    message: 'S3 备份任务已提交',
+    task: {
+      id: `mock-s3-backup-${Date.now()}`,
+      task_key: 'system.s3.backup',
+      status: 'queued',
+      progress_message: 'S3 备份任务已提交',
+    },
+  })
 })
 
 // 模块状态详情
@@ -1860,6 +2109,21 @@ registerDynamicRoute('PUT', '/api/admin/modules/status/:moduleName/enabled', asy
   }
   const body = JSON.parse(config.data || '{}') as { enabled?: boolean }
   const enabled = body.enabled === true
+  if (params.moduleName === 's3_backup') {
+    const index = MOCK_SYSTEM_CONFIGS.findIndex(item => item.key === 'backup_s3_enabled')
+    const entry = {
+      key: 'backup_s3_enabled',
+      value: enabled,
+      description: 'S3 自动备份开关',
+    }
+    if (index === -1) {
+      MOCK_SYSTEM_CONFIGS.push(entry)
+    } else {
+      MOCK_SYSTEM_CONFIGS[index] = { ...MOCK_SYSTEM_CONFIGS[index], ...entry }
+    }
+    refreshMockS3BackupModuleStatus()
+    return createMockResponse(MOCK_MODULE_STATUSES.s3_backup)
+  }
   const updated = {
     ...moduleStatus,
     enabled,

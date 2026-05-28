@@ -15,7 +15,7 @@ use crate::ai_serving::{
     ANTIGRAVITY_V1INTERNAL_ENVELOPE_NAME, GEMINI_CHAT_SYNC_FINALIZE_REPORT_KIND,
     OPENAI_IMAGE_SYNC_FINALIZE_REPORT_KIND,
 };
-use crate::clock::current_unix_ms;
+use crate::clock::{current_unix_ms, current_unix_secs};
 use crate::execution_runtime;
 use crate::handlers::admin::provider::shared::model_test_capabilities::{
     admin_provider_model_supports_image_generation, admin_provider_model_test_capabilities_payload,
@@ -64,7 +64,7 @@ use aether_data_contracts::repository::provider_catalog::{
 };
 use aether_model_fetch::{
     aggregate_models_for_cache, fetch_models_from_transports, json_string_list,
-    preset_models_for_provider, selected_models_fetch_endpoints,
+    merge_upstream_metadata, preset_models_for_provider, selected_models_fetch_endpoints,
 };
 use axum::{
     body::{to_bytes, Body},
@@ -99,6 +99,7 @@ static PROVIDER_QUERY_POOL_LOAD_BALANCE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 struct ProviderQueryKeyFetchResult {
     models: Vec<Value>,
     error: Option<String>,
+    warning: Option<String>,
     from_cache: bool,
     has_success: bool,
 }
@@ -288,6 +289,7 @@ fn provider_query_codex_preset_fallback(
     Some(ProviderQueryKeyFetchResult {
         models: aggregate_models_for_cache(&models),
         error: None,
+        warning: None,
         from_cache: false,
         has_success: true,
     })
@@ -427,6 +429,7 @@ async fn provider_query_fetch_models_for_key(
             return Ok(ProviderQueryKeyFetchResult {
                 models,
                 error: None,
+                warning: None,
                 from_cache: true,
                 has_success: true,
             });
@@ -444,6 +447,7 @@ async fn provider_query_fetch_models_for_key(
             return Ok(ProviderQueryKeyFetchResult {
                 models,
                 error: None,
+                warning: None,
                 from_cache: false,
                 has_success: true,
             });
@@ -451,6 +455,7 @@ async fn provider_query_fetch_models_for_key(
         return Ok(ProviderQueryKeyFetchResult {
             models: Vec::new(),
             error: Some(ADMIN_PROVIDER_QUERY_NO_ACTIVE_ENDPOINT_DETAIL.to_string()),
+            warning: None,
             from_cache: false,
             has_success: false,
         });
@@ -477,6 +482,7 @@ async fn provider_query_fetch_models_for_key(
         return Ok(ProviderQueryKeyFetchResult {
             models: Vec::new(),
             error: Some(all_errors.join("; ")),
+            warning: None,
             from_cache: false,
             has_success: false,
         });
@@ -492,6 +498,7 @@ async fn provider_query_fetch_models_for_key(
             return Ok(ProviderQueryKeyFetchResult {
                 models: Vec::new(),
                 error: Some(all_errors.join("; ")),
+                warning: None,
                 from_cache: false,
                 has_success: false,
             });
@@ -509,6 +516,18 @@ async fn provider_query_fetch_models_for_key(
         )
         .await;
     }
+    if let Some(upstream_metadata) = outcome.upstream_metadata.as_ref() {
+        let merged_metadata =
+            merge_upstream_metadata(key.upstream_metadata.as_ref(), upstream_metadata);
+        state
+            .app()
+            .update_provider_catalog_key_upstream_metadata(
+                &key.id,
+                Some(&merged_metadata),
+                Some(current_unix_secs()),
+            )
+            .await?;
+    }
 
     if unique_models.is_empty() && !all_errors.is_empty() {
         if let Some(fallback) = provider_query_codex_preset_fallback(provider) {
@@ -516,18 +535,25 @@ async fn provider_query_fetch_models_for_key(
         }
     }
 
-    let mut error = if all_errors.is_empty() {
-        None
-    } else {
+    let has_models = !unique_models.is_empty();
+    let mut error = if !has_models && !all_errors.is_empty() {
         Some(all_errors.join("; "))
+    } else {
+        None
     };
-    if unique_models.is_empty() && error.is_none() {
+    let warning = if has_models && !all_errors.is_empty() {
+        Some(all_errors.join("; "))
+    } else {
+        None
+    };
+    if !has_models && error.is_none() {
         error = Some(ADMIN_PROVIDER_QUERY_NO_MODELS_FROM_ENDPOINT_DETAIL.to_string());
     }
 
     Ok(ProviderQueryKeyFetchResult {
         models: provider_query_filter_models_for_key(provider, key, unique_models),
         error,
+        warning,
         from_cache: false,
         has_success: outcome.has_success,
     })
@@ -588,6 +614,7 @@ pub(crate) async fn build_admin_provider_query_models_response(
             "data": {
                 "models": models,
                 "error": result.error,
+                "warning": result.warning,
                 "from_cache": result.from_cache,
             },
             "provider": provider_query_provider_payload(&provider),
@@ -620,6 +647,7 @@ pub(crate) async fn build_admin_provider_query_models_response(
                 "data": {
                     "models": models,
                     "error": serde_json::Value::Null,
+                    "warning": serde_json::Value::Null,
                     "from_cache": true,
                     "keys_total": active_key_count,
                     "keys_cached": active_key_count,
@@ -643,6 +671,7 @@ pub(crate) async fn build_admin_provider_query_models_response(
 
     let mut all_models = Vec::new();
     let mut all_errors = Vec::new();
+    let mut all_warnings = Vec::new();
     let mut cache_hit_count = 0usize;
     let mut fetch_count = 0usize;
     for key in &ordered_keys {
@@ -655,6 +684,13 @@ pub(crate) async fn build_admin_provider_query_models_response(
                 "Key {}: {}",
                 provider_query_key_display_name(key),
                 error
+            ));
+        }
+        if let Some(warning) = result.warning {
+            all_warnings.push(format!(
+                "Key {}: {}",
+                provider_query_key_display_name(key),
+                warning
             ));
         }
         if result.from_cache {
@@ -682,10 +718,17 @@ pub(crate) async fn build_admin_provider_query_models_response(
         provider_query_write_provider_cached_models(state, &provider.id, &models).await;
     }
     let success = !models.is_empty();
-    let mut error = if all_errors.is_empty() {
-        None
+    let mut all_issues = all_errors;
+    all_issues.extend(all_warnings);
+    let mut error = if !success && !all_issues.is_empty() {
+        Some(all_issues.join("; "))
     } else {
-        Some(all_errors.join("; "))
+        None
+    };
+    let warning = if success && !all_issues.is_empty() {
+        Some(all_issues.join("; "))
+    } else {
+        None
     };
     if !success && error.is_none() {
         error = Some(ADMIN_PROVIDER_QUERY_NO_MODELS_FROM_KEY_DETAIL.to_string());
@@ -697,6 +740,7 @@ pub(crate) async fn build_admin_provider_query_models_response(
         "data": {
             "models": models,
             "error": error,
+            "warning": warning,
             "from_cache": fetch_count == 0 && cache_hit_count > 0,
             "keys_total": active_key_count,
             "keys_cached": cache_hit_count,

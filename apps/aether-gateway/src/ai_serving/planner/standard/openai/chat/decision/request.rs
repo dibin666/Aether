@@ -1,7 +1,5 @@
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use aether_contracts::ResolvedTransportProfile;
 use serde_json::{json, Value};
@@ -14,6 +12,13 @@ use crate::ai_serving::planner::candidate_resolution::EligibleLocalExecutionCand
 use crate::ai_serving::planner::common::{
     endpoint_config_forces_body_stream_field, enforce_provider_body_stream_policy,
     request_requires_body_stream_field, OPENAI_CHAT_STREAM_PLAN_KIND,
+};
+use crate::ai_serving::planner::gemini_cli::{
+    build_gemini_cli_v1internal_provider_request, GeminiCliV1InternalRequestError,
+    GeminiCliV1InternalRequestInput,
+};
+use crate::ai_serving::planner::redaction::{
+    request_identity_response_encoding_when_redacted, resolve_provider_chat_pii_redaction,
 };
 use crate::ai_serving::planner::standard::{
     apply_codex_openai_responses_special_body_edits, apply_codex_openai_responses_special_headers,
@@ -37,9 +42,10 @@ use crate::ai_serving::transport::windsurf::{
 use crate::ai_serving::transport::{
     build_grok_browser_headers, build_grok_upstream_url, build_kiro_cross_format_upstream_url,
     build_openai_image_headers, build_openai_image_upstream_url,
-    build_standard_provider_request_headers, openai_image_transport_unsupported_reason,
-    resolve_openai_image_auth, GrokHeaderInput, ProviderOpenAiImageHeadersInput,
-    StandardProviderRequestHeadersInput, GROK_CHAT_PATH,
+    build_standard_provider_request_headers, is_gemini_cli_provider_transport,
+    openai_image_transport_unsupported_reason, resolve_openai_image_auth, GrokHeaderInput,
+    ProviderOpenAiImageHeadersInput, StandardProviderRequestHeadersInput,
+    GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME, GROK_CHAT_PATH,
 };
 use crate::ai_serving::{
     ai_local_execution_contract_for_formats, request_conversion_direct_auth,
@@ -47,13 +53,7 @@ use crate::ai_serving::{
     LocalResolvedOAuthRequestAuth,
 };
 use crate::ai_serving::{ConversionMode, ExecutionStrategy};
-use crate::privacy::{
-    build_redaction_session_config, read_chat_pii_redaction_runtime_config,
-    try_mask_chat_request_json_with_cache_options, MaskChatRequestOptions, RedactionMaskError,
-    RedactionSessionSlot, RedisRedactionMappingCache,
-};
 use crate::{AppState, GatewayError};
-use tracing::warn;
 
 use super::support::{
     mark_skipped_local_openai_chat_candidate,
@@ -87,100 +87,6 @@ fn is_grok_text_provider_api_format(provider_api_format: &str) -> bool {
     )
 }
 
-fn request_identity_response_encoding_when_redacted(
-    headers: &mut BTreeMap<String, String>,
-    redacted: bool,
-) {
-    if redacted {
-        headers.insert("accept-encoding".to_string(), "identity".to_string());
-    }
-}
-
-struct ProviderChatRequestRedaction<'a> {
-    body_json: Cow<'a, Value>,
-    redacted: bool,
-}
-
-impl<'a> ProviderChatRequestRedaction<'a> {
-    fn disabled(body_json: &'a Value, _parts: &http::request::Parts) -> Self {
-        Self {
-            body_json: Cow::Borrowed(body_json),
-            redacted: false,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct ChatPiiRedactionFeatureSettings {
-    enabled: Option<bool>,
-    inject_model_instruction: Option<bool>,
-}
-
-impl ChatPiiRedactionFeatureSettings {
-    fn merge_from_value(&mut self, value: Option<&Value>) {
-        let Some(settings) = value
-            .and_then(Value::as_object)
-            .and_then(|features| features.get("chat_pii_redaction"))
-            .and_then(Value::as_object)
-        else {
-            return;
-        };
-        if let Some(enabled) = settings.get("enabled").and_then(Value::as_bool) {
-            self.enabled = Some(enabled);
-        }
-        if let Some(inject_model_instruction) = settings
-            .get("inject_model_instruction")
-            .and_then(Value::as_bool)
-        {
-            self.inject_model_instruction = Some(inject_model_instruction);
-        }
-    }
-
-    fn effective_enabled(self) -> bool {
-        self.enabled.unwrap_or(false)
-    }
-
-    fn effective_inject_model_instruction(self) -> bool {
-        self.inject_model_instruction.unwrap_or(true)
-    }
-}
-
-async fn resolve_chat_pii_redaction_feature_settings(
-    state: &AppState,
-    input: &LocalOpenAiChatDecisionInput,
-) -> Result<ChatPiiRedactionFeatureSettings, GatewayError> {
-    let user_settings = state
-        .read_user_feature_settings(&input.auth_context.user_id)
-        .await
-        .map_err(|err| {
-            warn!(
-                error = ?err,
-                "gateway failed to read user chat pii redaction feature settings"
-            );
-            GatewayError::Internal("chat pii redaction setup failed".to_string())
-        })?;
-    let key_settings = state
-        .read_auth_api_key_feature_settings(
-            &input.auth_context.user_id,
-            &input.auth_context.api_key_id,
-            input.auth_context.api_key_is_standalone,
-        )
-        .await
-        .map_err(|err| {
-            warn!(
-
-                error = ?err,
-                "gateway failed to read api key chat pii redaction feature settings"
-            );
-            GatewayError::Internal("chat pii redaction setup failed".to_string())
-        })?;
-
-    let mut settings = ChatPiiRedactionFeatureSettings::default();
-    settings.merge_from_value(user_settings.as_ref());
-    settings.merge_from_value(key_settings.as_ref());
-    Ok(settings)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
     state: &AppState,
@@ -209,9 +115,15 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
             Some(&input.requested_model),
         )
         .await;
-    let redaction =
-        resolve_provider_chat_request_redaction(state, parts, body_json, input, candidate_id)
-            .await?;
+    let redaction = resolve_provider_chat_pii_redaction(
+        state,
+        parts,
+        body_json,
+        &input.auth_context,
+        "openai:chat",
+        candidate_id,
+    )
+    .await?;
     let body_json = redaction.body_json.as_ref();
     let effective_headers = input.effective_headers(&parts.headers);
     let is_grok = transport
@@ -219,6 +131,7 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
         .provider_type
         .trim()
         .eq_ignore_ascii_case("grok");
+    let is_gemini_cli = is_gemini_cli_provider_transport(transport);
 
     if is_grok && is_grok_text_provider_api_format(provider_api_format) {
         let prepared_candidate = match prepare_header_authenticated_candidate(
@@ -533,6 +446,8 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
     };
 
     let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
+    let normalized_provider_api_format =
+        crate::ai_serving::normalize_api_format_alias(provider_api_format.as_str());
     if provider_api_format == "openai:image" {
         return resolve_openai_chat_to_openai_image_payload_parts(
             state,
@@ -567,17 +482,19 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
         transport,
         conversion_kind,
     ) {
-        mark_skipped_local_openai_chat_candidate(
-            state,
-            input,
-            trace_id,
-            candidate,
-            candidate_index,
-            candidate_id,
-            skip_reason,
-        )
-        .await;
-        return Ok(None);
+        if !(is_gemini_cli && normalized_provider_api_format == "gemini:generate_content") {
+            mark_skipped_local_openai_chat_candidate(
+                state,
+                input,
+                trace_id,
+                candidate,
+                candidate_index,
+                candidate_id,
+                skip_reason,
+            )
+            .await;
+            return Ok(None);
+        }
     }
     let is_kiro_claude_cli =
         is_kiro_claude_messages_transport(transport, provider_api_format.as_str());
@@ -745,6 +662,30 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
         )
         .await);
     }
+    if provider_api_format == "gemini:generate_content"
+        && is_gemini_cli_provider_transport(transport)
+    {
+        return Ok(build_gemini_cli_openai_chat_cross_format_payload_parts(
+            state,
+            parts,
+            trace_id,
+            body_json,
+            input,
+            eligible,
+            candidate_index,
+            candidate_id,
+            decision_kind,
+            transport,
+            provider_api_format.as_str(),
+            prepared_candidate.mapped_model,
+            prepared_candidate.auth_header,
+            prepared_candidate.auth_value,
+            provider_request_body,
+            upstream_is_stream,
+            redaction.redacted,
+        )
+        .await);
+    }
 
     let Some(upstream_url) = build_cross_format_openai_chat_upstream_url(
         parts,
@@ -843,6 +784,157 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
         transport_profile: None,
         image_request_summary: None,
     }))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn build_gemini_cli_openai_chat_cross_format_payload_parts(
+    state: &AppState,
+    parts: &http::request::Parts,
+    trace_id: &str,
+    original_body_json: &serde_json::Value,
+    input: &LocalOpenAiChatDecisionInput,
+    eligible: &EligibleLocalExecutionCandidate,
+    candidate_index: u32,
+    candidate_id: &str,
+    decision_kind: &str,
+    transport: &Arc<GatewayProviderTransportSnapshot>,
+    provider_api_format: &str,
+    mapped_model: String,
+    auth_header: String,
+    auth_value: String,
+    gemini_request_body: Value,
+    upstream_is_stream: bool,
+    request_redacted: bool,
+) -> Option<LocalOpenAiChatCandidatePayloadParts> {
+    let candidate = &eligible.candidate;
+    let effective_headers = input.effective_headers(&parts.headers);
+    let resolved =
+        match build_gemini_cli_v1internal_provider_request(GeminiCliV1InternalRequestInput {
+            state,
+            parts,
+            transport,
+            trace_id,
+            mapped_model: &mapped_model,
+            provider_api_format,
+            auth_header: &auth_header,
+            auth_value: &auth_value,
+            request_headers: effective_headers,
+            original_request_body: original_body_json,
+            gemini_request_body: &gemini_request_body,
+            upstream_is_stream,
+        })
+        .await
+        {
+            Ok(resolved) => resolved,
+            Err(GeminiCliV1InternalRequestError::ProjectUnavailable) => {
+                mark_skipped_local_openai_chat_candidate(
+                    state,
+                    input,
+                    trace_id,
+                    candidate,
+                    candidate_index,
+                    candidate_id,
+                    "transport_auth_unavailable",
+                )
+                .await;
+                return None;
+            }
+            Err(GeminiCliV1InternalRequestError::EnvelopeUnsupported) => {
+                mark_skipped_local_openai_chat_candidate_with_extra_data(
+                    state,
+                    input,
+                    trace_id,
+                    candidate,
+                    candidate_index,
+                    candidate_id,
+                    "provider_request_body_build_failed",
+                    request_body_build_failure_extra_data(
+                        original_body_json,
+                        "openai:chat",
+                        provider_api_format,
+                    ),
+                )
+                .await;
+                return None;
+            }
+            Err(GeminiCliV1InternalRequestError::UpstreamUrlUnavailable) => {
+                mark_skipped_local_openai_chat_candidate_with_failure_diagnostic(
+                    state,
+                    input,
+                    trace_id,
+                    candidate,
+                    candidate_index,
+                    candidate_id,
+                    "upstream_url_missing",
+                    CandidateFailureDiagnostic::upstream_url_missing(
+                        "openai:chat",
+                        provider_api_format,
+                        "openai_chat_gemini_cli_url",
+                    ),
+                )
+                .await;
+                return None;
+            }
+            Err(GeminiCliV1InternalRequestError::HeaderRulesApplyFailed) => {
+                mark_skipped_local_openai_chat_candidate_with_failure_diagnostic(
+                    state,
+                    input,
+                    trace_id,
+                    candidate,
+                    candidate_index,
+                    candidate_id,
+                    "transport_header_rules_apply_failed",
+                    CandidateFailureDiagnostic::header_rules_apply_failed(
+                        "openai:chat",
+                        provider_api_format,
+                        "openai_chat_gemini_cli_headers",
+                    ),
+                )
+                .await;
+                return None;
+            }
+        };
+    let mut provider_request_headers = resolved.headers.headers;
+    apply_codex_openai_responses_special_headers(
+        &mut provider_request_headers,
+        &resolved.body,
+        effective_headers,
+        resolved.transport.provider.provider_type.as_str(),
+        provider_api_format,
+        Some(trace_id),
+        resolved.transport.key.decrypted_auth_config.as_deref(),
+    );
+    request_identity_response_encoding_when_redacted(
+        &mut provider_request_headers,
+        request_redacted,
+    );
+
+    let resolved_report_kind = if decision_kind == OPENAI_CHAT_STREAM_PLAN_KIND {
+        "openai_chat_stream_success".to_string()
+    } else {
+        "openai_chat_sync_finalize".to_string()
+    };
+    let (execution_strategy, conversion_mode) =
+        ai_local_execution_contract_for_formats("openai:chat", provider_api_format);
+
+    Some(LocalOpenAiChatCandidatePayloadParts {
+        client_api_format: "openai:chat".to_string(),
+        auth_header: resolved.headers.auth_header,
+        auth_value: resolved.headers.auth_value,
+        mapped_model,
+        provider_api_format: provider_api_format.to_string(),
+        provider_request_body: resolved.body,
+        provider_request_headers,
+        upstream_url: resolved.upstream_url,
+        execution_strategy,
+        conversion_mode,
+        report_kind: resolved_report_kind,
+        envelope_name: Some(GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME),
+        transport: resolved.transport,
+        request_redacted,
+        transport_profile: None,
+        image_request_summary: None,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1607,93 +1699,221 @@ async fn build_kiro_openai_chat_cross_format_payload_parts(
     })
 }
 
-async fn resolve_provider_chat_request_redaction<'a>(
-    state: &AppState,
-    parts: &http::request::Parts,
-    body_json: &'a Value,
-    input: &LocalOpenAiChatDecisionInput,
-    candidate_id: &str,
-) -> Result<ProviderChatRequestRedaction<'a>, GatewayError> {
-    if parts.uri.path() != "/v1/chat/completions" {
-        return Ok(ProviderChatRequestRedaction::disabled(body_json, parts));
-    }
-    let Some(slot) = parts.extensions.get::<RedactionSessionSlot>() else {
-        return Ok(ProviderChatRequestRedaction::disabled(body_json, parts));
-    };
-    let runtime_config = read_chat_pii_redaction_runtime_config(state)
-        .await
-        .map_err(|err| {
-            warn!(
-                error = ?err,
-                "gateway failed to read chat pii redaction runtime config"
-            );
-            GatewayError::Internal("chat pii redaction setup failed".to_string())
-        })?;
-    if !runtime_config.enabled {
-        return Ok(ProviderChatRequestRedaction::disabled(body_json, parts));
-    }
-    let feature_settings = resolve_chat_pii_redaction_feature_settings(state, input).await?;
-    if !feature_settings.effective_enabled() {
-        return Ok(ProviderChatRequestRedaction::disabled(body_json, parts));
-    }
-    let Some(hmac_key) = state.encryption_key().map(str::as_bytes).map(Vec::from) else {
-        warn!("gateway chat pii redaction is enabled but encryption key is unavailable");
-        return Err(GatewayError::Internal(
-            "chat pii redaction setup failed".to_string(),
-        ));
-    };
-    let body_bytes = serde_json::to_vec(body_json).map_err(|err| {
-        warn!(
-            error = ?err,
-            "gateway failed to serialize provider chat pii redaction body"
-        );
-        GatewayError::Internal("chat pii redaction setup failed".to_string())
-    })?;
-    let now_unix_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let cache = RedisRedactionMappingCache::new(state.runtime_state.as_ref());
-    let masked = try_mask_chat_request_json_with_cache_options(
-        &body_bytes,
-        build_redaction_session_config(hmac_key, &runtime_config, now_unix_secs),
-        MaskChatRequestOptions::runtime(feature_settings.effective_inject_model_instruction()),
-        Some(&cache),
-    )
-    .await
-    .map_err(redaction_mask_error_to_gateway_error)?;
-    if !masked.redacted {
-        return Ok(ProviderChatRequestRedaction {
-            body_json: Cow::Borrowed(body_json),
-            redacted: false,
-        });
-    }
-    let masked_body_json = serde_json::from_slice::<Value>(&masked.body).map_err(|err| {
-        warn!(
-            error = ?err,
-            "gateway failed to decode redacted provider chat pii body"
-        );
-        GatewayError::Internal("chat pii redaction setup failed".to_string())
-    })?;
-    slot.put_for_candidate(candidate_id, masked.session);
-    Ok(ProviderChatRequestRedaction {
-        body_json: Cow::Owned(masked_body_json),
-        redacted: true,
-    })
-}
-
-fn redaction_mask_error_to_gateway_error(error: RedactionMaskError) -> GatewayError {
-    match error {
-        RedactionMaskError::Limit(limit) => GatewayError::Client {
-            status: limit.client_status(),
-            message: limit.safe_message().to_string(),
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aether_provider_transport::snapshot::{
+        GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
+        GatewayProviderTransportProvider, GatewayProviderTransportSnapshot,
+    };
+    use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
+
+    fn sample_auth_snapshot() -> crate::ai_serving::GatewayAuthApiKeySnapshot {
+        crate::ai_serving::GatewayAuthApiKeySnapshot {
+            user_id: "user-1".to_string(),
+            username: "alice".to_string(),
+            email: None,
+            user_role: "user".to_string(),
+            user_auth_source: "local".to_string(),
+            user_is_active: true,
+            user_is_deleted: false,
+            user_rate_limit: None,
+            user_allowed_providers: None,
+            user_allowed_api_formats: None,
+            user_allowed_models: None,
+            api_key_id: "api-key-1".to_string(),
+            api_key_name: Some("default".to_string()),
+            api_key_is_active: true,
+            api_key_is_locked: false,
+            api_key_is_standalone: false,
+            api_key_rate_limit: None,
+            api_key_concurrent_limit: None,
+            api_key_expires_at_unix_secs: None,
+            api_key_allowed_providers: None,
+            api_key_allowed_api_formats: None,
+            api_key_allowed_models: None,
+            api_key_ip_rules: None,
+            currently_usable: true,
+        }
+    }
+
+    fn sample_input() -> LocalOpenAiChatDecisionInput {
+        LocalOpenAiChatDecisionInput {
+            auth_context: crate::ai_serving::ExecutionRuntimeAuthContext {
+                user_id: "user-1".to_string(),
+                api_key_id: "api-key-1".to_string(),
+                username: Some("alice".to_string()),
+                api_key_name: Some("default".to_string()),
+                balance_remaining: Some(10.0),
+                access_allowed: true,
+                api_key_is_standalone: false,
+            },
+            requested_model: "gemini-2.5-pro".to_string(),
+            auth_snapshot: sample_auth_snapshot(),
+            required_capabilities: None,
+            request_auth_channel: None,
+            client_session_affinity: None,
+            routing_policy: None,
+            routing_trace_seed: None,
+            routing_context: None,
+        }
+    }
+
+    fn sample_gemini_cli_transport() -> GatewayProviderTransportSnapshot {
+        GatewayProviderTransportSnapshot {
+            provider: GatewayProviderTransportProvider {
+                id: "provider-1".to_string(),
+                name: "gemini".to_string(),
+                provider_type: "gemini_cli".to_string(),
+                website: None,
+                is_active: true,
+                keep_priority_on_conversion: false,
+                enable_format_conversion: true,
+                concurrent_limit: None,
+                max_retries: None,
+                proxy: None,
+                request_timeout_secs: None,
+                stream_first_byte_timeout_secs: None,
+                config: None,
+            },
+            endpoint: GatewayProviderTransportEndpoint {
+                id: "endpoint-1".to_string(),
+                provider_id: "provider-1".to_string(),
+                api_format: "gemini:generate_content".to_string(),
+                api_family: Some("gemini".to_string()),
+                endpoint_kind: Some("generate_content".to_string()),
+                is_active: true,
+                base_url: "https://cloudcode-pa.googleapis.com".to_string(),
+                header_rules: None,
+                body_rules: None,
+                max_retries: None,
+                custom_path: Some("/v1internal:{action}".to_string()),
+                config: None,
+                format_acceptance_config: None,
+                proxy: None,
+            },
+            key: GatewayProviderTransportKey {
+                id: "key-1".to_string(),
+                provider_id: "provider-1".to_string(),
+                name: "key".to_string(),
+                auth_type: "bearer".to_string(),
+                is_active: true,
+                api_formats: Some(vec!["gemini:generate_content".to_string()]),
+                auth_type_by_format: None,
+                allow_auth_channel_mismatch_formats: None,
+                allowed_models: None,
+                capabilities: None,
+                rate_multipliers: None,
+                global_priority_by_format: Some(json!({
+                    "gemini:generate_content": 1,
+                })),
+                expires_at_unix_secs: None,
+                proxy: None,
+                fingerprint: None,
+                upstream_metadata: Some(json!({
+                    "gemini_cli": {
+                        "project_id": "test-project"
+                    }
+                })),
+                decrypted_api_key: "oauth-access-token".to_string(),
+                decrypted_auth_config: None,
+            },
+        }
+    }
+
+    fn sample_gemini_cli_eligible() -> EligibleLocalExecutionCandidate {
+        EligibleLocalExecutionCandidate {
+            kind: crate::ai_serving::planner::candidate_resolution::LocalExecutionCandidateKind::SingleKey,
+            candidate: SchedulerMinimalCandidateSelectionCandidate {
+                provider_id: "provider-1".to_string(),
+                provider_name: "gemini".to_string(),
+                provider_type: "gemini_cli".to_string(),
+                provider_priority: 1,
+                endpoint_id: "endpoint-1".to_string(),
+                endpoint_api_format: "gemini:generate_content".to_string(),
+                key_id: "key-1".to_string(),
+                key_name: "key".to_string(),
+                key_auth_type: "bearer".to_string(),
+                key_internal_priority: 1,
+                key_global_priority_for_format: Some(1),
+                key_capabilities: None,
+                model_id: "model-1".to_string(),
+                global_model_id: "global-model-1".to_string(),
+                global_model_name: "gemini-2.5-pro".to_string(),
+                selected_provider_model_name: "gemini-2.5-pro".to_string(),
+                mapping_matched_model: None,
+            },
+            transport: Arc::new(sample_gemini_cli_transport()),
+            provider_api_format: "gemini:generate_content".to_string(),
+            orchestration: crate::orchestration::LocalExecutionCandidateMetadata::default(),
+            ranking: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn openai_chat_to_gemini_cli_wraps_cross_format_body_in_v1internal_envelope() {
+        let state = AppState::new().expect("state should build");
+        let request = http::Request::builder()
+            .method("POST")
+            .uri("/v1/chat/completions")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(())
+            .expect("request should build");
+        let (parts, _) = request.into_parts();
+        let body_json = json!({
+            "model": "gemini-2.5-pro",
+            "messages": [{"role": "user", "content": "hello"}],
+            "generationConfig": {"temperature": 0.2},
+            "stream": true
+        });
+
+        let payload = resolve_local_openai_chat_candidate_payload_parts(
+            &state,
+            &parts,
+            "trace-openai-chat-gemini-cli",
+            &body_json,
+            &sample_input(),
+            &sample_gemini_cli_eligible(),
+            0,
+            "candidate-0",
+            OPENAI_CHAT_STREAM_PLAN_KIND,
+            "openai_chat_stream_success",
+            true,
+        )
+        .await
+        .expect("candidate resolution should not fail")
+        .expect("gemini_cli candidate should build a payload");
+
+        assert_eq!(
+            payload.upstream_url,
+            "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+        );
+        assert_eq!(
+            payload.envelope_name,
+            Some(GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME)
+        );
+        assert_eq!(
+            payload
+                .provider_request_headers
+                .get("user-agent")
+                .map(String::as_str),
+            Some(crate::ai_serving::transport::GEMINI_CLI_USER_AGENT)
+        );
+        assert_eq!(payload.provider_request_body["model"], "gemini-2.5-pro");
+        assert_eq!(payload.provider_request_body["project"], "test-project");
+        assert_eq!(
+            payload.provider_request_body["user_prompt_id"],
+            "trace-openai-chat-gemini-cli"
+        );
+        assert!(payload.provider_request_body.get("contents").is_none());
+        assert!(payload
+            .provider_request_body
+            .get("generationConfig")
+            .is_none());
+        assert!(payload.provider_request_body["request"]
+            .get("contents")
+            .is_some());
+    }
 
     #[test]
     fn chatgpt_web_chat_image_bridge_body_uses_internal_web_shape() {
