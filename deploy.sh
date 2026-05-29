@@ -297,6 +297,28 @@ validate_docker_build_cache_mode() {
     esac
 }
 
+docker_buildx_driver() {
+    docker buildx inspect 2>/dev/null | awk -F: '
+        /^Driver:/ {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+            print $2
+            exit
+        }
+    '
+}
+
+docker_buildx_supports_external_cache() {
+    docker buildx version >/dev/null 2>&1 || return 1
+
+    local driver
+    driver="$(docker_buildx_driver)"
+    [ -n "$driver" ] || return 1
+
+    # docker driver 不支持 --cache-to 外部缓存导出，除非 Docker 开启 containerd image store。
+    # 为兼容普通服务器默认配置，这里只在非 docker driver 下启用本地 cache-to/cache-from。
+    [ "$driver" != "docker" ]
+}
+
 prepare_docker_build_cache_args() {
     local -n out_args=$1
     local -n out_tmp=$2
@@ -306,8 +328,8 @@ prepare_docker_build_cache_args() {
     docker_build_cache_enabled || return 0
     validate_docker_build_cache_mode
 
-    if ! docker buildx version >/dev/null 2>&1; then
-        echo ">>> Docker buildx not found; external BuildKit cache is disabled for this build."
+    if ! docker_buildx_supports_external_cache; then
+        echo ">>> Docker buildx external cache is not available for the current builder; using Docker's local layer/cache-mount cache."
         if docker image inspect "$LOCAL_APP_IMAGE" >/dev/null 2>&1; then
             out_args+=(--cache-from "$LOCAL_APP_IMAGE")
         fi
@@ -329,7 +351,7 @@ prepare_docker_build_cache_args() {
 }
 
 docker_build_command() {
-    if docker_build_cache_enabled && docker buildx version >/dev/null 2>&1; then
+    if docker_build_cache_enabled && docker_buildx_supports_external_cache; then
         printf '%s\n' "docker" "buildx" "build" "--load"
     else
         printf '%s\n' "docker" "build"
