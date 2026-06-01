@@ -881,6 +881,17 @@ const mockHandlers: Record<string, (config: AxiosRequestConfig) => Promise<Axios
     return createMockResponse(MOCK_USER_API_KEYS)
   },
 
+  'GET /api/users/me/client-config': async () => {
+    await delay()
+    const baseUrl = typeof window !== 'undefined'
+      ? window.location.origin
+      : 'https://demo.aether.local'
+    return createMockResponse({
+      base_url: baseUrl,
+      site_name: 'Aether Demo',
+    })
+  },
+
   'POST /api/users/me/api-keys': async (config) => {
     await delay()
     const body = JSON.parse(config.data || '{}')

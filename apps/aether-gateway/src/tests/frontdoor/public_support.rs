@@ -1,7 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::{
-    sample_endpoint, sample_key, sample_models_candidate_row, sample_provider,
+    hash_api_key, sample_endpoint, sample_key, sample_models_candidate_row, sample_provider,
     sample_public_catalog_model, sample_public_global_model,
     sample_public_global_model_with_capabilities, sample_request_candidate,
     InMemoryAnnouncementReadRepository, InMemoryGlobalModelReadRepository,
@@ -2372,6 +2372,28 @@ fn sample_auth_wallet(user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Stor
     .expect("wallet should build")
 }
 
+fn sample_standalone_auth_wallet(
+    api_key_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> StoredWalletSnapshot {
+    StoredWalletSnapshot::new(
+        "wallet-standalone-1".to_string(),
+        None,
+        Some(api_key_id.to_string()),
+        2.0,
+        0.5,
+        "finite".to_string(),
+        "USD".to_string(),
+        "active".to_string(),
+        5.0,
+        2.5,
+        0.0,
+        0.0,
+        now.timestamp(),
+    )
+    .expect("standalone wallet should build")
+}
+
 fn wallet_today_usage_test_time() -> chrono::DateTime<chrono::Utc> {
     let offset =
         chrono::FixedOffset::east_opt(8 * 3600).expect("Asia/Shanghai test offset should be valid");
@@ -4390,6 +4412,147 @@ async fn gateway_handles_wallet_balance_locally_without_proxying_upstream() {
 }
 
 #[tokio::test]
+async fn gateway_handles_ccswitch_usage_with_api_key_without_proxying_upstream() {
+    let now = wallet_today_usage_test_time();
+    let user = sample_auth_user(now);
+    let usage_repository = Arc::new(InMemoryUsageReadRepository::seed(vec![
+        sample_user_usage_audit(
+            "usage-ccswitch-1",
+            "req-ccswitch-1",
+            "user-auth-1",
+            "gpt-5",
+            "Aether",
+            "completed",
+            now,
+        ),
+    ]));
+    let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
+        Some(hash_api_key("sk-ccswitch-usage")),
+        sample_usage_auth_snapshot("api-key-user-1", "user-auth-1", "ccswitch"),
+    )]));
+    let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
+        start_auth_gateway_with_builder(|| {
+            let data_state = GatewayDataState::with_user_wallet_and_usage_for_tests(
+                Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![
+                    user.clone()
+                ])),
+                Arc::new(InMemoryWalletRepository::seed(vec![sample_auth_wallet(
+                    "user-auth-1",
+                    now,
+                )])),
+                Arc::clone(&usage_repository),
+            )
+            .with_auth_api_key_reader(auth_repository);
+            AppState::new()
+                .expect("gateway should build")
+                .with_data_state_for_tests(data_state)
+        })
+        .await;
+
+    let response = reqwest::Client::new()
+        .get(format!("{gateway_url}/api/ccswitch/usage"))
+        .header("authorization", "Bearer sk-ccswitch-usage")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["is_valid"], true);
+    assert_eq!(payload["plan_name"], "Aether");
+    assert_eq!(payload["remaining"], 15.5);
+    assert_eq!(payload["used"], 1.25);
+    assert_eq!(payload["unit"], "USD");
+    assert_eq!(payload["wallet"]["wallet_balance"], 15.5);
+    assert_eq!(payload["today"]["total_requests"], 1);
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_handles_ccswitch_usage_for_standalone_key_without_owner_usage() {
+    let now = wallet_today_usage_test_time();
+    let user = sample_auth_user(now);
+    let mut owner_usage = sample_user_usage_audit(
+        "usage-ccswitch-owner",
+        "req-ccswitch-owner",
+        "user-auth-1",
+        "gpt-5",
+        "Aether",
+        "completed",
+        now,
+    );
+    owner_usage.api_key_id = Some("api-key-user-1".to_string());
+    owner_usage.total_cost_usd = 1.25;
+    owner_usage.actual_total_cost_usd = 1.25;
+
+    let mut standalone_usage = sample_user_usage_audit(
+        "usage-ccswitch-standalone",
+        "req-ccswitch-standalone",
+        "user-auth-1",
+        "gpt-5",
+        "Aether",
+        "completed",
+        now,
+    );
+    standalone_usage.api_key_id = Some("api-key-standalone-1".to_string());
+    standalone_usage.api_key_name = Some("standalone".to_string());
+    standalone_usage.total_cost_usd = 0.5;
+    standalone_usage.actual_total_cost_usd = 0.5;
+
+    let usage_repository = Arc::new(InMemoryUsageReadRepository::seed(vec![
+        owner_usage,
+        standalone_usage,
+    ]));
+    let mut snapshot =
+        sample_usage_auth_snapshot("api-key-standalone-1", "user-auth-1", "standalone");
+    snapshot.api_key_is_standalone = true;
+    let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
+        Some(hash_api_key("sk-ccswitch-standalone")),
+        snapshot,
+    )]));
+    let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
+        start_auth_gateway_with_builder(|| {
+            let data_state = GatewayDataState::with_user_wallet_and_usage_for_tests(
+                Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![
+                    user.clone()
+                ])),
+                Arc::new(InMemoryWalletRepository::seed(vec![
+                    sample_auth_wallet("user-auth-1", now),
+                    sample_standalone_auth_wallet("api-key-standalone-1", now),
+                ])),
+                Arc::clone(&usage_repository),
+            )
+            .with_auth_api_key_reader(auth_repository);
+            AppState::new()
+                .expect("gateway should build")
+                .with_data_state_for_tests(data_state)
+        })
+        .await;
+
+    let response = reqwest::Client::new()
+        .get(format!("{gateway_url}/api/ccswitch/usage"))
+        .header("authorization", "Bearer sk-ccswitch-standalone")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["is_valid"], true);
+    assert_eq!(payload["remaining"], 2.5);
+    assert_eq!(payload["used"], 0.5);
+    assert_eq!(payload["wallet"]["wallet"]["id"], "wallet-standalone-1");
+    assert_eq!(payload["today"]["total_requests"], 1);
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
 async fn gateway_handles_wallet_today_cost_locally_without_proxying_upstream() {
     let auth_now = Utc::now();
     let usage_now = wallet_today_usage_test_time();
@@ -6397,6 +6560,70 @@ async fn gateway_handles_users_me_api_keys_locally_without_proxying_upstream() {
         .await
         .expect("json body should parse");
     assert_eq!(detail_payload["key"], "sk-user-live-1");
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_handles_users_me_client_config_locally_without_proxying_upstream() {
+    let now = Utc::now();
+    let user = sample_auth_user(now);
+    let _public_base_url_guard =
+        set_test_env_var("AETHER_PUBLIC_BASE_URL", "https://aether.example.com/");
+    let access_token = build_test_auth_token(
+        "access",
+        serde_json::Map::from_iter([
+            ("user_id".to_string(), json!(user.id)),
+            ("role".to_string(), json!(user.role)),
+            (
+                "created_at".to_string(),
+                json!(user.created_at.map(|value| value.to_rfc3339())),
+            ),
+            (
+                "session_id".to_string(),
+                json!("session-users-me-client-config"),
+            ),
+        ]),
+        now + chrono::Duration::hours(1),
+    );
+    let user_repository = Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![user]));
+
+    let (gateway_url, upstream_hits, gateway_handle, upstream_handle) =
+        start_auth_gateway_with_builder(|| {
+            let data_state =
+                crate::data::GatewayDataState::with_user_reader_for_tests(user_repository)
+                    .with_system_config_values_for_tests(vec![(
+                        "site_name".to_string(),
+                        json!("Aether Local"),
+                    )]);
+            AppState::new()
+                .expect("gateway should build")
+                .with_data_state_for_tests(data_state)
+                .with_auth_sessions_for_tests([sample_auth_session(
+                    "user-auth-1",
+                    "session-users-me-client-config",
+                    "device-users-me-client-config",
+                    "refresh-token-users-me-client-config",
+                    now,
+                )])
+        })
+        .await;
+
+    let response = reqwest::Client::new()
+        .get(format!("{gateway_url}/api/users/me/client-config"))
+        .header("authorization", format!("Bearer {access_token}"))
+        .header("x-client-device-id", "device-users-me-client-config")
+        .header("user-agent", "AetherTest/1.0")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["base_url"], "https://aether.example.com");
+    assert_eq!(payload["site_name"], "Aether Local");
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
 
     gateway_handle.abort();
