@@ -229,30 +229,47 @@ fn admin_pool_score_for_key(
         .filter(|score| score.is_finite())
 }
 
-fn admin_pool_sort_keys_for_request(keys: &mut [StoredProviderCatalogKey], sort: AdminPoolKeySort) {
+fn admin_pool_sort_keys_for_request(
+    state: &AdminAppState<'_>,
+    provider_type: &str,
+    keys: &mut [StoredProviderCatalogKey],
+    sort: AdminPoolKeySort,
+) {
     match sort.field {
-        AdminPoolKeySortField::Default => pool_selection::admin_pool_sort_keys(keys),
+        AdminPoolKeySortField::Default => {
+            pool_selection::admin_pool_sort_keys(state, provider_type, keys)
+        }
         AdminPoolKeySortField::ImportedAt => {
-            keys.sort_by(|left, right| {
-                admin_pool_compare_optional_unix_secs(
-                    left.created_at_unix_ms,
-                    right.created_at_unix_ms,
-                    sort.direction,
-                )
-                .then(left.name.cmp(&right.name))
-                .then(left.id.cmp(&right.id))
-            });
+            pool_selection::admin_pool_sort_keys_by_plan_then(
+                state,
+                provider_type,
+                keys,
+                |left, right| {
+                    admin_pool_compare_optional_unix_secs(
+                        left.created_at_unix_ms,
+                        right.created_at_unix_ms,
+                        sort.direction,
+                    )
+                    .then(left.name.cmp(&right.name))
+                    .then(left.id.cmp(&right.id))
+                },
+            );
         }
         AdminPoolKeySortField::LastUsedAt => {
-            keys.sort_by(|left, right| {
-                admin_pool_compare_optional_unix_secs(
-                    left.last_used_at_unix_secs,
-                    right.last_used_at_unix_secs,
-                    sort.direction,
-                )
-                .then(left.name.cmp(&right.name))
-                .then(left.id.cmp(&right.id))
-            });
+            pool_selection::admin_pool_sort_keys_by_plan_then(
+                state,
+                provider_type,
+                keys,
+                |left, right| {
+                    admin_pool_compare_optional_unix_secs(
+                        left.last_used_at_unix_secs,
+                        right.last_used_at_unix_secs,
+                        sort.direction,
+                    )
+                    .then(left.name.cmp(&right.name))
+                    .then(left.id.cmp(&right.id))
+                },
+            );
         }
         AdminPoolKeySortField::Score => {}
     }
@@ -629,7 +646,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
             admin_pool_sort_keys_by_score(&mut keys, &scores, sort.direction);
             Some(scores)
         } else {
-            admin_pool_sort_keys_for_request(&mut keys, sort);
+            admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
             None
         };
         let total = keys.len();
@@ -671,7 +688,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
             admin_pool_sort_keys_by_score(&mut keys, &scores, sort.direction);
             Some(scores)
         } else {
-            admin_pool_sort_keys_for_request(&mut keys, sort);
+            admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
             None
         };
         let total = keys.len();
