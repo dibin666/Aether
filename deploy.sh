@@ -17,7 +17,7 @@ CUSTOM_IMAGE_TAG=""
 AETHER_TUNNEL_MODE="${AETHER_TUNNEL_MODE:-source}"
 AETHER_TUNNEL_RELEASE_REPO="${AETHER_TUNNEL_RELEASE_REPO:-fawney19/Aether}"
 AETHER_TUNNEL_RELEASE_TAG="${AETHER_TUNNEL_RELEASE_TAG:-}"
-DOCKER_BUILD_CACHE="${DOCKER_BUILD_CACHE:-1}"
+DOCKER_BUILD_CACHE="${DOCKER_BUILD_CACHE:-0}"
 DOCKER_BUILD_CACHE_DIR="${DOCKER_BUILD_CACHE_DIR:-.docker-cache/app}"
 DOCKER_BUILD_CACHE_MODE="${DOCKER_BUILD_CACHE_MODE:-max}"
 export LOCAL_APP_IMAGE
@@ -37,7 +37,8 @@ Options:
                           release 模式下载的上游 tag，例如 tunnel-v0.3.13
   --tunnel-release-repo REPO
                           release 模式下载的仓库，默认 fawney19/Aether
-  --no-build-cache        禁用 Docker BuildKit 本地缓存导入/导出
+  --build-cache           启用 Docker BuildKit 本地缓存导入/导出
+  --no-build-cache        禁用 Docker BuildKit 本地缓存导入/导出，默认禁用
   --build-cache-dir DIR   Docker BuildKit 本地缓存目录，默认 .docker-cache/app
   -h, --help              显示帮助
 
@@ -48,7 +49,7 @@ Environment:
                            release 模式必填，例如 tunnel-v0.3.13
   AETHER_TUNNEL_RELEASE_REPO
                            release 模式下载仓库，默认 fawney19/Aether
-  DOCKER_BUILD_CACHE       是否启用 Docker BuildKit 本地缓存，默认 1；设为 0 禁用
+  DOCKER_BUILD_CACHE       是否启用 Docker BuildKit 本地缓存，默认 0；设为 1 启用
   DOCKER_BUILD_CACHE_DIR   Docker BuildKit 本地缓存目录，默认 .docker-cache/app
   DOCKER_BUILD_CACHE_MODE  缓存导出模式，默认 max；可设为 min/max
 EOF
@@ -155,6 +156,10 @@ while [ $# -gt 0 ]; do
             fi
             AETHER_TUNNEL_RELEASE_REPO="$2"
             shift 2
+            ;;
+        --build-cache)
+            DOCKER_BUILD_CACHE=1
+            shift
             ;;
         --no-build-cache)
             DOCKER_BUILD_CACHE=0
@@ -286,6 +291,30 @@ docker_build_cache_enabled() {
     esac
 }
 
+safe_remove_path() {
+    local path="$1"
+    if [ -z "$path" ] || [ "$path" = "/" ] || [ "$path" = "." ] || [ "$path" = ".." ]; then
+        echo "Refusing to remove unsafe path: ${path:-<empty>}"
+        exit 1
+    fi
+    rm -rf -- "$path"
+}
+
+cleanup_disabled_docker_build_cache() {
+    local cache_tmp="${DOCKER_BUILD_CACHE_DIR}.tmp"
+    if [ -e "$cache_tmp" ]; then
+        echo ">>> Removing stale Docker BuildKit cache temp dir: ${cache_tmp}"
+        safe_remove_path "$cache_tmp"
+    fi
+
+    docker_build_cache_enabled && return 0
+
+    if [ -e "$DOCKER_BUILD_CACHE_DIR" ]; then
+        echo ">>> Removing Docker BuildKit cache created by deploy.sh: ${DOCKER_BUILD_CACHE_DIR}"
+        safe_remove_path "$DOCKER_BUILD_CACHE_DIR"
+    fi
+}
+
 validate_docker_build_cache_mode() {
     case "${DOCKER_BUILD_CACHE_MODE}" in
         min|max) ;;
@@ -390,6 +419,8 @@ build_app() {
     apply_custom_tag
     save_code_hash
 }
+
+cleanup_disabled_docker_build_cache
 
 # 强制全部重建
 if [ "$FORCE_REBUILD_ALL" = true ]; then

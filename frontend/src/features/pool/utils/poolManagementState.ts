@@ -1,6 +1,7 @@
 export type PoolManagementStatus =
   | 'all'
   | 'available'
+  | 'quota_available'
   | 'cooldown'
   | 'inactive'
   | 'invalid'
@@ -79,6 +80,7 @@ function normalizeStatus(value: unknown): PoolManagementStatus {
   }
   if (
     value === 'available'
+    || value === 'quota_available'
     || value === 'cooldown'
     || value === 'inactive'
     || value === 'invalid'

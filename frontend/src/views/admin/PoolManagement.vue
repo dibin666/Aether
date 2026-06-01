@@ -1562,6 +1562,7 @@ import type {
   PoolOverviewItem,
   PoolKeyDetail,
   PoolKeysPageResponse,
+  PoolKeysQuery,
   PoolPresetMeta,
 } from '@/api/endpoints/pool'
 import type {
@@ -1691,6 +1692,7 @@ const providerDemandMetricSamples = ref<PoolDemandMetricSample[]>([])
 const poolKeyStatusFilterOptions: Array<{ value: PoolManagementViewState['status'], label: string }> = [
   { value: 'all', label: '全部状态' },
   { value: 'available', label: '可用' },
+  { value: 'quota_available', label: '有额度' },
   { value: 'cooldown', label: '冷却中' },
   { value: 'inactive', label: '已禁用' },
   { value: 'invalid', label: '已失效' },
@@ -2209,6 +2211,24 @@ const sortBy = ref<PoolManagementSortBy | null>(restoredViewState.sortBy)
 const sortOrder = ref<PoolManagementSortOrder>(restoredViewState.sortOrder)
 const poolStatsMode = ref<PoolManagementStatsMode>(restoredViewState.statsMode)
 const hasPoolKeyFilters = computed(() => searchQuery.value.trim().length > 0 || statusFilter.value !== 'all')
+
+function resolvePoolKeyQuickSelectors(status: PoolManagementViewState['status']): string[] {
+  if (status === 'quota_available') return ['quota_available']
+  if (status === 'quota_exhausted') return ['quota_exhausted']
+  return []
+}
+
+function resolvePoolKeyApiStatus(status: PoolManagementViewState['status']): PoolKeysQuery['status'] {
+  if (status === 'quota_available' || status === 'quota_exhausted') return 'all'
+  return status
+}
+
+const poolKeyQuickSelectors = computed(() => {
+  return resolvePoolKeyQuickSelectors(statusFilter.value)
+})
+const poolKeyApiStatus = computed(() => {
+  return resolvePoolKeyApiStatus(statusFilter.value)
+})
 const MANUAL_QUOTA_REFRESH_COOLDOWN_SECONDS = 5 * 60
 const refreshingOAuthKeyId = ref<string | null>(null)
 const resettingCycleKeyId = ref<string | null>(null)
@@ -2674,7 +2694,8 @@ async function loadKeys(options: { cacheTtlMs?: number } = {}) {
   const page = currentPage.value
   const pageSizeValue = pageSize.value
   const search = searchQuery.value || undefined
-  const status = statusFilter.value
+  const status = poolKeyApiStatus.value
+  const quickSelectors = poolKeyQuickSelectors.value
   const sortByValue = sortBy.value || undefined
   keysLoading.value = true
   try {
@@ -2683,6 +2704,7 @@ async function loadKeys(options: { cacheTtlMs?: number } = {}) {
       page_size: pageSizeValue,
       search,
       status,
+      quick_selectors: quickSelectors,
       sort_by: sortByValue || undefined,
       sort_order: sortByValue ? sortOrder.value : undefined,
     }, {
