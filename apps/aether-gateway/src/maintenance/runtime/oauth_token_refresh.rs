@@ -397,11 +397,10 @@ pub(crate) async fn perform_oauth_token_refresh_once(
         let mut provider_selected = 0usize;
         for key in provider_keys {
             summary.scanned = summary.scanned.saturating_add(1);
-            if !oauth_refresh_candidate(&provider, key, refresh_cutoff_unix_secs) {
+            if !oauth_refresh_candidate(&provider, key) {
                 summary.skipped = summary.skipped.saturating_add(1);
                 continue;
             }
-            summary.eligible = summary.eligible.saturating_add(1);
 
             let Some(endpoint) = provider_oauth_maintenance_endpoint_for_provider(
                 &provider.provider_type,
@@ -418,10 +417,20 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 summary.skipped = summary.skipped.saturating_add(1);
                 continue;
             };
-            if !auth_config_has_refresh_token(transport.key.decrypted_auth_config.as_deref()) {
+            let decrypted_auth_config = transport.key.decrypted_auth_config.as_deref();
+            if !auth_config_has_refresh_token(decrypted_auth_config) {
                 summary.skipped = summary.skipped.saturating_add(1);
                 continue;
             }
+            if !oauth_refresh_due_for_cutoff(
+                key,
+                decrypted_auth_config,
+                refresh_cutoff_unix_secs,
+            ) {
+                summary.skipped = summary.skipped.saturating_add(1);
+                continue;
+            }
+            summary.eligible = summary.eligible.saturating_add(1);
 
             candidates.push(OAuthTokenRefreshCandidate {
                 provider_id: provider.id.clone(),
@@ -711,7 +720,6 @@ fn group_keys_by_provider(
 fn oauth_refresh_candidate(
     provider: &StoredProviderCatalogProvider,
     key: &StoredProviderCatalogKey,
-    refresh_cutoff_unix_secs: u64,
 ) -> bool {
     key.is_active
         && oauth_invalid_state_allows_refresh(key)
@@ -720,10 +728,59 @@ fn oauth_refresh_candidate(
             .as_deref()
             .map(str::trim)
             .is_some_and(|value| !value.is_empty())
-        && key
-            .expires_at_unix_secs
-            .is_some_and(|expires_at| expires_at <= refresh_cutoff_unix_secs)
         && provider_key_is_oauth_managed(key, provider.provider_type.as_str())
+}
+
+fn oauth_refresh_due_for_cutoff(
+    key: &StoredProviderCatalogKey,
+    auth_config: Option<&str>,
+    refresh_cutoff_unix_secs: u64,
+) -> bool {
+    oauth_refresh_expires_at_unix_secs(key, auth_config)
+        .is_some_and(|expires_at| expires_at <= refresh_cutoff_unix_secs)
+}
+
+fn oauth_refresh_expires_at_unix_secs(
+    key: &StoredProviderCatalogKey,
+    auth_config: Option<&str>,
+) -> Option<u64> {
+    if key.expires_at_unix_secs.is_some() {
+        return key.expires_at_unix_secs;
+    }
+
+    let value = auth_config
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|auth_config| serde_json::from_str::<Value>(auth_config).ok())?;
+    let object = value.as_object()?;
+    for field in ["expires_at", "expiresAt", "expiry", "exp"] {
+        if let Some(expires_at) = json_u64(object.get(field)) {
+            return Some(expires_at);
+        }
+    }
+    None
+}
+
+fn json_u64(value: Option<&Value>) -> Option<u64> {
+    let value = value?;
+    if value.is_null() {
+        return None;
+    }
+    value
+        .as_u64()
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|number| number.is_finite() && *number >= 0.0)
+                .map(|number| number as u64)
+        })
+        .or_else(|| {
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|raw| !raw.is_empty())
+                .and_then(|raw| raw.parse::<u64>().ok())
+        })
 }
 
 fn oauth_invalid_state_allows_refresh(key: &StoredProviderCatalogKey) -> bool {
@@ -792,7 +849,10 @@ fn now_unix_secs() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{oauth_refresh_candidate, StoredProviderCatalogKey, StoredProviderCatalogProvider};
+    use super::{
+        oauth_refresh_candidate, oauth_refresh_due_for_cutoff, StoredProviderCatalogKey,
+        StoredProviderCatalogProvider,
+    };
 
     fn sample_provider() -> StoredProviderCatalogProvider {
         StoredProviderCatalogProvider::new(
@@ -835,7 +895,7 @@ mod tests {
         key.oauth_invalid_at_unix_secs = Some(90);
         key.oauth_invalid_reason = Some("[OAUTH_EXPIRED] access token invalid".to_string());
 
-        assert!(oauth_refresh_candidate(&provider, &key, 120));
+        assert!(oauth_refresh_candidate(&provider, &key));
     }
 
     #[test]
@@ -846,6 +906,24 @@ mod tests {
         key.oauth_invalid_reason =
             Some("[REFRESH_FAILED] Token 续期失败 (401): refresh_token 无效".to_string());
 
-        assert!(!oauth_refresh_candidate(&provider, &key, 120));
+        assert!(!oauth_refresh_candidate(&provider, &key));
+    }
+
+    #[test]
+    fn oauth_refresh_due_uses_decrypted_auth_config_expiry_fallback() {
+        let mut key = sample_oauth_key();
+        key.expires_at_unix_secs = None;
+        let auth_config = r#"{"refresh_token":"refresh-token","expires_at":100}"#;
+
+        assert!(oauth_refresh_due_for_cutoff(&key, Some(auth_config), 120));
+    }
+
+    #[test]
+    fn oauth_refresh_due_prefers_catalog_expiry_over_auth_config() {
+        let mut key = sample_oauth_key();
+        key.expires_at_unix_secs = Some(300);
+        let auth_config = r#"{"refresh_token":"refresh-token","expires_at":100}"#;
+
+        assert!(!oauth_refresh_due_for_cutoff(&key, Some(auth_config), 120));
     }
 }
