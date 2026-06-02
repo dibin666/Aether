@@ -113,6 +113,18 @@
                 variant="ghost"
                 size="icon"
                 class="h-8 w-8 shrink-0"
+                data-testid="pool-refresh-worker-button"
+                title="自动刷新配置和日志"
+                @click="openRefreshWorkerDialog"
+              >
+                <History class="w-3.5 h-3.5" />
+              </Button>
+            </div>
+            <div class="min-w-0 flex-1 flex justify-center">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="h-8 w-8 shrink-0"
                 title="账号批量操作"
                 @click="showAccountBatchDialog = true"
               >
@@ -313,6 +325,16 @@
               @click="showDemandMetricsDialog = true"
             >
               <Activity class="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-8 w-8"
+              data-testid="pool-refresh-worker-button"
+              title="自动刷新配置和日志"
+              @click="openRefreshWorkerDialog"
+            >
+              <History class="w-3.5 h-3.5" />
             </Button>
             <Button
               v-if="selectedProviderId"
@@ -1405,6 +1427,205 @@
     </Card>
 
     <!-- Dialogs -->
+    <Dialog
+      v-if="showRefreshWorkerDialog"
+      :model-value="showRefreshWorkerDialog"
+      :no-padding="true"
+      size="5xl"
+      @update:model-value="showRefreshWorkerDialog = $event"
+    >
+      <template #header>
+        <div class="border-b border-border px-4 py-4 sm:px-6">
+          <div class="flex items-start gap-3">
+            <div class="min-w-0 flex-1">
+              <h3 class="text-lg font-semibold leading-tight text-foreground">
+                自动刷新
+              </h3>
+              <p class="text-xs text-muted-foreground">
+                OAuth 与额度后台任务
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="h-8 w-8 shrink-0"
+              title="关闭"
+              @click="showRefreshWorkerDialog = false"
+            >
+              <X class="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      </template>
+
+      <div class="grid max-h-[calc(100dvh-13rem)] overflow-y-auto overscroll-contain lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)] lg:overflow-hidden">
+        <section class="border-b border-border/60 p-4 sm:p-6 lg:border-b-0 lg:border-r">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-sm font-semibold">
+              OAuth 配置
+            </h3>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="refreshWorkerSettingsLoading || refreshWorkerSettingsSaving"
+              @click="loadRefreshWorkerSettings"
+            >
+              <RefreshCw class="mr-1.5 h-3.5 w-3.5" />
+              读取配置
+            </Button>
+          </div>
+
+          <div class="mt-4 grid gap-3 sm:grid-cols-2">
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">提前刷新（秒）</label>
+              <Input
+                :model-value="refreshWorkerSettings.lookaheadSeconds"
+                type="number"
+                min="0"
+                class="h-9"
+                @update:model-value="(value) => refreshWorkerSettings.lookaheadSeconds = Number(value || 0)"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">扫描间隔（秒）</label>
+              <Input
+                :model-value="refreshWorkerSettings.intervalSeconds"
+                type="number"
+                min="15"
+                class="h-9"
+                @update:model-value="(value) => refreshWorkerSettings.intervalSeconds = Number(value || 0)"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">并发（账号）</label>
+              <Input
+                :model-value="refreshWorkerSettings.concurrency"
+                type="number"
+                min="1"
+                max="64"
+                class="h-9"
+                @update:model-value="(value) => refreshWorkerSettings.concurrency = Number(value || 0)"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <label class="text-xs font-medium text-muted-foreground">每轮最多（账号）</label>
+              <Input
+                :model-value="refreshWorkerSettings.maxPerRun"
+                type="number"
+                min="1"
+                max="10000"
+                class="h-9"
+                @update:model-value="(value) => refreshWorkerSettings.maxPerRun = Number(value || 0)"
+              />
+            </div>
+            <div class="space-y-1.5 sm:col-span-2">
+              <label class="text-xs font-medium text-muted-foreground">OAuth 代理</label>
+              <Select v-model="oauthRefreshProxySelectValue">
+                <SelectTrigger class="h-9 border-border/60">
+                  <SelectValue placeholder="选择代理" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="OAUTH_PROXY_AUTO_VALUE">
+                    跟随账号/系统
+                  </SelectItem>
+                  <SelectItem :value="OAUTH_PROXY_DIRECT_VALUE">
+                    直连
+                  </SelectItem>
+                  <SelectItem
+                    v-for="node in proxyNodesStore.onlineNodes"
+                    :key="node.id"
+                    :value="node.id"
+                  >
+                    {{ node.name }}{{ node.region ? ` · ${node.region}` : '' }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </section>
+
+        <section class="min-h-[24rem] p-4 sm:p-6">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-sm font-semibold">
+              刷新日志
+            </h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              class="h-8 px-2"
+              :disabled="refreshWorkerLogsLoading"
+              @click="loadRefreshWorkerLogs"
+            >
+              <RefreshCw
+                class="h-3.5 w-3.5"
+                :class="{ 'animate-spin': refreshWorkerLogsLoading }"
+              />
+            </Button>
+          </div>
+
+          <div class="mt-4 max-h-[min(62vh,34rem)] overflow-auto rounded-lg border border-border/60 bg-muted/10">
+            <div
+              v-if="refreshWorkerLogsLoading"
+              class="py-10 text-center text-xs text-muted-foreground"
+            >
+              加载中...
+            </div>
+            <div
+              v-else-if="refreshWorkerLogs.length === 0"
+              class="py-10 text-center text-xs text-muted-foreground"
+            >
+              暂无日志
+            </div>
+            <template v-else>
+              <div
+                v-for="item in refreshWorkerLogs"
+                :key="item.id"
+                class="border-b border-border/50 px-3 py-2.5 last:border-b-0"
+              >
+                <div class="flex items-start justify-between gap-3 text-xs">
+                  <div class="min-w-0">
+                    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span class="font-medium text-foreground">{{ refreshTaskLabel(item.taskKey) }}</span>
+                      <span class="text-foreground/90">{{ refreshLogSubject(item) }}</span>
+                      <Badge
+                        variant="outline"
+                        class="h-5 px-1.5 py-0 text-[11px]"
+                        :class="refreshLogStatusClass(item)"
+                      >
+                        {{ refreshLogStatusLabel(item) }}
+                      </Badge>
+                    </div>
+                    <div class="mt-1 truncate text-xs text-muted-foreground">
+                      {{ refreshLogDetail(item) }}
+                    </div>
+                  </div>
+                  <span class="shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
+                    {{ formatBrowserDateTime(item.createdAt) }}
+                  </span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </section>
+      </div>
+
+      <template #footer>
+        <Button
+          variant="outline"
+          class="min-w-[96px]"
+          @click="showRefreshWorkerDialog = false"
+        >
+          关闭
+        </Button>
+        <Button
+          class="min-w-[96px]"
+          :disabled="refreshWorkerSettingsSaving"
+          @click="saveRefreshWorkerSettings"
+        >
+          保存
+        </Button>
+      </template>
+    </Dialog>
     <OAuthAccountDialog
       v-if="selectedProviderId"
       :open="showImportDialog"
@@ -1493,6 +1714,7 @@ import {
   Upload,
   ChevronDown,
   RefreshCw,
+  History,
   Activity,
   Power,
   Database,
@@ -1511,10 +1733,12 @@ import {
   CircleHelp,
   Edit,
   Plug,
+  X,
 } from 'lucide-vue-next'
 
 import {
   Card,
+  Dialog,
   Badge,
   Button,
   Input,
@@ -1574,6 +1798,8 @@ import type {
 } from '@/api/endpoints/types/provider'
 import type { QuotaStatusSnapshot, QuotaWindowSnapshot } from '@/api/endpoints/types'
 import { getProvider, getProviderEndpoints, updateProvider } from '@/api/endpoints'
+import { adminApi } from '@/api/admin'
+import { asyncTasksApi, type AsyncTaskEvent } from '@/api/async-tasks'
 import { useProxyNodesStore } from '@/stores/proxy-nodes'
 import PoolSchedulingDialog from '@/features/pool/components/PoolSchedulingDialog.vue'
 import PoolAdvancedDialog from '@/features/pool/components/PoolAdvancedDialog.vue'
@@ -1643,6 +1869,328 @@ const { copyToClipboard } = useClipboard()
 const { tick: countdownTick, start: startCountdownTimer } = useCountdownTimer()
 const proxyNodesStore = useProxyNodesStore()
 const { getQueryValue, patchQuery } = useRouteQuery()
+
+interface RefreshWorkerSettings {
+  lookaheadSeconds: number
+  intervalSeconds: number
+  concurrency: number
+  maxPerRun: number
+  proxyNodeId: string
+}
+
+interface PoolRefreshLogItem {
+  id: string
+  taskKey: string
+  eventType: string
+  message: string
+  createdAt: string
+  payload: unknown
+  providerName?: string
+  keyId?: string
+  keyName?: string
+  status?: string
+  detail?: string
+}
+
+const DEFAULT_REFRESH_WORKER_SETTINGS: RefreshWorkerSettings = {
+  lookaheadSeconds: 120,
+  intervalSeconds: 60,
+  concurrency: 4,
+  maxPerRun: 50,
+  proxyNodeId: '',
+}
+const OAUTH_REFRESH_CONFIG_KEYS = {
+  lookaheadSeconds: 'oauth_token_refresh_lookahead_seconds',
+  intervalSeconds: 'oauth_token_refresh_interval_seconds',
+  concurrency: 'oauth_token_refresh_concurrency',
+  maxPerRun: 'oauth_token_refresh_max_per_run',
+  proxyNodeId: 'oauth_token_refresh_proxy_node_id',
+} as const
+const REFRESH_TASK_KEYS = [
+  'maintenance.oauth.token.refresh',
+  'pool.quota.probe.worker',
+] as const
+const OAUTH_PROXY_AUTO_VALUE = '__auto'
+const OAUTH_PROXY_DIRECT_VALUE = 'direct'
+
+const showRefreshWorkerDialog = ref(false)
+const refreshWorkerSettings = ref<RefreshWorkerSettings>({
+  ...DEFAULT_REFRESH_WORKER_SETTINGS,
+})
+const refreshWorkerSettingsLoading = ref(false)
+const refreshWorkerSettingsSaving = ref(false)
+const refreshWorkerLogs = ref<PoolRefreshLogItem[]>([])
+const refreshWorkerLogsLoading = ref(false)
+
+const oauthRefreshProxySelectValue = computed({
+  get: () => refreshWorkerSettings.value.proxyNodeId || OAUTH_PROXY_AUTO_VALUE,
+  set: (value: string) => {
+    refreshWorkerSettings.value.proxyNodeId = value === OAUTH_PROXY_AUTO_VALUE ? '' : value
+  },
+})
+
+function configNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function configString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+async function loadRefreshWorkerSettings() {
+  refreshWorkerSettingsLoading.value = true
+  try {
+    const configs = await adminApi.getAllSystemConfigs()
+    const valuesByKey = new Map(configs.map(item => [item.key, item.value]))
+    const configValue = (key: string, fallback: unknown) => (
+      valuesByKey.has(key) ? valuesByKey.get(key) : fallback
+    )
+    refreshWorkerSettings.value = {
+      lookaheadSeconds: configNumber(
+        configValue(
+          OAUTH_REFRESH_CONFIG_KEYS.lookaheadSeconds,
+          DEFAULT_REFRESH_WORKER_SETTINGS.lookaheadSeconds,
+        ),
+        DEFAULT_REFRESH_WORKER_SETTINGS.lookaheadSeconds,
+      ),
+      intervalSeconds: configNumber(
+        configValue(
+          OAUTH_REFRESH_CONFIG_KEYS.intervalSeconds,
+          DEFAULT_REFRESH_WORKER_SETTINGS.intervalSeconds,
+        ),
+        DEFAULT_REFRESH_WORKER_SETTINGS.intervalSeconds,
+      ),
+      concurrency: configNumber(
+        configValue(
+          OAUTH_REFRESH_CONFIG_KEYS.concurrency,
+          DEFAULT_REFRESH_WORKER_SETTINGS.concurrency,
+        ),
+        DEFAULT_REFRESH_WORKER_SETTINGS.concurrency,
+      ),
+      maxPerRun: configNumber(
+        configValue(
+          OAUTH_REFRESH_CONFIG_KEYS.maxPerRun,
+          DEFAULT_REFRESH_WORKER_SETTINGS.maxPerRun,
+        ),
+        DEFAULT_REFRESH_WORKER_SETTINGS.maxPerRun,
+      ),
+      proxyNodeId: configString(
+        configValue(
+          OAUTH_REFRESH_CONFIG_KEYS.proxyNodeId,
+          DEFAULT_REFRESH_WORKER_SETTINGS.proxyNodeId,
+        ),
+      ),
+    }
+  } catch (err) {
+    showError(parseApiError(err, '加载刷新配置失败'))
+  } finally {
+    refreshWorkerSettingsLoading.value = false
+  }
+}
+
+async function saveRefreshWorkerSettings() {
+  refreshWorkerSettingsSaving.value = true
+  try {
+    const settings = refreshWorkerSettings.value
+    const normalized: RefreshWorkerSettings = {
+      lookaheadSeconds: Math.max(0, Math.floor(configNumber(settings.lookaheadSeconds, 120))),
+      intervalSeconds: Math.max(15, Math.floor(configNumber(settings.intervalSeconds, 60))),
+      concurrency: Math.min(64, Math.max(1, Math.floor(configNumber(settings.concurrency, 4)))),
+      maxPerRun: Math.min(10000, Math.max(1, Math.floor(configNumber(settings.maxPerRun, 50)))),
+      proxyNodeId: configString(settings.proxyNodeId),
+    }
+    await Promise.all([
+      adminApi.updateSystemConfig(
+        OAUTH_REFRESH_CONFIG_KEYS.lookaheadSeconds,
+        normalized.lookaheadSeconds,
+        'OAuth 自动刷新提前量（秒）',
+      ),
+      adminApi.updateSystemConfig(
+        OAUTH_REFRESH_CONFIG_KEYS.intervalSeconds,
+        normalized.intervalSeconds,
+        'OAuth 自动刷新扫描间隔（秒）',
+      ),
+      adminApi.updateSystemConfig(
+        OAUTH_REFRESH_CONFIG_KEYS.concurrency,
+        normalized.concurrency,
+        'OAuth 自动刷新并发数',
+      ),
+      adminApi.updateSystemConfig(
+        OAUTH_REFRESH_CONFIG_KEYS.maxPerRun,
+        normalized.maxPerRun,
+        'OAuth 自动刷新每轮最多处理账号数',
+      ),
+      adminApi.updateSystemConfig(
+        OAUTH_REFRESH_CONFIG_KEYS.proxyNodeId,
+        normalized.proxyNodeId,
+        'OAuth 自动刷新代理节点；为空时跟随账号、端点、Provider 或系统代理',
+      ),
+    ])
+    refreshWorkerSettings.value = normalized
+    success('刷新配置已保存')
+  } catch (err) {
+    showError(parseApiError(err, '保存刷新配置失败'))
+  } finally {
+    refreshWorkerSettingsSaving.value = false
+  }
+}
+
+function refreshTaskLabel(taskKey: string): string {
+  if (taskKey === 'maintenance.oauth.token.refresh') return 'OAuth'
+  if (taskKey === 'pool.quota.probe.worker') return '额度'
+  return taskKey
+}
+
+function eventLabel(eventType: string): string {
+  if (!eventType) return '事件'
+  const normalized = eventType.toLowerCase()
+  if (normalized.includes('success') || normalized.includes('refreshed')) return '成功'
+  if (normalized.includes('fail') || normalized.includes('error')) return '失败'
+  if (normalized.includes('skip')) return '跳过'
+  if (normalized.includes('check')) return '已检查'
+  if (normalized.includes('boot')) return '启动'
+  return eventType
+}
+
+function payloadRecord(payload: unknown): Record<string, unknown> | null {
+  return payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : null
+}
+
+function payloadString(payload: Record<string, unknown> | null, key: string): string {
+  const value = payload?.[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function payloadNumber(payload: Record<string, unknown> | null, key: string): number | null {
+  const value = payload?.[key]
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function formatRefreshLogPayload(payload: unknown): string {
+  const record = payloadRecord(payload)
+  if (!record) return ''
+
+  const parts: string[] = []
+  const displayKeys = ['provider_name', 'key_name', 'status', 'reason', 'message']
+  for (const key of displayKeys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) {
+      parts.push(value.trim())
+    }
+  }
+  const statusCode = payloadNumber(record, 'status_code')
+  if (statusCode !== null) parts.push(`HTTP ${statusCode}`)
+  const error = payloadString(record, 'error')
+  if (error) parts.push(error)
+  return Array.from(new Set(parts)).join(' · ')
+}
+
+function buildRefreshLogItem(taskKey: string, event: AsyncTaskEvent): PoolRefreshLogItem {
+  const payload = payloadRecord(event.payload)
+  const detail = payloadString(payload, 'message')
+    || payloadString(payload, 'error')
+    || formatRefreshLogPayload(event.payload)
+    || event.message
+  return {
+    id: `${taskKey}:${event.id}`,
+    taskKey,
+    eventType: event.event_type,
+    message: event.message,
+    createdAt: event.created_at,
+    payload: event.payload,
+    providerName: payloadString(payload, 'provider_name'),
+    keyId: payloadString(payload, 'key_id'),
+    keyName: payloadString(payload, 'key_name'),
+    status: payloadString(payload, 'status'),
+    detail,
+  }
+}
+
+function refreshLogSubject(item: PoolRefreshLogItem): string {
+  const accountName = item.keyName || (item.keyId ? `Key ${item.keyId.slice(0, 8)}` : '')
+  if (accountName && item.providerName) return `${item.providerName} / ${accountName}`
+  return accountName || item.providerName || '后台任务'
+}
+
+function refreshLogStatusLabel(item: PoolRefreshLogItem): string {
+  const status = item.status?.trim()
+  if (status === 'refreshed') return '已刷新'
+  if (status === 'checked') return '已检查'
+  if (status === 'skipped') return '跳过'
+  if (status === 'success') return '成功'
+  if (status === 'failed' || status === 'error' || status === 'worker_error' || status === 'missing_result') return '失败'
+  if (status === 'auto_removed') return '已删除'
+  return eventLabel(item.eventType)
+}
+
+function refreshLogStatusClass(item: PoolRefreshLogItem): string {
+  const label = refreshLogStatusLabel(item)
+  if (label === '失败' || label === '已删除') {
+    return 'border-destructive/30 bg-destructive/10 text-destructive'
+  }
+  if (label === '跳过') {
+    return 'border-border/60 bg-muted text-muted-foreground'
+  }
+  return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+}
+
+function refreshLogDetail(item: PoolRefreshLogItem): string {
+  const payload = payloadRecord(item.payload)
+  const statusCode = payloadNumber(payload, 'status_code')
+  const reason = payloadString(payload, 'reason')
+  const autoRemoved = payload?.auto_removed === true ? '已自动删除' : ''
+  const parts = [item.detail || formatRefreshLogPayload(item.payload) || item.message]
+  if (statusCode !== null) parts.push(`HTTP ${statusCode}`)
+  if (reason) parts.push(reason)
+  if (autoRemoved) parts.push(autoRemoved)
+  return parts.filter(Boolean).join(' · ')
+}
+
+function formatBrowserDateTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
+async function loadRefreshWorkerLogs() {
+  refreshWorkerLogsLoading.value = true
+  try {
+    const eventGroups = await Promise.all(REFRESH_TASK_KEYS.map(async (taskKey) => {
+      const runs = await asyncTasksApi.list({ task_key: taskKey, page_size: 1 })
+      const run = runs.items[0]
+      if (!run) return []
+      const events = await asyncTasksApi.getEvents(run.id, { page_size: 100 })
+      return events.items.map((event: AsyncTaskEvent) => buildRefreshLogItem(taskKey, event))
+    }))
+    refreshWorkerLogs.value = eventGroups
+      .flat()
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, 60)
+  } catch (err) {
+    showError(parseApiError(err, '加载刷新日志失败'))
+  } finally {
+    refreshWorkerLogsLoading.value = false
+  }
+}
+
+async function openRefreshWorkerDialog() {
+  showRefreshWorkerDialog.value = true
+  await Promise.allSettled([
+    proxyNodesStore.ensureLoaded(),
+    loadRefreshWorkerSettings(),
+    loadRefreshWorkerLogs(),
+  ])
+}
 
 const poolManagementViewStorage = typeof window === 'undefined' ? undefined : window.sessionStorage
 const restoredViewState = readPoolManagementViewState(
@@ -2049,7 +2597,7 @@ const selectedProviderDemandMetaText = computed(() => {
   const hotCount = Number(overview.provider_hot_count ?? 0)
   const inFlight = Number(overview.provider_in_flight ?? 0)
   if (Number.isFinite(desiredHot) && desiredHot > 0) {
-    segments.push(`热池 ${hotCount} / ${desiredHot}`)
+    segments.push(`热池 ${hotCount}/${desiredHot}`)
     segments.push(`EMA ${formatDemandEma(overview.provider_ema_in_flight)}`)
   }
   if (Number.isFinite(inFlight) && inFlight > 0) {
