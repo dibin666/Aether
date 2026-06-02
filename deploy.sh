@@ -22,6 +22,23 @@ DOCKER_BUILD_CACHE_DIR="${DOCKER_BUILD_CACHE_DIR:-.docker-cache/app}"
 DOCKER_BUILD_CACHE_MODE="${DOCKER_BUILD_CACHE_MODE:-max}"
 export LOCAL_APP_IMAGE
 
+detect_build_version() {
+    if command -v git >/dev/null 2>&1; then
+        local version
+        if version=$(git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null); then
+            if [ -n "$version" ]; then
+                printf '%s\n' "$version"
+                return 0
+            fi
+        fi
+    fi
+
+    printf 'local-%s\n' "$(date -u +%Y%m%d%H%M%S)"
+}
+
+AETHER_BUILD_VERSION="${AETHER_BUILD_VERSION:-$(detect_build_version)}"
+export AETHER_BUILD_VERSION
+
 # 缓存文件
 CODE_HASH_FILE=".code-hash"
 
@@ -44,6 +61,7 @@ Options:
 
 Environment:
   LOCAL_APP_IMAGE          本地构建镜像名，默认 aether-app:latest
+  AETHER_BUILD_VERSION     应用显示版本，默认 git describe --tags --match 'v[0-9]*' --always --dirty
   AETHER_TUNNEL_MODE       source 从当前源码构建；release 下载上游二进制；none 不打包
   AETHER_TUNNEL_RELEASE_TAG
                            release 模式必填，例如 tunnel-v0.3.13
@@ -103,6 +121,7 @@ validate_tunnel_mode() {
 print_result() {
     echo ">>> Done!"
     echo ">>> Built image: ${LOCAL_APP_IMAGE}"
+    echo ">>> Build version: ${AETHER_BUILD_VERSION}"
     echo ">>> Aether tunnel mode: ${AETHER_TUNNEL_MODE}"
     if [ "$AETHER_TUNNEL_MODE" = "release" ]; then
         echo ">>> Aether tunnel release: ${AETHER_TUNNEL_RELEASE_REPO}@${AETHER_TUNNEL_RELEASE_TAG}"
@@ -233,6 +252,7 @@ emit_tree_for_hash() {
 # 计算代码文件的哈希值
 calc_code_hash() {
     {
+        emit_value_for_hash AETHER_BUILD_VERSION "$AETHER_BUILD_VERSION"
         emit_value_for_hash AETHER_TUNNEL_MODE "$AETHER_TUNNEL_MODE"
         emit_value_for_hash AETHER_TUNNEL_RELEASE_REPO "$AETHER_TUNNEL_RELEASE_REPO"
         emit_value_for_hash AETHER_TUNNEL_RELEASE_TAG "$AETHER_TUNNEL_RELEASE_TAG"
@@ -399,8 +419,10 @@ promote_docker_build_cache() {
 build_app() {
     require_file Dockerfile.app.local
     echo ">>> Building app image: $LOCAL_APP_IMAGE"
+    echo ">>> Build version: $AETHER_BUILD_VERSION"
     local build_args=(
         --build-arg "BUILDKIT_INLINE_CACHE=1"
+        --build-arg "AETHER_BUILD_VERSION=${AETHER_BUILD_VERSION}"
         --build-arg "AETHER_TUNNEL_MODE=${AETHER_TUNNEL_MODE}"
         --build-arg "AETHER_TUNNEL_RELEASE_REPO=${AETHER_TUNNEL_RELEASE_REPO}"
         --build-arg "AETHER_TUNNEL_RELEASE_TAG=${AETHER_TUNNEL_RELEASE_TAG}"
