@@ -1461,9 +1461,14 @@
       <div class="grid max-h-[calc(100dvh-13rem)] overflow-y-auto overscroll-contain lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)] lg:overflow-hidden">
         <section class="border-b border-border/60 p-4 sm:p-6 lg:border-b-0 lg:border-r">
           <div class="flex items-center justify-between gap-3">
-            <h3 class="text-sm font-semibold">
-              OAuth 配置
-            </h3>
+            <div class="min-w-0">
+              <h3 class="text-sm font-semibold">
+                OAuth 自动刷新
+              </h3>
+              <p class="mt-0.5 text-xs text-muted-foreground">
+                Token 到期前自动续期，保存后在下一轮扫描生效
+              </p>
+            </div>
             <Button
               variant="outline"
               size="sm"
@@ -1542,13 +1547,27 @@
               </Select>
             </div>
           </div>
+
+          <div class="mt-4 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+            <div class="font-medium text-foreground">
+              额度自动刷新
+            </div>
+            <p class="mt-1 leading-5">
+              额度由号池探测器按热池需求和配额过期时间自动刷新；右侧日志会优先显示最新账号级结果，汇总行显示本轮成功、失败与自动删除数量。
+            </p>
+          </div>
         </section>
 
         <section class="min-h-[24rem] p-4 sm:p-6">
           <div class="flex items-center justify-between gap-3">
-            <h3 class="text-sm font-semibold">
-              刷新日志
-            </h3>
+            <div class="min-w-0">
+              <h3 class="text-sm font-semibold">
+                刷新日志
+              </h3>
+              <p class="mt-0.5 text-xs text-muted-foreground">
+                最新 OAuth 与额度账号级明细
+              </p>
+            </div>
             <Button
               variant="ghost"
               size="sm"
@@ -1586,7 +1605,10 @@
                   <div class="min-w-0">
                     <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span class="font-medium text-foreground">{{ refreshTaskLabel(item.taskKey) }}</span>
-                      <span class="text-foreground/90">{{ refreshLogSubject(item) }}</span>
+                      <span
+                        class="text-foreground/90"
+                        :title="refreshLogSubject(item)"
+                      >{{ refreshLogSubject(item) }}</span>
                       <Badge
                         variant="outline"
                         class="h-5 px-1.5 py-0 text-[11px]"
@@ -1595,7 +1617,10 @@
                         {{ refreshLogStatusLabel(item) }}
                       </Badge>
                     </div>
-                    <div class="mt-1 truncate text-xs text-muted-foreground">
+                    <div
+                      class="mt-1 break-words text-xs text-muted-foreground"
+                      :title="refreshLogDetail(item)"
+                    >
                       {{ refreshLogDetail(item) }}
                     </div>
                   </div>
@@ -2045,6 +2070,7 @@ function refreshTaskLabel(taskKey: string): string {
 function eventLabel(eventType: string): string {
   if (!eventType) return '事件'
   const normalized = eventType.toLowerCase()
+  if (normalized.includes('completed')) return '完成'
   if (normalized.includes('success') || normalized.includes('refreshed')) return '成功'
   if (normalized.includes('fail') || normalized.includes('error')) return '失败'
   if (normalized.includes('skip')) return '跳过'
@@ -2070,6 +2096,38 @@ function payloadNumber(payload: Record<string, unknown> | null, key: string): nu
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function appendPayloadCount(
+  parts: string[],
+  payload: Record<string, unknown>,
+  key: string,
+  label: string,
+): void {
+  const value = payloadNumber(payload, key)
+  if (value !== null) parts.push(`${label} ${value}`)
+}
+
+function formatRefreshLogSummary(payload: Record<string, unknown>): string {
+  const parts: string[] = []
+
+  appendPayloadCount(parts, payload, 'selected_keys', '账号')
+  appendPayloadCount(parts, payload, 'succeeded', '成功')
+  appendPayloadCount(parts, payload, 'failed', '失败')
+  appendPayloadCount(parts, payload, 'auto_removed', '自动删除')
+  appendPayloadCount(parts, payload, 'scanned', '扫描')
+  appendPayloadCount(parts, payload, 'eligible', '待刷新')
+  appendPayloadCount(parts, payload, 'refreshed', '已刷新')
+  appendPayloadCount(parts, payload, 'resolved', '已确认')
+  appendPayloadCount(parts, payload, 'skipped', '跳过')
+
+  const accountEventsRecorded = payloadNumber(payload, 'account_events_recorded')
+  const accountEventLimit = payloadNumber(payload, 'account_event_limit')
+  if (accountEventsRecorded !== null && accountEventLimit !== null) {
+    parts.push(`账号日志 ${accountEventsRecorded}/${accountEventLimit}`)
+  }
+
+  return parts.join(' · ')
+}
+
 function formatRefreshLogPayload(payload: unknown): string {
   const record = payloadRecord(payload)
   if (!record) return ''
@@ -2084,6 +2142,8 @@ function formatRefreshLogPayload(payload: unknown): string {
   }
   const statusCode = payloadNumber(record, 'status_code')
   if (statusCode !== null) parts.push(`HTTP ${statusCode}`)
+  const summary = formatRefreshLogSummary(record)
+  if (summary) parts.push(summary)
   const error = payloadString(record, 'error')
   if (error) parts.push(error)
   return Array.from(new Set(parts)).join(' · ')
@@ -2113,7 +2173,11 @@ function buildRefreshLogItem(taskKey: string, event: AsyncTaskEvent): PoolRefres
 function refreshLogSubject(item: PoolRefreshLogItem): string {
   const accountName = item.keyName || (item.keyId ? `Key ${item.keyId.slice(0, 8)}` : '')
   if (accountName && item.providerName) return `${item.providerName} / ${accountName}`
-  return accountName || item.providerName || '后台任务'
+  if (accountName || item.providerName) return accountName || item.providerName || '后台任务'
+  const eventType = item.eventType.toLowerCase()
+  if (eventType.includes('completed')) return '本轮汇总'
+  if (eventType.includes('failed') || eventType.includes('error')) return '任务异常'
+  return '后台任务'
 }
 
 function refreshLogStatusLabel(item: PoolRefreshLogItem): string {
@@ -2169,7 +2233,7 @@ async function loadRefreshWorkerLogs() {
       const runs = await asyncTasksApi.list({ task_key: taskKey, page_size: 1 })
       const run = runs.items[0]
       if (!run) return []
-      const events = await asyncTasksApi.getEvents(run.id, { page_size: 100 })
+      const events = await asyncTasksApi.getEvents(run.id, { page_size: 200, order: 'desc' })
       return events.items.map((event: AsyncTaskEvent) => buildRefreshLogItem(taskKey, event))
     }))
     refreshWorkerLogs.value = eventGroups
