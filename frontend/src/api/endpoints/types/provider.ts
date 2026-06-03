@@ -748,6 +748,7 @@ export interface PoolAdvancedConfig {
   score_top_n?: number | null
   score_fallback_scan_limit?: number | null
   score_rules?: PoolScoreRules | null
+  score_ranking_enabled?: boolean
   probing_enabled?: boolean
   // deprecated: retained only for backward-compatible reads
   probing_target_percent?: number | null

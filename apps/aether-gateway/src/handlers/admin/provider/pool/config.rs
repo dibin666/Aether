@@ -413,6 +413,7 @@ pub(crate) fn admin_provider_pool_config_from_config_value(
             account_self_check_enabled: false,
             account_self_check_interval_minutes: 60,
             account_self_check_concurrency: 4,
+            score_ranking_enabled: true,
             score_top_n: 128,
             score_fallback_scan_limit: 4096,
             score_rules: PoolMemberScoreRules::default(),
@@ -501,6 +502,11 @@ pub(crate) fn admin_provider_pool_config_from_config_value(
             .filter(|value| *value > 0)
             .map(|value| value.min(64))
             .unwrap_or(4),
+        score_ranking_enabled: pool_advanced
+            .get("score_ranking_enabled")
+            .or_else(|| pool_advanced.get("pool_score_ranking_enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         score_top_n: pool_advanced
             .get("score_top_n")
             .and_then(json_u64)

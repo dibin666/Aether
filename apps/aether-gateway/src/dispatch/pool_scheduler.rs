@@ -348,6 +348,7 @@ pub(crate) struct PoolKeyCursor<'a> {
     page_size: u32,
     max_scanned_keys: u32,
     absolute_max_scanned_keys: u32,
+    score_ranking_enabled: bool,
     score_top_n: u32,
     score_phase_loaded: bool,
     skip_reason_counts: BTreeMap<&'static str, u32>,
@@ -390,6 +391,10 @@ impl<'a> PoolKeyCursor<'a> {
         let pool_key_order = pool_key_candidate_order_for_group(&group, routing_policy);
         let routing_overlay = routing_policy.map(|policy| policy.ranking_overlay.clone());
         let pool_config = pool_config_for_candidate(&group);
+        let score_ranking_enabled = pool_config
+            .as_ref()
+            .map(|config| config.score_ranking_enabled)
+            .unwrap_or(true);
         let score_top_n = pool_config
             .as_ref()
             .map(|config| config.score_top_n)
@@ -420,6 +425,7 @@ impl<'a> PoolKeyCursor<'a> {
             page_size: window_config.page_size,
             max_scanned_keys: max_scanned_keys.max(window_config.window_size),
             absolute_max_scanned_keys: absolute_max_scanned_keys.max(window_config.window_size),
+            score_ranking_enabled,
             score_top_n,
             score_phase_loaded: false,
             skip_reason_counts: BTreeMap::new(),
@@ -552,8 +558,10 @@ impl<'a> PoolKeyCursor<'a> {
     async fn next_page_candidates(&mut self) -> Option<Vec<EligibleLocalExecutionCandidate>> {
         if !self.score_phase_loaded {
             self.score_phase_loaded = true;
-            if let Some(score_candidates) = self.next_score_candidates().await {
-                return Some(score_candidates);
+            if self.score_ranking_enabled {
+                if let Some(score_candidates) = self.next_score_candidates().await {
+                    return Some(score_candidates);
+                }
             }
         }
 

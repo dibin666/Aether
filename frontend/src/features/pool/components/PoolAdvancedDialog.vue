@@ -686,6 +686,7 @@ const form = ref({
   request_failure_penalty: null as number | null | undefined,
   probe_failure_cooldown_threshold: null as number | null | undefined,
   probing_enabled: false,
+  score_ranking_enabled: true,
   account_self_check_enabled: false,
   account_self_check_interval_minutes: null as number | null | undefined,
   account_self_check_concurrency: null as number | null | undefined,
@@ -725,6 +726,8 @@ function getHealthToggleValue(key: PoolHealthToggleKey): boolean {
       return form.value.health_policy_enabled
     case 'probing_enabled':
       return form.value.probing_enabled
+    case 'score_ranking_enabled':
+      return form.value.score_ranking_enabled
     case 'account_self_check_enabled':
       return form.value.account_self_check_enabled
     case 'auto_remove_banned_keys':
@@ -741,6 +744,9 @@ function updateHealthToggleValue(key: PoolHealthToggleKey, value: boolean): void
       return
     case 'probing_enabled':
       form.value.probing_enabled = value
+      return
+    case 'score_ranking_enabled':
+      form.value.score_ranking_enabled = value
       return
     case 'account_self_check_enabled':
       form.value.account_self_check_enabled = value
@@ -784,6 +790,7 @@ watch(() => props.modelValue, (open) => {
     request_failure_penalty: scoreRules?.request_failure_penalty ?? null,
     probe_failure_cooldown_threshold: scoreRules?.probe_failure_cooldown_threshold ?? null,
     probing_enabled: cfg?.probing_enabled ?? false,
+    score_ranking_enabled: cfg?.score_ranking_enabled !== false,
     account_self_check_enabled: cfg?.account_self_check_enabled ?? false,
     account_self_check_interval_minutes: cfg?.account_self_check_interval_minutes ?? null,
     account_self_check_concurrency: cfg?.account_self_check_concurrency ?? null,
@@ -856,6 +863,7 @@ async function handleSave() {
       score_fallback_scan_limit: form.value.score_fallback_scan_limit ?? undefined,
       score_rules: scoreRules,
       probing_enabled: form.value.probing_enabled,
+      score_ranking_enabled: form.value.score_ranking_enabled,
       account_self_check_enabled: form.value.account_self_check_enabled,
       account_self_check_interval_minutes: form.value.account_self_check_enabled
         ? (form.value.account_self_check_interval_minutes ?? undefined)

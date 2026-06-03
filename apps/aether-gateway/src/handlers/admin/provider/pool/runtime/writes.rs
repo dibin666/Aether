@@ -645,6 +645,7 @@ mod tests {
             account_self_check_enabled: false,
             account_self_check_interval_minutes: 60,
             account_self_check_concurrency: 4,
+            score_ranking_enabled: true,
             score_top_n: 128,
             score_fallback_scan_limit: 4096,
             score_rules: aether_pool_core::PoolMemberScoreRules::default(),
