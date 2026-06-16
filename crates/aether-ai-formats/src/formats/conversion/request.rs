@@ -165,6 +165,7 @@ mod tests {
         convert_openai_chat_request_to_claude_request,
         convert_openai_chat_request_to_openai_responses_request,
         normalize_claude_request_to_openai_chat_request,
+        normalize_gemini_request_to_openai_chat_request,
         normalize_openai_responses_request_to_openai_chat_request,
     };
 
@@ -217,6 +218,43 @@ mod tests {
         assert_eq!(converted["model"], "claude-sonnet");
         assert_eq!(converted["messages"][0]["role"], "user");
         assert_eq!(converted["messages"][0]["content"], "hello");
+    }
+
+    #[test]
+    fn claude_request_to_chat_clamps_max_reasoning_effort_to_high() {
+        let body = json!({
+            "model": "claude-sonnet",
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "enabled", "budget_tokens": 1024},
+            "output_config": {"effort": "max"},
+            "max_tokens": 128,
+        });
+
+        let converted =
+            normalize_claude_request_to_openai_chat_request(&body).expect("openai chat request");
+
+        assert_eq!(converted["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn gemini_request_to_chat_clamps_xhigh_reasoning_effort_to_high() {
+        let body = json!({
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": "hello"}]
+            }],
+            "generationConfig": {
+                "thinkingConfig": {"thinkingBudget": 8192}
+            }
+        });
+
+        let converted = normalize_gemini_request_to_openai_chat_request(
+            &body,
+            "/v1beta/models/gemini-2.5-pro:generateContent",
+        )
+        .expect("openai chat request");
+
+        assert_eq!(converted["reasoning_effort"], "high");
     }
 
     #[test]
@@ -331,6 +369,34 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["content"], "");
+    }
+
+    #[test]
+    fn responses_request_normalizer_clamps_chat_reasoning_effort_and_filters_extensions() {
+        let body = json!({
+            "model": "gpt-5.1",
+            "input": "hello",
+            "reasoning": {"effort": "xhigh"},
+            "text": {"verbosity": "high"},
+            "include": ["reasoning.encrypted_content"],
+            "store": false,
+            "service_tier": "priority",
+            "prompt_cache_key": "cache_123",
+            "safety_identifier": "user_123"
+        });
+
+        let converted = normalize_openai_responses_request_to_openai_chat_request(&body)
+            .expect("openai chat request");
+
+        assert_eq!(converted["reasoning_effort"], "high");
+        assert_eq!(converted["verbosity"], "high");
+        assert_eq!(converted["service_tier"], "priority");
+        assert_eq!(converted["prompt_cache_key"], "cache_123");
+        assert_eq!(converted["safety_identifier"], "user_123");
+        assert!(converted.get("include").is_none());
+        assert!(converted.get("store").is_none());
+        assert!(converted.get("text").is_none());
+        assert!(converted.get("reasoning").is_none());
     }
 
     #[test]
@@ -657,15 +723,13 @@ mod tests {
                     "file": {"file_data": "data:application/pdf;base64,JVBERi0x"}
                 }),
                 json!({"type": "text", "text": "[File: https://example.com/report.pdf]"}),
-                json!({
-                    "type": "text",
-                    "text": "[Claude tool_result document content omitted: text/plain]"
-                }),
+                json!({"type": "text", "text": "document body"}),
             ]
         );
         let block_content_json = Value::Array(block_content.clone()).to_string();
         assert!(!block_content_json.contains("\"source\""));
-        assert!(!block_content_json.contains("document body"));
+        assert!(block_content_json.contains("document body"));
+        assert!(!block_content_json.contains("content omitted"));
     }
 
     #[test]
@@ -746,6 +810,34 @@ mod tests {
             assert_eq!(tool["parameters"]["type"], "object");
             assert!(tool["parameters"]["properties"].is_object());
         }
+    }
+
+    #[test]
+    fn openai_responses_request_normalizer_strips_content_cache_control() {
+        let body = json!({
+            "model": "gpt-5.1",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": "stable project brief",
+                    "cache_control": {"type": "ephemeral"}
+                }]
+            }],
+            "prompt_cache_key": "cache_123"
+        });
+
+        let converted = registry::convert_request(
+            "openai:responses",
+            "openai:responses",
+            &body,
+            &FormatContext::default(),
+        )
+        .expect("responses request");
+
+        assert_eq!(converted["prompt_cache_key"], "cache_123");
+        assert!(!converted["input"].to_string().contains("cache_control"));
     }
 
     #[test]
@@ -865,5 +957,91 @@ mod tests {
             input[3]["content"][0]["image_url"],
             "data:image/png;base64,AAAA"
         );
+    }
+
+    #[test]
+    fn claude_request_to_responses_rejects_unrepresentable_tool_result_blocks() {
+        let body = json!({
+            "model": "claude-sonnet",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_read",
+                    "content": [{
+                        "type": "image",
+                        "source": {
+                            "type": "unsupported",
+                            "media_type": "image/png",
+                            "data": "AAAA"
+                        }
+                    }]
+                }]
+            }],
+            "max_tokens": 128,
+        });
+
+        let error = registry::convert_request(
+            "claude:messages",
+            "openai:responses",
+            &body,
+            &FormatContext::default(),
+        )
+        .expect_err("unrepresentable Claude tool_result block should fail closed");
+
+        assert!(matches!(
+            error,
+            registry::FormatError::LossyConversionBlocked {
+                ref source_format,
+                ref target_format,
+                ref field,
+                ..
+            } if source_format == "claude:messages"
+                && target_format == "openai:responses"
+                && field == "messages[].content[].tool_result.content"
+        ));
+    }
+
+    #[test]
+    fn claude_request_to_openai_chat_rejects_unrepresentable_tool_result_blocks() {
+        let body = json!({
+            "model": "claude-sonnet",
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_read",
+                    "content": [{
+                        "type": "image",
+                        "source": {
+                            "type": "unsupported",
+                            "media_type": "image/png",
+                            "data": "AAAA"
+                        }
+                    }]
+                }]
+            }],
+            "max_tokens": 128,
+        });
+
+        let error = registry::convert_request(
+            "claude:messages",
+            "openai:chat",
+            &body,
+            &FormatContext::default(),
+        )
+        .expect_err("unrepresentable Claude tool_result block should fail closed for Chat");
+
+        assert!(matches!(
+            error,
+            registry::FormatError::LossyConversionBlocked {
+                ref source_format,
+                ref target_format,
+                ref field,
+                ..
+            } if source_format == "claude:messages"
+                && target_format == "openai:chat"
+                && field == "messages[].content[].tool_result.content"
+        ));
     }
 }

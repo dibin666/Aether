@@ -398,6 +398,23 @@ fn collect_codex_prompt_cache_control_anchors(value: &Value, anchors: &mut Vec<V
     }
 }
 
+fn strip_codex_cache_control_fields(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.remove("cache_control");
+            for child in object.values_mut() {
+                strip_codex_cache_control_fields(child);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                strip_codex_cache_control_fields(child);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn extract_codex_prompt_cache_control_seed(provider_request_body: &Value) -> Option<String> {
     let mut anchors = Vec::new();
     collect_codex_prompt_cache_control_anchors(provider_request_body, &mut anchors);
@@ -721,6 +738,34 @@ fn strip_codex_hosted_tool_choice_name_for_backend(
     }
 }
 
+fn wrap_codex_responses_string_input_for_backend(
+    body_object: &mut serde_json::Map<String, Value>,
+    provider_api_format: &str,
+) {
+    if !aether_ai_formats::is_openai_responses_family_format(provider_api_format) {
+        return;
+    }
+    let Some(text) = body_object
+        .get("input")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+    else {
+        return;
+    };
+
+    body_object.insert(
+        "input".to_string(),
+        json!([{
+            "type": "message",
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": text,
+            }],
+        }]),
+    );
+}
+
 pub fn apply_codex_openai_responses_special_body_edits(
     provider_request_body: &mut Value,
     provider_type: &str,
@@ -743,6 +788,7 @@ pub fn apply_codex_openai_responses_special_body_edits(
         return;
     };
 
+    wrap_codex_responses_string_input_for_backend(body_object, provider_api_format);
     for field in CODEX_OPENAI_RESPONSES_UNSUPPORTED_BODY_FIELDS {
         if !body_rules_handle_path(body_rules, field) {
             body_object.remove(*field);
@@ -780,6 +826,7 @@ pub fn apply_codex_openai_responses_special_body_edits(
         inject_codex_default_variation_prompt(body_object);
     }
 
+    strip_codex_cache_control_fields(provider_request_body);
     insert_codex_prompt_cache_key(provider_request_body, prompt_cache_key);
 }
 
@@ -965,6 +1012,34 @@ mod tests {
             ])
         );
         assert_eq!(provider_request_body["parallel_tool_calls"], json!(false));
+    }
+
+    #[test]
+    fn codex_responses_body_edits_wrap_string_input_for_backend() {
+        let mut provider_request_body = json!({
+            "input": "hello",
+            "model": "gpt-5.4"
+        });
+
+        apply_codex_openai_responses_special_body_edits(
+            &mut provider_request_body,
+            "codex",
+            "openai:responses",
+            None,
+            None,
+        );
+
+        assert_eq!(
+            provider_request_body["input"],
+            json!([{
+                "type": "message",
+                "role": "user",
+                "content": [{
+                    "type": "input_text",
+                    "text": "hello"
+                }]
+            }])
+        );
     }
 
     #[test]
@@ -1206,6 +1281,49 @@ mod tests {
 
         assert_eq!(body_a["prompt_cache_key"], body_b["prompt_cache_key"]);
         assert_ne!(body_a["prompt_cache_key"], body_c["prompt_cache_key"]);
+        assert!(!body_a.to_string().contains("\"cache_control\""));
+        assert!(!body_b.to_string().contains("\"cache_control\""));
+        assert!(!body_c.to_string().contains("\"cache_control\""));
+    }
+
+    #[test]
+    fn codex_responses_body_edits_strip_developer_cache_control_before_upstream() {
+        let mut provider_request_body = json!({
+            "input": [{
+                "type": "message",
+                "role": "developer",
+                "content": [{
+                    "type": "input_text",
+                    "text": "stable system brief",
+                    "cache_control": {"type": "ephemeral"}
+                }]
+            }, {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "new turn"}]
+            }],
+            "model": "gpt-5.4"
+        });
+
+        apply_codex_openai_responses_special_body_edits(
+            &mut provider_request_body,
+            "codex",
+            "openai:responses",
+            None,
+            Some("key-a"),
+        );
+
+        assert!(provider_request_body
+            .get("prompt_cache_key")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.trim().is_empty()));
+        assert!(!provider_request_body
+            .to_string()
+            .contains("\"cache_control\""));
+        assert_eq!(
+            provider_request_body["input"][0]["content"][0]["text"],
+            json!("stable system brief")
+        );
     }
 
     #[test]
