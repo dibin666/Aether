@@ -15,6 +15,7 @@
 .trellis
 AGENTS.md
 .playwright-mcp/
+.agents
 
 ### Python ###
 *.db
