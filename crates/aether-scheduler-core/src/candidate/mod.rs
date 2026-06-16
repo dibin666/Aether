@@ -575,6 +575,37 @@ mod tests {
     }
 
     #[test]
+    fn disabled_key_circuit_breaker_allows_open_circuit_and_zero_health() {
+        let mut key = sample_key("1", 0.0);
+        key.capabilities = Some(serde_json::json!({
+            "disable_circuit_breaker": true
+        }));
+        key.circuit_breaker_by_format = Some(serde_json::json!({
+            "openai:chat": {
+                "open": true,
+                "next_probe_at_unix_secs": 200
+            }
+        }));
+        let provider_key_rpm_states = BTreeMap::from([("key-1".to_string(), key)]);
+
+        assert_eq!(
+            candidate_runtime_skip_reason_with_state(CandidateRuntimeSelectabilityInput {
+                candidate: &sample_candidate("1", None),
+                recent_candidates: &[],
+                provider_concurrent_limits: &BTreeMap::new(),
+                provider_key_rpm_states: &provider_key_rpm_states,
+                now_unix_secs: 100,
+                provider_quota_blocks_requests: false,
+                account_quota_exhausted: false,
+                oauth_invalid: false,
+                enforce_key_circuit_breaker: true,
+                rpm_reset_at: None,
+            }),
+            None
+        );
+    }
+
+    #[test]
     fn candidate_selectability_rejects_quota_or_zero_health() {
         let provider_key_rpm_states = BTreeMap::from([("key-1".to_string(), sample_key("1", 0.0))]);
 

@@ -22,6 +22,9 @@ const MIN_HEADER_CONFIRMATIONS: usize = 2;
 const OBSERVATION_CONSISTENCY_THRESHOLD: f64 = 0.3;
 const HEALTH_DEGRADED_THRESHOLD: f64 = 0.8;
 const HEALTH_LOW_THRESHOLD: f64 = 0.5;
+const DISABLE_CIRCUIT_BREAKER_CAPABILITY: &str = "disable_circuit_breaker";
+const LEGACY_DISABLE_CIRCUIT_BREAKER_CAPABILITIES: [&str; 2] =
+    ["circuit_breaker_disabled", "never_circuit_break"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProviderKeyHealthBucket {
@@ -274,6 +277,9 @@ pub fn provider_key_health_bucket(
 }
 
 pub fn is_provider_key_circuit_open(key: &StoredProviderCatalogKey, api_format: &str) -> bool {
+    if provider_key_disables_circuit_breaker(key) {
+        return false;
+    }
     key.circuit_breaker_by_format
         .as_ref()
         .and_then(serde_json::Value::as_object)
@@ -289,6 +295,9 @@ pub fn is_provider_key_circuit_open_at(
     api_format: &str,
     now_unix_secs: u64,
 ) -> bool {
+    if provider_key_disables_circuit_breaker(key) {
+        return false;
+    }
     let Some(payload) = key
         .circuit_breaker_by_format
         .as_ref()
@@ -304,6 +313,9 @@ pub fn any_provider_key_circuit_open_at(
     key: &StoredProviderCatalogKey,
     now_unix_secs: u64,
 ) -> bool {
+    if provider_key_disables_circuit_breaker(key) {
+        return false;
+    }
     key.circuit_breaker_by_format
         .as_ref()
         .and_then(serde_json::Value::as_object)
@@ -342,6 +354,25 @@ pub fn provider_key_circuit_payload_is_active_open_at(
         return now_unix_secs < next_probe_at;
     }
     true
+}
+
+pub fn provider_key_disables_circuit_breaker(key: &StoredProviderCatalogKey) -> bool {
+    let Some(capabilities) = key
+        .capabilities
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+    else {
+        return false;
+    };
+    capabilities
+        .get(DISABLE_CIRCUIT_BREAKER_CAPABILITY)
+        .or_else(|| {
+            LEGACY_DISABLE_CIRCUIT_BREAKER_CAPABILITIES
+                .iter()
+                .find_map(|name| capabilities.get(*name))
+        })
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn rfc3339_to_unix_secs(value: &str) -> Option<u64> {
@@ -675,12 +706,13 @@ mod tests {
     use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
 
     use super::{
-        aggregate_provider_key_health_score, count_recent_active_requests_for_api_key,
-        count_recent_active_requests_for_provider, count_recent_active_requests_for_provider_key,
-        count_recent_rpm_requests_for_provider_key,
+        aggregate_provider_key_health_score, any_provider_key_circuit_open_at,
+        count_recent_active_requests_for_api_key, count_recent_active_requests_for_provider,
+        count_recent_active_requests_for_provider_key, count_recent_rpm_requests_for_provider_key,
         count_recent_rpm_requests_for_provider_key_since, effective_provider_key_health_score,
         effective_provider_key_rpm_limit, is_candidate_in_recent_failure_cooldown,
-        is_provider_key_circuit_open, is_provider_key_circuit_open_at, provider_key_health_bucket,
+        is_provider_key_circuit_open, is_provider_key_circuit_open_at,
+        provider_key_disables_circuit_breaker, provider_key_health_bucket,
         provider_key_health_score, provider_key_rpm_allows_request,
         provider_key_rpm_allows_request_since, ProviderKeyHealthBucket,
     };
@@ -1371,6 +1403,27 @@ mod tests {
         );
         assert!(is_provider_key_circuit_open(&key, "openai:chat"));
         assert!(!is_provider_key_circuit_open(&key, "openai:responses"));
+    }
+
+    #[test]
+    fn disable_circuit_breaker_capability_overrides_open_circuit_status() {
+        let mut key = provider_catalog_key("key-a").with_health_fields(
+            None,
+            Some(serde_json::json!({
+                "openai:chat": {
+                    "open": true,
+                    "next_probe_at_unix_secs": 200
+                }
+            })),
+        );
+        key.capabilities = Some(serde_json::json!({
+            "disable_circuit_breaker": true
+        }));
+
+        assert!(provider_key_disables_circuit_breaker(&key));
+        assert!(!is_provider_key_circuit_open(&key, "openai:chat"));
+        assert!(!is_provider_key_circuit_open_at(&key, "openai:chat", 100));
+        assert!(!any_provider_key_circuit_open_at(&key, 100));
     }
 
     #[test]

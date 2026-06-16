@@ -96,6 +96,7 @@ pub fn candidate_runtime_skip_reason_with_state(
     }
 
     if let Some(provider_key) = provider_key {
+        let disables_circuit_breaker = crate::provider_key_disables_circuit_breaker(provider_key);
         if enforce_key_circuit_breaker
             && crate::is_provider_key_circuit_open_at(
                 provider_key,
@@ -105,7 +106,11 @@ pub fn candidate_runtime_skip_reason_with_state(
         {
             return Some("key_circuit_open");
         }
-        if crate::provider_key_health_score(provider_key, candidate.endpoint_api_format.as_str())
+        if !disables_circuit_breaker
+            && crate::provider_key_health_score(
+                provider_key,
+                candidate.endpoint_api_format.as_str(),
+            )
             .is_some_and(|score| score <= 0.0)
         {
             return Some("key_health_score_zero");

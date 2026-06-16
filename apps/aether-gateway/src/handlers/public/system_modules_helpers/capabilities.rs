@@ -73,6 +73,13 @@ fn capability_short_name_by_name(name: &str) -> Option<&'static str> {
         .map(|capability| capability.short_name)
 }
 
+fn internal_key_capability_name(name: &str) -> bool {
+    matches!(
+        name,
+        "disable_circuit_breaker" | "circuit_breaker_disabled" | "never_circuit_break"
+    )
+}
+
 pub(crate) fn supported_capability_names(
     supported_capabilities: Option<&serde_json::Value>,
 ) -> Vec<String> {
@@ -93,6 +100,9 @@ pub(crate) fn enabled_key_capability_short_names(
         .into_iter()
         .flatten()
         .filter_map(|(name, enabled)| {
+            if internal_key_capability_name(name) {
+                return None;
+            }
             enabled.as_bool().filter(|value| *value).map(|_| {
                 capability_short_name_by_name(name)
                     .unwrap_or(name.as_str())

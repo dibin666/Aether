@@ -422,11 +422,7 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 summary.skipped = summary.skipped.saturating_add(1);
                 continue;
             }
-            if !oauth_refresh_due_for_cutoff(
-                key,
-                decrypted_auth_config,
-                refresh_cutoff_unix_secs,
-            ) {
+            if !oauth_refresh_due_for_cutoff(key, decrypted_auth_config, refresh_cutoff_unix_secs) {
                 summary.skipped = summary.skipped.saturating_add(1);
                 continue;
             }

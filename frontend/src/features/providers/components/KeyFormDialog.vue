@@ -291,6 +291,20 @@
         </div>
       </div>
 
+      <!-- 熔断策略 -->
+      <div class="flex items-center justify-between rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+        <div class="space-y-0.5">
+          <Label class="text-sm font-medium">永不熔断</Label>
+          <p class="text-xs text-muted-foreground">
+            错误不会触发此密钥熔断, 适合排队型提供商
+          </p>
+        </div>
+        <Switch
+          v-model="form.disable_circuit_breaker"
+          aria-label="永不熔断"
+        />
+      </div>
+
       <!-- 自动获取模型 -->
       <div class="space-y-3 py-2 px-3 rounded-md border border-border/60 bg-muted/30">
         <div class="flex items-center justify-between">
@@ -389,6 +403,7 @@ import { formatApiFormat, normalizeApiFormatAlias, formatSupportsAuthOverride } 
 
 type RawSecretAuthType = 'api_key' | 'bearer'
 type ProviderKeyFormAuthType = RawSecretAuthType | 'service_account'
+const DISABLE_CIRCUIT_BREAKER_CAPABILITY = 'disable_circuit_breaker'
 
 interface AuthTypeOption {
   value: ProviderKeyFormAuthType
@@ -632,6 +647,34 @@ function getDefaultAllowAuthChannelMismatchFormats(formats = getDefaultApiFormat
   return sanitizeAllowAuthChannelMismatchFormats(formats, formats)
 }
 
+function normalizeKeyCapabilities(
+  capabilities: Record<string, boolean> | null | undefined
+): Record<string, boolean> {
+  const normalized: Record<string, boolean> = {}
+  for (const [key, value] of Object.entries(capabilities || {})) {
+    if (typeof value === 'boolean') {
+      normalized[key] = value
+    }
+  }
+  return normalized
+}
+
+function keyDisablesCircuitBreaker(
+  capabilities: Record<string, boolean> | null | undefined
+): boolean {
+  return !!normalizeKeyCapabilities(capabilities)[DISABLE_CIRCUIT_BREAKER_CAPABILITY]
+}
+
+function buildCapabilitiesPayload(): Record<string, boolean> | null {
+  const capabilities = normalizeKeyCapabilities(props.editingKey?.capabilities)
+  if (form.value.disable_circuit_breaker) {
+    capabilities[DISABLE_CIRCUIT_BREAKER_CAPABILITY] = true
+  } else {
+    delete capabilities[DISABLE_CIRCUIT_BREAKER_CAPABILITY]
+  }
+  return Object.keys(capabilities).length > 0 ? capabilities : null
+}
+
 // 显示自动获取模型警告：编辑模式下，原本未启用但现在启用，且已有 allowed_models
 const showAutoFetchWarning = computed(() => {
   if (!props.editingKey) return false
@@ -705,6 +748,7 @@ const form = ref({
   concurrent_limit: undefined as number | null | undefined,  // 并发请求上限（null/0=不限制，undefined=保持原值）
   cache_ttl_minutes: 5,
   max_probe_interval_minutes: 32,
+  disable_circuit_breaker: false,
   note: '',
   is_active: true,
   auto_fetch_models: false,
@@ -799,6 +843,7 @@ function resetForm() {
     concurrent_limit: undefined,
     cache_ttl_minutes: 5,
     max_probe_interval_minutes: 32,
+    disable_circuit_breaker: false,
     note: '',
     is_active: true,
     auto_fetch_models: defaultAutoFetchModels.value,
@@ -850,6 +895,7 @@ function loadKeyData() {
     concurrent_limit: props.editingKey.concurrent_limit ?? undefined,
     cache_ttl_minutes: props.editingKey.cache_ttl_minutes ?? 5,
     max_probe_interval_minutes: props.editingKey.max_probe_interval_minutes ?? 32,
+    disable_circuit_breaker: keyDisablesCircuitBreaker(props.editingKey.capabilities),
     note: props.editingKey.note || '',
     is_active: props.editingKey.is_active,
     auto_fetch_models: props.editingKey.auto_fetch_models ?? false,
@@ -955,6 +1001,7 @@ async function handleSave() {
     const authConfig = parseAuthConfig()
     const authTypeByFormat = buildAuthTypeByFormatPayload()
     const allowAuthChannelMismatchFormats = buildAllowAuthChannelMismatchFormatsPayload()
+    const capabilities = buildCapabilitiesPayload()
 
     if (props.editingKey) {
       const shouldClearAllowedModels = !!props.editingKey.auto_fetch_models && !form.value.auto_fetch_models
@@ -968,6 +1015,7 @@ async function handleSave() {
         auth_type_by_format: authTypeByFormat,
         allow_auth_channel_mismatch_formats: allowAuthChannelMismatchFormats,
         rate_multipliers: rateMultipliersData,
+        capabilities,
         internal_priority: form.value.internal_priority,
         rpm_limit: form.value.rpm_limit,
         concurrent_limit: form.value.concurrent_limit,
@@ -1002,6 +1050,7 @@ async function handleSave() {
         auth_config: authConfig || undefined,
         name: form.value.name,
         rate_multipliers: rateMultipliersData,
+        capabilities,
         internal_priority: form.value.internal_priority,
         rpm_limit: form.value.rpm_limit,
         concurrent_limit: form.value.concurrent_limit,
