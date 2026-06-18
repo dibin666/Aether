@@ -70,19 +70,41 @@ pub fn maybe_build_standard_cross_format_sync_product_from_normalized_payload(
         .and_then(Value::as_str)
         .unwrap_or_default();
 
-    let aggregated_stream_body = match body_base64 {
+    let (aggregated_stream_body, aggregated_stream_api_format) = match body_base64 {
         Some(body_base64) => {
             let body_bytes = base64::engine::general_purpose::STANDARD.decode(body_base64)?;
+            let provider_stream_event_api_format =
+                provider_stream_event_api_format_for_report_context(
+                    report_context,
+                    provider_api_format,
+                );
             if is_standard_chat_finalize_kind(report_kind) {
-                try_aggregate_standard_chat_stream_sync_response(&body_bytes, provider_api_format)?
+                let body = try_aggregate_standard_chat_stream_sync_response(
+                    &body_bytes,
+                    &provider_stream_event_api_format,
+                )?;
+                let api_format = body
+                    .as_ref()
+                    .map(|_| provider_stream_event_api_format.clone());
+                (body, api_format)
             } else if is_standard_cli_finalize_kind(report_kind) {
-                try_aggregate_standard_cli_stream_sync_response(&body_bytes, provider_api_format)?
+                let body = try_aggregate_standard_cli_stream_sync_response(
+                    &body_bytes,
+                    &provider_stream_event_api_format,
+                )?;
+                let api_format = body
+                    .as_ref()
+                    .map(|_| provider_stream_event_api_format.clone());
+                (body, api_format)
             } else {
                 return Ok(None);
             }
         }
-        None => None,
+        None => (None, None),
     };
+    let provider_body_api_format = aggregated_stream_api_format
+        .as_deref()
+        .unwrap_or(provider_api_format);
 
     let Some(provider_body_json) = aggregated_stream_body.or_else(|| body_json.cloned()) else {
         return Ok(None);
@@ -90,7 +112,7 @@ pub fn maybe_build_standard_cross_format_sync_product_from_normalized_payload(
 
     Ok(maybe_build_standard_cross_format_sync_product(
         report_kind,
-        provider_api_format,
+        provider_body_api_format,
         client_api_format,
         report_context,
         provider_body_json,
@@ -547,11 +569,29 @@ fn maybe_build_standard_same_format_stream_sync_body(
         return Ok(None);
     };
     let body_bytes = base64::engine::general_purpose::STANDARD.decode(body_base64)?;
-    Ok(
-        try_aggregate_same_format_stream_sync_response(expected_api_format, &body_bytes)?.map(
-            |body| client_body_with_report_context_model(body, report_context, &client_api_format),
-        ),
-    )
+    let provider_stream_event_api_format =
+        provider_stream_event_api_format_for_report_context(report_context, &provider_api_format);
+    let Some(body) = try_aggregate_standard_chat_stream_sync_response(
+        &body_bytes,
+        &provider_stream_event_api_format,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(client_body) = convert_aggregated_stream_body_to_client_sync_response(
+        report_kind,
+        body,
+        &provider_stream_event_api_format,
+        &client_api_format,
+        report_context,
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(client_body_with_report_context_model(
+        client_body,
+        report_context,
+        &client_api_format,
+    )))
 }
 
 fn maybe_build_openai_responses_same_family_sync_body(
@@ -1464,16 +1504,52 @@ fn standard_same_format_api_format(report_kind: &str) -> Option<&'static str> {
     }
 }
 
-fn try_aggregate_same_format_stream_sync_response(
-    api_format: &str,
-    body: &[u8],
-) -> Result<Option<Value>, AiSurfaceFinalizeError> {
-    match api_format {
-        "openai:chat" => try_aggregate_openai_chat_stream_sync_response(body),
-        "claude:messages" => try_aggregate_claude_stream_sync_response(body),
-        "gemini:generate_content" => try_aggregate_gemini_stream_sync_response(body),
-        _ => Ok(None),
+fn provider_stream_event_api_format_for_report_context(
+    report_context: &Value,
+    provider_api_format: &str,
+) -> String {
+    report_context_api_format_field(report_context, "provider_stream_event_api_format")
+        .or_else(|| report_context_api_format_field(report_context, "provider_stream_api_format"))
+        .unwrap_or_else(|| provider_api_format.trim().to_ascii_lowercase())
+}
+
+fn report_context_api_format_field(report_context: &Value, key: &str) -> Option<String> {
+    let value = report_context.get(key)?.as_str()?.trim();
+    (!value.is_empty()).then(|| value.to_ascii_lowercase())
+}
+
+fn api_formats_match(left: &str, right: &str) -> bool {
+    aether_ai_formats::normalize_api_format_alias(left)
+        == aether_ai_formats::normalize_api_format_alias(right)
+}
+
+fn convert_aggregated_stream_body_to_client_sync_response(
+    report_kind: &str,
+    body: Value,
+    provider_stream_event_api_format: &str,
+    client_api_format: &str,
+    report_context: &Value,
+) -> Option<Value> {
+    if api_formats_match(provider_stream_event_api_format, client_api_format) {
+        return Some(body);
     }
+    if is_standard_chat_finalize_kind(report_kind) {
+        return convert_standard_chat_response(
+            &body,
+            provider_stream_event_api_format,
+            client_api_format,
+            report_context,
+        );
+    }
+    if is_standard_cli_finalize_kind(report_kind) {
+        return convert_standard_cli_response(
+            &body,
+            provider_stream_event_api_format,
+            client_api_format,
+            report_context,
+        );
+    }
+    None
 }
 
 fn is_openai_responses_family_api_format(api_format: &str) -> bool {
@@ -1974,7 +2050,7 @@ pub fn aggregate_openai_responses_stream_sync_response(body: &[u8]) -> Option<Va
                         reasoning_states.entry(output_index).or_default(),
                         item,
                     ),
-                    "function_call" => {
+                    "function_call" | "custom_tool_call" => {
                         merge_openai_responses_tool_item(
                             tool_states.entry(output_index).or_default(),
                             item,
@@ -1991,7 +2067,7 @@ pub fn aggregate_openai_responses_stream_sync_response(body: &[u8]) -> Option<Va
                     _ => {}
                 }
             }
-            "response.function_call_arguments.delta" => {
+            "response.function_call_arguments.delta" | "response.custom_tool_call_input.delta" => {
                 let Some(output_index) =
                     resolve_openai_responses_tool_output_index(event_object, &item_output_indexes)
                 else {
@@ -2004,18 +2080,43 @@ pub fn aggregate_openai_responses_stream_sync_response(body: &[u8]) -> Option<Va
                 if delta.is_empty() {
                     continue;
                 }
-                tool_states
-                    .entry(output_index)
-                    .or_default()
-                    .arguments
-                    .push_str(delta);
+                let state = tool_states.entry(output_index).or_default();
+                if event_object
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value.starts_with("response.custom_tool_call_input."))
+                {
+                    state
+                        .item
+                        .entry("type".to_string())
+                        .or_insert_with(|| Value::String("custom_tool_call".to_string()));
+                    if let Some(name) = event_object.get("name").and_then(Value::as_str) {
+                        state
+                            .item
+                            .entry("name".to_string())
+                            .or_insert_with(|| Value::String(name.to_string()));
+                    }
+                    if let Some(item_id) = event_object.get("item_id").and_then(Value::as_str) {
+                        state
+                            .item
+                            .entry("id".to_string())
+                            .or_insert_with(|| Value::String(item_id.to_string()));
+                    }
+                    if let Some(call_id) = event_object.get("call_id").and_then(Value::as_str) {
+                        state
+                            .item
+                            .entry("call_id".to_string())
+                            .or_insert_with(|| Value::String(call_id.to_string()));
+                    }
+                }
+                state.arguments.push_str(delta);
                 register_openai_responses_tool_event_aliases(
                     &mut item_output_indexes,
                     event_object,
                     output_index,
                 );
             }
-            "response.function_call_arguments.done" => {
+            "response.function_call_arguments.done" | "response.custom_tool_call_input.done" => {
                 let Some(output_index) =
                     resolve_openai_responses_tool_output_index(event_object, &item_output_indexes)
                 else {
@@ -2032,14 +2133,44 @@ pub fn aggregate_openai_responses_stream_sync_response(body: &[u8]) -> Option<Va
                         item,
                     );
                 }
+                if event_object
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value.starts_with("response.custom_tool_call_input."))
+                {
+                    let state = tool_states.entry(output_index).or_default();
+                    state
+                        .item
+                        .entry("type".to_string())
+                        .or_insert_with(|| Value::String("custom_tool_call".to_string()));
+                    if let Some(name) = event_object.get("name").and_then(Value::as_str) {
+                        state
+                            .item
+                            .entry("name".to_string())
+                            .or_insert_with(|| Value::String(name.to_string()));
+                    }
+                    if let Some(item_id) = event_object.get("item_id").and_then(Value::as_str) {
+                        state
+                            .item
+                            .entry("id".to_string())
+                            .or_insert_with(|| Value::String(item_id.to_string()));
+                    }
+                    if let Some(call_id) = event_object.get("call_id").and_then(Value::as_str) {
+                        state
+                            .item
+                            .entry("call_id".to_string())
+                            .or_insert_with(|| Value::String(call_id.to_string()));
+                    }
+                }
                 let arguments = event_object
                     .get("arguments")
+                    .or_else(|| event_object.get("input"))
                     .and_then(Value::as_str)
                     .or_else(|| {
                         event_object
                             .get("item")
                             .and_then(Value::as_object)
-                            .and_then(|item| item.get("arguments"))
+                            .and_then(|item| item.get("arguments").or_else(|| item.get("input")))
                             .and_then(Value::as_str)
                     })
                     .unwrap_or_default();
@@ -2076,7 +2207,7 @@ pub fn aggregate_openai_responses_stream_sync_response(body: &[u8]) -> Option<Va
                                 reasoning_states.entry(output_index).or_default(),
                                 item,
                             ),
-                            "function_call" => {
+                            "function_call" | "custom_tool_call" => {
                                 merge_openai_responses_tool_item(
                                     tool_states.entry(output_index).or_default(),
                                     item,
@@ -2644,6 +2775,12 @@ fn materialize_openai_responses_tool_item(
     state: OpenAIResponsesSyncToolState,
 ) -> Value {
     let mut item = state.item;
+    let item_type = item
+        .get("type")
+        .and_then(Value::as_str)
+        .filter(|value| *value == "custom_tool_call")
+        .unwrap_or("function_call")
+        .to_string();
     let generated_id = format!("call_auto_{output_index}");
     let call_id = item
         .get("call_id")
@@ -2660,10 +2797,7 @@ fn materialize_openai_responses_tool_item(
         })
         .unwrap_or(generated_id.clone());
 
-    item.insert(
-        "type".to_string(),
-        Value::String("function_call".to_string()),
-    );
+    item.insert("type".to_string(), Value::String(item_type.clone()));
     item.entry("id".to_string())
         .or_insert_with(|| Value::String(call_id.clone()));
     item.insert("call_id".to_string(), Value::String(call_id));
@@ -2672,9 +2806,19 @@ fn materialize_openai_responses_tool_item(
     item.entry("status".to_string())
         .or_insert_with(|| Value::String("completed".to_string()));
     if !state.arguments.is_empty() {
-        item.insert("arguments".to_string(), Value::String(state.arguments));
+        let argument_key = if item_type == "custom_tool_call" {
+            "input"
+        } else {
+            "arguments"
+        };
+        item.insert(argument_key.to_string(), Value::String(state.arguments));
     } else {
-        item.entry("arguments".to_string())
+        let argument_key = if item_type == "custom_tool_call" {
+            "input"
+        } else {
+            "arguments"
+        };
+        item.entry(argument_key.to_string())
             .or_insert_with(|| Value::String(String::new()));
     }
     Value::Object(item)
@@ -4290,6 +4434,27 @@ mod tests {
     }
 
     #[test]
+    fn custom_tool_call_input_events_materialize_custom_tool_call() {
+        let body = concat!(
+            "event: response.custom_tool_call_input.delta\n",
+            "data: {\"type\":\"response.custom_tool_call_input.delta\",\"output_index\":0,\"item_id\":\"ctc_123\",\"name\":\"code_exec\",\"delta\":\"print\"}\n\n",
+            "event: response.custom_tool_call_input.done\n",
+            "data: {\"type\":\"response.custom_tool_call_input.done\",\"output_index\":0,\"item_id\":\"ctc_123\",\"call_id\":\"call_custom_123\",\"name\":\"code_exec\",\"input\":\"print('hi')\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_custom_123\",\"object\":\"response\",\"model\":\"gpt-5\",\"status\":\"completed\",\"output\":[]}}\n\n",
+        );
+
+        let result = aggregate_openai_responses_stream_sync_response(body.as_bytes())
+            .expect("custom tool stream should aggregate into a sync body");
+
+        assert_eq!(result["output"][0]["type"], "custom_tool_call");
+        assert_eq!(result["output"][0]["call_id"], "call_custom_123");
+        assert_eq!(result["output"][0]["name"], "code_exec");
+        assert_eq!(result["output"][0]["input"], "print('hi')");
+        assert!(result["output"][0].get("arguments").is_none());
+    }
+
+    #[test]
     fn aggregates_modern_reasoning_text_and_response_done_alias() {
         let body = concat!(
             "event: response.reasoning_text.delta\n",
@@ -5214,6 +5379,77 @@ mod tests {
                 provider_body_json
             ))
         );
+    }
+
+    #[test]
+    fn standard_sync_finalize_uses_explicit_stream_event_format_for_same_format_body() {
+        let body = concat!(
+            "event: keepalive\n",
+            "data: {\"type\":\"keepalive\",\"sequence_number\":1}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"response_id\":\"resp_keepalive_sync_123\",\"output_index\":0,\"content_index\":0,\"delta\":\"pong\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_keepalive_sync_123\",\"object\":\"response\",\"model\":\"gpt-5\",\"status\":\"completed\",\"output\":[]}}\n\n",
+        );
+        let report_context = json!({
+            "provider_api_format": "openai:chat",
+            "provider_stream_event_api_format": "openai:responses",
+            "client_api_format": "openai:chat",
+            "needs_conversion": false,
+        });
+
+        let product = maybe_build_standard_sync_finalize_product_from_normalized_payload(
+            "openai_chat_sync_finalize",
+            200,
+            Some(&report_context),
+            None,
+            Some(&base64::engine::general_purpose::STANDARD.encode(body)),
+        )
+        .expect("responses stream event format should aggregate")
+        .expect("dispatch should produce a body");
+
+        let StandardSyncFinalizeNormalizedProduct::SuccessBody(body_json) = product else {
+            panic!("same-format response should be a success body");
+        };
+        assert_eq!(body_json["object"], "chat.completion");
+        assert_eq!(body_json["choices"][0]["message"]["content"], "pong");
+    }
+
+    #[test]
+    fn standard_cross_format_finalize_uses_explicit_stream_event_format_for_provider_body() {
+        let body = concat!(
+            "event: keepalive\n",
+            "data: {\"type\":\"keepalive\",\"sequence_number\":1}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"response_id\":\"resp_keepalive_cross_123\",\"output_index\":0,\"content_index\":0,\"delta\":\"pong\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_keepalive_cross_123\",\"object\":\"response\",\"model\":\"gpt-5\",\"status\":\"completed\",\"output\":[]}}\n\n",
+        );
+        let report_context = json!({
+            "provider_api_format": "openai:chat",
+            "provider_stream_event_api_format": "openai:responses",
+            "client_api_format": "claude:messages",
+            "model": "claude-sonnet-4-5",
+            "mapped_model": "gpt-5",
+            "needs_conversion": true,
+        });
+
+        let product = maybe_build_standard_sync_finalize_product_from_normalized_payload(
+            "claude_chat_sync_finalize",
+            200,
+            Some(&report_context),
+            None,
+            Some(&base64::engine::general_purpose::STANDARD.encode(body)),
+        )
+        .expect("responses stream event format should aggregate")
+        .expect("dispatch should produce a product");
+
+        let StandardSyncFinalizeNormalizedProduct::CrossFormat(product) = product else {
+            panic!("cross-format response should produce a conversion product");
+        };
+        assert_eq!(product.provider_body_json["object"], "response");
+        assert_eq!(product.client_body_json["type"], "message");
+        assert_eq!(product.client_body_json["content"][0]["text"], "pong");
     }
 
     #[test]
