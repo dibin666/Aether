@@ -4,6 +4,7 @@
 # 用法:
 #   构建/更新镜像:  ./deploy.sh
 #   强制重建镜像:  ./deploy.sh --force
+#   禁用 Docker 层缓存重建: ./deploy.sh --no-cache
 #   追加自定义 tag: ./deploy.sh --tag v20260427
 #   下载上游 tunnel: AETHER_TUNNEL_MODE=release AETHER_TUNNEL_RELEASE_TAG=tunnel-v0.3.13 ./deploy.sh
 
@@ -20,6 +21,7 @@ AETHER_TUNNEL_RELEASE_TAG="${AETHER_TUNNEL_RELEASE_TAG:-}"
 DOCKER_BUILD_CACHE="${DOCKER_BUILD_CACHE:-0}"
 DOCKER_BUILD_CACHE_DIR="${DOCKER_BUILD_CACHE_DIR:-.docker-cache/app}"
 DOCKER_BUILD_CACHE_MODE="${DOCKER_BUILD_CACHE_MODE:-max}"
+DOCKER_NO_CACHE="${DOCKER_NO_CACHE:-0}"
 export LOCAL_APP_IMAGE
 
 detect_build_version() {
@@ -56,6 +58,8 @@ Options:
                           release 模式下载的仓库，默认 fawney19/Aether
   --build-cache           启用 Docker BuildKit 本地缓存导入/导出
   --no-build-cache        禁用 Docker BuildKit 本地缓存导入/导出，默认禁用
+  --docker-no-cache,
+  --no-cache              禁用 Docker 层缓存并强制重建（传递 --no-cache 给 docker build）
   --build-cache-dir DIR   Docker BuildKit 本地缓存目录，默认 .docker-cache/app
   -h, --help              显示帮助
 
@@ -70,6 +74,7 @@ Environment:
   DOCKER_BUILD_CACHE       是否启用 Docker BuildKit 本地缓存，默认 0；设为 1 启用
   DOCKER_BUILD_CACHE_DIR   Docker BuildKit 本地缓存目录，默认 .docker-cache/app
   DOCKER_BUILD_CACHE_MODE  缓存导出模式，默认 max；可设为 min/max
+  DOCKER_NO_CACHE          是否禁用 Docker 层缓存，默认 0；设为 1 启用
 EOF
 }
 
@@ -182,6 +187,11 @@ while [ $# -gt 0 ]; do
             ;;
         --no-build-cache)
             DOCKER_BUILD_CACHE=0
+            shift
+            ;;
+        --docker-no-cache|--no-cache)
+            DOCKER_NO_CACHE=1
+            FORCE_REBUILD_ALL=true
             shift
             ;;
         --build-cache-dir)
@@ -311,6 +321,18 @@ docker_build_cache_enabled() {
     esac
 }
 
+docker_no_cache_enabled() {
+    case "${DOCKER_NO_CACHE}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        0|false|FALSE|no|NO|off|OFF) return 1 ;;
+        *)
+            echo "Invalid DOCKER_NO_CACHE: ${DOCKER_NO_CACHE}"
+            echo "Allowed values: 1/0, true/false, yes/no, on/off"
+            exit 1
+            ;;
+    esac
+}
+
 safe_remove_path() {
     local path="$1"
     if [ -z "$path" ] || [ "$path" = "/" ] || [ "$path" = "." ] || [ "$path" = ".." ]; then
@@ -429,11 +451,17 @@ build_app() {
     )
     local cache_args=()
     local cache_tmp=""
+    local no_cache_args=()
     local docker_cmd=()
-    prepare_docker_build_cache_args cache_args cache_tmp
+    if docker_no_cache_enabled; then
+        echo ">>> Docker layer cache disabled (--no-cache)."
+        no_cache_args+=(--no-cache)
+    else
+        prepare_docker_build_cache_args cache_args cache_tmp
+    fi
     mapfile -t docker_cmd < <(docker_build_command)
 
-    if ! DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}" "${docker_cmd[@]}" --pull=false "${cache_args[@]}" "${build_args[@]}" -f Dockerfile.app.local -t "$LOCAL_APP_IMAGE" .; then
+    if ! DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-1}" "${docker_cmd[@]}" --pull=false "${no_cache_args[@]}" "${cache_args[@]}" "${build_args[@]}" -f Dockerfile.app.local -t "$LOCAL_APP_IMAGE" .; then
         [ -n "$cache_tmp" ] && rm -rf "$cache_tmp"
         return 1
     fi
