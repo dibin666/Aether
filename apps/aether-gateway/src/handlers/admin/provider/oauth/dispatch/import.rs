@@ -16,7 +16,9 @@ use super::super::state::{
 };
 use super::helpers::admin_provider_oauth_key_name_from_auth_config;
 use super::token_import::{
-    build_provider_access_token_import_auth_config, normalize_provider_import_tokens,
+    build_provider_access_token_import_auth_config, decode_access_token_expires_at,
+    normalize_provider_import_tokens, normalize_provider_oauth_import_headers_from_object,
+    provider_oauth_import_authorization_bearer_token_from_object,
     provider_type_supports_access_token_import,
 };
 use crate::handlers::admin::provider::shared::paths::admin_provider_oauth_import_provider_id;
@@ -106,6 +108,34 @@ fn import_payload_string_any(
         .map(ToOwned::to_owned)
 }
 
+fn import_payload_project_id_any(
+    payload: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<String> {
+    keys.iter().find_map(|key| {
+        let value = payload.get(*key)?;
+        if let Some(string) = value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(string.to_string());
+        }
+        value
+            .as_object()
+            .and_then(|object| {
+                object
+                    .get("id")
+                    .or_else(|| object.get("project_id"))
+                    .or_else(|| object.get("projectId"))
+            })
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    })
+}
+
 fn import_payload_u64_any(
     payload: &serde_json::Map<String, serde_json::Value>,
     keys: &[&str],
@@ -123,12 +153,69 @@ fn import_payload_u64_any(
     })
 }
 
+fn import_payload_export_access_token(
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    if import_payload_string(payload, "refresh_token", "refreshToken").is_some() {
+        return None;
+    }
+    let access_token = import_payload_string(payload, "access_token", "accessToken")?;
+    let header_bearer = provider_oauth_import_authorization_bearer_token_from_object(payload);
+    if header_bearer.as_deref() == Some(access_token.as_str()) {
+        return None;
+    }
+    Some(access_token)
+}
+
 fn apply_single_import_hints(
     provider_type: &str,
     payload: &serde_json::Map<String, serde_json::Value>,
     auth_config: &mut serde_json::Map<String, serde_json::Value>,
 ) {
     let provider_type = provider_type.trim().to_ascii_lowercase();
+    if provider_type == "antigravity" {
+        if let Some(project_id) = import_payload_project_id_any(
+            payload,
+            &[
+                "project_id",
+                "projectId",
+                "cloudaicompanionProject",
+                "cloudAiCompanionProject",
+            ],
+        ) {
+            auth_config
+                .entry("project_id".to_string())
+                .or_insert_with(|| json!(project_id));
+        }
+        for (target, keys) in [
+            (
+                "client_version",
+                &[
+                    "client_version",
+                    "clientVersion",
+                    "antigravityClientVersion",
+                ][..],
+            ),
+            (
+                "session_id",
+                &[
+                    "session_id",
+                    "sessionId",
+                    "vscode_session_id",
+                    "vscodeSessionId",
+                ][..],
+            ),
+            ("user_agent", &["user_agent", "userAgent"][..]),
+        ] {
+            let Some(value) = import_payload_string_any(payload, keys) else {
+                continue;
+            };
+            auth_config
+                .entry(target.to_string())
+                .or_insert_with(|| json!(value));
+        }
+        return;
+    }
     if !matches!(provider_type.as_str(), "codex" | "chatgpt_web" | "grok") {
         return;
     }
@@ -195,6 +282,18 @@ fn apply_single_import_hints(
                 json!(value)
             }
         });
+    }
+
+    if let Some(access_token) = import_payload_export_access_token(payload) {
+        auth_config
+            .entry("access_token".to_string())
+            .or_insert_with(|| json!(access_token));
+    }
+
+    if let Some(request_headers) = normalize_provider_oauth_import_headers_from_object(payload) {
+        auth_config
+            .entry("headers".to_string())
+            .or_insert_with(|| json!(request_headers));
     }
 }
 
@@ -426,7 +525,8 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
             "session_token",
             "sessionToken",
         ],
-    );
+    )
+    .or_else(|| provider_oauth_import_authorization_bearer_token_from_object(&raw_payload));
     let imported_expires_at =
         import_payload_u64_any(&raw_payload, &["expires_at", "expiresAt", "expired"]);
     let name = raw_payload
@@ -543,9 +643,22 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
     let AdminProviderOAuthSingleImportTokens {
         access_token,
         mut auth_config,
-        expires_at,
+        mut expires_at,
     } = resolved_import;
     apply_single_import_hints(&provider_type, &raw_payload, &mut auth_config);
+    if let Some(header_access_token) =
+        provider_oauth_import_authorization_bearer_token_from_object(&raw_payload)
+    {
+        if let Some(header_expires_at) =
+            decode_access_token_expires_at(&header_access_token).or(imported_expires_at)
+        {
+            auth_config.insert("expires_at".to_string(), json!(header_expires_at));
+            expires_at = Some(header_expires_at);
+        } else {
+            auth_config.remove("expires_at");
+            expires_at = None;
+        }
+    }
     let has_refresh_token = auth_config
         .get("refresh_token")
         .and_then(serde_json::Value::as_str)
@@ -640,7 +753,8 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
 #[cfg(test)]
 mod tests {
     use super::{
-        import_payload_string_any, import_payload_u64_any, sanitize_windsurf_import_error,
+        apply_single_import_hints, import_payload_string_any, import_payload_u64_any,
+        sanitize_windsurf_import_error,
     };
     use aether_oauth::core::OAuthError;
     use serde_json::json;
@@ -673,6 +787,98 @@ mod tests {
             import_payload_u64_any(&payload, &["expires_at", "expiresAt", "expired"]),
             Some(1_893_456_000)
         );
+    }
+
+    #[test]
+    fn single_import_applies_antigravity_identity_hints() {
+        let payload = json!({
+            "cloudaicompanionProject": {
+                "id": "project-antigravity-1"
+            },
+            "clientVersion": "1.99.0",
+            "sessionId": "session-antigravity-1",
+            "userAgent": "antigravity"
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be an object");
+        let mut auth_config = serde_json::Map::new();
+
+        apply_single_import_hints("antigravity", &payload, &mut auth_config);
+
+        assert_eq!(
+            auth_config.get("project_id"),
+            Some(&json!("project-antigravity-1"))
+        );
+        assert_eq!(auth_config.get("client_version"), Some(&json!("1.99.0")));
+        assert_eq!(
+            auth_config.get("session_id"),
+            Some(&json!("session-antigravity-1"))
+        );
+        assert_eq!(auth_config.get("user_agent"), Some(&json!("antigravity")));
+    }
+
+    #[test]
+    fn single_import_preserves_distinct_top_level_access_token_for_export() {
+        let payload = json!({
+            "access_token": "jwt-access-token",
+            "headers": {
+                "authorization": "Bearer imported-session-token"
+            },
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be an object");
+        let mut auth_config = serde_json::Map::new();
+
+        apply_single_import_hints("codex", &payload, &mut auth_config);
+
+        assert_eq!(
+            auth_config.get("access_token"),
+            Some(&json!("jwt-access-token"))
+        );
+        assert_eq!(
+            auth_config.get("headers"),
+            Some(&json!({"authorization":"Bearer imported-session-token"}))
+        );
+    }
+
+    #[test]
+    fn single_import_does_not_preserve_header_bearer_as_export_access_token() {
+        let payload = json!({
+            "access_token": "imported-session-token",
+            "headers": {
+                "authorization": "Bearer imported-session-token"
+            },
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be an object");
+        let mut auth_config = serde_json::Map::new();
+
+        apply_single_import_hints("codex", &payload, &mut auth_config);
+
+        assert!(auth_config.get("access_token").is_none());
+        assert_eq!(
+            auth_config.get("headers"),
+            Some(&json!({"authorization":"Bearer imported-session-token"}))
+        );
+    }
+
+    #[test]
+    fn single_import_does_not_preserve_access_token_from_refresh_token_payload_for_export() {
+        let payload = json!({
+            "refresh_token": "refresh-token",
+            "access_token": "refreshed-access-token",
+        })
+        .as_object()
+        .cloned()
+        .expect("payload should be an object");
+        let mut auth_config = serde_json::Map::new();
+
+        apply_single_import_hints("codex", &payload, &mut auth_config);
+
+        assert!(auth_config.get("access_token").is_none());
     }
 
     #[test]

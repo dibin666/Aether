@@ -76,12 +76,16 @@ RUN --mount=type=cache,id=aether-cargo-registry,target=/usr/local/cargo/registry
         source) \
             cargo chef cook --release --locked \
                 --package aether-gateway --bin aether-gateway \
+                --features jemalloc \
+                --recipe-path recipe.json; \
+            cargo chef cook --release --locked \
                 --package aether-tunnel --bin aether-tunnel \
                 --recipe-path recipe.json \
             ;; \
         release|none) \
             cargo chef cook --release --locked \
                 --package aether-gateway --bin aether-gateway \
+                --features jemalloc \
                 --recipe-path recipe.json \
             ;; \
         *) \
@@ -130,17 +134,18 @@ RUN --mount=type=cache,id=aether-cargo-registry,target=/usr/local/cargo/registry
     }; \
     case "$AETHER_TUNNEL_MODE" in \
         source) \
-            cargo build --release --locked -p aether-gateway -p aether-tunnel; \
+            cargo build --release --locked -p aether-gateway --bin aether-gateway --features jemalloc; \
+            cargo build --release --locked -p aether-tunnel --bin aether-tunnel; \
             cp target/release/aether-gateway /tmp/aether-gateway; \
             cp target/release/aether-tunnel /tmp/aether-tunnel \
             ;; \
         release) \
-            cargo build --release --locked -p aether-gateway; \
+            cargo build --release --locked -p aether-gateway --bin aether-gateway --features jemalloc; \
             cp target/release/aether-gateway /tmp/aether-gateway; \
             download_tunnel_release \
             ;; \
         none) \
-            cargo build --release --locked -p aether-gateway; \
+            cargo build --release --locked -p aether-gateway --bin aether-gateway --features jemalloc; \
             cp target/release/aether-gateway /tmp/aether-gateway \
             ;; \
         *) \

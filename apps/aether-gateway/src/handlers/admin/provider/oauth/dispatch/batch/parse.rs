@@ -1,4 +1,8 @@
-use super::super::token_import::{import_tokens_from_raw_token, normalize_provider_import_tokens};
+use super::super::token_import::{
+    import_tokens_from_raw_token, normalize_provider_import_tokens,
+    normalize_provider_oauth_import_headers_from_object,
+    provider_oauth_import_authorization_bearer_token,
+};
 use crate::handlers::admin::provider::oauth::errors::build_internal_control_error_response;
 use crate::handlers::admin::provider::oauth::state::{current_unix_secs, json_u64_value};
 use axum::{
@@ -9,6 +13,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -22,6 +27,7 @@ pub(super) struct AdminProviderOAuthBatchImportEntry {
     pub parse_error: Option<String>,
     pub refresh_token: Option<String>,
     pub access_token: Option<String>,
+    pub export_access_token: Option<String>,
     pub raw_credentials: Option<serde_json::Value>,
     pub expires_at: Option<u64>,
     pub account_id: Option<String>,
@@ -32,9 +38,12 @@ pub(super) struct AdminProviderOAuthBatchImportEntry {
     pub email: Option<String>,
     pub account_name: Option<String>,
     pub project_id: Option<String>,
+    pub client_version: Option<String>,
+    pub session_id: Option<String>,
     pub sso_rw_token: Option<String>,
     pub cf_cookies: Option<String>,
     pub cf_clearance: Option<String>,
+    pub request_headers: Option<BTreeMap<String, String>>,
     pub user_agent: Option<String>,
     pub browser_profile: Option<String>,
 }
@@ -181,6 +190,7 @@ fn extract_admin_provider_oauth_batch_import_entry(
                     parse_error: None,
                     refresh_token,
                     access_token,
+                    export_access_token: None,
                     raw_credentials: None,
                     expires_at: None,
                     account_id: None,
@@ -191,9 +201,12 @@ fn extract_admin_provider_oauth_batch_import_entry(
                     email: None,
                     account_name: None,
                     project_id: None,
+                    client_version: None,
+                    session_id: None,
                     sso_rw_token: grok_cookie_value(raw_token, "sso-rw"),
                     cf_cookies: grok_cookie_profile(raw_token),
                     cf_clearance: grok_cookie_value(raw_token, "cf_clearance"),
+                    request_headers: None,
                     user_agent: None,
                     browser_profile: None,
                 })
@@ -233,10 +246,24 @@ fn extract_admin_provider_oauth_batch_import_entry(
                     .as_deref()
                     .and_then(|cookie| grok_cookie_value(cookie, "sso"))
             });
+            let request_headers = normalize_provider_oauth_import_headers_from_object(object);
+            let header_bearer_token =
+                provider_oauth_import_authorization_bearer_token(request_headers.as_ref());
+            let export_access_token = if refresh_token.is_none() {
+                access_token
+                    .as_ref()
+                    .filter(|value| header_bearer_token.as_deref() != Some(value.as_str()))
+                    .cloned()
+            } else {
+                None
+            };
             let (refresh_token, access_token) = normalize_provider_import_tokens(
                 provider_type,
                 refresh_token.as_deref(),
-                access_token.as_deref().or(session_token.as_deref()),
+                access_token
+                    .as_deref()
+                    .or(session_token.as_deref())
+                    .or(header_bearer_token.as_deref()),
             );
             let windsurf_api_key = is_windsurf
                 .then(|| {
@@ -331,6 +358,19 @@ fn extract_admin_provider_oauth_batch_import_entry(
                     .or_else(|| object.get("cloudaicompanionProject"))
                     .or_else(|| object.get("cloudAiCompanionProject")),
             );
+            let client_version = coerce_admin_provider_oauth_import_str(
+                object
+                    .get("client_version")
+                    .or_else(|| object.get("clientVersion"))
+                    .or_else(|| object.get("antigravityClientVersion")),
+            );
+            let session_id = coerce_admin_provider_oauth_import_str(
+                object
+                    .get("session_id")
+                    .or_else(|| object.get("sessionId"))
+                    .or_else(|| object.get("vscode_session_id"))
+                    .or_else(|| object.get("vscodeSessionId")),
+            );
             let sso_rw_token = coerce_admin_provider_oauth_import_str(
                 object
                     .get("sso_rw_token")
@@ -369,6 +409,7 @@ fn extract_admin_provider_oauth_batch_import_entry(
                 parse_error: None,
                 refresh_token,
                 access_token,
+                export_access_token,
                 raw_credentials,
                 expires_at,
                 account_id,
@@ -379,9 +420,12 @@ fn extract_admin_provider_oauth_batch_import_entry(
                 email,
                 account_name,
                 project_id,
+                client_version,
+                session_id,
                 sso_rw_token,
                 cf_cookies,
                 cf_clearance,
+                request_headers,
                 user_agent,
                 browser_profile,
             })
@@ -460,6 +504,7 @@ fn parse_error_entry(error: String) -> AdminProviderOAuthBatchImportEntry {
         parse_error: Some(error),
         refresh_token: None,
         access_token: None,
+        export_access_token: None,
         raw_credentials: None,
         expires_at: None,
         account_id: None,
@@ -470,9 +515,12 @@ fn parse_error_entry(error: String) -> AdminProviderOAuthBatchImportEntry {
         email: None,
         account_name: None,
         project_id: None,
+        client_version: None,
+        session_id: None,
         sso_rw_token: None,
         cf_cookies: None,
         cf_clearance: None,
+        request_headers: None,
         user_agent: None,
         browser_profile: None,
     }
@@ -502,6 +550,29 @@ pub(super) fn apply_admin_provider_oauth_batch_import_hints(
         }
         return;
     }
+    if provider_type == "antigravity" {
+        if let Some(project_id) = entry.project_id.as_ref() {
+            auth_config
+                .entry("project_id".to_string())
+                .or_insert_with(|| json!(project_id));
+        }
+        if let Some(client_version) = entry.client_version.as_ref() {
+            auth_config
+                .entry("client_version".to_string())
+                .or_insert_with(|| json!(client_version));
+        }
+        if let Some(session_id) = entry.session_id.as_ref() {
+            auth_config
+                .entry("session_id".to_string())
+                .or_insert_with(|| json!(session_id));
+        }
+        if let Some(user_agent) = entry.user_agent.as_ref() {
+            auth_config
+                .entry("user_agent".to_string())
+                .or_insert_with(|| json!(user_agent));
+        }
+        return;
+    }
     if !matches!(provider_type.as_str(), "codex" | "chatgpt_web" | "grok") {
         return;
     }
@@ -524,6 +595,11 @@ pub(super) fn apply_admin_provider_oauth_batch_import_hints(
         auth_config
             .entry("pool_tier".to_string())
             .or_insert_with(|| json!(pool_tier));
+    }
+    if let Some(access_token) = entry.export_access_token.as_ref() {
+        auth_config
+            .entry("access_token".to_string())
+            .or_insert_with(|| json!(access_token));
     }
     if let Some(user_id) = entry.user_id.as_ref() {
         auth_config
@@ -554,6 +630,11 @@ pub(super) fn apply_admin_provider_oauth_batch_import_hints(
         auth_config
             .entry("cf_clearance".to_string())
             .or_insert_with(|| json!(cf_clearance));
+    }
+    if let Some(request_headers) = entry.request_headers.as_ref() {
+        auth_config
+            .entry("headers".to_string())
+            .or_insert_with(|| json!(request_headers));
     }
     if let Some(user_agent) = entry.user_agent.as_ref() {
         auth_config
@@ -677,9 +758,108 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].refresh_token, None);
         assert_eq!(entries[0].access_token.as_deref(), Some("at_1"));
+        assert_eq!(entries[0].export_access_token.as_deref(), Some("at_1"));
         assert_eq!(entries[0].expires_at, Some(2_100_000_000));
         assert_eq!(entries[0].account_id.as_deref(), Some("acc-1"));
         assert_eq!(entries[0].email.as_deref(), Some("u@example.com"));
+    }
+
+    #[test]
+    fn parses_codex_import_header_overrides() {
+        let entries = parse_admin_provider_oauth_batch_import_entries(
+            "codex",
+            r#"[{"access_token":"jwt_access","headers":{"authorization":"Bearer session-1","chatgpt-account-id":"acc-1","host":"blocked.example"}}]"#,
+        );
+
+        assert_eq!(entries.len(), 1);
+        let headers = entries[0]
+            .request_headers
+            .as_ref()
+            .expect("headers should parse");
+        assert_eq!(
+            headers.get("authorization"),
+            Some(&"Bearer session-1".to_string())
+        );
+        assert_eq!(
+            headers.get("chatgpt-account-id"),
+            Some(&"acc-1".to_string())
+        );
+        assert!(!headers.contains_key("host"));
+    }
+
+    #[test]
+    fn treats_import_authorization_header_as_session_access_token() {
+        let entries = parse_admin_provider_oauth_batch_import_entries(
+            "codex",
+            r#"[{"access_token":"jwt_access","headers":{"authorization":"Bearer session-1"}}]"#,
+        );
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].access_token.as_deref(), Some("jwt_access"));
+        assert_eq!(
+            entries[0].export_access_token.as_deref(),
+            Some("jwt_access")
+        );
+
+        let entries = parse_admin_provider_oauth_batch_import_entries(
+            "codex",
+            r#"[{"headers":{"authorization":"Bearer session-1"}}]"#,
+        );
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].access_token.as_deref(), Some("session-1"));
+        assert!(entries[0].export_access_token.is_none());
+    }
+
+    #[test]
+    fn applies_codex_import_header_overrides_to_auth_config() {
+        let entries = parse_admin_provider_oauth_batch_import_entries(
+            "codex",
+            r#"{"accessToken":"at_1","headers":{"Authorization":"Bearer session-1"}}"#,
+        );
+        let mut auth_config = serde_json::Map::new();
+
+        apply_admin_provider_oauth_batch_import_hints("codex", &entries[0], &mut auth_config);
+
+        assert_eq!(
+            auth_config.get("headers"),
+            Some(&json!({"authorization":"Bearer session-1"}))
+        );
+        assert_eq!(auth_config.get("access_token"), Some(&json!("at_1")));
+    }
+
+    #[test]
+    fn does_not_export_access_token_when_it_is_the_header_bearer() {
+        let entries = parse_admin_provider_oauth_batch_import_entries(
+            "codex",
+            r#"{"accessToken":"session-1","headers":{"Authorization":"Bearer session-1"}}"#,
+        );
+        let mut auth_config = serde_json::Map::new();
+
+        apply_admin_provider_oauth_batch_import_hints("codex", &entries[0], &mut auth_config);
+
+        assert!(entries[0].export_access_token.is_none());
+        assert!(auth_config.get("access_token").is_none());
+        assert_eq!(
+            auth_config.get("headers"),
+            Some(&json!({"authorization":"Bearer session-1"}))
+        );
+    }
+
+    #[test]
+    fn does_not_export_access_token_from_refresh_token_payload() {
+        let entries = parse_admin_provider_oauth_batch_import_entries(
+            "codex",
+            r#"{"refreshToken":"refresh-1","accessToken":"refreshed-access"}"#,
+        );
+        let mut auth_config = serde_json::Map::new();
+
+        apply_admin_provider_oauth_batch_import_hints("codex", &entries[0], &mut auth_config);
+
+        assert_eq!(entries[0].refresh_token.as_deref(), Some("refresh-1"));
+        assert_eq!(entries[0].access_token.as_deref(), Some("refreshed-access"));
+        assert!(entries[0].export_access_token.is_none());
+        assert!(auth_config.get("access_token").is_none());
     }
 
     #[test]
@@ -821,6 +1001,23 @@ mod tests {
             auth_config.get("project_id"),
             Some(&json!("project-gemini-cli-2"))
         );
+    }
+
+    #[test]
+    fn applies_antigravity_project_and_user_agent_hints_to_auth_config() {
+        let entries = parse_admin_provider_oauth_batch_import_entries(
+            "antigravity",
+            r#"{"refreshToken":"rt-1","cloudaicompanionProject":{"id":"project-antigravity-2"},"userAgent":"antigravity"}"#,
+        );
+        let mut auth_config = serde_json::Map::new();
+
+        apply_admin_provider_oauth_batch_import_hints("antigravity", &entries[0], &mut auth_config);
+
+        assert_eq!(
+            auth_config.get("project_id"),
+            Some(&json!("project-antigravity-2"))
+        );
+        assert_eq!(auth_config.get("user_agent"), Some(&json!("antigravity")));
     }
 
     #[test]

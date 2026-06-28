@@ -177,7 +177,10 @@ pub(crate) fn build_admin_provider_summary_value(
         "provider_type".to_owned(),
         json!(provider.provider_type.clone()),
     );
-    summary.insert("description".to_owned(), json!(provider.description.clone()));
+    summary.insert(
+        "description".to_owned(),
+        json!(provider.description.clone()),
+    );
     summary.insert("website".to_owned(), json!(provider.website.clone()));
     summary.insert(
         "provider_priority".to_owned(),
@@ -210,7 +213,9 @@ pub(crate) fn build_admin_provider_summary_value(
     );
     summary.insert(
         "claude_code_advanced".to_owned(),
-        json!(config.and_then(|cfg| cfg.get("claude_code_advanced")).cloned()),
+        json!(config
+            .and_then(|cfg| cfg.get("claude_code_advanced"))
+            .cloned()),
     );
     summary.insert(
         "pool_advanced".to_owned(),
@@ -222,11 +227,15 @@ pub(crate) fn build_admin_provider_summary_value(
     );
     summary.insert(
         "chat_pii_redaction".to_owned(),
-        json!(config.and_then(|cfg| cfg.get("chat_pii_redaction")).cloned()),
+        json!(config
+            .and_then(|cfg| cfg.get("chat_pii_redaction"))
+            .cloned()),
     );
     summary.insert(
         "oauth_token_refresh".to_owned(),
-        json!(config.and_then(|cfg| cfg.get("oauth_token_refresh")).cloned()),
+        json!(config
+            .and_then(|cfg| cfg.get("oauth_token_refresh"))
+            .cloned()),
     );
     summary.insert("total_endpoints".to_owned(), json!(total_endpoints));
     summary.insert("active_endpoints".to_owned(), json!(active_endpoints));
@@ -234,7 +243,10 @@ pub(crate) fn build_admin_provider_summary_value(
     summary.insert("active_keys".to_owned(), json!(active_keys));
     summary.insert("total_models".to_owned(), json!(total_models));
     summary.insert("active_models".to_owned(), json!(active_models));
-    summary.insert("global_model_ids".to_owned(), json!(active_global_model_ids));
+    summary.insert(
+        "global_model_ids".to_owned(),
+        json!(active_global_model_ids),
+    );
     summary.insert("avg_health_score".to_owned(), json!(avg_health_score));
     summary.insert("unhealthy_endpoints".to_owned(), json!(unhealthy_endpoints));
     summary.insert("api_formats".to_owned(), json!(api_formats));
