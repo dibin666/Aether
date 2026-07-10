@@ -278,6 +278,48 @@
                           />
                         </div>
                       </div>
+                      <div
+                        v-if="getCodexResetCreditsDisplay(key)"
+                        class="mt-3 border-t border-border/60 pt-2"
+                      >
+                        <div class="flex flex-wrap items-center gap-x-1 gap-y-1 text-[10px] leading-4 text-muted-foreground">
+                          <button
+                            v-if="canConsumeCodexResetCredit(key)"
+                            type="button"
+                            class="font-medium text-primary underline-offset-2 transition-colors hover:text-primary/80 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:pointer-events-none disabled:opacity-60"
+                            :disabled="consumingCodexResetCreditKeyId === key.id"
+                            @click="handleConsumeCodexResetCredit(key)"
+                          >
+                            {{ consumingCodexResetCreditKeyId === key.id ? legacyT('重置中...') : legacyT('点击以进行重置') }}
+                          </button>
+                          <span
+                            v-else
+                            class="font-medium"
+                          >
+                            {{ legacyT('点击以进行重置') }}
+                          </span>
+                          <span>{{ formatCodexResetCreditCount(key) }}</span>
+                          <template v-if="getVisibleCodexResetCreditItems(key).length > 0">
+                            <span aria-hidden="true">|</span>
+                            <span>{{ legacyT('临近过期') }}</span>
+                            <template
+                              v-for="(item, itemIndex) in getVisibleCodexResetCreditItems(key)"
+                              :key="item.id || `${item.displayKey}-${item.expiresAt}`"
+                            >
+                              <span
+                                :title="item.title"
+                                class="tabular-nums"
+                              >
+                                {{ item.displayKey }} {{ formatCodexResetCreditDays(item.remainingSeconds) }}
+                              </span>
+                              <span
+                                v-if="itemIndex < getVisibleCodexResetCreditItems(key).length - 1"
+                                aria-hidden="true"
+                              >·</span>
+                            </template>
+                          </template>
+                        </div>
+                      </div>
                     </div>
                     <!-- Antigravity 上游额度摘要（按家族分组展示关键配额） -->
                     <div
@@ -319,31 +361,39 @@
                         />
                         <div class="grid grid-cols-2 gap-3">
                           <ProviderQuotaProgressRow
-                            v-for="group in getAntigravityQuotaSummaryForKey(key)"
-                            :key="group.key"
-                            :label="group.label"
-                            :used-percent="group.usedPercent"
-                            :remaining-percent="group.remainingPercent"
-                            :meter-class="getQuotaRemainingClass(group.usedPercent)"
-                            :bar-class="getQuotaRemainingBarColor(group.usedPercent)"
+                            v-for="item in getAntigravityQuotaPreviewForKey(key)"
+                            :key="item.model"
+                            :label="item.label"
+                            :title="item.model"
+                            :used-percent="item.usedPercent"
+                            :remaining-percent="item.remainingPercent"
+                            :meter-class="getQuotaRemainingClass(item.usedPercent)"
+                            :bar-class="getQuotaRemainingBarColor(item.usedPercent)"
                           >
                             <template #footer>
-                              <div
-                                v-if="group.resetSeconds !== null || group.usedPercent > 0"
-                                class="text-[9px] text-muted-foreground/70 mt-0.5"
-                              >
-                                <template v-if="group.resetSeconds !== null && group.resetSeconds > 0">
-                                  {{ formatResetTime(group.resetSeconds) }}{{ legacyT('后重置') }}
-                                </template>
-                                <template v-else-if="group.resetSeconds !== null && group.resetSeconds <= 0">
-                                  {{ legacyT('已重置') }}
-                                </template>
-                                <template v-else>
-                                  {{ legacyT('重置时间未知') }}
-                                </template>
+                              <div class="mt-0.5 space-y-0.5">
+                                <div
+                                  v-if="item.resetSeconds !== null"
+                                  class="text-[9px] text-muted-foreground/70"
+                                >
+                                  <template v-if="item.resetSeconds !== null && item.resetSeconds > 0">
+                                    {{ formatResetTime(item.resetSeconds) }}{{ legacyT('后重置') }}
+                                  </template>
+                                  <template v-else-if="item.resetSeconds !== null && item.resetSeconds <= 0">
+                                    {{ legacyT('已重置') }}
+                                  </template>
+                                </div>
                               </div>
                             </template>
                           </ProviderQuotaProgressRow>
+                          <button
+                            v-if="getAntigravityQuotaHiddenCountForKey(key) > 0"
+                            type="button"
+                            class="col-span-2 text-left text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                            @click="openAntigravityQuotaDialog(key)"
+                          >
+                            {{ legacyT('另有') }} {{ getAntigravityQuotaHiddenCountForKey(key) }} {{ legacyT('个模型，查看全部') }}
+                          </button>
                         </div>
                       </template>
                     </div>
@@ -908,6 +958,11 @@ import ProviderQuotaProgressRow from '@/features/providers/components/ProviderQu
 import ProviderQuotaSectionHeader from '@/features/providers/components/ProviderQuotaSectionHeader.vue'
 import { useProxyNodesStore } from '@/stores/proxy-nodes'
 import {
+  compareAntigravityQuotaItems,
+  dedupeAntigravityQuotaItemsByLabel,
+  resolveAntigravityQuotaLabel,
+} from '@/features/providers/utils/antigravityQuota'
+import {
   deleteEndpointKey,
   recoverKeyHealth,
   getProviderKeysPage,
@@ -916,6 +971,7 @@ import {
   exportKey,
   refreshProviderOAuth,
   refreshProviderQuota,
+  consumeCodexResetCredit,
   clearOAuthInvalid,
   type ProviderEndpoint,
   type EndpointAPIKey,
@@ -931,6 +987,7 @@ import type {
   GrokUpstreamMetadata,
   KiroUpstreamMetadata,
   WindsurfUpstreamMetadata,
+  QuotaResetCreditsSnapshot,
   QuotaStatusSnapshot,
   QuotaWindowSnapshot,
 } from '@/api/endpoints/types'
@@ -948,7 +1005,6 @@ import {
   canExportOAuthCredential,
   canRefreshOAuthCredential,
   isOAuthManagedCredential,
-  isServiceAccountCredential,
   getProviderMaskedSecretLabel,
   shouldShowOAuthRefreshControl,
 } from '@/utils/providerKeyAuth'
@@ -961,6 +1017,12 @@ import {
   getOAuthStatusTitle as resolveOAuthStatusTitle,
 } from '@/utils/providerKeyStatus'
 import { getGeminiCliAccountCreditsText } from '@/utils/providerKeyQuota'
+import {
+  formatCodexResetCreditCount as formatCodexResetCreditCountLabel,
+  formatCodexResetCreditDays,
+  getCodexResetCreditAvailableCount as getCodexResetCreditAvailableCountFromSnapshot,
+  getVisibleCodexResetCreditItems as getVisibleCodexResetCreditItemsFromSnapshot,
+} from './codex-reset-credit-display'
 
 // 扩展端点类型,包含密钥列表
 interface ProviderEndpointWithKeys extends ProviderEndpoint {
@@ -1059,6 +1121,9 @@ const refreshingOAuthKeyId = ref<string | null>(null)
 
 // OAuth 失效清除状态
 const clearingOAuthInvalidKeyId = ref<string | null>(null)
+
+// Codex reset credit 消费状态
+const consumingCodexResetCreditKeyId = ref<string | null>(null)
 
 // 限额刷新状态（Codex / Antigravity）
 const refreshingQuota = ref(false)
@@ -1299,14 +1364,6 @@ async function toggleFormatConversion() {
     emit('refresh')
   } catch {
     showError(legacyT('切换格式转换失败'))
-  }
-}
-
-// Provider 级别代理配置
-function handleProviderProxyPopoverToggle(open: boolean) {
-  providerProxyPopoverOpen.value = open
-  if (open) {
-    proxyNodesStore.ensureLoaded()
   }
 }
 
@@ -1616,6 +1673,75 @@ async function handleClearOAuthInvalid(key: EndpointAPIKey) {
   }
 }
 
+function createCodexResetCreditIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  throw new Error('浏览器不支持 crypto.randomUUID，无法生成安全幂等 ID')
+}
+
+function codexResetCreditOutcomeFeedback(
+  result: Awaited<ReturnType<typeof consumeCodexResetCredit>>,
+): { tone: 'success' | 'warning'; message: string } {
+  switch (result.outcome) {
+    case 'reset':
+      return { tone: 'success', message: '已使用 Codex 重置机会，并刷新账号配额' }
+    case 'already_redeemed':
+      return { tone: 'success', message: '本次重置请求已处理，账号配额已刷新' }
+    case 'nothing_to_reset':
+      return { tone: 'warning', message: '当前没有需要重置的 Codex 额度窗口' }
+    case 'no_credit':
+      return { tone: 'warning', message: '当前没有可用的 Codex 重置机会' }
+    default:
+      return { tone: 'warning', message: '重置请求已返回，但结果类型未知，请查看最新账号配额' }
+  }
+}
+
+async function handleConsumeCodexResetCredit(key: EndpointAPIKey) {
+  if (!canConsumeCodexResetCredit(key)) return
+
+  const earliest = getVisibleCodexResetCreditItems(key)[0]
+  const detailMessage = earliest
+    ? `\n当前最早过期项：${earliest.displayKey}，约 ${formatCodexResetCreditDays(earliest.remainingSeconds)} 后过期。`
+    : ''
+  const confirmed = await confirm({
+    title: legacyT('确认使用 Codex 重置机会'),
+    message: `${legacyT('将消耗 1 次 Codex 重置机会。操作完成后会重新刷新账号配额状态。')}${detailMessage}`,
+    confirmText: legacyT('确认重置'),
+    cancelText: legacyT('取消'),
+    variant: 'warning',
+  })
+  if (!confirmed) return
+
+  consumingCodexResetCreditKeyId.value = key.id
+  try {
+    const idempotencyKey = createCodexResetCreditIdempotencyKey()
+    const result = await consumeCodexResetCredit(key.id, {
+      idempotency_key: idempotencyKey,
+    })
+    applyQuotaResults([{
+      key_id: result.key_id,
+      status: result.refresh_status === 'success' ? 'success' : result.status,
+      metadata: result.metadata,
+      quota_snapshot: result.quota_snapshot,
+    }])
+
+    const feedback = codexResetCreditOutcomeFeedback(result)
+    if (feedback.tone === 'success') {
+      showSuccess(legacyT(feedback.message))
+    } else {
+      showWarning(legacyT(feedback.message))
+    }
+    if (result.refresh_status === 'failed') {
+      showWarning(legacyT(result.refresh_error || '重置请求已处理，但最新配额刷新失败'))
+    }
+  } catch (err: unknown) {
+    showError(localizedApiError(err, 'Codex 重置机会使用失败'), legacyT('错误'))
+  } finally {
+    consumingCodexResetCreditKeyId.value = null
+  }
+}
+
 // Codex / Gemini CLI / Antigravity / Kiro / Windsurf / ChatGPT Web：打开抽屉后自动后台刷新（配额缓存缺失/过期，或 Token 即将过期时触发）
 const AUTO_QUOTA_REFRESH_STALE_SECONDS = 5 * 60
 // 与后端 OAuth 懒刷新阈值对齐：到期前 2 分钟内视为需要刷新
@@ -1764,6 +1890,7 @@ function getCodexQuotaDisplayFromMetadata(metadata: CodexUpstreamMetadata | null
   ]
   numberFields.forEach(field => copyCodexNumberField(display, metadata, field))
   if (metadata.has_credits !== undefined) display.has_credits = metadata.has_credits
+  if (metadata.reset_credits) display.reset_credits = metadata.reset_credits
 
   return Object.keys(display).length > 0 ? display : null
 }
@@ -1819,6 +1946,7 @@ function getCodexQuotaDisplayFromSnapshot(quota: QuotaStatusSnapshot | null | un
   if (typeof sparkSecondaryWindow?.window_minutes === 'number') {
     display.spark_secondary_window_minutes = sparkSecondaryWindow.window_minutes
   }
+  if (quota.reset_credits) display.reset_credits = quota.reset_credits
 
   return Object.keys(display).length > 0 ? display : null
 }
@@ -1835,6 +1963,11 @@ function codexDisplayHasUsage(display: CodexUpstreamMetadata | null | undefined)
     || display.spark_primary_used_percent !== undefined
     || display.spark_secondary_used_percent !== undefined
   )
+}
+
+function codexDisplayHasResetCredits(display: CodexUpstreamMetadata | null | undefined): boolean {
+  const count = display?.reset_credits?.available_count
+  return typeof count === 'number' && Number.isFinite(count)
 }
 
 function getCodexQuotaDisplay(key: EndpointAPIKey): CodexUpstreamMetadata | null {
@@ -1863,6 +1996,7 @@ function hasCodexQuotaDisplayData(key: EndpointAPIKey): boolean {
     || codex.secondary_used_percent !== undefined
     || codex.spark_primary_used_percent !== undefined
     || codex.spark_secondary_used_percent !== undefined
+    || codexDisplayHasResetCredits(codex)
   )
 }
 
@@ -1872,6 +2006,29 @@ function hasCodexSparkQuotaDisplayData(key: EndpointAPIKey): boolean {
     codex.spark_primary_used_percent !== undefined
     || codex.spark_secondary_used_percent !== undefined
   )
+}
+
+function getCodexResetCreditsDisplay(key: EndpointAPIKey): QuotaResetCreditsSnapshot | null {
+  return getCodexQuotaDisplay(key)?.reset_credits ?? null
+}
+
+function getCodexResetCreditAvailableCount(key: EndpointAPIKey): number | null {
+  return getCodexResetCreditAvailableCountFromSnapshot(getCodexResetCreditsDisplay(key))
+}
+
+function formatCodexResetCreditCount(key: EndpointAPIKey): string {
+  return formatCodexResetCreditCountLabel(getCodexResetCreditAvailableCount(key))
+}
+
+function getVisibleCodexResetCreditItems(key: EndpointAPIKey) {
+  return getVisibleCodexResetCreditItemsFromSnapshot(getCodexResetCreditsDisplay(key))
+}
+
+function canConsumeCodexResetCredit(key: EndpointAPIKey): boolean {
+  return provider.value?.provider_type === 'codex'
+    && getCodexResetCreditAvailableCount(key) !== null
+    && (getCodexResetCreditAvailableCount(key) ?? 0) > 0
+    && !consumingCodexResetCreditKeyId.value
 }
 
 function getKiroQuotaDisplay(key: EndpointAPIKey): KiroUpstreamMetadata | null {
@@ -3204,53 +3361,72 @@ function secondsUntilReset(resetTime: string): number | null {
   return diff > 0 ? diff : 0
 }
 
+function secondsUntilUnixReset(resetAt: number | string | null | undefined): number | null {
+  const numericResetAt = Number(resetAt)
+  if (!Number.isFinite(numericResetAt) || numericResetAt <= 0) return null
+  const now = Math.floor(Date.now() / 1000)
+  return Math.max(Math.floor(numericResetAt - now), 0)
+}
+
+function coerceAntigravityPercent(value: number | string | null | undefined): number | undefined {
+  const numericValue = Number(value)
+  if (!Number.isFinite(numericValue)) return undefined
+  return Math.min(Math.max(numericValue, 0), 100)
+}
+
+function coerceAntigravityRemainingFraction(value: number | string | null | undefined): number | undefined {
+  const numericValue = Number(value)
+  if (!Number.isFinite(numericValue)) return undefined
+  return Math.min(Math.max(numericValue, 0), 1)
+}
+
 function getAntigravityQuotaItems(metadata: UpstreamMetadata | null | undefined): AntigravityQuotaItem[] {
   const quotaByModel = metadata?.antigravity?.quota_by_model
   if (!quotaByModel || typeof quotaByModel !== 'object') return []
 
   const items: AntigravityQuotaItem[] = []
+  const opaqueDisplayIndex = { value: 1 }
   for (const [model, rawInfo] of Object.entries(quotaByModel)) {
     if (!model) continue
     const info: Partial<AntigravityModelQuota> = rawInfo || {}
 
-    let usedPercent = Number(info.used_percent)
-    if (!Number.isFinite(usedPercent)) {
-      const remainingFraction = Number(info.remaining_fraction)
-      if (Number.isFinite(remainingFraction)) {
+    let usedPercent = coerceAntigravityPercent(info.used_percent)
+    if (usedPercent === undefined) {
+      const remainingFraction = coerceAntigravityRemainingFraction(info.remaining_fraction)
+      if (remainingFraction !== undefined) {
         usedPercent = (1 - remainingFraction) * 100
       } else {
         continue
       }
     }
 
-    if (usedPercent < 0) usedPercent = 0
-    if (usedPercent > 100) usedPercent = 100
+    usedPercent = coerceAntigravityPercent(usedPercent) ?? 0
 
     const remainingPercent = Math.max(100 - usedPercent, 0)
 
-    let resetSeconds: number | null = null
+    let resetSeconds = secondsUntilUnixReset(info.reset_at)
     if (typeof info.reset_time === 'string' && info.reset_time.trim()) {
-      resetSeconds = secondsUntilReset(info.reset_time.trim())
+      resetSeconds = secondsUntilReset(info.reset_time.trim()) ?? resetSeconds
     }
 
     items.push({
       model,
-      label: model,
+      label: resolveAntigravityQuotaLabel(model, info.display_name, opaqueDisplayIndex),
       usedPercent,
       remainingPercent,
       resetSeconds,
     })
   }
 
-  // 按“最紧张”（已用最多）优先排序，便于快速定位额度风险；完整列表通过滚动展示
-  items.sort((a, b) => (b.usedPercent - a.usedPercent) || a.model.localeCompare(b.model))
-  return items
+  items.sort(compareAntigravityQuotaItems)
+  return dedupeAntigravityQuotaItemsByLabel(items)
 }
 
 function getAntigravityQuotaItemsFromSnapshot(key: EndpointAPIKey): AntigravityQuotaItem[] {
   const quota = getQuotaSnapshotForProvider(key, 'antigravity')
   const windows = getQuotaWindowByScope(quota, 'model')
   if (!quota || windows.length === 0) return []
+  const opaqueDisplayIndex = { value: 1 }
 
   const items = windows
     .map((window) => {
@@ -3274,7 +3450,11 @@ function getAntigravityQuotaItemsFromSnapshot(key: EndpointAPIKey): AntigravityQ
 
       return {
         model,
-        label: String(window.label || window.model || model),
+        label: resolveAntigravityQuotaLabel(
+          model,
+          window.label || window.model,
+          opaqueDisplayIndex,
+        ),
         usedPercent: normalizedUsedPercent,
         remainingPercent: normalizedRemainingPercent,
         resetSeconds: getQuotaWindowLiveResetSeconds(quota, window),
@@ -3282,124 +3462,24 @@ function getAntigravityQuotaItemsFromSnapshot(key: EndpointAPIKey): AntigravityQ
     })
     .filter((item): item is AntigravityQuotaItem => item !== null)
 
-  items.sort((a, b) => (b.usedPercent - a.usedPercent) || a.model.localeCompare(b.model))
-  return items
+  items.sort(compareAntigravityQuotaItems)
+  return dedupeAntigravityQuotaItemsByLabel(items)
 }
 
-// Antigravity 配额分组定义（按匹配优先级排列，具体规则在前）
-interface AntigravityQuotaGroup {
-  key: string
-  label: string
-  match: (model: string) => boolean
-}
+const ANTIGRAVITY_QUOTA_PREVIEW_LIMIT = 6
 
-const ANTIGRAVITY_QUOTA_GROUPS: AntigravityQuotaGroup[] = [
-  { key: 'claude', label: 'Claude', match: m => m.includes('claude') },
-  { key: 'gemini-2.5', label: 'Gemini 2.5', match: m => m.includes('gemini-2.5') || m.includes('gemini-2-5') },
-  { key: 'gemini-3', label: 'Gemini 3', match: m => m.includes('gemini-3') && !m.includes('image') },
-  { key: 'gemini-3-image', label: 'Gemini 3 Image', match: m => m.includes('gemini-3') && m.includes('image') },
-]
-
-interface AntigravityQuotaSummaryItem {
-  key: string
-  label: string
-  usedPercent: number       // 组内最高已用百分比（最紧张）
-  remainingPercent: number  // 100 - usedPercent
-  resetSeconds: number | null
-}
-
-function getAntigravityQuotaSummary(metadata: UpstreamMetadata | null | undefined): AntigravityQuotaSummaryItem[] {
-  const items = getAntigravityQuotaItems(metadata)
-  if (!items.length) return []
-
-  // 将每个模型归入分组
-  const groupMap = new Map<string, { label: string, maxUsed: number, resetSeconds: number | null }>()
-
-  for (const item of items) {
-    const model = item.model.toLowerCase()
-    const group = ANTIGRAVITY_QUOTA_GROUPS.find(g => g.match(model))
-    if (!group) continue
-
-    const existing = groupMap.get(group.key)
-    if (!existing) {
-      groupMap.set(group.key, {
-        label: group.label,
-        maxUsed: item.usedPercent,
-        resetSeconds: item.resetSeconds,
-      })
-    } else {
-      if (item.usedPercent > existing.maxUsed) {
-        existing.maxUsed = item.usedPercent
-      }
-      if (existing.resetSeconds === null) {
-        existing.resetSeconds = item.resetSeconds
-      } else if (item.resetSeconds !== null && item.resetSeconds < existing.resetSeconds) {
-        existing.resetSeconds = item.resetSeconds
-      }
-    }
-  }
-
-  // 按 ANTIGRAVITY_QUOTA_GROUPS 定义的顺序输出
-  const result: AntigravityQuotaSummaryItem[] = []
-  for (const group of ANTIGRAVITY_QUOTA_GROUPS) {
-    const data = groupMap.get(group.key)
-    if (!data) continue
-    result.push({
-      key: group.key,
-      label: data.label,
-      usedPercent: data.maxUsed,
-      remainingPercent: Math.max(100 - data.maxUsed, 0),
-      resetSeconds: data.resetSeconds,
-    })
-  }
-  return result
-}
-
-function getAntigravityQuotaSummaryForKey(key: EndpointAPIKey): AntigravityQuotaSummaryItem[] {
+function getAntigravityQuotaItemsForKey(key: EndpointAPIKey): AntigravityQuotaItem[] {
   const snapshotItems = getAntigravityQuotaItemsFromSnapshot(key)
-  if (snapshotItems.length > 0) {
-    const groupMap = new Map<string, { label: string, maxUsed: number, resetSeconds: number | null }>()
+  if (snapshotItems.length > 0) return snapshotItems
+  return getAntigravityQuotaItems(key.upstream_metadata)
+}
 
-    for (const item of snapshotItems) {
-      const model = item.model.toLowerCase()
-      const group = ANTIGRAVITY_QUOTA_GROUPS.find(g => g.match(model))
-      if (!group) continue
+function getAntigravityQuotaPreviewForKey(key: EndpointAPIKey): AntigravityQuotaItem[] {
+  return getAntigravityQuotaItemsForKey(key).slice(0, ANTIGRAVITY_QUOTA_PREVIEW_LIMIT)
+}
 
-      const existing = groupMap.get(group.key)
-      if (!existing) {
-        groupMap.set(group.key, {
-          label: group.label,
-          maxUsed: item.usedPercent,
-          resetSeconds: item.resetSeconds,
-        })
-      } else {
-        if (item.usedPercent > existing.maxUsed) {
-          existing.maxUsed = item.usedPercent
-        }
-        if (existing.resetSeconds === null) {
-          existing.resetSeconds = item.resetSeconds
-        } else if (item.resetSeconds !== null && item.resetSeconds < existing.resetSeconds) {
-          existing.resetSeconds = item.resetSeconds
-        }
-      }
-    }
-
-    const result: AntigravityQuotaSummaryItem[] = []
-    for (const group of ANTIGRAVITY_QUOTA_GROUPS) {
-      const data = groupMap.get(group.key)
-      if (!data) continue
-      result.push({
-        key: group.key,
-        label: data.label,
-        usedPercent: data.maxUsed,
-        remainingPercent: Math.max(100 - data.maxUsed, 0),
-        resetSeconds: data.resetSeconds,
-      })
-    }
-    return result
-  }
-
-  return getAntigravityQuotaSummary(key.upstream_metadata)
+function getAntigravityQuotaHiddenCountForKey(key: EndpointAPIKey): number {
+  return Math.max(getAntigravityQuotaItemsForKey(key).length - ANTIGRAVITY_QUOTA_PREVIEW_LIMIT, 0)
 }
 
 function getResetCountdownText(

@@ -223,13 +223,19 @@ pub fn parse_antigravity_usage_response(
 ) -> Option<serde_json::Value> {
     let models = value.get("models")?.as_object()?;
     let mut quota_by_model = serde_json::Map::new();
+    let mut opaque_key_display_index = 1usize;
 
     for (model_id, model_value) in models {
         let mut payload = serde_json::Map::new();
-        if let Some(display_name) = coerce_json_string(
+        let upstream_display_name = coerce_json_string(
             model_value
                 .get("displayName")
                 .or_else(|| model_value.get("display_name")),
+        );
+        if let Some(display_name) = friendly_quota_display_name(
+            upstream_display_name,
+            model_id,
+            &mut opaque_key_display_index,
         ) {
             payload.insert("display_name".to_string(), json!(display_name));
         }
@@ -270,6 +276,7 @@ pub fn parse_gemini_cli_retrieve_user_quota_response(
 ) -> Option<serde_json::Value> {
     let buckets = value.get("buckets")?.as_array()?;
     let mut quota_by_model = serde_json::Map::new();
+    let mut opaque_key_display_index = 1usize;
 
     for bucket in buckets {
         if !bucket.is_object() {
@@ -319,6 +326,12 @@ pub fn parse_gemini_cli_retrieve_user_quota_response(
         )
         .or_else(|| model_id.clone())
         .or_else(|| token_type.clone())
+        .unwrap_or_else(|| quota_key.clone());
+        let display_name = friendly_quota_display_name(
+            Some(display_name),
+            &quota_key,
+            &mut opaque_key_display_index,
+        )
         .unwrap_or_else(|| quota_key.clone());
         let remaining_fraction = first_json_f64_by_paths(
             bucket,
@@ -454,6 +467,38 @@ pub fn parse_gemini_cli_retrieve_user_quota_response(
         "updated_at": updated_at_unix_secs,
         "quota_by_model": quota_by_model,
     }))
+}
+
+fn is_opaque_reset_credit_quota_identifier(value: &str) -> bool {
+    value.trim().starts_with("RateLimitResetCredit_")
+}
+
+fn friendly_quota_display_name(
+    candidate: Option<String>,
+    quota_key: &str,
+    opaque_key_display_index: &mut usize,
+) -> Option<String> {
+    let candidate = candidate
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if let Some(candidate) = candidate.as_deref() {
+        if !is_opaque_reset_credit_quota_identifier(candidate) {
+            return Some(candidate.to_string());
+        }
+    }
+
+    if is_opaque_reset_credit_quota_identifier(quota_key)
+        || candidate
+            .as_deref()
+            .is_some_and(is_opaque_reset_credit_quota_identifier)
+    {
+        let label = format!("Key-{}", *opaque_key_display_index);
+        *opaque_key_display_index += 1;
+        return Some(label);
+    }
+
+    candidate
 }
 
 pub fn parse_gemini_cli_v1internal_credits_response(
@@ -601,6 +646,47 @@ fn codex_find_spark_rate_limit(
         .and_then(serde_json::Value::as_object)
 }
 
+fn codex_reset_credits_container(
+    root: &serde_json::Map<String, serde_json::Value>,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    [
+        "rate_limit_reset_credits",
+        "rateLimitResetCredits",
+        "reset_credits",
+        "resetCredits",
+    ]
+    .iter()
+    .find_map(|key| root.get(*key).and_then(serde_json::Value::as_object))
+}
+
+fn codex_reset_credits_available_count(
+    root: &serde_json::Map<String, serde_json::Value>,
+) -> Option<u64> {
+    let container = codex_reset_credits_container(root)?;
+    [
+        "available_count",
+        "availableCount",
+        "available",
+        "remaining",
+        "count",
+    ]
+    .iter()
+    .find_map(|key| container.get(*key).and_then(coerce_json_u64))
+}
+
+fn codex_reset_credits_count_snapshot(
+    available_count: u64,
+    updated_at_unix_secs: u64,
+) -> serde_json::Value {
+    json!({
+        "available_count": available_count,
+        "updated_at": updated_at_unix_secs,
+        "detail_source": "wham_usage",
+        "detail_status": "not_requested",
+        "credits": [],
+    })
+}
+
 pub fn parse_codex_wham_usage_response(
     value: &serde_json::Value,
     updated_at_unix_secs: u64,
@@ -668,11 +754,197 @@ pub fn parse_codex_wham_usage_response(
         }
     }
 
+    if let Some(available_count) = codex_reset_credits_available_count(root) {
+        result.insert(
+            "reset_credits".to_string(),
+            codex_reset_credits_count_snapshot(available_count, updated_at_unix_secs),
+        );
+    }
+
     if result.is_empty() {
         return None;
     }
     result.insert("updated_at".to_string(), json!(updated_at_unix_secs));
     Some(serde_json::Value::Object(result))
+}
+
+fn parse_codex_reset_credit_timestamp(value: Option<&serde_json::Value>) -> Option<u64> {
+    let value = value?;
+    if let Some(timestamp) = coerce_json_u64(value) {
+        return Some(if timestamp > 1_000_000_000_000 {
+            timestamp / 1000
+        } else {
+            timestamp
+        });
+    }
+    let raw = value.as_str()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .and_then(|timestamp| u64::try_from(timestamp.timestamp()).ok())
+}
+
+fn codex_reset_credit_detail_items(value: &serde_json::Value) -> Option<&Vec<serde_json::Value>> {
+    first_json_value_by_paths(
+        value,
+        &[
+            &["credits"],
+            &["data"],
+            &["items"],
+            &["rate_limit_reset_credits", "credits"],
+            &["rate_limit_reset_credits", "data"],
+            &["rateLimitResetCredits", "credits"],
+            &["rateLimitResetCredits", "data"],
+            &["reset_credits", "credits"],
+            &["resetCredits", "credits"],
+        ],
+    )
+    .and_then(serde_json::Value::as_array)
+}
+
+fn codex_reset_credit_id(object: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    [
+        "id",
+        "credit_id",
+        "creditId",
+        "key",
+        "idempotency_key",
+        "idempotencyKey",
+    ]
+    .iter()
+    .find_map(|key| coerce_json_string(object.get(*key)))
+}
+
+fn codex_reset_credit_display_key(id: &str) -> Option<String> {
+    id.split('-')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn codex_reset_credit_status(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Option<String> {
+    ["status", "state"]
+        .iter()
+        .find_map(|key| coerce_json_string(object.get(*key)))
+}
+
+fn parse_codex_reset_credit_detail_item(item: &serde_json::Value) -> Option<serde_json::Value> {
+    let object = item.as_object()?;
+    let id = codex_reset_credit_id(object)?;
+    let display_key = codex_reset_credit_display_key(&id)?;
+    let expires_at = parse_codex_reset_credit_timestamp(
+        object
+            .get("expires_at")
+            .or_else(|| object.get("expiresAt"))
+            .or_else(|| object.get("expiration_time"))
+            .or_else(|| object.get("expirationTime")),
+    )?;
+    let granted_at = parse_codex_reset_credit_timestamp(
+        object
+            .get("granted_at")
+            .or_else(|| object.get("grantedAt"))
+            .or_else(|| object.get("created_at"))
+            .or_else(|| object.get("createdAt")),
+    );
+
+    let mut out = serde_json::Map::new();
+    out.insert("id".to_string(), json!(id));
+    out.insert("display_key".to_string(), json!(display_key));
+    if let Some(status) = codex_reset_credit_status(object) {
+        out.insert("status".to_string(), json!(status));
+    }
+    if let Some(granted_at) = granted_at {
+        out.insert("granted_at".to_string(), json!(granted_at));
+    }
+    out.insert("expires_at".to_string(), json!(expires_at));
+    Some(serde_json::Value::Object(out))
+}
+
+pub fn parse_codex_wham_reset_credits_detail_response(
+    value: &serde_json::Value,
+    updated_at_unix_secs: u64,
+) -> Option<serde_json::Value> {
+    value.as_object()?;
+    let mut credits = codex_reset_credit_detail_items(value)
+        .into_iter()
+        .flatten()
+        .filter_map(parse_codex_reset_credit_detail_item)
+        .collect::<Vec<_>>();
+    credits.sort_by_key(|item| {
+        item.get("expires_at")
+            .and_then(coerce_json_u64)
+            .unwrap_or(u64::MAX)
+    });
+
+    let detail_status = if credits.is_empty() {
+        "empty"
+    } else {
+        "available"
+    };
+    let mut reset_credits = serde_json::Map::new();
+    reset_credits.insert("updated_at".to_string(), json!(updated_at_unix_secs));
+    reset_credits.insert("detail_source".to_string(), json!("wham_readonly"));
+    reset_credits.insert("detail_status".to_string(), json!(detail_status));
+    reset_credits.insert("credits".to_string(), serde_json::Value::Array(credits));
+
+    if let Some(root) = value.as_object() {
+        if let Some(available_count) = codex_reset_credits_available_count(root).or_else(|| {
+            [
+                "available_count",
+                "availableCount",
+                "available",
+                "remaining",
+                "count",
+            ]
+            .iter()
+            .find_map(|key| root.get(*key).and_then(coerce_json_u64))
+        }) {
+            reset_credits.insert("available_count".to_string(), json!(available_count));
+        }
+    }
+
+    Some(json!({ "reset_credits": reset_credits }))
+}
+
+pub fn normalize_codex_reset_credit_consume_outcome(
+    value: Option<&serde_json::Value>,
+) -> Option<String> {
+    let object = value.and_then(serde_json::Value::as_object)?;
+    let raw = ["outcome", "status", "result", "code"]
+        .iter()
+        .find_map(|key| coerce_json_string(object.get(*key)));
+    if let Some(raw) = raw {
+        let normalized = raw.trim().replace(['-', ' '], "_").to_ascii_lowercase();
+        return match normalized.as_str() {
+            "reset" | "success" | "redeemed" => Some("reset".to_string()),
+            "alreadyredeemed" | "already_redeemed" => Some("already_redeemed".to_string()),
+            "nothingtoreset" | "nothing_to_reset" => Some("nothing_to_reset".to_string()),
+            "nocredit" | "no_credit" => Some("no_credit".to_string()),
+            "error" | "failed" => Some("error".to_string()),
+            _ => None,
+        };
+    }
+
+    for (field, outcome) in [
+        ("reset", "reset"),
+        ("alreadyRedeemed", "already_redeemed"),
+        ("already_redeemed", "already_redeemed"),
+        ("nothingToReset", "nothing_to_reset"),
+        ("nothing_to_reset", "nothing_to_reset"),
+        ("noCredit", "no_credit"),
+        ("no_credit", "no_credit"),
+    ] {
+        if object.get(field).and_then(coerce_json_bool) == Some(true) {
+            return Some(outcome.to_string());
+        }
+    }
+
+    None
 }
 
 fn codex_json_object<'a>(
@@ -1772,8 +2044,10 @@ pub fn parse_chatgpt_web_conversation_init_response(
 mod tests {
     use super::{
         codex_build_invalid_state, codex_runtime_invalid_reason,
+        normalize_codex_reset_credit_consume_outcome, parse_antigravity_usage_response,
         parse_chatgpt_web_conversation_init_response, parse_codex_backend_me_response,
-        parse_codex_wham_usage_response, parse_gemini_cli_retrieve_user_quota_response,
+        parse_codex_wham_reset_credits_detail_response, parse_codex_wham_usage_response,
+        parse_gemini_cli_retrieve_user_quota_response,
         parse_gemini_cli_v1internal_credits_response, parse_windsurf_model_configs_response,
         parse_windsurf_rate_limit_response, parse_windsurf_user_status_response,
         provider_auto_remove_quota_exhausted_keys, quota_refresh_success_invalid_state,
@@ -2188,6 +2462,95 @@ mod tests {
     }
 
     #[test]
+    fn parses_codex_reset_credit_count_from_wham_usage() {
+        let parsed = parse_codex_wham_usage_response(
+            &json!({
+                "plan_type": "plus",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 25.0,
+                        "reset_after_seconds": 604800
+                    }
+                },
+                "rate_limit_reset_credits": {
+                    "available_count": 2
+                }
+            }),
+            1_777_000_000,
+        )
+        .expect("codex wham usage should parse");
+
+        assert_eq!(
+            parsed.pointer("/reset_credits/available_count"),
+            Some(&json!(2u64))
+        );
+        assert_eq!(
+            parsed.pointer("/reset_credits/detail_status"),
+            Some(&json!("not_requested"))
+        );
+        assert_eq!(
+            parsed.pointer("/reset_credits/updated_at"),
+            Some(&json!(1_777_000_000u64))
+        );
+    }
+
+    #[test]
+    fn parses_codex_reset_credit_detail_sorted_by_expiry() {
+        let parsed = parse_codex_wham_reset_credits_detail_response(
+            &json!({
+                "credits": [
+                    {
+                        "idempotencyKey": "bbbbbbbb-1111-2222-3333-444444444444",
+                        "status": "available",
+                        "expiresAt": "2030-01-04T00:00:00Z"
+                    },
+                    {
+                        "idempotencyKey": "aaaaaaaa-1111-2222-3333-444444444444",
+                        "status": "available",
+                        "grantedAt": 1_893_456_000_000u64,
+                        "expiresAt": "2030-01-02T00:00:00Z"
+                    }
+                ]
+            }),
+            1_777_000_000,
+        )
+        .expect("detail should parse");
+
+        assert_eq!(
+            parsed.pointer("/reset_credits/detail_status"),
+            Some(&json!("available"))
+        );
+        assert_eq!(
+            parsed.pointer("/reset_credits/credits/0/display_key"),
+            Some(&json!("aaaaaaaa"))
+        );
+        assert_eq!(
+            parsed.pointer("/reset_credits/credits/0/granted_at"),
+            Some(&json!(1_893_456_000u64))
+        );
+        assert_eq!(
+            parsed.pointer("/reset_credits/credits/1/display_key"),
+            Some(&json!("bbbbbbbb"))
+        );
+    }
+
+    #[test]
+    fn normalizes_codex_reset_credit_consume_outcome() {
+        assert_eq!(
+            normalize_codex_reset_credit_consume_outcome(Some(&json!({
+                "outcome": "alreadyRedeemed"
+            }))),
+            Some("already_redeemed".to_string())
+        );
+        assert_eq!(
+            normalize_codex_reset_credit_consume_outcome(Some(&json!({
+                "noCredit": true
+            }))),
+            Some("no_credit".to_string())
+        );
+    }
+
+    #[test]
     fn parses_codex_backend_me_identity_metadata_without_quota_windows() {
         let parsed = parse_codex_backend_me_response(
             &json!({
@@ -2219,6 +2582,40 @@ mod tests {
         assert_eq!(parsed.get("updated_at"), Some(&json!(1_777_000_000u64)));
         assert!(parsed.get("primary_used_percent").is_none());
         assert!(parsed.get("secondary_used_percent").is_none());
+    }
+
+    #[test]
+    fn parses_antigravity_usage_response_labels_opaque_reset_credit_keys() {
+        let parsed = parse_antigravity_usage_response(
+            &json!({
+                "models": {
+                    "RateLimitResetCredit_05cbb6eeeb9c81918e011d8300f9ebfb": {
+                        "quotaInfo": {
+                            "remainingFraction": 0.75,
+                            "resetTime": "2030-01-01T00:00:00Z"
+                        }
+                    },
+                    "gemini-3-pro-preview": {
+                        "displayName": "Gemini 3 Pro Preview",
+                        "quotaInfo": {
+                            "remainingFraction": 0.25
+                        }
+                    }
+                }
+            }),
+            1_777_000_000,
+        )
+        .expect("antigravity quota should parse");
+
+        assert_eq!(
+            parsed["models"]["RateLimitResetCredit_05cbb6eeeb9c81918e011d8300f9ebfb"]
+                ["display_name"],
+            json!("Key-1")
+        );
+        assert_eq!(
+            parsed["models"]["gemini-3-pro-preview"]["display_name"],
+            json!("Gemini 3 Pro Preview")
+        );
     }
 
     #[test]
@@ -2275,6 +2672,38 @@ mod tests {
         assert_eq!(
             parsed["quota_by_model"]["gemini-2.5-flash"]["used_percent"],
             json!(100.0)
+        );
+    }
+
+    #[test]
+    fn parses_gemini_cli_quota_buckets_labels_opaque_reset_credit_keys() {
+        let parsed = parse_gemini_cli_retrieve_user_quota_response(
+            &json!({
+                "buckets": [
+                    {
+                        "tokenType": "RateLimitResetCredit_05cbb6eeeb9c81918e011d8300f9ebfb",
+                        "remainingFraction": 0.5
+                    },
+                    {
+                        "modelId": "RateLimitResetCredit_d18b8aac4ec2472697ad747a14975ac8",
+                        "displayName": "RateLimitResetCredit_d18b8aac4ec2472697ad747a14975ac8",
+                        "remainingFraction": 0.25
+                    }
+                ]
+            }),
+            1_777_000_000,
+        )
+        .expect("gemini cli quota should parse");
+
+        assert_eq!(
+            parsed["quota_by_model"]["RateLimitResetCredit_05cbb6eeeb9c81918e011d8300f9ebfb"]
+                ["display_name"],
+            json!("Key-1")
+        );
+        assert_eq!(
+            parsed["quota_by_model"]["RateLimitResetCredit_d18b8aac4ec2472697ad747a14975ac8"]
+                ["display_name"],
+            json!("Key-2")
         );
     }
 
