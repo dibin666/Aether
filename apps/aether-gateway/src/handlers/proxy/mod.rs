@@ -51,7 +51,7 @@ use crate::handlers::shared::{
     should_strip_forwarded_provider_credential_header, should_strip_forwarded_trusted_admin_header,
 };
 use crate::headers::{
-    extract_or_generate_trace_id, request_origin_from_headers_and_remote_addr,
+    effective_client_ip, extract_or_generate_trace_id, request_origin_from_headers_and_remote_addr,
     should_skip_request_header, RequestBodyNormalizationError,
 };
 use crate::router::RequestAdmissionError;
@@ -417,7 +417,7 @@ fn api_key_remote_ip_allowed(ip_rules: Option<&[String]>, remote_ip: std::net::I
 
 async fn maybe_promote_management_token_admin_principal(
     state: &AppState,
-    remote_addr: &std::net::SocketAddr,
+    client_ip: std::net::IpAddr,
     headers: &http::HeaderMap,
     trace_id: &str,
     request_context: &mut GatewayPublicRequestContext,
@@ -451,7 +451,7 @@ async fn maybe_promote_management_token_admin_principal(
     {
         return Ok(());
     }
-    if !remote_ip_allowed(token_with_user.token.allowed_ips.as_ref(), remote_addr.ip()) {
+    if !remote_ip_allowed(token_with_user.token.allowed_ips.as_ref(), client_ip) {
         return Ok(());
     }
     let Some(user) = state.find_user_auth_by_id(&token_with_user.user.id).await? else {
@@ -483,7 +483,7 @@ async fn maybe_promote_management_token_admin_principal(
         management_token_permissions,
     });
 
-    let remote_ip = remote_addr.ip().to_string();
+    let remote_ip = client_ip.to_string();
     if let Err(err) = state
         .record_management_token_usage(&token_with_user.token.id, Some(remote_ip.as_str()))
         .await
@@ -1039,6 +1039,51 @@ async fn proxy_request_inner(
     request: Request,
 ) -> Result<Response<Body>, GatewayError> {
     let started_at = Instant::now();
+    let client_ip = effective_client_ip(request.headers(), &remote_addr);
+    let trace_id = extract_or_generate_trace_id(request.headers());
+    match state.admin_security_ip_blacklisted(client_ip).await {
+        Ok(true) => {
+            warn!(
+                event_name = "frontdoor_ip_blacklist_rejected",
+                log_type = "event",
+                trace_id = %trace_id,
+                client_ip = %client_ip,
+                path = %request.uri().path(),
+                "gateway rejected blacklisted client IP"
+            );
+            let response = build_local_http_error_response(
+                &trace_id,
+                None,
+                http::StatusCode::FORBIDDEN,
+                "当前 IP 已被禁止访问",
+            )?;
+            return Ok(finalize_gateway_response(
+                &state,
+                response,
+                &trace_id,
+                &remote_addr,
+                request.method(),
+                request
+                    .uri()
+                    .path_and_query()
+                    .map(|value| value.as_str())
+                    .unwrap_or("/"),
+                None,
+                EXECUTION_PATH_LOCAL_AUTH_DENIED,
+                &started_at,
+                None,
+            ));
+        }
+        Ok(false) => {}
+        Err(err) => warn!(
+            event_name = "frontdoor_ip_blacklist_check_failed",
+            log_type = "ops",
+            trace_id = %trace_id,
+            client_ip = %client_ip,
+            error = ?err,
+            "gateway failed open after IP blacklist check error"
+        ),
+    }
     let accepted_at = request
         .extensions()
         .get::<crate::middleware::GatewayRequestAcceptedAt>()
@@ -1175,7 +1220,7 @@ async fn proxy_request_inner(
     .await?;
     maybe_promote_management_token_admin_principal(
         &state,
-        &remote_addr,
+        client_ip,
         &parts.headers,
         &trace_id,
         &mut request_context,
@@ -1186,9 +1231,9 @@ async fn proxy_request_inner(
         .as_ref()
         .and_then(|decision| decision.auth_context.as_ref())
     {
-        if !api_key_remote_ip_allowed(auth_context.ip_rules.as_deref(), remote_addr.ip()) {
+        if !api_key_remote_ip_allowed(auth_context.ip_rules.as_deref(), client_ip) {
             let rejection = crate::control::GatewayLocalAuthRejection::IpNotAllowed {
-                remote_ip: remote_addr.ip().to_string(),
+                remote_ip: client_ip.to_string(),
             };
             let response = build_local_auth_rejection_response(
                 &trace_id,
@@ -1528,10 +1573,36 @@ async fn proxy_request_inner(
     }
 
     let rpm_started_at = Instant::now();
-    let rate_limit_outcome = state
-        .frontdoor_user_rpm()
-        .check_and_consume(&state, control_decision)
-        .await?;
+    let ip_whitelist_applies =
+        control_decision.and_then(|decision| decision.route_class.as_deref()) == Some("ai_public");
+    let ip_whitelisted = if ip_whitelist_applies {
+        state.admin_security_ip_whitelisted(client_ip).await
+    } else {
+        Ok(false)
+    };
+    let rate_limit_outcome = match ip_whitelisted {
+        Ok(true) => FrontdoorUserRpmOutcome::NotApplicable,
+        Ok(false) => {
+            state
+                .frontdoor_user_rpm()
+                .check_and_consume(&state, control_decision)
+                .await?
+        }
+        Err(err) => {
+            warn!(
+                event_name = "frontdoor_ip_whitelist_check_failed",
+                log_type = "ops",
+                trace_id = %trace_id,
+                client_ip = %client_ip,
+                error = ?err,
+                "gateway continued with rate limiting after IP whitelist check error"
+            );
+            state
+                .frontdoor_user_rpm()
+                .check_and_consume(&state, control_decision)
+                .await?
+        }
+    };
     observe_gateway_stage_ms("frontdoor_rpm", rpm_started_at.elapsed().as_millis() as u64);
     if let FrontdoorUserRpmOutcome::Rejected(rejection) = &rate_limit_outcome {
         let auth_context = control_decision.and_then(|decision| decision.auth_context.as_ref());

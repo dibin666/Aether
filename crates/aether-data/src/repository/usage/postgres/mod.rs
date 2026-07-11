@@ -4991,9 +4991,13 @@ normalized_usage AS (
     successful_response_time_samples,
     CASE
       WHEN input_tokens <= 0 THEN 0
-      WHEN cache_read_tokens <= 0 THEN input_tokens
       WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
-           IN ('openai', 'gemini', 'google')
+           = 'openai'
+           AND (cache_creation_tokens > 0 OR cache_read_tokens > 0)
+      THEN GREATEST(input_tokens - cache_creation_tokens - cache_read_tokens, 0)
+      WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
+           IN ('gemini', 'google')
+           AND cache_read_tokens > 0
       THEN GREATEST(input_tokens - cache_read_tokens, 0)
       ELSE input_tokens
     END AS effective_input_tokens,
@@ -5002,13 +5006,21 @@ normalized_usage AS (
            IN ('claude', 'anthropic')
       THEN input_tokens + cache_creation_tokens + cache_read_tokens
       WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
-           IN ('openai', 'gemini', 'google')
+           = 'openai'
       THEN (
         CASE
           WHEN input_tokens <= 0 THEN 0
-          WHEN cache_read_tokens <= 0 THEN input_tokens
-          WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
-               IN ('openai', 'gemini', 'google')
+          WHEN cache_creation_tokens > 0 OR cache_read_tokens > 0
+          THEN GREATEST(input_tokens - cache_creation_tokens - cache_read_tokens, 0)
+          ELSE input_tokens
+        END
+      ) + cache_creation_tokens + cache_read_tokens
+      WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
+           IN ('gemini', 'google')
+      THEN (
+        CASE
+          WHEN input_tokens <= 0 THEN 0
+          WHEN cache_read_tokens > 0
           THEN GREATEST(input_tokens - cache_read_tokens, 0)
           ELSE input_tokens
         END
@@ -7213,9 +7225,13 @@ normalized_usage AS (
     success_flag,
     CASE
       WHEN input_tokens <= 0 THEN 0
-      WHEN cache_read_tokens <= 0 THEN input_tokens
       WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
-           IN ('openai', 'gemini', 'google')
+           = 'openai'
+           AND (cache_creation_tokens > 0 OR cache_read_tokens > 0)
+      THEN GREATEST(input_tokens - cache_creation_tokens - cache_read_tokens, 0)
+      WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
+           IN ('gemini', 'google')
+           AND cache_read_tokens > 0
       THEN GREATEST(input_tokens - cache_read_tokens, 0)
       ELSE input_tokens
     END AS effective_input_tokens,
@@ -7224,13 +7240,21 @@ normalized_usage AS (
            IN ('claude', 'anthropic')
       THEN input_tokens + cache_creation_tokens + cache_read_tokens
       WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
-           IN ('openai', 'gemini', 'google')
+           = 'openai'
       THEN (
         CASE
           WHEN input_tokens <= 0 THEN 0
-          WHEN cache_read_tokens <= 0 THEN input_tokens
-          WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
-               IN ('openai', 'gemini', 'google')
+          WHEN cache_creation_tokens > 0 OR cache_read_tokens > 0
+          THEN GREATEST(input_tokens - cache_creation_tokens - cache_read_tokens, 0)
+          ELSE input_tokens
+        END
+      ) + cache_creation_tokens + cache_read_tokens
+      WHEN split_part(lower(COALESCE(normalized_api_format, '')), ':', 1)
+           IN ('gemini', 'google')
+      THEN (
+        CASE
+          WHEN input_tokens <= 0 THEN 0
+          WHEN cache_read_tokens > 0
           THEN GREATEST(input_tokens - cache_read_tokens, 0)
           ELSE input_tokens
         END
@@ -11182,16 +11206,24 @@ fn usage_normalized_api_family(usage: &UpsertUsageRecord) -> String {
 
 fn usage_effective_input_tokens(
     input_tokens: Option<i64>,
+    cache_creation_tokens: Option<i64>,
     cache_read_tokens: Option<i64>,
     api_family: &str,
 ) -> Option<i64> {
     let input_tokens = input_tokens?;
+    let cache_creation_tokens = cache_creation_tokens.unwrap_or_default();
     let cache_read_tokens = cache_read_tokens.unwrap_or_default();
-    if matches!(api_family, "openai" | "gemini" | "google")
-        && input_tokens > 0
-        && cache_read_tokens > 0
-    {
-        return Some(input_tokens.saturating_sub(cache_read_tokens));
+    if input_tokens > 0 {
+        if api_family == "openai" && (cache_creation_tokens > 0 || cache_read_tokens > 0) {
+            return Some(
+                input_tokens
+                    .saturating_sub(cache_creation_tokens)
+                    .saturating_sub(cache_read_tokens),
+            );
+        }
+        if matches!(api_family, "gemini" | "google") && cache_read_tokens > 0 {
+            return Some(input_tokens.saturating_sub(cache_read_tokens));
+        }
     }
     Some(input_tokens)
 }
@@ -11290,6 +11322,7 @@ fn usage_settlement_pricing_snapshot_from_usage(
         .or_else(|| {
             usage_effective_input_tokens(
                 billing_input_tokens,
+                billing_cache_creation_tokens,
                 billing_cache_read_tokens,
                 api_family.as_str(),
             )

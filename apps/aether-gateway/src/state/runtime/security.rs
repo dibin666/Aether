@@ -1,7 +1,36 @@
 use crate::state::AdminSecurityBlacklistEntry;
 use crate::{AppState, GatewayError};
+use std::net::IpAddr;
 
 impl AppState {
+    pub(crate) async fn admin_security_ip_blacklisted(
+        &self,
+        ip_address: IpAddr,
+    ) -> Result<bool, GatewayError> {
+        const ADMIN_SECURITY_BLACKLIST_PREFIX: &str = "ip:blacklist:";
+
+        self.runtime_state
+            .kv_exists(&format!("{ADMIN_SECURITY_BLACKLIST_PREFIX}{ip_address}"))
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn admin_security_ip_whitelisted(
+        &self,
+        ip_address: IpAddr,
+    ) -> Result<bool, GatewayError> {
+        const ADMIN_SECURITY_WHITELIST_KEY: &str = "ip:whitelist";
+
+        let rules = self
+            .runtime_state
+            .set_members(ADMIN_SECURITY_WHITELIST_KEY)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        Ok(rules
+            .iter()
+            .any(|rule| crate::handlers::shared::ip_rule_pattern_matches(rule.trim(), ip_address)))
+    }
+
     pub(crate) async fn add_admin_security_blacklist(
         &self,
         ip_address: &str,
