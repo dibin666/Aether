@@ -71,16 +71,6 @@ impl AppState {
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
 
-    pub(crate) async fn resolve_request_usage_body_ref(
-        &self,
-        body_ref: &str,
-    ) -> Result<Option<serde_json::Value>, GatewayError> {
-        self.data
-            .resolve_request_usage_body_ref(body_ref)
-            .await
-            .map_err(|err| GatewayError::Internal(err.to_string()))
-    }
-
     pub(crate) async fn list_usage_audits(
         &self,
         query: &usage::UsageAuditListQuery,
@@ -187,6 +177,16 @@ impl AppState {
     ) -> Result<usage::StoredUsageDashboardSummary, GatewayError> {
         self.data
             .summarize_dashboard_usage(query)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn summarize_dashboard_stats(
+        &self,
+        query: &usage::UsageDashboardSummaryQuery,
+    ) -> Result<usage::StoredUsageDashboardStatsSummary, GatewayError> {
+        self.data
+            .summarize_dashboard_stats(query)
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }
@@ -351,19 +351,6 @@ impl AppState {
     > {
         self.data
             .summarize_usage_by_provider_api_key_ids(provider_api_key_ids)
-            .await
-            .map_err(|err| GatewayError::Internal(err.to_string()))
-    }
-
-    pub(crate) async fn summarize_provider_api_key_consumption(
-        &self,
-        query: &usage::ProviderApiKeyConsumptionSummaryQuery,
-    ) -> Result<
-        std::collections::BTreeMap<String, usage::StoredProviderApiKeyConsumptionSummary>,
-        GatewayError,
-    > {
-        self.data
-            .summarize_provider_api_key_consumption(query)
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }

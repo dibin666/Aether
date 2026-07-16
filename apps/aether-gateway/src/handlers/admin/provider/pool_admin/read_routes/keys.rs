@@ -4,6 +4,7 @@ use super::{
     parse_admin_pool_quick_selectors, parse_admin_pool_search, parse_admin_pool_status_filter,
     pool_payloads, pool_selection, read_admin_provider_pool_runtime_state, AdminPoolKeySort,
     AdminPoolKeySortDirection, AdminPoolKeySortField, AdminProviderPoolRuntimeState,
+    ProviderCatalogKeyListOrder, ProviderCatalogKeyListQuery,
     ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL,
 };
 use crate::ai_serving::{provider_key_pool_score_id, provider_key_pool_score_scope};
@@ -228,47 +229,30 @@ fn admin_pool_score_for_key(
         .filter(|score| score.is_finite())
 }
 
-fn admin_pool_sort_keys_for_request(
-    state: &AdminAppState<'_>,
-    provider_type: &str,
-    keys: &mut [StoredProviderCatalogKey],
-    sort: AdminPoolKeySort,
-) {
+fn admin_pool_sort_keys_for_request(keys: &mut [StoredProviderCatalogKey], sort: AdminPoolKeySort) {
     match sort.field {
-        AdminPoolKeySortField::Default => {
-            pool_selection::admin_pool_sort_keys(state, provider_type, keys)
-        }
+        AdminPoolKeySortField::Default => pool_selection::admin_pool_sort_keys(keys),
         AdminPoolKeySortField::ImportedAt => {
-            pool_selection::admin_pool_sort_keys_by_plan_then(
-                state,
-                provider_type,
-                keys,
-                |left, right| {
-                    admin_pool_compare_optional_unix_secs(
-                        left.created_at_unix_ms,
-                        right.created_at_unix_ms,
-                        sort.direction,
-                    )
-                    .then(left.name.cmp(&right.name))
-                    .then(left.id.cmp(&right.id))
-                },
-            );
+            keys.sort_by(|left, right| {
+                admin_pool_compare_optional_unix_secs(
+                    left.created_at_unix_ms,
+                    right.created_at_unix_ms,
+                    sort.direction,
+                )
+                .then(left.name.cmp(&right.name))
+                .then(left.id.cmp(&right.id))
+            });
         }
         AdminPoolKeySortField::LastUsedAt => {
-            pool_selection::admin_pool_sort_keys_by_plan_then(
-                state,
-                provider_type,
-                keys,
-                |left, right| {
-                    admin_pool_compare_optional_unix_secs(
-                        left.last_used_at_unix_secs,
-                        right.last_used_at_unix_secs,
-                        sort.direction,
-                    )
-                    .then(left.name.cmp(&right.name))
-                    .then(left.id.cmp(&right.id))
-                },
-            );
+            keys.sort_by(|left, right| {
+                admin_pool_compare_optional_unix_secs(
+                    left.last_used_at_unix_secs,
+                    right.last_used_at_unix_secs,
+                    sort.direction,
+                )
+                .then(left.name.cmp(&right.name))
+                .then(left.id.cmp(&right.id))
+            });
         }
         AdminPoolKeySortField::Score => {}
     }
@@ -288,6 +272,25 @@ fn admin_pool_sort_keys_by_score(
         .then(left.name.cmp(&right.name))
         .then(left.id.cmp(&right.id))
     });
+}
+
+fn admin_pool_repository_key_order(sort: AdminPoolKeySort) -> ProviderCatalogKeyListOrder {
+    match (sort.field, sort.direction) {
+        (AdminPoolKeySortField::Default, _) => ProviderCatalogKeyListOrder::Name,
+        (AdminPoolKeySortField::ImportedAt, AdminPoolKeySortDirection::Asc) => {
+            ProviderCatalogKeyListOrder::CreatedAtAsc
+        }
+        (AdminPoolKeySortField::ImportedAt, AdminPoolKeySortDirection::Desc) => {
+            ProviderCatalogKeyListOrder::CreatedAtDesc
+        }
+        (AdminPoolKeySortField::LastUsedAt, AdminPoolKeySortDirection::Asc) => {
+            ProviderCatalogKeyListOrder::LastUsedAtAsc
+        }
+        (AdminPoolKeySortField::LastUsedAt, AdminPoolKeySortDirection::Desc) => {
+            ProviderCatalogKeyListOrder::LastUsedAtDesc
+        }
+        (AdminPoolKeySortField::Score, _) => ProviderCatalogKeyListOrder::Name,
+    }
 }
 
 fn admin_pool_trimmed_string(value: Option<&Value>) -> Option<String> {
@@ -627,7 +630,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
             admin_pool_sort_keys_by_score(&mut keys, &scores, sort.direction);
             Some(scores)
         } else {
-            admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
+            admin_pool_sort_keys_for_request(&mut keys, sort);
             None
         };
         let total = keys.len();
@@ -637,7 +640,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
             .take(page_size)
             .collect::<Vec<_>>();
         (keys, total, preloaded_pool_scores_by_key_id)
-    } else {
+    } else if !quick_selectors.is_empty() || sort_by_score {
         let mut keys = state
             .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
             .await?
@@ -669,7 +672,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
             admin_pool_sort_keys_by_score(&mut keys, &scores, sort.direction);
             Some(scores)
         } else {
-            admin_pool_sort_keys_for_request(state, &provider.provider_type, &mut keys, sort);
+            admin_pool_sort_keys_for_request(&mut keys, sort);
             None
         };
         let total = keys.len();
@@ -679,6 +682,18 @@ pub(super) async fn build_admin_pool_list_keys_response(
             .take(page_size)
             .collect::<Vec<_>>();
         (keys, total, preloaded_pool_scores_by_key_id)
+    } else {
+        let key_page = state
+            .list_provider_catalog_key_page(&ProviderCatalogKeyListQuery {
+                provider_id: provider.id.clone(),
+                search: search.clone(),
+                is_active: None,
+                offset: page_offset,
+                limit: page_size,
+                order: admin_pool_repository_key_order(sort),
+            })
+            .await?;
+        (key_page.items, key_page.total, None)
     };
 
     let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();

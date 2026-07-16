@@ -13,8 +13,6 @@ pub(crate) const ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL: &str =
     "Admin pool overview requires provider catalog reader";
 pub(crate) const ADMIN_POOL_PROVIDER_CATALOG_WRITER_UNAVAILABLE_DETAIL: &str =
     "Admin pool cleanup requires provider catalog writer";
-pub(crate) const ADMIN_POOL_USAGE_READER_UNAVAILABLE_DETAIL: &str =
-    "Admin pool consumption stats requires usage reader";
 pub(crate) const ADMIN_POOL_BANNED_KEY_CLEANUP_EMPTY_MESSAGE: &str = "未发现可清理的异常账号";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +38,7 @@ pub(crate) struct AdminPoolKeySort {
 impl Default for AdminPoolKeySort {
     fn default() -> Self {
         Self {
-            field: AdminPoolKeySortField::Default,
+            field: AdminPoolKeySortField::ImportedAt,
             direction: AdminPoolKeySortDirection::Desc,
         }
     }
@@ -141,7 +139,7 @@ pub(crate) fn parse_admin_pool_key_sort(query: Option<&str>) -> Result<AdminPool
         .filter(|value| !value.is_empty())
         .as_deref()
     {
-        None | Some("default") => AdminPoolKeySortField::Default,
+        None | Some("default") => AdminPoolKeySortField::ImportedAt,
         Some("name") => AdminPoolKeySortField::Default,
         Some("imported_at") | Some("created_at") => AdminPoolKeySortField::ImportedAt,
         Some("last_used_at") | Some("last_used") => AdminPoolKeySortField::LastUsedAt,
@@ -176,18 +174,6 @@ pub(crate) fn admin_pool_provider_id_from_path(request_path: &str) -> Option<Str
     }
 }
 
-pub(crate) fn admin_pool_provider_id_from_consumption_path(request_path: &str) -> Option<String> {
-    let raw = request_path.strip_prefix("/api/admin/pool/")?;
-    let mut segments = raw.split('/');
-    let provider_id = segments.next()?.trim();
-    let stats_segment = segments.next()?.trim_end_matches('/').trim();
-    if provider_id.is_empty() || stats_segment != "consumption-stats" {
-        None
-    } else {
-        Some(provider_id.to_string())
-    }
-}
-
 pub(crate) fn admin_pool_provider_id_from_scores_path(request_path: &str) -> Option<String> {
     let raw = request_path.strip_prefix("/api/admin/pool/")?;
     let mut segments = raw.split('/');
@@ -211,10 +197,6 @@ pub(crate) fn is_admin_pool_route(request_context: &AdminRequestContext<'_>) -> 
     (request_context.method() == http::Method::GET && path == "/api/admin/pool/overview")
         || (request_context.method() == http::Method::GET
             && path == "/api/admin/pool/scheduling-presets")
-        || (request_context.method() == http::Method::GET
-            && path.starts_with("/api/admin/pool/")
-            && path.ends_with("/consumption-stats")
-            && path.matches('/').count() == 5)
         || (request_context.method() == http::Method::GET
             && path.starts_with("/api/admin/pool/")
             && path.ends_with("/keys")

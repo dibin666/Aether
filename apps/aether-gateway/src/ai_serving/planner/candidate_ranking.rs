@@ -360,6 +360,7 @@ mod tests {
             global_model_id: "global-model-1".to_string(),
             global_model_name: "gpt-4.1".to_string(),
             selected_provider_model_name: "gpt-4.1".to_string(),
+            supports_streaming: true,
             mapping_matched_model: None,
         }
     }
@@ -636,6 +637,7 @@ mod tests {
             global_model_id: "global-model-1".to_string(),
             global_model_name: "gpt-4.1".to_string(),
             selected_provider_model_name: "gpt-4.1".to_string(),
+            supports_streaming: true,
             mapping_matched_model: None,
         }
     }

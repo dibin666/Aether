@@ -3,11 +3,10 @@ use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogProvider,
 };
 use chrono::{TimeZone, Utc};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::status as provider_status;
-const ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD: f64 = 0.02;
 
 #[derive(Debug, Default, Clone, serde::Deserialize)]
 pub struct AdminPoolResolveSelectionRequest {
@@ -33,6 +32,7 @@ pub enum AdminPoolBatchActionKind {
     Disable,
     ClearProxy,
     SetProxy,
+    UpdateSettings,
     RegenerateFingerprint,
     Delete,
 }
@@ -43,6 +43,7 @@ pub struct AdminPoolBatchActionPlan {
     pub action: AdminPoolBatchActionKind,
     pub action_label: &'static str,
     pub proxy_payload: Option<Value>,
+    pub settings_payload: Option<Value>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -61,6 +62,10 @@ pub struct AdminPoolBatchImportRequest {
     pub keys: Vec<AdminPoolBatchImportItem>,
     #[serde(default)]
     pub proxy_node_id: Option<String>,
+    #[serde(default)]
+    pub api_formats: Vec<String>,
+    #[serde(default)]
+    pub settings: Option<Value>,
 }
 
 #[derive(Debug, Default, Clone, serde::Deserialize)]
@@ -71,6 +76,10 @@ pub struct AdminPoolBatchImportItem {
     pub api_key: String,
     #[serde(default)]
     pub auth_type: String,
+    #[serde(default)]
+    pub api_formats: Vec<String>,
+    #[serde(default)]
+    pub settings: Option<Value>,
 }
 
 fn admin_pool_reason_indicates_ban(reason: &str) -> bool {
@@ -93,145 +102,13 @@ fn admin_pool_reason_indicates_ban(reason: &str) -> bool {
         .any(|hint| normalized.contains(hint))
 }
 
-fn admin_pool_metadata_bucket<'a>(
-    upstream_metadata: Option<&'a Value>,
-    provider_type: &str,
-) -> Option<&'a serde_json::Map<String, Value>> {
-    upstream_metadata
-        .and_then(Value::as_object)
-        .and_then(|metadata| metadata.get(&provider_type.trim().to_ascii_lowercase()))
-        .and_then(Value::as_object)
-}
-
-fn admin_pool_json_bool(value: Option<&Value>) -> Option<bool> {
-    match value {
-        Some(Value::Bool(value)) => Some(*value),
-        Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
-            "true" | "1" => Some(true),
-            "false" | "0" => Some(false),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn admin_pool_json_f64(value: Option<&Value>) -> Option<f64> {
-    match value {
-        Some(Value::Number(number)) => number.as_f64(),
-        Some(Value::String(value)) => value.trim().parse::<f64>().ok(),
-        _ => None,
-    }
-    .filter(|value| value.is_finite())
-}
-
-fn admin_pool_quota_snapshot_matches_provider(
-    quota_snapshot: &serde_json::Map<String, Value>,
-    provider_type: &str,
-) -> bool {
-    let normalized_provider_type = provider_type.trim().to_ascii_lowercase();
-    match quota_snapshot
-        .get("provider_type")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        Some(provider_type) => provider_type.eq_ignore_ascii_case(&normalized_provider_type),
-        None => {
-            admin_pool_json_bool(quota_snapshot.get("exhausted")) == Some(true)
-                || quota_snapshot
-                    .get("code")
-                    .and_then(Value::as_str)
-                    .is_some_and(|code| !code.trim().eq_ignore_ascii_case("unknown"))
-                || quota_snapshot
-                    .get("updated_at")
-                    .is_some_and(|value| !value.is_null())
-                || quota_snapshot
-                    .get("observed_at")
-                    .is_some_and(|value| !value.is_null())
-                || quota_snapshot
-                    .get("usage_ratio")
-                    .is_some_and(|value| !value.is_null())
-                || quota_snapshot
-                    .get("reset_seconds")
-                    .is_some_and(|value| !value.is_null())
-                || quota_snapshot
-                    .get("windows")
-                    .and_then(Value::as_array)
-                    .is_some_and(|windows| !windows.is_empty())
-                || quota_snapshot
-                    .get("credits")
-                    .and_then(Value::as_object)
-                    .is_some_and(|credits| !credits.is_empty())
-        }
-    }
-}
-
-fn admin_pool_key_quota_snapshot<'a>(
-    key: &'a StoredProviderCatalogKey,
-    provider_type: &str,
-) -> Option<&'a serde_json::Map<String, Value>> {
-    let quota_snapshot = key
-        .status_snapshot
-        .as_ref()
-        .and_then(Value::as_object)
-        .and_then(|snapshot| snapshot.get("quota"))
-        .and_then(Value::as_object)?;
-    admin_pool_quota_snapshot_matches_provider(quota_snapshot, provider_type)
-        .then_some(quota_snapshot)
-}
-fn admin_pool_quota_window_remaining_ratio(window: &serde_json::Map<String, Value>) -> Option<f64> {
-    admin_pool_json_f64(window.get("remaining_ratio"))
-        .map(|value| value.clamp(0.0, 1.0))
-        .or_else(|| {
-            admin_pool_json_f64(window.get("used_ratio"))
-                .map(|value| (1.0 - value.clamp(0.0, 1.0)).max(0.0))
-        })
-        .or_else(|| (admin_pool_json_bool(window.get("is_exhausted")) == Some(true)).then_some(0.0))
-}
-
-fn admin_pool_remaining_ratio_below_skip_threshold(remaining: f64) -> bool {
-    remaining <= ADMIN_POOL_QUOTA_SKIP_REMAINING_RATIO_THRESHOLD + f64::EPSILON
-}
-
-fn admin_pool_quota_windows_below_skip_threshold(windows: &[Value]) -> Option<bool> {
-    let remaining_ratios = windows
-        .iter()
-        .filter_map(Value::as_object)
-        .filter_map(admin_pool_quota_window_remaining_ratio)
-        .collect::<Vec<_>>();
-
-    (!remaining_ratios.is_empty()).then(|| {
-        remaining_ratios
-            .iter()
-            .any(|remaining| admin_pool_remaining_ratio_below_skip_threshold(*remaining))
-    })
-}
-
-fn admin_pool_codex_quota_snapshot_exhausted(
-    quota_snapshot: &serde_json::Map<String, Value>,
-) -> Option<bool> {
-    if quota_snapshot
-        .get("credits")
-        .and_then(Value::as_object)
-        .and_then(|credits| credits.get("unlimited"))
-        .and_then(|value| admin_pool_json_bool(Some(value)))
-        == Some(true)
-    {
-        return Some(false);
-    }
-
-    quota_snapshot
-        .get("windows")
-        .and_then(Value::as_array)
-        .and_then(|windows| admin_pool_quota_windows_below_skip_threshold(windows))
-}
-
 pub fn admin_pool_key_account_quota_exhausted(
     key: &StoredProviderCatalogKey,
     provider_type: &str,
 ) -> bool {
     aether_provider_pool::provider_pool_key_account_quota_exhausted(key, provider_type)
 }
+
 fn admin_pool_has_proxy(key: &StoredProviderCatalogKey) -> bool {
     match key.proxy.as_ref() {
         Some(Value::Object(values)) => !values.is_empty(),
@@ -378,28 +255,11 @@ fn admin_pool_reason_has_tag(reason: &str, tag: &str) -> bool {
         .any(|line| line.starts_with(tag))
 }
 
-fn admin_pool_matches_plan_selector(selector: &str, oauth_plan_type: Option<&str>) -> bool {
-    let Some(expected_plan) = selector.strip_prefix("plan_") else {
-        return false;
-    };
-    if expected_plan.is_empty() {
-        return false;
-    }
-    let Some(actual_plan) = oauth_plan_type.map(admin_pool_normalize_text) else {
-        return expected_plan == "unknown";
-    };
-    if expected_plan == "unknown" {
-        return actual_plan.is_empty() || actual_plan == "unknown";
-    }
-    actual_plan.contains(expected_plan)
-}
-
 pub fn admin_pool_matches_quick_selector(
     key: &StoredProviderCatalogKey,
     selector: &str,
     oauth_plan_type: Option<&str>,
     now_unix_secs: u64,
-    provider_type: &str,
 ) -> bool {
     match selector {
         "banned" => admin_pool_key_is_known_banned(key),
@@ -408,12 +268,9 @@ pub fn admin_pool_matches_quick_selector(
         "proxy_set" => admin_pool_has_proxy(key),
         "disabled" => !key.is_active,
         "enabled" => key.is_active,
-        "quota_available" => !admin_pool_key_account_quota_exhausted(key, provider_type),
-        "quota_exhausted" => admin_pool_key_account_quota_exhausted(key, provider_type),
+        "plan_free" => oauth_plan_type.is_some_and(|value| value.contains("free")),
+        "plan_team" => oauth_plan_type.is_some_and(|value| value.contains("team")),
         "no_5h_limit" | "no_weekly_limit" => false,
-        _ if selector.starts_with("plan_") => {
-            admin_pool_matches_plan_selector(selector, oauth_plan_type)
-        }
         _ => false,
     }
 }
@@ -509,6 +366,137 @@ pub fn admin_pool_key_proxy_value(proxy_node_id: Option<&str>) -> Option<Value> 
         .map(|value| json!({ "node_id": value, "enabled": true }))
 }
 
+const ADMIN_POOL_KEY_SETTING_FIELDS: &[&str] = &[
+    "internal_priority",
+    "rpm_limit",
+    "concurrent_limit",
+    "cache_ttl_minutes",
+    "max_probe_interval_minutes",
+    "is_active",
+    "note",
+    "proxy_node_id",
+];
+
+fn admin_pool_settings_object(payload: &Value) -> Result<&Map<String, Value>, String> {
+    let settings = payload
+        .as_object()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "settings payload must be a non-empty object".to_string())?;
+    if let Some(field) = settings
+        .keys()
+        .find(|field| !ADMIN_POOL_KEY_SETTING_FIELDS.contains(&field.as_str()))
+    {
+        return Err(format!("Unsupported key setting: {field}"));
+    }
+    Ok(settings)
+}
+
+fn admin_pool_setting_i64(
+    settings: &Map<String, Value>,
+    field: &str,
+    min: i64,
+    max: i64,
+) -> Result<Option<i64>, String> {
+    let Some(value) = settings.get(field) else {
+        return Ok(None);
+    };
+    let number = value
+        .as_i64()
+        .ok_or_else(|| format!("{field} must be an integer"))?;
+    if !(min..=max).contains(&number) {
+        return Err(format!("{field} must be between {min} and {max}"));
+    }
+    Ok(Some(number))
+}
+
+pub fn validate_admin_pool_key_settings_payload(payload: &Value) -> Result<(), String> {
+    let settings = admin_pool_settings_object(payload)?;
+    admin_pool_setting_i64(settings, "internal_priority", 0, i32::MAX as i64)?;
+    if settings
+        .get("rpm_limit")
+        .is_some_and(|value| !value.is_null())
+    {
+        admin_pool_setting_i64(settings, "rpm_limit", 1, 10_000)?;
+    }
+    if settings
+        .get("concurrent_limit")
+        .is_some_and(|value| !value.is_null())
+    {
+        admin_pool_setting_i64(settings, "concurrent_limit", 0, i32::MAX as i64)?;
+    }
+    admin_pool_setting_i64(settings, "cache_ttl_minutes", 0, 60)?;
+    admin_pool_setting_i64(settings, "max_probe_interval_minutes", 0, 32)?;
+    if settings
+        .get("is_active")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err("is_active must be a boolean".to_string());
+    }
+    if settings
+        .get("note")
+        .is_some_and(|value| !value.is_null() && !value.is_string())
+    {
+        return Err("note must be a string or null".to_string());
+    }
+    if settings
+        .get("proxy_node_id")
+        .is_some_and(|value| !value.is_null() && !value.is_string())
+    {
+        return Err("proxy_node_id must be a string or null".to_string());
+    }
+    Ok(())
+}
+
+pub fn apply_admin_pool_key_settings(
+    key: &mut StoredProviderCatalogKey,
+    payload: &Value,
+) -> Result<(), String> {
+    validate_admin_pool_key_settings_payload(payload)?;
+    let settings = admin_pool_settings_object(payload)?;
+    if let Some(value) = admin_pool_setting_i64(settings, "internal_priority", 0, i32::MAX as i64)?
+    {
+        key.internal_priority = value as i32;
+    }
+    if let Some(value) = settings.get("rpm_limit") {
+        key.rpm_limit = if value.is_null() {
+            None
+        } else {
+            Some(value.as_u64().expect("validated rpm_limit") as u32)
+        };
+    }
+    if let Some(value) = settings.get("concurrent_limit") {
+        key.concurrent_limit = if value.is_null() || value.as_i64() == Some(0) {
+            None
+        } else {
+            Some(value.as_i64().expect("validated concurrent_limit") as i32)
+        };
+    }
+    if let Some(value) = admin_pool_setting_i64(settings, "cache_ttl_minutes", 0, 60)? {
+        key.cache_ttl_minutes = value as i32;
+    }
+    if let Some(value) = admin_pool_setting_i64(settings, "max_probe_interval_minutes", 0, 32)? {
+        key.max_probe_interval_minutes = value as i32;
+    }
+    if let Some(value) = settings.get("is_active").and_then(Value::as_bool) {
+        key.is_active = value;
+    }
+    if let Some(value) = settings.get("note") {
+        key.note = value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+    }
+    if let Some(value) = settings.get("proxy_node_id") {
+        key.proxy = if value.is_null() {
+            None
+        } else {
+            admin_pool_key_proxy_value(value.as_str())
+        };
+    }
+    Ok(())
+}
+
 pub fn build_admin_pool_batch_action_plan(
     payload: AdminPoolBatchActionRequest,
 ) -> Result<AdminPoolBatchActionPlan, String> {
@@ -518,6 +506,7 @@ pub fn build_admin_pool_batch_action_plan(
         "disable" => (AdminPoolBatchActionKind::Disable, "disabled"),
         "clear_proxy" => (AdminPoolBatchActionKind::ClearProxy, "proxy cleared"),
         "set_proxy" => (AdminPoolBatchActionKind::SetProxy, "proxy set"),
+        "update_settings" => (AdminPoolBatchActionKind::UpdateSettings, "settings updated"),
         "regenerate_fingerprint" => (
             AdminPoolBatchActionKind::RegenerateFingerprint,
             "fingerprint regenerated",
@@ -525,7 +514,7 @@ pub fn build_admin_pool_batch_action_plan(
         "delete" => (AdminPoolBatchActionKind::Delete, "deleted"),
         _ => {
             return Err(format!(
-                "Invalid action: {action}. Supported locally: enable, disable, clear_proxy, set_proxy, regenerate_fingerprint, delete"
+                "Invalid action: {action}. Supported locally: enable, disable, clear_proxy, set_proxy, update_settings, regenerate_fingerprint, delete"
             ));
         }
     };
@@ -542,9 +531,10 @@ pub fn build_admin_pool_batch_action_plan(
         return Err("key_ids should not be empty".to_string());
     }
 
+    let action_payload = payload.payload;
     let proxy_payload = if action_kind == AdminPoolBatchActionKind::SetProxy {
-        match payload.payload {
-            Some(Value::Object(map)) if !map.is_empty() => Some(Value::Object(map)),
+        match action_payload.as_ref() {
+            Some(Value::Object(map)) if !map.is_empty() => Some(Value::Object(map.clone())),
             _ => {
                 return Err(
                     "set_proxy action requires a non-empty payload with proxy config".to_string(),
@@ -554,12 +544,21 @@ pub fn build_admin_pool_batch_action_plan(
     } else {
         None
     };
+    let settings_payload = if action_kind == AdminPoolBatchActionKind::UpdateSettings {
+        let settings = action_payload
+            .ok_or_else(|| "update_settings action requires a settings payload".to_string())?;
+        validate_admin_pool_key_settings_payload(&settings)?;
+        Some(settings)
+    } else {
+        None
+    };
 
     Ok(AdminPoolBatchActionPlan {
         key_ids,
         action: action_kind,
         action_label,
         proxy_payload,
+        settings_payload,
     })
 }
 
@@ -598,45 +597,25 @@ pub fn admin_pool_resolved_api_formats(
     formats
 }
 
-fn admin_pool_quick_selector_allowed(selector: &str) -> bool {
-    if matches!(
-        selector,
-        "banned"
-            | "no_5h_limit"
-            | "no_weekly_limit"
-            | "oauth_invalid"
-            | "proxy_unset"
-            | "proxy_set"
-            | "disabled"
-            | "enabled"
-            | "quota_available"
-            | "quota_exhausted"
-    ) {
-        return true;
-    }
-
-    matches!(
-        selector.strip_prefix("plan_"),
-        Some(
-            "free"
-                | "team"
-                | "plus"
-                | "pro"
-                | "paid"
-                | "enterprise"
-                | "business"
-                | "ultra"
-                | "power"
-                | "unknown"
-        )
-    )
-}
-
 pub fn admin_pool_sanitize_quick_selectors(selectors: Vec<String>) -> Vec<String> {
     let mut selectors = selectors
         .into_iter()
         .map(admin_pool_normalize_text)
-        .filter(|value| admin_pool_quick_selector_allowed(value))
+        .filter(|value| {
+            matches!(
+                value.as_str(),
+                "banned"
+                    | "no_5h_limit"
+                    | "no_weekly_limit"
+                    | "plan_free"
+                    | "plan_team"
+                    | "oauth_invalid"
+                    | "proxy_unset"
+                    | "proxy_set"
+                    | "disabled"
+                    | "enabled"
+            )
+        })
         .collect::<Vec<_>>();
     selectors.sort();
     selectors.dedup();
@@ -666,7 +645,10 @@ mod tests {
     use super::{
         admin_pool_key_account_quota_exhausted, admin_pool_key_is_known_banned,
         admin_pool_matches_quick_selector, admin_pool_sanitize_quick_selectors,
-        build_admin_pool_key_payload, AdminPoolKeyPayloadContext,
+        apply_admin_pool_key_settings, build_admin_pool_batch_action_plan,
+        build_admin_pool_batch_import_key_record, build_admin_pool_key_payload,
+        resolve_admin_pool_key_settings, validate_admin_pool_key_settings_payload,
+        AdminPoolBatchActionKind, AdminPoolBatchActionRequest, AdminPoolKeyPayloadContext,
     };
     use aether_data_contracts::repository::provider_catalog::StoredProviderCatalogKey;
     use serde_json::json;
@@ -686,71 +668,8 @@ mod tests {
     }
 
     #[test]
-    fn quick_selectors_match_plan_and_quota_filters() {
-        let with_quota = sample_key(Some(json!({
-            "codex": {
-                "has_credits": true,
-                "primary_used_percent": 10.0,
-                "secondary_used_percent": 20.0
-            }
-        })));
-        let without_quota = sample_key(Some(json!({
-            "codex": {
-                "primary_used_percent": 100.0
-            }
-        })));
-
-        assert!(admin_pool_matches_quick_selector(
-            &with_quota,
-            "plan_plus",
-            Some("plus"),
-            0,
-            "codex",
-        ));
-        assert!(!admin_pool_matches_quick_selector(
-            &with_quota,
-            "plan_free",
-            Some("plus"),
-            0,
-            "codex",
-        ));
-        assert!(admin_pool_matches_quick_selector(
-            &with_quota,
-            "quota_available",
-            Some("plus"),
-            0,
-            "codex",
-        ));
-        assert!(admin_pool_matches_quick_selector(
-            &without_quota,
-            "quota_exhausted",
-            Some("free"),
-            0,
-            "codex",
-        ));
-    }
-
-    #[test]
-    fn sanitizes_pool_quota_and_plan_selectors() {
-        assert_eq!(
-            admin_pool_sanitize_quick_selectors(vec![
-                "quota_available".to_string(),
-                "plan_plus".to_string(),
-                "plan_free".to_string(),
-                "plan_bad".to_string(),
-                "quota_available".to_string(),
-            ]),
-            vec![
-                "plan_free".to_string(),
-                "plan_plus".to_string(),
-                "quota_available".to_string(),
-            ]
-        );
-    }
-
-    #[test]
     fn detects_codex_exhaustion_from_metadata() {
-        assert!(!admin_pool_key_account_quota_exhausted(
+        assert!(admin_pool_key_account_quota_exhausted(
             &sample_key(Some(json!({
                 "codex": {
                     "has_credits": false,
@@ -770,36 +689,6 @@ mod tests {
         assert!(admin_pool_key_account_quota_exhausted(
             &sample_key(Some(json!({
                 "codex": {
-                    "secondary_used_percent": 100.0
-                }
-            }))),
-            "codex",
-        ));
-        assert!(admin_pool_key_account_quota_exhausted(
-            &sample_key(Some(json!({
-                "codex": {
-                    "has_credits": true,
-                    "primary_used_percent": 98.0,
-                    "secondary_used_percent": 25.0
-                }
-            }))),
-            "codex",
-        ));
-        assert!(admin_pool_key_account_quota_exhausted(
-            &sample_key(Some(json!({
-                "codex": {
-                    "has_credits": true,
-                    "primary_used_percent": 99.0,
-                    "secondary_used_percent": 25.0
-                }
-            }))),
-            "codex",
-        ));
-        assert!(admin_pool_key_account_quota_exhausted(
-            &sample_key(Some(json!({
-                "codex": {
-                    "has_credits": true,
-                    "primary_used_percent": 100.0,
                     "secondary_used_percent": 100.0
                 }
             }))),
@@ -865,11 +754,11 @@ mod tests {
     }
 
     #[test]
-    fn codex_snapshot_windows_override_stale_exhausted_flag() {
+    fn clears_stale_codex_exhausted_snapshot_when_windows_have_capacity() {
         let mut key = sample_key(Some(json!({
             "codex": {
-                "primary_used_percent": 100.0,
-                "secondary_used_percent": 100.0
+                "has_credits": false,
+                "primary_used_percent": 100.0
             }
         })));
         key.status_snapshot = Some(json!({
@@ -878,113 +767,24 @@ mod tests {
                 "provider_type": "codex",
                 "code": "exhausted",
                 "exhausted": true,
+                "usage_ratio": 0.0,
                 "updated_at": 1_776_395_200u64,
                 "windows": [
                     {
                         "code": "weekly",
-                        "used_ratio": 0.97,
-                        "remaining_ratio": 0.03
+                        "used_ratio": 0.0,
+                        "remaining_ratio": 1.0
                     },
                     {
                         "code": "5h",
-                        "used_ratio": 0.25,
-                        "remaining_ratio": 0.75
-                    }
-                ]
-            }
-        }));
-
-        assert!(!admin_pool_key_account_quota_exhausted(&key, "codex"));
-    }
-
-    #[test]
-    fn treats_two_percent_snapshot_remaining_as_exhausted() {
-        let mut key = sample_key(None);
-        key.status_snapshot = Some(json!({
-            "quota": {
-                "provider_type": "codex",
-                "code": "ok",
-                "exhausted": false,
-                "windows": [
-                    {
-                        "code": "weekly",
-                        "remaining_ratio": 0.02
-                    }
-                ]
-            }
-        }));
-
-        assert!(admin_pool_key_account_quota_exhausted(&key, "codex"));
-    }
-
-    #[test]
-    fn codex_ignores_stale_exhausted_snapshot_without_remaining_data() {
-        let mut key = sample_key(Some(json!({
-            "codex": {
-                "has_credits": true,
-                "primary_used_percent": 0.0,
-                "secondary_used_percent": 0.0
-            }
-        })));
-        key.status_snapshot = Some(json!({
-            "quota": {
-                "version": 2,
-                "provider_type": "codex",
-                "code": "exhausted",
-                "exhausted": true,
-                "updated_at": 1_776_395_200u64
-            }
-        }));
-
-        assert!(!admin_pool_key_account_quota_exhausted(&key, "codex"));
-    }
-
-    #[test]
-    fn non_codex_snapshot_exhausted_flag_controls_model_window_cooldowns() {
-        let mut key = sample_key(Some(json!({
-            "gemini_cli": {
-                "quota_by_model": {
-                    "gemini-2.5-pro": {
-                        "is_exhausted": false
-                    }
-                }
-            }
-        })));
-        key.status_snapshot = Some(json!({
-            "quota": {
-                "version": 2,
-                "provider_type": "gemini_cli",
-                "code": "cooldown",
-                "exhausted": false,
-                "windows": [
-                    {
-                        "code": "model:gemini-2.5-pro",
-                        "is_exhausted": true,
-                        "remaining_ratio": 0.0
-                    }
-                ]
-            }
-        }));
-
-        assert!(!admin_pool_key_account_quota_exhausted(&key, "gemini_cli"));
-
-        key.status_snapshot = Some(json!({
-            "quota": {
-                "version": 2,
-                "provider_type": "gemini_cli",
-                "code": "exhausted",
-                "exhausted": true,
-                "windows": [
-                    {
-                        "code": "model:gemini-2.5-pro",
-                        "is_exhausted": false,
+                        "used_ratio": 0.0,
                         "remaining_ratio": 1.0
                     }
                 ]
             }
         }));
 
-        assert!(admin_pool_key_account_quota_exhausted(&key, "gemini_cli"));
+        assert!(!admin_pool_key_account_quota_exhausted(&key, "codex"));
     }
 
     #[test]
@@ -1001,14 +801,6 @@ mod tests {
             &sample_key(Some(json!({
                 "kiro": {
                     "usage_percentage": 100.0
-                }
-            }))),
-            "kiro",
-        ));
-        assert!(admin_pool_key_account_quota_exhausted(
-            &sample_key(Some(json!({
-                "kiro": {
-                    "usage_percentage": 98.0
                 }
             }))),
             "kiro",
@@ -1061,6 +853,108 @@ mod tests {
         assert_eq!(payload["scheduling_status"], json!("available"));
         assert_eq!(payload["scheduling_reason"], json!("available"));
         assert_eq!(payload["scheduling_label"], json!("可用"));
+    }
+
+    #[test]
+    fn validates_and_applies_shared_key_settings() {
+        let settings = json!({
+            "internal_priority": 12,
+            "rpm_limit": 600,
+            "concurrent_limit": 8,
+            "cache_ttl_minutes": 10,
+            "max_probe_interval_minutes": 16,
+            "is_active": false,
+            "note": " imported ",
+            "proxy_node_id": "proxy-1"
+        });
+        let mut key = sample_key(None);
+
+        validate_admin_pool_key_settings_payload(&settings).expect("settings should validate");
+        apply_admin_pool_key_settings(&mut key, &settings).expect("settings should apply");
+
+        assert_eq!(key.internal_priority, 12);
+        assert_eq!(key.rpm_limit, Some(600));
+        assert_eq!(key.concurrent_limit, Some(8));
+        assert_eq!(key.cache_ttl_minutes, 10);
+        assert_eq!(key.max_probe_interval_minutes, 16);
+        assert!(!key.is_active);
+        assert_eq!(key.note.as_deref(), Some("imported"));
+        assert_eq!(
+            key.proxy,
+            Some(json!({ "node_id": "proxy-1", "enabled": true }))
+        );
+
+        assert!(validate_admin_pool_key_settings_payload(&json!({ "rpm_limit": 0 })).is_err());
+        assert!(validate_admin_pool_key_settings_payload(&json!({ "unknown": true })).is_err());
+    }
+
+    #[test]
+    fn builds_update_settings_action_plan() {
+        let settings = json!({ "rpm_limit": null, "proxy_node_id": "proxy-1" });
+        let plan = build_admin_pool_batch_action_plan(AdminPoolBatchActionRequest {
+            key_ids: vec![
+                "key-2".to_string(),
+                "key-1".to_string(),
+                "key-1".to_string(),
+            ],
+            action: "update_settings".to_string(),
+            payload: Some(settings.clone()),
+        })
+        .expect("action plan should build");
+
+        assert_eq!(plan.action, AdminPoolBatchActionKind::UpdateSettings);
+        assert_eq!(plan.key_ids, vec!["key-1", "key-2"]);
+        assert_eq!(plan.settings_payload, Some(settings));
+        assert!(plan.proxy_payload.is_none());
+    }
+
+    #[test]
+    fn batch_import_record_applies_shared_settings() {
+        let record = build_admin_pool_batch_import_key_record(
+            "key-1".to_string(),
+            "provider-1".to_string(),
+            "1".to_string(),
+            "api_key".to_string(),
+            vec!["openai:chat".to_string()],
+            "encrypted".to_string(),
+            None,
+            Some(&json!({
+                "rpm_limit": 900,
+                "cache_ttl_minutes": 0,
+                "max_probe_interval_minutes": 4,
+                "is_active": false
+            })),
+            1_700_000_000,
+        )
+        .expect("record should build");
+
+        assert_eq!(record.name, "1");
+        assert_eq!(record.rpm_limit, Some(900));
+        assert_eq!(record.cache_ttl_minutes, 0);
+        assert_eq!(record.max_probe_interval_minutes, 4);
+        assert!(!record.is_active);
+    }
+
+    #[test]
+    fn batch_import_item_settings_override_shared_values() {
+        let resolved = resolve_admin_pool_key_settings(
+            Some(&json!({
+                "rpm_limit": 900,
+                "cache_ttl_minutes": 5,
+                "is_active": true
+            })),
+            Some(&json!({
+                "rpm_limit": 120,
+                "is_active": false
+            })),
+        )
+        .expect("item settings should override shared values")
+        .expect("resolved settings should exist");
+
+        assert_eq!(resolved["rpm_limit"], 120);
+        assert_eq!(resolved["cache_ttl_minutes"], 5);
+        assert_eq!(resolved["is_active"], false);
+        assert!(resolve_admin_pool_key_settings(None, Some(&json!([]))).is_err());
     }
 }
 
@@ -1191,6 +1085,25 @@ pub fn build_admin_pool_overview_payload(
     json!({ "items": items })
 }
 
+pub fn resolve_admin_pool_key_settings(
+    shared: Option<&Value>,
+    overrides: Option<&Value>,
+) -> Result<Option<Value>, String> {
+    let mut resolved = Map::new();
+    for settings in [shared, overrides].into_iter().flatten() {
+        let Value::Object(values) = settings else {
+            return Err("settings payload must be an object".to_string());
+        };
+        resolved.extend(values.clone());
+    }
+    if resolved.is_empty() {
+        return Ok(None);
+    }
+    let resolved = Value::Object(resolved);
+    validate_admin_pool_key_settings_payload(&resolved)?;
+    Ok(Some(resolved))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn build_admin_pool_batch_import_key_record(
     id: String,
@@ -1200,6 +1113,7 @@ pub fn build_admin_pool_batch_import_key_record(
     api_formats: Vec<String>,
     encrypted_api_key: String,
     proxy: Option<Value>,
+    settings: Option<&Value>,
     now_unix_secs: u64,
 ) -> Result<StoredProviderCatalogKey, String> {
     let mut record = StoredProviderCatalogKey::new(id, provider_id, name, auth_type, None, true)
@@ -1223,6 +1137,9 @@ pub fn build_admin_pool_batch_import_key_record(
     record.total_response_time_ms = Some(0);
     record.health_by_format = Some(json!({}));
     record.circuit_breaker_by_format = Some(json!({}));
+    if let Some(settings) = settings {
+        apply_admin_pool_key_settings(&mut record, settings)?;
+    }
     record.created_at_unix_ms = Some(now_unix_secs);
     record.updated_at_unix_secs = Some(now_unix_secs);
     Ok(record)

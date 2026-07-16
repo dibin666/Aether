@@ -250,6 +250,13 @@
                         <span class="ml-1 font-bold text-primary">{{ formatOutputRateValue(detailOutputRate) }}tps</span>
                       </span>
                     </div>
+                    <ServiceTierFacts
+                      v-if="hasServiceTierFacts"
+                      class="mt-3"
+                      :requested="serviceTierFacts.requested"
+                      :actual="serviceTierFacts.actual"
+                      :billing="serviceTierFacts.billing"
+                    />
                   </div>
 
                   <!-- 分隔线 -->
@@ -909,6 +916,8 @@ import JsonContentPanel from './JsonContentPanel.vue'
 import ConversationView from './RequestDetailDrawer/ConversationView.vue'
 import HorizontalRequestTimeline from './HorizontalRequestTimeline.vue'
 import ReplayDialog from './ReplayDialog.vue'
+import ServiceTierFacts from './ServiceTierFacts.vue'
+import { hasServiceTierFact, resolveServiceTierFacts } from '../utils/service-tier'
 
 // 对话解析器
 import {
@@ -957,6 +966,7 @@ const emit = defineEmits<{
     targetModel?: string | null
     reasoningEffort?: string | null
     serviceTier?: string | null
+    actualServiceTier?: string | null
     imageProgress?: ImageProgress | null
     errorMessage?: string | null
   }]
@@ -1141,6 +1151,7 @@ function emitDetailRequestState(nextDetail: RequestDetail) {
     targetModel: nextDetail.target_model ?? null,
     reasoningEffort: nextDetail.reasoning_effort ?? null,
     serviceTier: nextDetail.service_tier ?? null,
+    actualServiceTier: nextDetail.actual_service_tier ?? null,
     errorMessage: nextDetail.error_message ?? undefined,
   })
 }
@@ -1348,6 +1359,9 @@ const metadataPanelData = computed<Record<string, unknown> | null>(() => {
 })
 
 const failureNotice = computed(() => resolveRequestFailureNotice(detail.value))
+
+const serviceTierFacts = computed(() => resolveServiceTierFacts(detail.value))
+const hasServiceTierFacts = computed(() => hasServiceTierFact(serviceTierFacts.value))
 
 const settlementInfo = computed<JsonRecord | null>(() =>
   asRecord(detail.value?.settlement ?? null),

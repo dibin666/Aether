@@ -9,9 +9,7 @@ use aether_data_contracts::repository::pool_scores::{
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
-use aether_provider_pool::{
-    provider_pool_quota_metadata_updated_at, provider_pool_quota_snapshot_updated_at,
-};
+use aether_provider_pool::provider_pool_quota_metadata_updated_at;
 use aether_runtime_state::{RuntimeLockLease, RuntimeState};
 use futures_util::{stream, StreamExt};
 use serde_json::Value;
@@ -32,7 +30,6 @@ use crate::provider_pool_demand::{
     provider_pool_burst_pending_key, read_provider_pool_demand_snapshot,
     sample_provider_pool_demand, ProviderPoolDemandSnapshot,
 };
-use crate::task_runtime::{append_event_with_logging, TASK_KEY_POOL_QUOTA_PROBE};
 
 use super::pool_score_rebuild::ensure_provider_key_pool_scores_for_keys;
 
@@ -96,7 +93,6 @@ impl PoolQuotaProbeRunSummary {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PoolQuotaProbeWorkerConfig {
     pub(crate) scan_interval: Duration,
-    pub(crate) refresh_interval: Duration,
     pub(crate) max_keys_per_provider: usize,
     pub(crate) global_concurrency: usize,
 }
@@ -112,9 +108,6 @@ impl PoolQuotaProbeWorkerConfig {
             "POOL_QUOTA_PROBE_MAX_KEYS_PER_PROVIDER",
             POOL_QUOTA_PROBE_UNLIMITED_MAX_KEYS_PER_PROVIDER,
         );
-        let refresh_interval_seconds =
-            env_u64("POOL_QUOTA_REFRESH_STALE_SECONDS", scan_interval_seconds)
-                .max(POOL_QUOTA_PROBE_MIN_SCAN_INTERVAL_SECONDS);
         let global_concurrency = env_usize(
             "POOL_QUOTA_PROBE_GLOBAL_CONCURRENCY",
             POOL_QUOTA_PROBE_DEFAULT_GLOBAL_CONCURRENCY,
@@ -122,7 +115,6 @@ impl PoolQuotaProbeWorkerConfig {
         .clamp(1, 256);
         Self {
             scan_interval: Duration::from_secs(scan_interval_seconds),
-            refresh_interval: Duration::from_secs(refresh_interval_seconds),
             max_keys_per_provider,
             global_concurrency,
         }
@@ -311,57 +303,6 @@ fn score_last_self_check_success_at(score: &StoredPoolMemberScore) -> Option<u64
         .flatten()
 }
 
-fn quota_status_snapshot<'a>(
-    key: &'a StoredProviderCatalogKey,
-) -> Option<&'a serde_json::Map<String, Value>> {
-    key.status_snapshot
-        .as_ref()
-        .and_then(Value::as_object)
-        .and_then(|snapshot| snapshot.get("quota"))
-        .and_then(Value::as_object)
-}
-
-fn quota_reset_due_at_from_snapshot(key: &StoredProviderCatalogKey) -> Option<u64> {
-    let quota = quota_status_snapshot(key)?;
-    let quota_updated_at = quota
-        .get("observed_at")
-        .and_then(json_u64)
-        .or_else(|| quota.get("updated_at").and_then(json_u64));
-    let mut due_at = quota.get("reset_at").and_then(json_u64);
-    if let Some(reset_seconds) = quota.get("reset_seconds").and_then(json_u64) {
-        if let Some(updated_at) = quota_updated_at {
-            due_at = Some(
-                due_at
-                    .unwrap_or(u64::MAX)
-                    .min(updated_at.saturating_add(reset_seconds)),
-            );
-        }
-    }
-
-    if let Some(windows) = quota.get("windows").and_then(Value::as_array) {
-        for window in windows.iter().filter_map(Value::as_object) {
-            let window_reset_at = window.get("reset_at").and_then(json_u64).or_else(|| {
-                quota_updated_at
-                    .zip(window.get("reset_seconds").and_then(json_u64))
-                    .map(|(updated_at, reset_seconds)| updated_at.saturating_add(reset_seconds))
-            });
-            if let Some(window_reset_at) = window_reset_at {
-                due_at = Some(due_at.unwrap_or(u64::MAX).min(window_reset_at));
-            }
-        }
-    }
-
-    due_at
-}
-
-fn quota_probe_anchor_ts(key: &StoredProviderCatalogKey, provider_type: &str) -> u64 {
-    provider_pool_quota_snapshot_updated_at(key, provider_type)
-        .or_else(|| {
-            provider_pool_quota_metadata_updated_at(key.upstream_metadata.as_ref(), provider_type)
-        })
-        .unwrap_or(0)
-}
-
 pub(crate) fn select_pool_quota_probe_key_ids(
     keys: &[StoredProviderCatalogKey],
     provider_type: &str,
@@ -375,21 +316,12 @@ pub(crate) fn select_pool_quota_probe_key_ids(
         if key.id.trim().is_empty() {
             continue;
         }
+        let quota_updated_ts =
+            provider_pool_quota_metadata_updated_at(key.upstream_metadata.as_ref(), provider_type);
         let last_probe_ts = last_probe_timestamps.get(&key.id).copied();
-        if last_probe_ts
-            .is_some_and(|last_probe_ts| now_ts.saturating_sub(last_probe_ts) < interval_seconds)
-        {
-            continue;
-        }
-        if let Some(reset_due_at) = quota_reset_due_at_from_snapshot(key) {
-            if reset_due_at <= now_ts {
-                stale.push((reset_due_at, key.id.clone()));
-            }
-            continue;
-        }
-        let quota_updated_ts = quota_probe_anchor_ts(key, provider_type);
-        let last_probe_ts = last_probe_timestamps.get(&key.id).copied();
-        let anchor_ts = quota_updated_ts.max(last_probe_ts.unwrap_or(0));
+        let anchor_ts = quota_updated_ts
+            .unwrap_or(0)
+            .max(last_probe_ts.unwrap_or(0));
         if anchor_ts == 0 || now_ts.saturating_sub(anchor_ts) >= interval_seconds {
             stale.push((anchor_ts, key.id.clone()));
         }
@@ -910,7 +842,9 @@ async fn select_keys_for_provider(
     state: &AppState,
     runtime: &RuntimeState,
     provider: &StoredProviderCatalogProvider,
+    pool_config: &AdminProviderPoolConfig,
     config: PoolQuotaProbeWorkerConfig,
+    mode: PoolQuotaProbeMode,
     now_ts: u64,
 ) -> Result<PoolQuotaProbeSelectionOutcome, GatewayError> {
     let lease = acquire_provider_probe_lock(runtime, &provider.id).await;
@@ -919,43 +853,130 @@ async fn select_keys_for_provider(
     }
 
     let result = async {
-        let keys = state
-            .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
+        let summaries = state
+            .list_provider_catalog_key_maintenance_summaries_by_provider_ids(std::slice::from_ref(
+                &provider.id,
+            ))
             .await?
             .into_iter()
-            .filter(|key| key.is_active)
+            .filter(|summary| summary.is_active)
             .collect::<Vec<_>>();
-        if keys.is_empty() {
+        if summaries.is_empty() {
             return Ok(PoolQuotaProbeSelectionOutcome::Empty);
         }
 
-        if config.max_keys_per_provider == 0 {
+        let demand_snapshot = match mode {
+            PoolQuotaProbeMode::Base => {
+                sample_provider_pool_demand(
+                    runtime,
+                    &provider.id,
+                    summaries.len(),
+                    config.max_keys_per_provider,
+                )
+                .await
+            }
+            PoolQuotaProbeMode::Burst => {
+                read_provider_pool_demand_snapshot(
+                    runtime,
+                    &provider.id,
+                    summaries.len(),
+                    config.max_keys_per_provider,
+                )
+                .await
+            }
+        };
+        let target_active_count = pool_quota_probe_target_count_for_mode(
+            summaries.len(),
+            pool_config,
+            demand_snapshot.desired_hot,
+            config,
+            mode,
+        );
+        if target_active_count == 0 {
             return Ok(PoolQuotaProbeSelectionOutcome::Empty);
         }
-        let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
+        let selection_limit = pool_quota_probe_selection_limit_for_mode(pool_config, config, mode);
+        if selection_limit == 0 {
+            return Ok(PoolQuotaProbeSelectionOutcome::Empty);
+        }
+
+        let key_ids = summaries
+            .iter()
+            .map(|summary| summary.id.clone())
+            .collect::<Vec<_>>();
+        let scores_by_key = load_provider_key_account_scores(state, &provider.id, &key_ids).await;
+        let mut active_member_ids =
+            load_pruned_active_probe_member_ids(runtime, &provider.id, &key_ids, &scores_by_key)
+                .await;
+        if matches!(mode, PoolQuotaProbeMode::Base) {
+            let trimmed_ids = trim_pool_quota_probe_active_member_ids_to_target(
+                &active_member_ids,
+                &scores_by_key,
+                target_active_count,
+            );
+            if !trimmed_ids.is_empty() {
+                remove_active_probe_member_ids(runtime, &provider.id, &trimmed_ids).await;
+                for key_id in trimmed_ids {
+                    active_member_ids.remove(&key_id);
+                }
+            }
+        }
         let probe_stamps = load_probe_timestamps(runtime, &provider.id, &key_ids).await;
-        let selected_ids = select_pool_quota_probe_key_ids(
-            &keys,
-            provider.provider_type.as_str(),
-            now_ts,
-            config.refresh_interval.as_secs(),
-            &probe_stamps,
-            config.max_keys_per_provider,
+        let probe_eligible_key_ids = key_ids
+            .iter()
+            .filter(|key_id| {
+                if active_member_ids.contains(key_id.as_str()) {
+                    return false;
+                }
+                match mode {
+                    PoolQuotaProbeMode::Base => {
+                        probe_stamps
+                            .get(key_id.as_str())
+                            .is_none_or(|last_probe_ts| {
+                                now_ts.saturating_sub(*last_probe_ts)
+                                    >= pool_quota_probe_auto_interval_seconds(&demand_snapshot)
+                            })
+                    }
+                    PoolQuotaProbeMode::Burst => {
+                        probe_stamps
+                            .get(key_id.as_str())
+                            .is_none_or(|last_probe_ts| {
+                                now_ts.saturating_sub(*last_probe_ts)
+                                    >= POOL_QUOTA_PROBE_BURST_RETRY_GUARD_SECONDS
+                            })
+                    }
+                }
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut selected_ids = select_pool_quota_probe_ids_for_active_target(
+            &probe_eligible_key_ids,
+            &active_member_ids,
+            &scores_by_key,
+            pool_config.account_self_check_enabled,
+            target_active_count,
+            selection_limit,
         );
         if selected_ids.is_empty() {
             return Ok(PoolQuotaProbeSelectionOutcome::Empty);
         }
 
+        let stamp_interval_seconds = match mode {
+            PoolQuotaProbeMode::Base => pool_quota_probe_auto_interval_seconds(&demand_snapshot),
+            PoolQuotaProbeMode::Burst => POOL_QUOTA_PROBE_BURST_PENDING_TTL_SECONDS,
+        };
         mark_probe_timestamps(
             runtime,
             &provider.id,
             &selected_ids,
             now_ts,
-            config.refresh_interval.as_secs(),
+            stamp_interval_seconds,
         )
         .await;
 
-        let mut keys_by_id = keys
+        let mut keys_by_id = state
+            .list_provider_catalog_keys_by_ids(&selected_ids)
+            .await?
             .into_iter()
             .map(|key| (key.id.clone(), key))
             .collect::<BTreeMap<_, _>>();
@@ -1205,134 +1226,6 @@ fn probe_result_hard_state(item: &Value) -> Option<PoolMemberHardState> {
     }
 }
 
-fn pool_quota_probe_run_id(state: &AppState) -> String {
-    format!(
-        "boot:{}:{}",
-        TASK_KEY_POOL_QUOTA_PROBE,
-        state.tunnel.local_instance_id()
-    )
-}
-
-fn quota_probe_result_string<'a>(item: &'a Value, key: &str) -> Option<&'a str> {
-    item.get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
-async fn append_pool_quota_probe_account_event(
-    state: &AppState,
-    provider: &StoredProviderCatalogProvider,
-    provider_type: &str,
-    key_id: &str,
-    key_name: &str,
-    event_type: &str,
-    message: &str,
-    mut payload: serde_json::Map<String, Value>,
-) {
-    payload.insert(
-        "provider_id".to_string(),
-        serde_json::json!(provider.id.clone()),
-    );
-    payload.insert(
-        "provider_name".to_string(),
-        serde_json::json!(provider.name.clone()),
-    );
-    payload.insert(
-        "provider_type".to_string(),
-        serde_json::json!(provider_type),
-    );
-    payload.insert("key_id".to_string(), serde_json::json!(key_id));
-    payload.insert("key_name".to_string(), serde_json::json!(key_name));
-    payload.insert("action".to_string(), serde_json::json!("quota_refresh"));
-
-    append_event_with_logging(
-        state,
-        &pool_quota_probe_run_id(state),
-        event_type,
-        message,
-        Some(Value::Object(payload)),
-    )
-    .await;
-}
-
-async fn append_pool_quota_probe_account_events_from_payload(
-    state: &AppState,
-    provider: &StoredProviderCatalogProvider,
-    provider_type: &str,
-    fallback_key_id: &str,
-    fallback_key_name: &str,
-    payload: Option<&Value>,
-) {
-    let Some(results) = payload
-        .and_then(|value| value.get("results"))
-        .and_then(Value::as_array)
-    else {
-        let mut event_payload = serde_json::Map::new();
-        event_payload.insert("status".to_string(), serde_json::json!("missing_result"));
-        event_payload.insert(
-            "message".to_string(),
-            serde_json::json!("额度刷新无明细结果"),
-        );
-        append_pool_quota_probe_account_event(
-            state,
-            provider,
-            provider_type,
-            fallback_key_id,
-            fallback_key_name,
-            "quota_refresh_account_failed",
-            "quota refresh result missing",
-            event_payload,
-        )
-        .await;
-        return;
-    };
-
-    for item in results {
-        let key_id = quota_probe_result_string(item, "key_id").unwrap_or(fallback_key_id);
-        let key_name = quota_probe_result_string(item, "key_name").unwrap_or(fallback_key_name);
-        let succeeded = probe_result_succeeded(item);
-        let status = quota_probe_result_string(item, "status").unwrap_or(if succeeded {
-            "success"
-        } else {
-            "error"
-        });
-        let message = quota_probe_result_string(item, "message").unwrap_or(if succeeded {
-            "额度刷新成功"
-        } else {
-            "额度刷新失败"
-        });
-        let mut event_payload = serde_json::Map::new();
-        event_payload.insert("status".to_string(), serde_json::json!(status));
-        event_payload.insert("message".to_string(), serde_json::json!(message));
-        if let Some(value) = item.get("status_code").cloned() {
-            event_payload.insert("status_code".to_string(), value);
-        }
-        if let Some(value) = item.get("auto_removed").cloned() {
-            event_payload.insert("auto_removed".to_string(), value);
-        }
-        append_pool_quota_probe_account_event(
-            state,
-            provider,
-            provider_type,
-            key_id,
-            key_name,
-            if succeeded {
-                "quota_refresh_account_succeeded"
-            } else {
-                "quota_refresh_account_failed"
-            },
-            if succeeded {
-                "quota refresh succeeded"
-            } else {
-                "quota refresh failed"
-            },
-            event_payload,
-        )
-        .await;
-    }
-}
-
 async fn perform_pool_quota_probe_for_provider(
     state: &AppState,
     admin_state: &AdminAppState<'_>,
@@ -1405,7 +1298,9 @@ async fn perform_pool_quota_probe_for_provider(
         state,
         state.runtime_state.as_ref(),
         provider,
+        pool_config,
         config,
+        mode,
         now_ts,
     )
     .await?
@@ -1463,7 +1358,6 @@ async fn perform_pool_quota_probe_for_provider(
     let probe_concurrency = probe_concurrency.min(config.global_concurrency).max(1);
     let probe_results = stream::iter(keys.into_iter().map(|key| {
         let key_id = key.id.clone();
-        let key_name = key.name.clone();
         let endpoint = &endpoint;
         let provider_type = provider_type.to_string();
         async move {
@@ -1475,7 +1369,7 @@ async fn perform_pool_quota_probe_for_provider(
                 vec![key],
             )
             .await;
-            (key_id, key_name, result)
+            (key_id, result)
         }
     }))
     .buffer_unordered(probe_concurrency)
@@ -1484,7 +1378,7 @@ async fn perform_pool_quota_probe_for_provider(
 
     let mut probe_success = 0usize;
     let mut probe_failed = 0usize;
-    for (key_id, key_name, result) in probe_results {
+    for (key_id, result) in probe_results {
         match result {
             Ok(payload) => {
                 update_summary_from_payload(&mut summary, 1, payload.as_ref());
@@ -1498,7 +1392,7 @@ async fn perform_pool_quota_probe_for_provider(
                     .and_then(|value| value.get("failed"))
                     .and_then(Value::as_u64)
                     .unwrap_or(0) as usize;
-                let _successful_key_ids = record_score_probe_results_from_payload(
+                let successful_key_ids = record_score_probe_results_from_payload(
                     state,
                     &provider.id,
                     std::slice::from_ref(&key_id),
@@ -1506,13 +1400,10 @@ async fn perform_pool_quota_probe_for_provider(
                     now_ts,
                 )
                 .await;
-                append_pool_quota_probe_account_events_from_payload(
-                    state,
-                    provider,
-                    provider_type,
-                    &key_id,
-                    &key_name,
-                    payload.as_ref(),
+                add_active_probe_member_ids(
+                    state.runtime_state.as_ref(),
+                    &provider.id,
+                    &successful_key_ids,
                 )
                 .await;
             }
@@ -1542,20 +1433,6 @@ async fn perform_pool_quota_probe_for_provider(
                     error = ?err,
                     "gateway pool quota probe failed"
                 );
-                let mut event_payload = serde_json::Map::new();
-                event_payload.insert("status".to_string(), serde_json::json!("worker_error"));
-                event_payload.insert("message".to_string(), serde_json::json!(format!("{err:?}")));
-                append_pool_quota_probe_account_event(
-                    state,
-                    provider,
-                    provider_type,
-                    &key_id,
-                    &key_name,
-                    "quota_refresh_account_failed",
-                    "quota refresh failed",
-                    event_payload,
-                )
-                .await;
             }
         }
     }
@@ -1595,7 +1472,11 @@ pub(crate) async fn perform_pool_quota_probe_once_with_config(
         })
         .filter_map(|(provider, provider_type)| {
             let pool_config = admin_provider_pool_config(&provider)?;
-            Some((provider, provider_type, pool_config))
+            if pool_config.probing_enabled {
+                Some((provider, provider_type, pool_config))
+            } else {
+                None
+            }
         })
         .collect::<Vec<_>>();
 
@@ -1687,7 +1568,9 @@ async fn perform_pool_quota_probe_once_for_provider_with_mode(
             ..PoolQuotaProbeRunSummary::empty()
         });
     }
-    let Some(pool_config) = admin_provider_pool_config(&provider) else {
+    let Some(pool_config) =
+        admin_provider_pool_config(&provider).filter(|config| config.probing_enabled)
+    else {
         return Ok(PoolQuotaProbeRunSummary {
             providers_checked: 1,
             ..PoolQuotaProbeRunSummary::empty()
@@ -1818,56 +1701,24 @@ pub(crate) fn spawn_pool_quota_probe_worker(
     }
 
     let config = PoolQuotaProbeWorkerConfig::from_env();
-    Some(tokio::spawn(async move {
-        let mut interval = tokio::time::interval(config.scan_interval);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        interval.tick().await;
-        loop {
+    Some(crate::task_runtime::spawn_singleton_worker(
+        state,
+        crate::task_runtime::TASK_KEY_POOL_QUOTA_PROBE,
+        move |state| async move {
+            let mut interval = tokio::time::interval(config.scan_interval);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             interval.tick().await;
-            let run_id = pool_quota_probe_run_id(&state);
-            match perform_pool_quota_probe_once_with_config(&state, config).await {
-                Ok(summary) => {
-                    if summary.selected_keys > 0 || summary.failed > 0 {
-                        append_event_with_logging(
-                            &state,
-                            &run_id,
-                            "quota_refresh_completed",
-                            "pool quota refresh scan completed",
-                            Some(serde_json::json!({
-                                "providers_checked": summary.providers_checked,
-                                "providers_probed": summary.providers_probed,
-                                "providers_skipped": summary.providers_skipped,
-                                "providers_busy": summary.providers_busy,
-                                "selected_keys": summary.selected_keys,
-                                "succeeded": summary.succeeded,
-                                "failed": summary.failed,
-                                "auto_removed": summary.auto_removed,
-                                "scan_interval_seconds": config.scan_interval.as_secs(),
-                                "refresh_interval_seconds": config.refresh_interval.as_secs(),
-                                "max_keys_per_provider": config.max_keys_per_provider,
-                                "global_concurrency": config.global_concurrency,
-                            })),
-                        )
-                        .await;
-                    }
-                }
-                Err(err) => {
+            loop {
+                interval.tick().await;
+                if let Err(err) = perform_pool_quota_probe_once_with_config(&state, config).await {
                     warn!(
                         error = ?err,
                         "gateway pool quota probe worker tick failed"
                     );
-                    append_event_with_logging(
-                        &state,
-                        &run_id,
-                        "quota_refresh_failed",
-                        "pool quota refresh scan failed",
-                        Some(serde_json::json!({ "error": format!("{err:?}") })),
-                    )
-                    .await;
                 }
             }
-        }
-    }))
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -1918,60 +1769,6 @@ mod tests {
         let selected = select_pool_quota_probe_key_ids(&keys, "codex", 2_000, 600, &stamps, 2);
 
         assert_eq!(selected, vec!["never".to_string(), "old".to_string()]);
-    }
-
-    #[test]
-    fn selects_quota_keys_when_reset_time_has_arrived() {
-        let mut due = key("due", "provider-1", None);
-        due.status_snapshot = Some(json!({
-            "quota": {
-                "provider_type": "codex",
-                "updated_at": 1_000,
-                "reset_seconds": 60,
-                "windows": [
-                    { "code": "5h", "reset_at": 1_060 }
-                ]
-            }
-        }));
-        let mut future = key("future", "provider-1", None);
-        future.status_snapshot = Some(json!({
-            "quota": {
-                "provider_type": "codex",
-                "updated_at": 1_000,
-                "reset_seconds": 600,
-                "windows": [
-                    { "code": "weekly", "reset_at": 1_600 }
-                ]
-            }
-        }));
-
-        let selected = select_pool_quota_probe_key_ids(
-            &[due, future],
-            "codex",
-            1_060,
-            600,
-            &BTreeMap::new(),
-            10,
-        );
-
-        assert_eq!(selected, vec!["due".to_string()]);
-    }
-
-    #[test]
-    fn recent_probe_stamp_temporarily_guards_due_quota_key() {
-        let mut due = key("due", "provider-1", None);
-        due.status_snapshot = Some(json!({
-            "quota": {
-                "provider_type": "codex",
-                "updated_at": 1_000,
-                "reset_seconds": 60
-            }
-        }));
-        let stamps = BTreeMap::from([("due".to_string(), 1_055)]);
-
-        let selected = select_pool_quota_probe_key_ids(&[due], "codex", 1_060, 30, &stamps, 10);
-
-        assert!(selected.is_empty());
     }
 
     fn score(
