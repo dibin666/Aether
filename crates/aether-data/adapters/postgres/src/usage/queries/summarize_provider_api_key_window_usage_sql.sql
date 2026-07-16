@@ -22,6 +22,10 @@ SELECT
   requested.provider_api_key_id,
   requested.window_code,
   COUNT("usage".id)::BIGINT AS request_count,
+  COALESCE(SUM(GREATEST(COALESCE("usage".input_tokens, 0), 0)), 0)::BIGINT AS input_tokens,
+  COALESCE(SUM(GREATEST(COALESCE("usage".output_tokens, 0), 0)), 0)::BIGINT AS output_tokens,
+  COALESCE(SUM(GREATEST(COALESCE("usage".cache_creation_input_tokens, 0), 0)), 0)::BIGINT AS cache_creation_tokens,
+  COALESCE(SUM(GREATEST(COALESCE("usage".cache_read_input_tokens, 0), 0)), 0)::BIGINT AS cache_read_tokens,
   COALESCE(SUM("usage".total_tokens), 0)::BIGINT AS total_tokens,
   CAST(COALESCE(SUM("usage".total_cost_usd), 0) AS DOUBLE PRECISION) AS total_cost_usd
 FROM requested

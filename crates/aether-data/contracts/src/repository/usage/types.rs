@@ -803,6 +803,10 @@ pub struct StoredProviderApiKeyWindowUsageSummary {
     pub provider_api_key_id: String,
     pub window_code: String,
     pub request_count: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
     pub total_tokens: u64,
     pub total_cost_usd: f64,
 }

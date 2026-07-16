@@ -2522,6 +2522,14 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                 }
 
                 summary.request_count = summary.request_count.saturating_add(1);
+                summary.input_tokens = summary.input_tokens.saturating_add(item.input_tokens);
+                summary.output_tokens = summary.output_tokens.saturating_add(item.output_tokens);
+                summary.cache_creation_tokens = summary
+                    .cache_creation_tokens
+                    .saturating_add(item.cache_creation_input_tokens);
+                summary.cache_read_tokens = summary
+                    .cache_read_tokens
+                    .saturating_add(item.cache_read_input_tokens);
                 summary.total_tokens = summary.total_tokens.saturating_add(item.total_tokens);
                 summary.total_cost_usd += item.total_cost_usd;
             }

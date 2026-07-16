@@ -3636,6 +3636,10 @@ WHERE provider_api_key_id IN (
                 r#"
 SELECT
   COUNT(*) AS request_count,
+  COALESCE(SUM(MAX(COALESCE(input_tokens, 0), 0)), 0) AS input_tokens,
+  COALESCE(SUM(MAX(COALESCE(output_tokens, 0), 0)), 0) AS output_tokens,
+  COALESCE(SUM(MAX(COALESCE(cache_creation_input_tokens, 0), 0)), 0) AS cache_creation_tokens,
+  COALESCE(SUM(MAX(COALESCE(cache_read_input_tokens, 0), 0)), 0) AS cache_read_tokens,
   COALESCE(SUM(MAX(COALESCE(total_tokens, 0), 0)), 0) AS total_tokens,
   COALESCE(SUM(COALESCE(CAST(total_cost_usd AS REAL), 0)), 0) AS total_cost_usd
 FROM "usage"
@@ -3655,6 +3659,10 @@ WHERE provider_api_key_id = ?
                 provider_api_key_id: provider_api_key_id.to_string(),
                 window_code: window_code.to_string(),
                 request_count: sqlite_aggregate_u64(&row, "request_count")?,
+                input_tokens: sqlite_aggregate_u64(&row, "input_tokens")?,
+                output_tokens: sqlite_aggregate_u64(&row, "output_tokens")?,
+                cache_creation_tokens: sqlite_aggregate_u64(&row, "cache_creation_tokens")?,
+                cache_read_tokens: sqlite_aggregate_u64(&row, "cache_read_tokens")?,
                 total_tokens: sqlite_aggregate_u64(&row, "total_tokens")?,
                 total_cost_usd: sqlite_real(&row, "total_cost_usd")?,
             });

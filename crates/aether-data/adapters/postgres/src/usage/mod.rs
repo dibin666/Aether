@@ -7955,6 +7955,26 @@ ORDER BY "usage".user_id ASC
                             "usage.request_count window aggregate is negative".to_string(),
                         )
                     })?,
+                input_tokens: row
+                    .try_get::<i64, _>("input_tokens")
+                    .map_postgres_err()?
+                    .try_into()
+                    .map_err(|_| DataLayerError::UnexpectedValue("usage.input_tokens window aggregate is negative".to_string()))?,
+                output_tokens: row
+                    .try_get::<i64, _>("output_tokens")
+                    .map_postgres_err()?
+                    .try_into()
+                    .map_err(|_| DataLayerError::UnexpectedValue("usage.output_tokens window aggregate is negative".to_string()))?,
+                cache_creation_tokens: row
+                    .try_get::<i64, _>("cache_creation_tokens")
+                    .map_postgres_err()?
+                    .try_into()
+                    .map_err(|_| DataLayerError::UnexpectedValue("usage.cache_creation_tokens window aggregate is negative".to_string()))?,
+                cache_read_tokens: row
+                    .try_get::<i64, _>("cache_read_tokens")
+                    .map_postgres_err()?
+                    .try_into()
+                    .map_err(|_| DataLayerError::UnexpectedValue("usage.cache_read_tokens window aggregate is negative".to_string()))?,
                 total_tokens: row
                     .try_get::<i64, _>("total_tokens")
                     .map_postgres_err()?
