@@ -28,6 +28,16 @@ describe('usage performance metrics', () => {
     })).toBe(100)
   })
 
+  it('excludes reasoning tokens from visible stream output speed', () => {
+    expect(calculateOutputRate({
+      output_tokens: 80,
+      reasoning_tokens: 30,
+      response_time_ms: 1000,
+      first_byte_time_ms: 500,
+      upstream_is_stream: true,
+    })).toBe(100)
+  })
+
   it('calculates standard output tokens per total response second', () => {
     const timing = {
       output_tokens: 50,

@@ -1530,6 +1530,8 @@ function formatRecordDurationSeconds(ms: number | null | undefined): string {
 function getRecordDisplayOutputRate(record: UsageRecord): number | null {
   return getDisplayOutputRate({
     output_tokens: record.output_tokens,
+    reasoning_tokens: record.reasoning_tokens,
+
     response_time_ms: record.response_time_ms,
     first_byte_time_ms: record.first_byte_time_ms,
     is_stream: record.is_stream,

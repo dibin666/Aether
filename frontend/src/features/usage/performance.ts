@@ -1,5 +1,6 @@
 export interface UsagePerformanceTiming {
   output_tokens?: number | null
+  reasoning_tokens?: number | null
   response_time_ms?: number | null
   first_byte_time_ms?: number | null
   is_stream?: boolean | null
@@ -31,11 +32,22 @@ export function getOutputRateDurationMs(timing: UsagePerformanceTiming): number 
   return responseTimeMs
 }
 
-export function calculateOutputRate(timing: UsagePerformanceTiming): number | null {
+export function getVisibleOutputTokens(timing: UsagePerformanceTiming): number | null {
   const outputTokens = timing.output_tokens ?? 0
+  const reasoningTokens = timing.reasoning_tokens ?? 0
+
+  if (!Number.isFinite(outputTokens) || outputTokens <= 0) return null
+  if (!Number.isFinite(reasoningTokens) || reasoningTokens < 0) return null
+
+  return Math.max(0, outputTokens - reasoningTokens)
+}
+
+export function calculateOutputRate(timing: UsagePerformanceTiming): number | null {
+  const outputTokens = getVisibleOutputTokens(timing)
   const outputRateDurationMs = getOutputRateDurationMs(timing)
 
-  if (!Number.isFinite(outputTokens) || outputTokens <= 0 || outputRateDurationMs == null) return null
+  if (outputTokens == null || outputTokens <= 0 || outputRateDurationMs == null) return null
+
 
   const outputRateSeconds = outputRateDurationMs / 1000
   if (outputRateSeconds <= 0) return null

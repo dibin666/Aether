@@ -60,6 +60,8 @@ export interface UsageRecordDetail {
   input_tokens: number
   effective_input_tokens?: number
   output_tokens: number
+  reasoning_tokens?: number
+
   total_tokens: number
   cost: number  // 官方费率
   actual_cost?: number  // 倍率消耗（仅管理员可见）

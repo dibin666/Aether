@@ -1282,6 +1282,8 @@ const detailOutputRate = computed(() => {
   if (!detail.value) return null
   return getDisplayOutputRate({
     output_tokens: detailOutputTokens.value,
+    reasoning_tokens: detail.value.reasoning_tokens,
+
     response_time_ms: detail.value.response_time_ms,
     first_byte_time_ms: detail.value.first_byte_time_ms,
     is_stream: detail.value.is_stream,

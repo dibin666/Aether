@@ -202,6 +202,15 @@ pub fn extract_ai_pool_sticky_session_token(body_json: &serde_json::Value) -> Op
         .or_else(|| non_empty_str(object.get("sessionId")))
         .or_else(|| {
             object
+                .get("client_metadata")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|metadata| {
+                    non_empty_str(metadata.get("thread_id"))
+                        .or_else(|| non_empty_str(metadata.get("session_id")))
+                })
+        })
+        .or_else(|| {
+            object
                 .get("metadata")
                 .and_then(serde_json::Value::as_object)
                 .and_then(|metadata| {
@@ -444,6 +453,17 @@ mod tests {
             }))
             .as_deref(),
             Some("conversation-c")
+        );
+
+        assert_eq!(
+            extract_ai_pool_sticky_session_token(&json!({
+                "client_metadata": {
+                    "thread_id": " thread-e ",
+                    "session_id": "session-f"
+                }
+            }))
+            .as_deref(),
+            Some("thread-e")
         );
 
         assert_eq!(

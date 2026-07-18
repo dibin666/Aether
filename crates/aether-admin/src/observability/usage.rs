@@ -1076,6 +1076,21 @@ fn admin_usage_metadata_string<'a>(
         .filter(|value| !value.is_empty())
 }
 
+fn admin_usage_reasoning_tokens(item: &StoredRequestUsageAudit) -> u64 {
+    item.request_metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("dimensions"))
+        .and_then(Value::as_object)
+        .and_then(|dimensions| dimensions.get("reasoning_tokens"))
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_i64().and_then(|value| u64::try_from(value).ok()))
+        })
+        .unwrap_or_default()
+}
+
 fn infer_client_family_from_user_agent(user_agent: &str) -> Option<&'static str> {
     let normalized = user_agent.trim().to_ascii_lowercase();
     if normalized.is_empty() {
@@ -1192,6 +1207,7 @@ fn admin_usage_active_request_json(
         "input_tokens": item.input_tokens,
         "effective_input_tokens": admin_usage_effective_input_tokens(item),
         "output_tokens": item.output_tokens,
+        "reasoning_tokens": admin_usage_reasoning_tokens(item),
         "cache_creation_input_tokens": cache_creation_input_tokens,
         "cache_creation_ephemeral_5m_input_tokens": item.cache_creation_ephemeral_5m_input_tokens,
         "cache_creation_ephemeral_1h_input_tokens": item.cache_creation_ephemeral_1h_input_tokens,
@@ -1287,6 +1303,8 @@ pub fn admin_usage_record_json(
         "input_tokens": item.input_tokens,
         "effective_input_tokens": admin_usage_effective_input_tokens(item),
         "output_tokens": item.output_tokens,
+        "reasoning_tokens": admin_usage_reasoning_tokens(item),
+
         "cache_creation_input_tokens": cache_creation_input_tokens,
         "cache_creation_ephemeral_5m_input_tokens": item.cache_creation_ephemeral_5m_input_tokens,
         "cache_creation_ephemeral_1h_input_tokens": item.cache_creation_ephemeral_1h_input_tokens,
@@ -2605,6 +2623,27 @@ mod tests {
         assert!(!admin_usage_is_failed(&item));
         assert!(!admin_usage_matches_status(&item, Some("failed")));
         assert!(admin_usage_matches_status(&item, Some("completed")));
+    }
+
+    #[test]
+    fn usage_record_exposes_reasoning_tokens_from_dimensions() {
+        let item = StoredRequestUsageAudit {
+            request_metadata: Some(json!({
+                "dimensions": {"reasoning_tokens": 12}
+            })),
+            ..sample_usage("completed", Some(200), None)
+        };
+
+        let record = admin_usage_record_json(
+            &item,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            false,
+            false,
+            None,
+        );
+
+        assert_eq!(record["reasoning_tokens"], 12);
     }
 
     #[test]

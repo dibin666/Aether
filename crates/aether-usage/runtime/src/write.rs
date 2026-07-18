@@ -2535,7 +2535,7 @@ fn apply_standardized_usage_seed(usage: &StandardizedUsage, data: &mut UsageEven
 }
 
 fn apply_standardized_usage_dimensions_seed(usage: &StandardizedUsage, data: &mut UsageEventData) {
-    if usage.dimensions.is_empty() && usage.request_count <= 0 {
+    if usage.dimensions.is_empty() && usage.request_count <= 0 && usage.reasoning_tokens <= 0 {
         return;
     }
 
@@ -2549,6 +2549,12 @@ fn apply_standardized_usage_dimensions_seed(usage: &StandardizedUsage, data: &mu
             .entry("request_count".to_string())
             .or_insert_with(|| json!(usage.request_count));
     }
+    if usage.reasoning_tokens > 0 {
+        dimensions
+            .entry("reasoning_tokens".to_string())
+            .or_insert_with(|| json!(usage.reasoning_tokens));
+    }
+
     if dimensions.is_empty() {
         return;
     }
