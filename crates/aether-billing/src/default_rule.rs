@@ -101,6 +101,11 @@ impl DefaultBillingRuleGenerator {
             ),
             ("cache_read_tokens", "cache_read_tokens", json!(0)),
             ("request_count", "request_count", json!(1)),
+            (
+                "audio_duration_seconds",
+                "audio_duration_seconds",
+                json!(0.0),
+            ),
             ("image_count", "image_count", json!(0)),
             ("image_count_unmetered", "image_count_unmetered", json!(0)),
             ("image_price_key", "image_price_key", json!("default")),

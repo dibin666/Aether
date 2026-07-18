@@ -43,6 +43,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
     input: &LocalSameFormatProviderDecisionInput,
     attempt: LocalSameFormatProviderCandidateAttempt,
     spec: LocalSameFormatProviderSpec,
+    body_base64: Option<&str>,
 ) -> Result<Option<AiExecutionDecision>, GatewayError> {
     let spec_metadata = local_same_format_provider_spec_metadata(spec);
     let LocalSameFormatProviderCandidateAttempt {
@@ -55,21 +56,32 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
     let (execution_strategy, conversion_mode) =
         ai_local_execution_contract_for_formats(spec_metadata.api_format, spec_metadata.api_format);
     let Some(resolved) = resolve_local_same_format_provider_candidate_payload_parts(
-        state, parts, trace_id, body_json, input, &attempt, spec,
+        state,
+        parts,
+        trace_id,
+        body_json,
+        body_base64,
+        input,
+        &attempt,
+        spec,
     )
     .await?
     else {
         return Ok(None);
     };
-    let original_request_body_json = if resolved.request_redacted {
-        Some(&resolved.provider_request_body)
+    let has_binary_body = resolved.provider_request_body_base64.is_some();
+    let original_request_body_json = if has_binary_body {
+        None
+    } else if resolved.request_redacted {
+        resolved.provider_request_body.as_ref()
     } else {
         Some(body_json)
     };
 
     let prompt_cache_key = resolved
         .provider_request_body
-        .get("prompt_cache_key")
+        .as_ref()
+        .and_then(|body| body.get("prompt_cache_key"))
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -147,13 +159,17 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
                 request_query_string: parts.uri.query(),
                 request_origin: Some(crate::ai_serving::request_origin_from_parts(parts)),
                 original_request_body_json,
-                original_request_body_base64: None,
+                original_request_body_base64: has_binary_body.then_some(body_base64).flatten(),
                 client_session_affinity: input.client_session_affinity.as_ref(),
                 scheduler_affinity_epoch: eligible.orchestration.scheduler_affinity_epoch,
-                client_requested_stream: body_json
-                    .get("stream")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false),
+                client_requested_stream: if has_binary_body {
+                    spec_metadata.require_streaming
+                } else {
+                    body_json
+                        .get("stream")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                },
                 upstream_is_stream: resolved.upstream_is_stream,
                 has_envelope: resolved.is_kiro || resolved.is_antigravity || resolved.is_gemini_cli,
                 needs_conversion: false,
@@ -180,11 +196,16 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         upstream_url,
         provider_request_headers,
         provider_request_body,
+        provider_request_body_base64,
         transport_profile: _,
         compatibility_edits: _,
         request_redacted: _,
     } = resolved;
     let request_encoding = resolve_transport_request_encoding_policy(&transport);
+    let content_type = provider_request_headers
+        .get("content-type")
+        .cloned()
+        .or_else(|| (!has_binary_body).then(|| "application/json".to_string()));
 
     let mut decision = build_ai_execution_decision_response(AiExecutionDecisionResponseParts {
         decision_is_stream: spec_metadata.require_streaming,
@@ -209,9 +230,9 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         mapped_model,
         prompt_cache_key,
         provider_request_headers,
-        provider_request_body: Some(provider_request_body),
-        provider_request_body_base64: None,
-        content_type: Some("application/json".to_string()),
+        provider_request_body,
+        provider_request_body_base64,
+        content_type,
         content_encoding: request_encoding.content_encoding,
         request_gzip: request_encoding.request_gzip,
         proxy,

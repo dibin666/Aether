@@ -86,7 +86,7 @@ pub fn take_ai_upstream_auth_pair(
     }
 }
 
-pub fn resolve_ai_passthrough_sync_request_body(
+pub fn resolve_ai_passthrough_request_body(
     provider_request_body: Option<serde_json::Value>,
     provider_request_body_base64: Option<String>,
 ) -> RequestBody {
@@ -401,8 +401,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_ai_passthrough_sync_request_body_prefers_trimmed_base64() {
-        let body = resolve_ai_passthrough_sync_request_body(
+    fn resolve_ai_passthrough_request_body_prefers_trimmed_base64() {
+        let body = resolve_ai_passthrough_request_body(
             Some(json!({"ignored": true})),
             Some("  YWJj  ".to_string()),
         );
@@ -412,8 +412,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_ai_passthrough_sync_request_body_uses_json_when_no_base64() {
-        let body = resolve_ai_passthrough_sync_request_body(Some(json!({"ok": true})), None);
+    fn resolve_ai_passthrough_request_body_uses_json_when_no_base64() {
+        let body = resolve_ai_passthrough_request_body(Some(json!({"ok": true})), None);
 
         assert_eq!(body.json_body, Some(json!({"ok": true})));
         assert!(body.body_bytes_b64.is_none());
@@ -757,7 +757,7 @@ mod tests {
             take_ai_non_empty_string(&mut decision.upstream_url).expect("url should round-trip");
         let headers = std::mem::take(&mut decision.provider_request_headers);
         let content_type = decision.content_type.take();
-        let body = resolve_ai_passthrough_sync_request_body(
+        let body = resolve_ai_passthrough_request_body(
             decision.provider_request_body.take(),
             decision.provider_request_body_base64.take(),
         );

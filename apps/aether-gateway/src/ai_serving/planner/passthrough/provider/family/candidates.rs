@@ -1,5 +1,7 @@
+use base64::Engine as _;
 use tracing::warn;
 
+use crate::ai_serving::parse_openai_transcription_request;
 use crate::ai_serving::planner::candidate_materialization::{
     build_local_execution_candidate_attempt_source_with_serving,
     materialize_local_execution_candidates_with_serving, LocalCandidateResolutionMode,
@@ -39,6 +41,7 @@ pub(crate) async fn resolve_local_same_format_provider_decision_input(
     trace_id: &str,
     decision: &GatewayControlDecision,
     body_json: &serde_json::Value,
+    body_base64: Option<&str>,
     spec: LocalSameFormatProviderSpec,
 ) -> Result<Option<LocalSameFormatProviderDecisionInput>, GatewayError> {
     let spec_metadata = local_same_format_provider_spec_metadata(spec);
@@ -46,14 +49,45 @@ pub(crate) async fn resolve_local_same_format_provider_decision_input(
         return Ok(None);
     };
 
-    let Some(requested_model) = extract_requested_model_from_request(
-        parts,
-        body_json,
-        spec_metadata
-            .requested_model_family
-            .expect("same-format provider specs should declare requested-model family"),
-    ) else {
-        return Ok(None);
+    let requested_model = if spec_metadata.api_format == "openai:transcription" {
+        let encoded = body_base64
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| GatewayError::Client {
+                status: http::StatusCode::BAD_REQUEST,
+                message: crate::ai_serving::OpenAiTranscriptionRequestError::InvalidMultipart
+                    .detail()
+                    .to_string(),
+            })?;
+        let body = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|_| GatewayError::Client {
+                status: http::StatusCode::BAD_REQUEST,
+                message: crate::ai_serving::OpenAiTranscriptionRequestError::InvalidMultipart
+                    .detail()
+                    .to_string(),
+            })?;
+        let content_type = parts
+            .headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok());
+        parse_openai_transcription_request(content_type, &body)
+            .map_err(|error| GatewayError::Client {
+                status: http::StatusCode::BAD_REQUEST,
+                message: error.detail().to_string(),
+            })?
+            .requested_model
+    } else {
+        let Some(requested_model) = extract_requested_model_from_request(
+            parts,
+            body_json,
+            spec_metadata
+                .requested_model_family
+                .expect("same-format provider specs should declare requested-model family"),
+        ) else {
+            return Ok(None);
+        };
+        requested_model
     };
 
     let resolved_input = match resolve_local_authenticated_decision_input(

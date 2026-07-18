@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use http::Method;
 use url::form_urlencoded;
 
@@ -13,11 +14,13 @@ use crate::contracts::{
     OPENAI_IMAGE_STREAM_PLAN_KIND, OPENAI_IMAGE_SYNC_PLAN_KIND, OPENAI_RERANK_SYNC_PLAN_KIND,
     OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND, OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND,
     OPENAI_RESPONSES_STREAM_PLAN_KIND, OPENAI_RESPONSES_SYNC_PLAN_KIND,
-    OPENAI_SEARCH_SYNC_PLAN_KIND, OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND,
+    OPENAI_SEARCH_SYNC_PLAN_KIND, OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND,
+    OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND, OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND,
     OPENAI_VIDEO_CONTENT_PLAN_KIND, OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND, OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
 use crate::formats::openai::image::request::is_openai_image_stream_request;
+use crate::formats::openai::transcription::parse_openai_transcription_request;
 
 pub fn resolve_execution_runtime_stream_plan_kind(
     route_class: Option<&str>,
@@ -101,6 +104,14 @@ pub fn resolve_execution_runtime_stream_plan_kind(
         && matches!(path, "/v1/images/generations" | "/v1/images/edits")
     {
         return Some(OPENAI_IMAGE_STREAM_PLAN_KIND);
+    }
+
+    if route_family == Some("openai")
+        && route_kind == Some("transcription")
+        && *method == Method::POST
+        && path == "/v1/audio/transcriptions"
+    {
+        return Some(OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND);
     }
 
     if route_family == Some("openai")
@@ -222,6 +233,14 @@ pub fn resolve_execution_runtime_sync_plan_kind(
         && path == "/v1/alpha/search"
     {
         return Some(OPENAI_SEARCH_SYNC_PLAN_KIND);
+    }
+
+    if route_family == Some("openai")
+        && route_kind == Some("transcription")
+        && *method == Method::POST
+        && path == "/v1/audio/transcriptions"
+    {
+        return Some(OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND);
     }
 
     if route_family == Some("openai")
@@ -406,6 +425,7 @@ pub fn is_matching_stream_request(
         return false;
     }
     match plan_kind {
+        OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND => false,
         OPENAI_CHAT_STREAM_PLAN_KIND
         | CLAUDE_CHAT_STREAM_PLAN_KIND
         | OPENAI_RESPONSES_STREAM_PLAN_KIND
@@ -428,6 +448,25 @@ pub fn is_matching_stream_http_request(
     body_json: &serde_json::Value,
     body_base64: Option<&str>,
 ) -> bool {
+    if plan_kind == OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND {
+        let Some(body_base64) = body_base64 else {
+            return false;
+        };
+        let Some(content_type) = parts
+            .headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+        else {
+            return false;
+        };
+        let Ok(body) = base64::engine::general_purpose::STANDARD.decode(body_base64.trim()) else {
+            return false;
+        };
+        return parse_openai_transcription_request(Some(content_type), &body)
+            .map(|metadata| metadata.stream)
+            .unwrap_or(false);
+    }
+
     if plan_kind == OPENAI_IMAGE_STREAM_PLAN_KIND {
         return is_openai_image_stream_request(parts, body_json, body_base64);
     }
@@ -443,6 +482,7 @@ pub fn supports_sync_execution_decision_kind(plan_kind: &str) -> bool {
             | OPENAI_RERANK_SYNC_PLAN_KIND
             | OPENAI_SEARCH_SYNC_PLAN_KIND
             | OPENAI_IMAGE_SYNC_PLAN_KIND
+            | OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND
             | OPENAI_RESPONSES_SYNC_PLAN_KIND
             | OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND
             | CLAUDE_CHAT_SYNC_PLAN_KIND
@@ -472,6 +512,7 @@ pub fn supports_stream_execution_decision_kind(plan_kind: &str) -> bool {
             | GEMINI_CHAT_STREAM_PLAN_KIND
             | OPENAI_RESPONSES_STREAM_PLAN_KIND
             | OPENAI_IMAGE_STREAM_PLAN_KIND
+            | OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND
             | CLAUDE_CLI_STREAM_PLAN_KIND
             | GEMINI_CLI_STREAM_PLAN_KIND
             | GEMINI_INTERACTIONS_STREAM_PLAN_KIND
@@ -501,7 +542,8 @@ mod tests {
         OPENAI_IMAGE_STREAM_PLAN_KIND, OPENAI_IMAGE_SYNC_PLAN_KIND, OPENAI_RERANK_SYNC_PLAN_KIND,
         OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND, OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND,
         OPENAI_RESPONSES_STREAM_PLAN_KIND, OPENAI_RESPONSES_SYNC_PLAN_KIND,
-        OPENAI_SEARCH_SYNC_PLAN_KIND,
+        OPENAI_SEARCH_SYNC_PLAN_KIND, OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND,
+        OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND,
     };
 
     #[test]
@@ -654,6 +696,38 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn resolves_openai_transcription_plan_kinds() {
+        assert_eq!(
+            resolve_execution_runtime_sync_plan_kind(
+                Some("ai_public"),
+                Some("openai"),
+                Some("transcription"),
+                None,
+                &Method::POST,
+                "/v1/audio/transcriptions",
+            ),
+            Some(OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND)
+        );
+        assert_eq!(
+            resolve_execution_runtime_stream_plan_kind(
+                Some("ai_public"),
+                Some("openai"),
+                Some("transcription"),
+                None,
+                &Method::POST,
+                "/v1/audio/transcriptions",
+            ),
+            Some(OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND)
+        );
+        assert!(supports_sync_execution_decision_kind(
+            OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND
+        ));
+        assert!(supports_stream_execution_decision_kind(
+            OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND
+        ));
     }
 
     #[test]
@@ -1059,6 +1133,40 @@ mod tests {
 
         assert!(is_matching_stream_http_request(
             OPENAI_IMAGE_STREAM_PLAN_KIND,
+            &parts,
+            &serde_json::json!({}),
+            Some(body_base64.as_str()),
+        ));
+    }
+
+    #[test]
+    fn http_stream_matching_reads_transcription_multipart_stream_flag() {
+        let request = http::Request::builder()
+            .method(Method::POST)
+            .uri("/v1/audio/transcriptions")
+            .header(
+                http::header::CONTENT_TYPE,
+                "multipart/form-data; boundary=transcription-stream-boundary",
+            )
+            .body(())
+            .expect("request should build");
+        let (parts, _) = request.into_parts();
+        let body = concat!(
+            "--transcription-stream-boundary\r\n",
+            "Content-Disposition: form-data; name=\"model\"\r\n\r\n",
+            "transcribe-client\r\n",
+            "--transcription-stream-boundary\r\n",
+            "Content-Disposition: form-data; name=\"stream\"\r\n\r\n",
+            "true\r\n",
+            "--transcription-stream-boundary\r\n",
+            "Content-Disposition: form-data; name=\"file\"; filename=\"sample.wav\"\r\n\r\n",
+            "RIFF-bytes\r\n",
+            "--transcription-stream-boundary--\r\n"
+        );
+        let body_base64 = base64::engine::general_purpose::STANDARD.encode(body.as_bytes());
+
+        assert!(is_matching_stream_http_request(
+            OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND,
             &parts,
             &serde_json::json!({}),
             Some(body_base64.as_str()),

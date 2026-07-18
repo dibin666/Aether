@@ -34,6 +34,7 @@ pub const GEMINI_EMBEDDING_SYNC_SUCCESS_REPORT_KIND: &str = "gemini_embedding_sy
 pub const OPENAI_IMAGE_SYNC_SUCCESS_REPORT_KIND: &str = "openai_image_sync_success";
 pub const CLAUDE_CLI_SYNC_SUCCESS_REPORT_KIND: &str = "claude_cli_sync_success";
 pub const GEMINI_CLI_SYNC_SUCCESS_REPORT_KIND: &str = "gemini_cli_sync_success";
+pub const OPENAI_TRANSCRIPTION_SYNC_SUCCESS_REPORT_KIND: &str = "openai_transcription_sync_success";
 
 pub const OPENAI_CHAT_STREAM_SUCCESS_REPORT_KIND: &str = "openai_chat_stream_success";
 pub const CLAUDE_CHAT_STREAM_SUCCESS_REPORT_KIND: &str = "claude_chat_stream_success";
@@ -46,6 +47,8 @@ pub const OPENAI_RESPONSES_COMPACT_STREAM_SUCCESS_REPORT_KIND: &str =
 pub const OPENAI_IMAGE_STREAM_SUCCESS_REPORT_KIND: &str = "openai_image_stream_success";
 pub const CLAUDE_CLI_STREAM_SUCCESS_REPORT_KIND: &str = "claude_cli_stream_success";
 pub const GEMINI_CLI_STREAM_SUCCESS_REPORT_KIND: &str = "gemini_cli_stream_success";
+pub const OPENAI_TRANSCRIPTION_STREAM_SUCCESS_REPORT_KIND: &str =
+    "openai_transcription_stream_success";
 
 pub const OPENAI_CHAT_SYNC_ERROR_REPORT_KIND: &str = "openai_chat_sync_error";
 pub const CLAUDE_CHAT_SYNC_ERROR_REPORT_KIND: &str = "claude_chat_sync_error";
@@ -155,5 +158,30 @@ pub fn implicit_stream_success_report_kind(plan_kind: &str) -> Option<&'static s
     match plan_kind {
         OPENAI_IMAGE_STREAM_PLAN_KIND => Some(OPENAI_IMAGE_STREAM_SUCCESS_REPORT_KIND),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        implicit_sync_finalize_report_kind, OPENAI_TRANSCRIPTION_STREAM_SUCCESS_REPORT_KIND,
+        OPENAI_TRANSCRIPTION_SYNC_SUCCESS_REPORT_KIND,
+    };
+    use crate::contracts::OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND;
+
+    #[test]
+    fn openai_transcription_report_kinds_are_stable_without_sync_finalize() {
+        assert_eq!(
+            OPENAI_TRANSCRIPTION_SYNC_SUCCESS_REPORT_KIND,
+            "openai_transcription_sync_success"
+        );
+        assert_eq!(
+            OPENAI_TRANSCRIPTION_STREAM_SUCCESS_REPORT_KIND,
+            "openai_transcription_stream_success"
+        );
+        assert_eq!(
+            implicit_sync_finalize_report_kind(OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND),
+            None
+        );
     }
 }

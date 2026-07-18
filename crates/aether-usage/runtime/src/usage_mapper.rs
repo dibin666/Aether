@@ -39,6 +39,9 @@ impl UsageMapper {
         } else {
             StandardizedUsage::new()
         };
+        if is_openai_transcription_api(api_format) {
+            apply_openai_transcription_duration_usage(response, &mut usage);
+        }
         if is_openai_image_api(api_format) {
             apply_openai_image_response_dimensions(response, &mut usage);
         }
@@ -96,6 +99,35 @@ fn api_kind(api_format: &str) -> String {
 
 fn is_openai_image_api(api_format: &str) -> bool {
     api_family(api_format).as_str() == "openai" && api_kind(api_format).as_str() == "image"
+}
+
+fn is_openai_transcription_api(api_format: &str) -> bool {
+    api_family(api_format).as_str() == "openai" && api_kind(api_format).as_str() == "transcription"
+}
+
+fn apply_openai_transcription_duration_usage(
+    response: &serde_json::Value,
+    usage: &mut StandardizedUsage,
+) {
+    let Some(raw_usage) = resolve_usage_value(response, "openai") else {
+        return;
+    };
+    if raw_usage.get("type").and_then(serde_json::Value::as_str) != Some("duration") {
+        return;
+    }
+    let Some(seconds) = raw_usage
+        .get("seconds")
+        .and_then(serde_json::Value::as_f64)
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+    else {
+        return;
+    };
+
+    usage.request_count = 1;
+    usage.dimensions.insert(
+        "audio_duration_seconds".to_string(),
+        serde_json::json!(seconds),
+    );
 }
 
 fn apply_openai_image_response_dimensions(
@@ -769,6 +801,71 @@ mod tests {
         assert_eq!(
             usage.dimensions.get("image_count"),
             Some(&serde_json::json!(1))
+        );
+    }
+    #[test]
+    fn maps_openai_transcription_token_usage() {
+        let usage = map_usage_from_response(
+            &serde_json::json!({
+                "text": "hello",
+                "usage": {
+                    "type": "tokens",
+                    "input_tokens": 12,
+                    "output_tokens": 5,
+                    "total_tokens": 17,
+                    "input_token_details": {"text_tokens": 2, "audio_tokens": 10}
+                }
+            }),
+            "openai:transcription",
+        );
+
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(
+            usage.dimensions.get("total_tokens"),
+            Some(&serde_json::json!(17))
+        );
+        assert!(!usage.dimensions.contains_key("audio_duration_seconds"));
+    }
+
+    #[test]
+    fn maps_openai_transcription_duration_usage() {
+        let usage = map_usage_from_response(
+            &serde_json::json!({
+                "text": "hello",
+                "usage": {"type": "duration", "seconds": 1.25}
+            }),
+            "openai:transcription",
+        );
+
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.request_count, 1);
+        assert_eq!(
+            usage.dimensions.get("audio_duration_seconds"),
+            Some(&serde_json::json!(1.25))
+        );
+    }
+
+    #[test]
+    fn maps_streamed_openai_transcription_duration_usage() {
+        let usage = map_usage_from_response(
+            &serde_json::json!({
+                "chunks": [
+                    {"type": "transcript.text.delta", "delta": "hel"},
+                    {
+                        "type": "transcript.text.done",
+                        "text": "hello",
+                        "usage": {"type": "duration", "seconds": 2.5}
+                    }
+                ]
+            }),
+            "openai:transcription",
+        );
+
+        assert_eq!(
+            usage.dimensions.get("audio_duration_seconds"),
+            Some(&serde_json::json!(2.5))
         );
     }
 }

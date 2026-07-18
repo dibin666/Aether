@@ -6,7 +6,9 @@ use crate::contracts::{
     GEMINI_INTERACTIONS_STREAM_SUCCESS_REPORT_KIND, GEMINI_INTERACTIONS_SYNC_PLAN_KIND,
     GEMINI_INTERACTIONS_SYNC_SUCCESS_REPORT_KIND, OPENAI_EMBEDDING_SYNC_PLAN_KIND,
     OPENAI_RERANK_SYNC_PLAN_KIND, OPENAI_SEARCH_SYNC_PLAN_KIND,
-    OPENAI_SEARCH_SYNC_SUCCESS_REPORT_KIND,
+    OPENAI_SEARCH_SYNC_SUCCESS_REPORT_KIND, OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND,
+    OPENAI_TRANSCRIPTION_STREAM_SUCCESS_REPORT_KIND, OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND,
+    OPENAI_TRANSCRIPTION_SYNC_SUCCESS_REPORT_KIND,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +91,13 @@ pub fn resolve_sync_spec(plan_kind: &str) -> Option<LocalSameFormatProviderSpec>
             family: LocalSameFormatProviderFamily::Standard,
             require_streaming: false,
         }),
+        OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND => Some(LocalSameFormatProviderSpec {
+            api_format: "openai:transcription",
+            decision_kind: OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND,
+            report_kind: OPENAI_TRANSCRIPTION_SYNC_SUCCESS_REPORT_KIND,
+            family: LocalSameFormatProviderFamily::Standard,
+            require_streaming: false,
+        }),
         _ => None,
     }
 }
@@ -130,6 +139,13 @@ pub fn resolve_stream_spec(plan_kind: &str) -> Option<LocalSameFormatProviderSpe
             family: LocalSameFormatProviderFamily::Gemini,
             require_streaming: true,
         }),
+        OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND => Some(LocalSameFormatProviderSpec {
+            api_format: "openai:transcription",
+            decision_kind: OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND,
+            report_kind: OPENAI_TRANSCRIPTION_STREAM_SUCCESS_REPORT_KIND,
+            family: LocalSameFormatProviderFamily::Standard,
+            require_streaming: true,
+        }),
         _ => None,
     }
 }
@@ -160,6 +176,24 @@ mod tests {
         assert_eq!(spec.api_format, "openai:embedding");
         assert_eq!(spec.report_kind, "openai_embedding_sync_success");
         assert!(!spec.require_streaming);
+    }
+
+    #[test]
+    fn resolves_openai_transcription_same_format_specs() {
+        let sync = resolve_sync_spec("openai_transcription_sync").expect("sync spec");
+        assert_eq!(sync.api_format, "openai:transcription");
+        assert_eq!(sync.report_kind, "openai_transcription_sync_success");
+        assert_eq!(sync.family, super::LocalSameFormatProviderFamily::Standard);
+        assert!(!sync.require_streaming);
+
+        let stream = resolve_stream_spec("openai_transcription_stream").expect("stream spec");
+        assert_eq!(stream.api_format, "openai:transcription");
+        assert_eq!(stream.report_kind, "openai_transcription_stream_success");
+        assert_eq!(
+            stream.family,
+            super::LocalSameFormatProviderFamily::Standard
+        );
+        assert!(stream.require_streaming);
     }
 
     #[test]

@@ -114,6 +114,7 @@ pub struct SameFormatProviderHeadersInput<'a> {
     pub headers: &'a http::HeaderMap,
     pub provider_request_body: &'a Value,
     pub original_request_body: &'a Value,
+    pub content_type: Option<&'a str>,
     pub header_rules: Option<&'a Value>,
     pub behavior: SameFormatProviderRequestBehavior,
     pub auth_header: Option<&'a str>,
@@ -536,18 +537,14 @@ pub fn build_same_format_provider_headers(
             input.key_fingerprint,
         )
     } else if input.behavior.is_vertex {
-        build_complete_passthrough_headers(
-            input.headers,
-            input.extra_headers,
-            Some("application/json"),
-        )
+        build_complete_passthrough_headers(input.headers, input.extra_headers, input.content_type)
     } else {
         build_complete_passthrough_headers_with_auth(
             input.headers,
             auth_header,
             auth_value,
             input.extra_headers,
-            Some("application/json"),
+            input.content_type,
         )
     };
 
@@ -625,6 +622,7 @@ pub fn same_format_provider_transport_unsupported_reason_for_trace(
             "openai:responses" => "openai:responses",
             "openai:responses:compact" => "openai:responses:compact",
             "openai:search" => "openai:search",
+            "openai:transcription" => "openai:transcription",
             "claude:messages" => "claude:messages",
             "gemini:generate_content" => "gemini:generate_content",
             "gemini:interactions" => "gemini:interactions",
@@ -707,6 +705,7 @@ fn resolve_same_format_standard_direct_auth(
 ) -> Option<(String, String)> {
     if aether_ai_formats::api_format_alias_matches(provider_api_format, "openai:embedding")
         || aether_ai_formats::api_format_alias_matches(provider_api_format, "openai:search")
+        || aether_ai_formats::api_format_alias_matches(provider_api_format, "openai:transcription")
     {
         resolve_local_openai_bearer_auth(transport)
     } else {
@@ -1861,6 +1860,8 @@ mod tests {
             headers: &http::HeaderMap::new(),
             provider_request_body: &provider_request_body,
             original_request_body: &original_request_body,
+            content_type: Some("application/json"),
+
             header_rules: None,
             behavior: SameFormatProviderRequestBehavior {
                 is_antigravity: false,
@@ -1886,6 +1887,58 @@ mod tests {
             headers.get("content-type").map(String::as_str),
             Some("application/json")
         );
+        assert_eq!(
+            headers.get("accept").map(String::as_str),
+            Some("text/event-stream")
+        );
+    }
+
+    #[test]
+    fn builds_transcription_headers_with_boundary_and_upstream_auth() {
+        let mut request_headers = http::HeaderMap::new();
+        request_headers.insert(
+            http::header::AUTHORIZATION,
+            http::HeaderValue::from_static("Bearer client-key"),
+        );
+        request_headers.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_static("1234"),
+        );
+        let body = json!({});
+        let headers = build_same_format_provider_headers(SameFormatProviderHeadersInput {
+            headers: &request_headers,
+            provider_request_body: &body,
+            original_request_body: &body,
+            content_type: Some("multipart/form-data; boundary=audio-boundary"),
+            header_rules: None,
+            behavior: SameFormatProviderRequestBehavior {
+                is_antigravity: false,
+                is_gemini_cli: false,
+                is_claude_code: false,
+                is_vertex: false,
+                is_kiro: false,
+                upstream_is_stream: true,
+                force_body_stream_field: false,
+                report_kind: "openai_transcription_stream_success",
+            },
+            auth_header: Some("authorization"),
+            auth_value: Some("Bearer upstream-key"),
+            extra_headers: &BTreeMap::new(),
+            key_fingerprint: None,
+            kiro_auth_config: None,
+            kiro_machine_id: None,
+        })
+        .expect("headers should build");
+
+        assert_eq!(
+            headers.get("content-type").map(String::as_str),
+            Some("multipart/form-data; boundary=audio-boundary")
+        );
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer upstream-key")
+        );
+        assert!(!headers.contains_key("content-length"));
         assert_eq!(
             headers.get("accept").map(String::as_str),
             Some("text/event-stream")

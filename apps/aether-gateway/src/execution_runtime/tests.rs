@@ -6,9 +6,9 @@ use serde_json::json;
 use crate::ai_serving::api::{
     build_gemini_stream_plan_from_decision, build_gemini_sync_plan_from_decision,
     build_openai_responses_stream_plan_from_decision,
-    build_openai_responses_sync_plan_from_decision, build_passthrough_sync_plan_from_decision,
-    build_standard_stream_plan_from_decision, build_standard_sync_plan_from_decision,
-    AiExecutionDecision,
+    build_openai_responses_sync_plan_from_decision, build_passthrough_stream_plan_from_decision,
+    build_passthrough_sync_plan_from_decision, build_standard_stream_plan_from_decision,
+    build_standard_sync_plan_from_decision, AiExecutionDecision,
 };
 use crate::execution_runtime::submission::{
     build_best_effort_local_core_error_body, has_nested_error,
@@ -740,6 +740,53 @@ fn passthrough_sync_plan_uses_raw_body_bytes_when_decision_provides_base64_body(
             .get("content-type")
             .map(String::as_str),
         Some("application/octet-stream")
+    );
+}
+
+#[test]
+fn passthrough_stream_plan_uses_raw_body_bytes_when_decision_provides_base64_body() {
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/audio/transcriptions")
+        .body(())
+        .expect("request");
+    let (parts, _) = request.into_parts();
+
+    let mut payload = missing_exact_provider_request_payload("openai_transcription_stream");
+    payload.provider_name = Some("openai".to_string());
+    payload.provider_api_format = Some("openai:transcription".to_string());
+    payload.client_api_format = Some("openai:transcription".to_string());
+    payload.upstream_url = Some("https://api.openai.com/v1/audio/transcriptions".to_string());
+    payload.provider_request_headers = [
+        (
+            "content-type".to_string(),
+            "multipart/form-data; boundary=audio-boundary".to_string(),
+        ),
+        (
+            "authorization".to_string(),
+            "Bearer upstream-key".to_string(),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    payload.provider_request_body_base64 = Some("bXVsdGlwYXJ0LWJ5dGVz".to_string());
+    payload.content_type = Some("multipart/form-data; boundary=audio-boundary".to_string());
+    payload.upstream_is_stream = true;
+
+    let plan_and_report = build_passthrough_stream_plan_from_decision(&parts, payload)
+        .expect("builder should not error")
+        .expect("plan should be built");
+
+    assert_eq!(plan_and_report.plan.method, "POST");
+    assert!(plan_and_report.plan.stream);
+    assert_eq!(
+        plan_and_report.plan.body.body_bytes_b64.as_deref(),
+        Some("bXVsdGlwYXJ0LWJ5dGVz")
+    );
+    assert_eq!(plan_and_report.plan.body.json_body, None);
+    assert_eq!(
+        plan_and_report.plan.content_type.as_deref(),
+        Some("multipart/form-data; boundary=audio-boundary")
     );
 }
 

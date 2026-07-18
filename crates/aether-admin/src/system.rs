@@ -794,6 +794,12 @@ const ADMIN_API_FORMAT_DEFINITIONS: &[AdminApiFormatDefinition] = &[
         aliases: &["openai_image", "images"],
     },
     AdminApiFormatDefinition {
+        value: "openai:transcription",
+        label: "OpenAI Transcription",
+        default_path: "/v1/audio/transcriptions",
+        aliases: &["openai_transcription", "transcription", "transcriptions"],
+    },
+    AdminApiFormatDefinition {
         value: "openai:video",
         label: "OpenAI Video",
         default_path: "/v1/videos",
@@ -3039,6 +3045,26 @@ fn mask_admin_proxy_node_password(password: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn admin_api_formats_include_openai_transcription() {
+        let payload = build_admin_api_formats_payload();
+        let format = payload["formats"]
+            .as_array()
+            .and_then(|formats| {
+                formats
+                    .iter()
+                    .find(|format| format["value"] == "openai:transcription")
+            })
+            .expect("transcription format should be present");
+
+        assert_eq!(format["label"], "OpenAI Transcription");
+        assert_eq!(format["default_path"], "/v1/audio/transcriptions");
+        assert_eq!(
+            format["aliases"],
+            serde_json::json!(["openai_transcription", "transcription", "transcriptions"])
+        );
+    }
 
     #[test]
     fn admin_system_config_default_value_includes_oauth_refresh_worker_settings() {

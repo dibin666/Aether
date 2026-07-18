@@ -255,6 +255,8 @@ pub fn is_local_ai_sync_report_kind(report_kind: &str) -> bool {
             | "openai_cli_sync_success"
             | "openai_image_sync_success"
             | "openai_search_sync_success"
+            | "openai_transcription_sync_success"
+            | "openai_transcription_sync_error"
             | "openai_image_sync_error"
             | "openai_embedding_sync_success"
             | "openai_embedding_sync_error"
@@ -291,6 +293,7 @@ pub fn is_local_ai_stream_report_kind(report_kind: &str) -> bool {
             | "openai_responses_stream_success"
             | "openai_responses_compact_stream_success"
             | "openai_cli_stream_success"
+            | "openai_transcription_stream_success"
             | "claude_cli_stream_success"
             | "gemini_cli_stream_success"
     )
@@ -882,6 +885,9 @@ mod tests {
         ));
         assert!(is_local_ai_sync_report_kind("openai_image_sync_success"));
         assert!(is_local_ai_sync_report_kind("openai_search_sync_success"));
+        assert!(is_local_ai_sync_report_kind(
+            "openai_transcription_sync_success"
+        ));
         assert!(is_local_ai_sync_report_kind("openai_image_sync_error"));
         assert!(is_local_ai_sync_report_kind(
             "openai_embedding_sync_success"
@@ -899,6 +905,9 @@ mod tests {
         assert!(is_local_ai_stream_report_kind("openai_chat_stream_success"));
         assert!(is_local_ai_stream_report_kind(
             "openai_responses_compact_stream_success"
+        ));
+        assert!(is_local_ai_stream_report_kind(
+            "openai_transcription_stream_success"
         ));
         assert!(!is_local_ai_stream_report_kind("openai_chat_stream_error"));
     }

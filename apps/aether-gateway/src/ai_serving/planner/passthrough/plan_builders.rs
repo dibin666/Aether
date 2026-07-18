@@ -2,7 +2,7 @@ use aether_contracts::RequestBody;
 
 use super::{
     augment_sync_report_context, build_ai_execution_plan_from_decision,
-    resolve_ai_passthrough_sync_request_body, take_ai_decision_plan_core, take_non_empty_string,
+    resolve_ai_passthrough_request_body, take_ai_decision_plan_core, take_non_empty_string,
     AiExecutionPlanFromDecisionParts, AiStreamAttempt, AiSyncAttempt,
 };
 use crate::{AiExecutionDecision, GatewayError};
@@ -25,7 +25,7 @@ pub(crate) fn build_passthrough_sync_plan_from_decision(
         &provider_request_headers,
         &ignored_provider_request_body,
     )?;
-    let request_body = resolve_ai_passthrough_sync_request_body(
+    let request_body = resolve_ai_passthrough_request_body(
         payload.provider_request_body.take(),
         payload.provider_request_body_base64.take(),
     );
@@ -72,6 +72,10 @@ pub(crate) fn build_passthrough_stream_plan_from_decision(
         .take()
         .or_else(|| provider_request_headers.get("content-type").cloned());
     let stream = payload.upstream_is_stream;
+    let request_body = resolve_ai_passthrough_request_body(
+        payload.provider_request_body.take(),
+        payload.provider_request_body_base64.take(),
+    );
     let plan = build_ai_execution_plan_from_decision(
         &mut payload,
         AiExecutionPlanFromDecisionParts {
@@ -80,11 +84,8 @@ pub(crate) fn build_passthrough_stream_plan_from_decision(
             url: upstream_url,
             headers: provider_request_headers,
             content_type,
-            body: RequestBody {
-                json_body: None,
-                body_bytes_b64: None,
-                body_ref: None,
-            },
+            body: request_body,
+
             stream,
         },
     );

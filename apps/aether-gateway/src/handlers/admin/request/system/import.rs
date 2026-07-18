@@ -3347,7 +3347,7 @@ mod tests {
     }
 
     #[test]
-    fn config_import_normalizes_python_cli_api_format_aliases() {
+    fn config_import_normalizes_endpoint_format_aliases() {
         for (raw, expected) in [
             ("openai:cli", "openai:responses"),
             ("openai:compact", "openai:responses:compact"),
@@ -3355,6 +3355,10 @@ mod tests {
             ("images", "openai:image"),
             ("/v1/images/generations", "openai:image"),
             ("/v1/images/edits", "openai:image"),
+            ("openai_transcription", "openai:transcription"),
+            ("transcription", "openai:transcription"),
+            ("transcriptions", "openai:transcription"),
+            ("/v1/audio/transcriptions", "openai:transcription"),
             ("claude:chat", "claude:messages"),
             ("claude:cli", "claude:messages"),
             ("gemini:chat", "gemini:generate_content"),

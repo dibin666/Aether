@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 pub(crate) use aether_ai_serving::{
-    build_ai_execution_plan_from_decision, resolve_ai_passthrough_sync_request_body,
+    build_ai_execution_plan_from_decision, resolve_ai_passthrough_request_body,
     take_ai_decision_plan_core, take_ai_non_empty_string as take_non_empty_string,
     take_ai_upstream_auth_pair, AiExecutionPlanFromDecisionParts,
 };

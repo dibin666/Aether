@@ -4,6 +4,9 @@ use base64::Engine as _;
 use serde_json::{json, Map, Number, Value};
 
 use crate::formats::openai::responses::codex::CODEX_OPENAI_IMAGE_DEFAULT_MODEL;
+use crate::formats::shared::multipart::{
+    multipart_text_field, parse_multipart_fields, MultipartField,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpenAiImageOperation {
@@ -263,7 +266,10 @@ pub fn is_openai_image_stream_request(
 
     if let Some(body_base64) = body_base64 {
         return parse_multipart_fields_from_base64(parts, body_base64)
-            .and_then(|fields| find_multipart_text_field(&fields, "stream"))
+            .and_then(|multipart| {
+                let fields = multipart.fields()?;
+                find_multipart_text_field(&fields, "stream")
+            })
             .and_then(|value| parse_bool_string(&value))
             .unwrap_or(false);
     }
@@ -288,7 +294,13 @@ fn resolve_chatgpt_web_raw_image_fields(
     body_base64: Option<&str>,
 ) -> Result<ChatGptWebRawImageFields, ChatGptWebImageRequestError> {
     if let Some(body_base64) = body_base64 {
-        let fields = parse_multipart_fields_from_base64(parts, body_base64).ok_or_else(|| {
+        let multipart =
+            parse_multipart_fields_from_base64(parts, body_base64).ok_or_else(|| {
+                ChatGptWebImageRequestError::invalid_request(
+                    "ChatGPT-Web image proxy could not parse multipart image request",
+                )
+            })?;
+        let fields = multipart.fields().ok_or_else(|| {
             ChatGptWebImageRequestError::invalid_request(
                 "ChatGPT-Web image proxy could not parse multipart image request",
             )
@@ -453,11 +465,12 @@ pub fn resolve_requested_openai_image_model_for_request(
 ) -> Option<String> {
     let operation = openai_image_operation_from_path(parts.uri.path())?;
     if let Some(body_base64) = body_base64 {
-        let multipart_fields = parse_multipart_fields_from_base64(parts, body_base64)?;
+        let multipart = parse_multipart_fields_from_base64(parts, body_base64)?;
+        let multipart_fields = multipart.fields()?;
         let model = multipart_fields
             .iter()
             .find(|field| field.name.trim() == "model")
-            .map(|field| String::from_utf8_lossy(&field.data).trim().to_string());
+            .map(|field| String::from_utf8_lossy(field.data).trim().to_string());
         normalize_requested_image_model(model.as_deref())
             .or_else(|| Some(default_model_for_openai_image_operation(operation).to_string()))
     } else {
@@ -1147,7 +1160,8 @@ fn normalize_openai_image_multipart_request(
     operation: OpenAiImageOperation,
     options: OpenAiImageNormalizeOptions,
 ) -> Option<NormalizedOpenAiImageRequest> {
-    let multipart_fields = parse_multipart_fields_from_base64(parts, body_base64)?;
+    let multipart = parse_multipart_fields_from_base64(parts, body_base64)?;
+    let multipart_fields = multipart.fields()?;
     let requested_model = normalize_requested_image_model(
         find_multipart_text_field(&multipart_fields, "model").as_deref(),
     );
@@ -1548,40 +1562,43 @@ fn mask_payload(mask: &Value) -> Value {
         .unwrap_or_else(|| mask.clone())
 }
 
-#[derive(Debug, Clone)]
-struct MultipartField {
-    name: String,
-    content_type: Option<String>,
-    data: Vec<u8>,
+#[derive(Debug)]
+struct ParsedMultipartBody {
+    content_type: String,
+    body: Vec<u8>,
 }
 
-fn multipart_file_to_input_image(field: &MultipartField) -> Value {
-    let content_type = field
-        .content_type
-        .clone()
-        .unwrap_or_else(|| "application/octet-stream".to_string());
+impl ParsedMultipartBody {
+    fn fields(&self) -> Option<Vec<MultipartField<'_>>> {
+        parse_multipart_fields(&self.content_type, &self.body).ok()
+    }
+}
+
+fn multipart_file_to_input_image(field: &MultipartField<'_>) -> Value {
+    let content_type = field.content_type.unwrap_or("application/octet-stream");
     json!({
         "type": "input_image",
         "image_url": format!(
             "data:{};base64,{}",
             content_type,
-            base64::engine::general_purpose::STANDARD.encode(&field.data),
+            base64::engine::general_purpose::STANDARD.encode(field.data),
         ),
     })
 }
 
-fn find_multipart_text_field(fields: &[MultipartField], name: &str) -> Option<String> {
-    fields
-        .iter()
-        .find(|field| field.name.trim() == name)
-        .map(|field| String::from_utf8_lossy(&field.data).trim().to_string())
+fn find_multipart_text_field(fields: &[MultipartField<'_>], name: &str) -> Option<String> {
+    multipart_text_field(fields, name)
+        .ok()
+        .flatten()
+        .map(str::trim)
         .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn parse_multipart_fields_from_base64(
     parts: &http::request::Parts,
     body_base64: &str,
-) -> Option<Vec<MultipartField>> {
+) -> Option<ParsedMultipartBody> {
     let body_base64 = body_base64.trim();
     if body_base64.is_empty() {
         return None;
@@ -1589,96 +1606,13 @@ fn parse_multipart_fields_from_base64(
     let content_type = parts
         .headers
         .get(http::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())?;
-    let boundary = multipart_boundary(content_type)?;
-    let body_bytes = base64::engine::general_purpose::STANDARD
+        .and_then(|value| value.to_str().ok())?
+        .to_string();
+    let body = base64::engine::general_purpose::STANDARD
         .decode(body_base64)
         .ok()?;
-    Some(parse_multipart_fields(&body_bytes, boundary.as_str()))
-}
-
-fn parse_multipart_fields(body: &[u8], boundary: &str) -> Vec<MultipartField> {
-    let delimiter = format!("--{boundary}").into_bytes();
-    let mut parts = Vec::new();
-    let mut cursor = 0usize;
-
-    while let Some(index) = find_subslice(&body[cursor..], &delimiter) {
-        let start = cursor + index + delimiter.len();
-        if body.get(start..start + 2) == Some(b"--") {
-            break;
-        }
-        let mut part = &body[start..];
-        if part.starts_with(b"\r\n") {
-            part = &part[2..];
-        }
-        let Some(next) = find_subslice(part, &delimiter) else {
-            break;
-        };
-        let raw = &part[..next];
-        let raw = raw.strip_suffix(b"\r\n").unwrap_or(raw);
-        if let Some(field) = parse_multipart_field(raw) {
-            parts.push(field);
-        }
-        cursor = start + next;
-    }
-
-    parts
-}
-
-fn multipart_boundary(content_type: &str) -> Option<String> {
-    content_type.split(';').find_map(|segment| {
-        let (key, value) = segment.trim().split_once('=')?;
-        if !key.trim().eq_ignore_ascii_case("boundary") {
-            return None;
-        }
-        let boundary = value.trim().trim_matches('"').trim();
-        (!boundary.is_empty()).then(|| boundary.to_string())
-    })
-}
-
-fn parse_multipart_field(raw: &[u8]) -> Option<MultipartField> {
-    let header_end = find_subslice(raw, b"\r\n\r\n")?;
-    let headers = &raw[..header_end];
-    let data = raw.get(header_end + 4..)?.to_vec();
-    let header_text = String::from_utf8_lossy(headers);
-
-    let mut name = None;
-    let mut content_type = None;
-    for line in header_text.lines() {
-        let trimmed = line.trim();
-        let lower = trimmed.to_ascii_lowercase();
-        if lower.starts_with("content-disposition:") {
-            name = extract_quoted_header_value(trimmed, "name");
-        } else if lower.starts_with("content-type:") {
-            content_type = trimmed
-                .split_once(':')
-                .map(|(_, value)| value.trim().to_string())
-                .filter(|value| !value.is_empty());
-        }
-    }
-
-    Some(MultipartField {
-        name: name?,
-        content_type,
-        data,
-    })
-}
-
-fn extract_quoted_header_value(header: &str, key: &str) -> Option<String> {
-    let pattern = format!("{key}=\"");
-    let start = header.find(&pattern)? + pattern.len();
-    let rest = &header[start..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
-}
-
-fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return None;
-    }
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
+    parse_multipart_fields(&content_type, &body).ok()?;
+    Some(ParsedMultipartBody { content_type, body })
 }
 
 #[cfg(test)]

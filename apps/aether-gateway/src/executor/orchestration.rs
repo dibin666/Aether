@@ -565,6 +565,7 @@ pub(crate) async fn maybe_execute_sync_via_local_same_format_provider_decision(
     trace_id: &str,
     decision: &GatewayControlDecision,
     body_json: &serde_json::Value,
+    body_base64: Option<&str>,
     plan_kind: &str,
 ) -> Result<LocalExecutionRequestOutcome, GatewayError> {
     let Some(spec) = resolve_local_same_format_sync_spec(plan_kind) else {
@@ -572,7 +573,13 @@ pub(crate) async fn maybe_execute_sync_via_local_same_format_provider_decision(
     };
 
     let Some((attempt_source, _candidate_count)) = build_local_same_format_sync_attempt_source(
-        state, parts, trace_id, decision, body_json, spec,
+        state,
+        parts,
+        trace_id,
+        decision,
+        body_json,
+        body_base64,
+        spec,
     )
     .await?
     else {
@@ -582,6 +589,7 @@ pub(crate) async fn maybe_execute_sync_via_local_same_format_provider_decision(
     if standard_text_sync_heartbeat_should_wrap(state, plan_kind).await {
         let parts_for_task = parts.clone();
         let body_json_for_task = body_json.clone();
+        let body_base64_for_task = body_base64.map(ToOwned::to_owned);
         return Ok(LocalExecutionRequestOutcome::responded(
             build_standard_text_sync_heartbeat_shell_response(
                 state.clone(),
@@ -597,6 +605,7 @@ pub(crate) async fn maybe_execute_sync_via_local_same_format_provider_decision(
                             trace_id.as_str(),
                             &decision,
                             &body_json_for_task,
+                            body_base64_for_task.as_deref(),
                             spec,
                         )
                         .await?
@@ -647,6 +656,7 @@ pub(crate) async fn maybe_execute_stream_via_local_same_format_provider_decision
     trace_id: &str,
     decision: &GatewayControlDecision,
     body_json: &serde_json::Value,
+    body_base64: Option<&str>,
     plan_kind: &str,
 ) -> Result<LocalExecutionRequestOutcome, GatewayError> {
     let Some(spec) = resolve_local_same_format_stream_spec(plan_kind) else {
@@ -654,7 +664,13 @@ pub(crate) async fn maybe_execute_stream_via_local_same_format_provider_decision
     };
 
     let Some((attempt_source, _candidate_count)) = build_local_same_format_stream_attempt_source(
-        state, parts, trace_id, decision, body_json, spec,
+        state,
+        parts,
+        trace_id,
+        decision,
+        body_json,
+        body_base64,
+        spec,
     )
     .await?
     else {

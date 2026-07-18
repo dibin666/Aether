@@ -18,6 +18,7 @@ const AI_POST_ROUTE_PATTERNS: &[&str] = &[
     "/v1/alpha/search",
     "/v1/images/generations",
     "/v1/images/edits",
+    "/v1/audio/transcriptions",
     "/v1/interactions",
     "/v1beta/interactions",
     "/v1internal:loadCodeAssist",

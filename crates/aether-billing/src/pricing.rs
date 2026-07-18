@@ -572,6 +572,8 @@ pub struct BillingUsageInput {
     pub image_size: Option<String>,
     pub image_quality: Option<String>,
     pub image_output_format: Option<String>,
+    #[serde(default)]
+    pub audio_duration_seconds: Option<f64>,
     pub cache_ttl_minutes: Option<i64>,
 }
 
@@ -617,6 +619,7 @@ impl BillingUsageInput {
             image_size: None,
             image_quality: None,
             image_output_format: None,
+            audio_duration_seconds: None,
             cache_ttl_minutes: None,
         }
     }

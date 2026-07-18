@@ -40,7 +40,9 @@ pub use crate::contracts::{
     OPENAI_RESPONSES_STREAM_SUCCESS_REPORT_KIND, OPENAI_RESPONSES_SYNC_ERROR_REPORT_KIND,
     OPENAI_RESPONSES_SYNC_FINALIZE_REPORT_KIND, OPENAI_RESPONSES_SYNC_PLAN_KIND,
     OPENAI_RESPONSES_SYNC_SUCCESS_REPORT_KIND, OPENAI_SEARCH_SYNC_PLAN_KIND,
-    OPENAI_SEARCH_SYNC_SUCCESS_REPORT_KIND, OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND,
+    OPENAI_SEARCH_SYNC_SUCCESS_REPORT_KIND, OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND,
+    OPENAI_TRANSCRIPTION_STREAM_SUCCESS_REPORT_KIND, OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND,
+    OPENAI_TRANSCRIPTION_SYNC_SUCCESS_REPORT_KIND, OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND,
     OPENAI_VIDEO_CONTENT_PLAN_KIND, OPENAI_VIDEO_CREATE_SYNC_FINALIZE_REPORT_KIND,
     OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND, OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
@@ -63,6 +65,14 @@ pub use crate::formats::openai::shared::{
     map_openai_reasoning_effort_to_claude_output, map_openai_reasoning_effort_to_gemini_budget,
     parse_openai_stop_sequences, resolve_openai_chat_max_tokens, value_as_u64,
 };
+pub use crate::formats::openai::transcription::{
+    parse_openai_transcription_request, rewrite_openai_transcription_model,
+    OpenAiTranscriptionRequestError, OpenAiTranscriptionRequestMetadata,
+    TRANSCRIPTION_CONTENT_TYPE_DETAIL, TRANSCRIPTION_FILE_REQUIRED_DETAIL,
+    TRANSCRIPTION_INVALID_MULTIPART_DETAIL, TRANSCRIPTION_MODEL_REQUIRED_DETAIL,
+    TRANSCRIPTION_STREAM_INVALID_DETAIL,
+};
+
 pub use crate::formats::openai::{
     reasoning::{
         validate_openai_reasoning_request, OpenAiReasoningContractViolation,
@@ -103,6 +113,11 @@ pub use crate::formats::shared::model_directives::{
     CROSS_PROVIDER_MODEL_DIRECTIVE_SUFFIXES, MODEL_DIRECTIVE_API_FORMATS,
     OPENAI_MODEL_DIRECTIVE_SUFFIXES,
 };
+pub use crate::formats::shared::multipart::{
+    count_non_empty_multipart_files, multipart_text_field, parse_multipart_fields,
+    replace_multipart_text_field, MultipartField, MultipartParseError,
+};
+
 pub use crate::formats::shared::passthrough::{
     resolve_stream_spec as resolve_local_same_format_stream_spec,
     resolve_sync_spec as resolve_local_same_format_sync_spec, LocalSameFormatProviderFamily,

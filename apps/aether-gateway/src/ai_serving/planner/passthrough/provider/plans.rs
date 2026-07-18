@@ -32,6 +32,7 @@ pub(crate) struct LocalSameFormatProviderSyncAttemptSource<'a> {
     parts: &'a http::request::Parts,
     trace_id: &'a str,
     body_json: serde_json::Value,
+    body_base64: Option<&'a str>,
     input: LocalSameFormatProviderDecisionInput,
     spec: LocalSameFormatProviderSpec,
     requested_model_family: RequestedModelFamily,
@@ -43,6 +44,7 @@ pub(crate) struct LocalSameFormatProviderStreamAttemptSource<'a> {
     parts: &'a http::request::Parts,
     trace_id: &'a str,
     body_json: serde_json::Value,
+    body_base64: Option<&'a str>,
     input: LocalSameFormatProviderDecisionInput,
     spec: LocalSameFormatProviderSpec,
     requested_model_family: RequestedModelFamily,
@@ -55,6 +57,7 @@ pub(crate) async fn build_local_sync_attempt_source<'a>(
     trace_id: &'a str,
     decision: &'a GatewayControlDecision,
     body_json: &'a serde_json::Value,
+    body_base64: Option<&'a str>,
     spec: LocalSameFormatProviderSpec,
 ) -> Result<Option<(LocalSameFormatProviderSyncAttemptSource<'a>, usize)>, GatewayError> {
     let spec_metadata = local_same_format_provider_spec_metadata(spec);
@@ -62,7 +65,13 @@ pub(crate) async fn build_local_sync_attempt_source<'a>(
         .requested_model_family
         .expect("same-format provider spec metadata should include requested-model family");
     let Some(input) = resolve_local_same_format_provider_decision_input(
-        state, parts, trace_id, decision, body_json, spec,
+        state,
+        parts,
+        trace_id,
+        decision,
+        body_json,
+        body_base64,
+        spec,
     )
     .await?
     else {
@@ -109,6 +118,7 @@ pub(crate) async fn build_local_sync_attempt_source<'a>(
             parts,
             trace_id,
             body_json: effective_body_json,
+            body_base64,
             input,
             spec,
             requested_model_family,
@@ -124,6 +134,7 @@ pub(crate) async fn build_local_stream_attempt_source<'a>(
     trace_id: &'a str,
     decision: &'a GatewayControlDecision,
     body_json: &'a serde_json::Value,
+    body_base64: Option<&'a str>,
     spec: LocalSameFormatProviderSpec,
 ) -> Result<Option<(LocalSameFormatProviderStreamAttemptSource<'a>, usize)>, GatewayError> {
     let spec_metadata = local_same_format_provider_spec_metadata(spec);
@@ -131,7 +142,13 @@ pub(crate) async fn build_local_stream_attempt_source<'a>(
         .requested_model_family
         .expect("same-format provider spec metadata should include requested-model family");
     let Some(input) = resolve_local_same_format_provider_decision_input(
-        state, parts, trace_id, decision, body_json, spec,
+        state,
+        parts,
+        trace_id,
+        decision,
+        body_json,
+        body_base64,
+        spec,
     )
     .await?
     else {
@@ -178,6 +195,7 @@ pub(crate) async fn build_local_stream_attempt_source<'a>(
             parts,
             trace_id,
             body_json: effective_body_json,
+            body_base64,
             input,
             spec,
             requested_model_family,
@@ -258,6 +276,7 @@ impl LocalSameFormatProviderSyncAttemptSource<'_> {
             &self.input,
             attempt,
             self.spec,
+            self.body_base64,
         )
         .await?
         else {
@@ -296,6 +315,7 @@ impl LocalSameFormatProviderStreamAttemptSource<'_> {
             &self.input,
             attempt,
             self.spec,
+            self.body_base64,
         )
         .await?
         else {
@@ -327,6 +347,7 @@ pub(crate) async fn build_local_sync_plan_and_reports(
     trace_id: &str,
     decision: &GatewayControlDecision,
     body_json: &serde_json::Value,
+    body_base64: Option<&str>,
     spec: LocalSameFormatProviderSpec,
 ) -> Result<Vec<AiSyncAttempt>, GatewayError> {
     let spec_metadata = local_same_format_provider_spec_metadata(spec);
@@ -334,7 +355,13 @@ pub(crate) async fn build_local_sync_plan_and_reports(
         .requested_model_family
         .expect("same-format provider spec metadata should include requested-model family");
     let Some(input) = resolve_local_same_format_provider_decision_input(
-        state, parts, trace_id, decision, body_json, spec,
+        state,
+        parts,
+        trace_id,
+        decision,
+        body_json,
+        body_base64,
+        spec,
     )
     .await?
     else {
@@ -374,7 +401,14 @@ pub(crate) async fn build_local_sync_plan_and_reports(
     let mut plans = Vec::new();
     while let Some(attempt) = source.next_attempt().await? {
         let Some(payload) = maybe_build_local_same_format_provider_decision_payload_for_candidate(
-            state, parts, trace_id, body_json, &input, attempt, spec,
+            state,
+            parts,
+            trace_id,
+            body_json,
+            &input,
+            attempt,
+            spec,
+            body_base64,
         )
         .await?
         else {
@@ -413,6 +447,7 @@ pub(crate) async fn build_local_stream_plan_and_reports(
     trace_id: &str,
     decision: &GatewayControlDecision,
     body_json: &serde_json::Value,
+    body_base64: Option<&str>,
     spec: LocalSameFormatProviderSpec,
 ) -> Result<Vec<AiStreamAttempt>, GatewayError> {
     let spec_metadata = local_same_format_provider_spec_metadata(spec);
@@ -420,7 +455,13 @@ pub(crate) async fn build_local_stream_plan_and_reports(
         .requested_model_family
         .expect("same-format provider spec metadata should include requested-model family");
     let Some(input) = resolve_local_same_format_provider_decision_input(
-        state, parts, trace_id, decision, body_json, spec,
+        state,
+        parts,
+        trace_id,
+        decision,
+        body_json,
+        body_base64,
+        spec,
     )
     .await?
     else {
@@ -460,7 +501,14 @@ pub(crate) async fn build_local_stream_plan_and_reports(
     let mut plans = Vec::new();
     while let Some(attempt) = source.next_attempt().await? {
         let Some(payload) = maybe_build_local_same_format_provider_decision_payload_for_candidate(
-            state, parts, trace_id, body_json, &input, attempt, spec,
+            state,
+            parts,
+            trace_id,
+            body_json,
+            &input,
+            attempt,
+            spec,
+            body_base64,
         )
         .await?
         else {

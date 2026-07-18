@@ -129,6 +129,13 @@ fn build_transport_request_url_inner(
             &transport.endpoint.base_url,
             params.request_query,
         )),
+        "openai:transcription" => build_passthrough_path_url(
+            &transport.endpoint.base_url,
+            "/v1/audio/transcriptions",
+            params.request_query,
+            &[],
+        ),
+
         "openai:embedding" | "jina:embedding" => {
             build_provider_embedding_v1_url(&transport.endpoint.base_url, params.request_query)
         }
@@ -1375,6 +1382,51 @@ mod tests {
             Some(
                 "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents"
             )
+        );
+    }
+
+    #[test]
+    fn transcription_request_url_builds_default_and_custom_paths() {
+        let default = sample_transport(
+            "openai",
+            "openai:transcription",
+            "https://api.openai.example/v1",
+            None,
+        );
+        let custom = sample_transport(
+            "custom",
+            "openai:transcription",
+            "https://provider.example/root",
+            Some("/speech/transcribe"),
+        );
+
+        assert_eq!(
+            build_transport_request_url(
+                &default,
+                TransportRequestUrlParams {
+                    provider_api_format: "openai:transcription",
+                    mapped_model: Some("gpt-4o-transcribe"),
+                    upstream_is_stream: false,
+                    request_query: None,
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some("https://api.openai.example/v1/audio/transcriptions")
+        );
+        assert_eq!(
+            build_transport_request_url(
+                &custom,
+                TransportRequestUrlParams {
+                    provider_api_format: "openai:transcription",
+                    mapped_model: Some("gpt-4o-transcribe"),
+                    upstream_is_stream: true,
+                    request_query: Some("tenant=demo"),
+                    kiro_api_region: None,
+                },
+            )
+            .as_deref(),
+            Some("https://provider.example/root/speech/transcribe?tenant=demo")
         );
     }
 

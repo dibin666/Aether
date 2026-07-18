@@ -17,6 +17,9 @@ pub(super) enum ProviderQueryTestAdapter {
     Antigravity,
 }
 pub(super) fn provider_query_unsupported_test_api_format_message(api_format: &str) -> String {
+    if crate::ai_serving::normalize_api_format_alias(api_format) == "openai:transcription" {
+        return "Rust local provider-query model test does not support openai:transcription because it requires multipart audio file input".to_string();
+    }
     let api_format = api_format.trim();
     if api_format.is_empty() {
         "Rust local provider-query model test does not support an empty endpoint format".to_string()

@@ -20,6 +20,7 @@ pub(crate) async fn maybe_build_sync_local_same_format_provider_decision_payload
     trace_id: &str,
     decision: &GatewayControlDecision,
     body_json: &serde_json::Value,
+    body_base64: Option<&str>,
     plan_kind: &str,
 ) -> Result<Option<AiExecutionDecision>, GatewayError> {
     let Some(spec) = resolve_sync_spec(plan_kind) else {
@@ -31,7 +32,13 @@ pub(crate) async fn maybe_build_sync_local_same_format_provider_decision_payload
         .expect("same-format provider spec metadata should include requested-model family");
 
     let Some(input) = resolve_local_same_format_provider_decision_input(
-        state, parts, trace_id, decision, body_json, spec,
+        state,
+        parts,
+        trace_id,
+        decision,
+        body_json,
+        body_base64,
+        spec,
     )
     .await?
     else {
@@ -69,7 +76,14 @@ pub(crate) async fn maybe_build_sync_local_same_format_provider_decision_payload
     while let Some(attempt) = source.next_attempt().await? {
         if let Some(payload) =
             maybe_build_local_same_format_provider_decision_payload_for_candidate(
-                state, parts, trace_id, body_json, &input, attempt, spec,
+                state,
+                parts,
+                trace_id,
+                body_json,
+                &input,
+                attempt,
+                spec,
+                body_base64,
             )
             .await?
         {
@@ -88,6 +102,7 @@ pub(crate) async fn maybe_build_stream_local_same_format_provider_decision_paylo
     trace_id: &str,
     decision: &GatewayControlDecision,
     body_json: &serde_json::Value,
+    body_base64: Option<&str>,
     plan_kind: &str,
 ) -> Result<Option<AiExecutionDecision>, GatewayError> {
     let Some(spec) = resolve_stream_spec(plan_kind) else {
@@ -99,7 +114,13 @@ pub(crate) async fn maybe_build_stream_local_same_format_provider_decision_paylo
         .expect("same-format provider spec metadata should include requested-model family");
 
     let Some(input) = resolve_local_same_format_provider_decision_input(
-        state, parts, trace_id, decision, body_json, spec,
+        state,
+        parts,
+        trace_id,
+        decision,
+        body_json,
+        body_base64,
+        spec,
     )
     .await?
     else {
@@ -137,7 +158,14 @@ pub(crate) async fn maybe_build_stream_local_same_format_provider_decision_paylo
     while let Some(attempt) = source.next_attempt().await? {
         if let Some(payload) =
             maybe_build_local_same_format_provider_decision_payload_for_candidate(
-                state, parts, trace_id, body_json, &input, attempt, spec,
+                state,
+                parts,
+                trace_id,
+                body_json,
+                &input,
+                attempt,
+                spec,
+                body_base64,
             )
             .await?
         {

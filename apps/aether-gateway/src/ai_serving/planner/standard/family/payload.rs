@@ -61,6 +61,7 @@ pub(super) async fn maybe_build_local_standard_decision_payload_for_candidate(
                 input,
                 attempt,
                 same_format_spec,
+                None,
             )
             .await;
         }

@@ -489,6 +489,10 @@ fn build_dimensions(
         ),
         ("image_count".to_string(), json!(input.image_count.max(0))),
         (
+            "audio_duration_seconds".to_string(),
+            json!(input.audio_duration_seconds.unwrap_or_default().max(0.0)),
+        ),
+        (
             "image_count_unmetered".to_string(),
             json!(if image_output_pricing.enabled {
                 input.image_count.max(0)
@@ -1002,6 +1006,7 @@ mod tests {
                     image_quality: None,
                     image_output_format: None,
                     cache_ttl_minutes: Some(60),
+                    audio_duration_seconds: None,
                 },
             )
             .expect("billing should calculate");
@@ -1010,6 +1015,30 @@ mod tests {
         assert!(result.cost_result.cost > 0.0);
         assert!(result.actual_total_cost > 0.0);
         assert_eq!(result.rate_multiplier, 0.5);
+    }
+
+    #[test]
+    fn exposes_audio_duration_to_formula_dimensions() {
+        let result = BillingService::new()
+            .calculate(
+                &pricing(),
+                &BillingUsageInput {
+                    api_format: Some("openai:transcription".to_string()),
+                    audio_duration_seconds: Some(1.25),
+                    ..BillingUsageInput::new("audio")
+                },
+            )
+            .expect("billing should calculate");
+
+        assert_eq!(result.cost_result.status, BillingSnapshotStatus::Complete);
+        assert_eq!(
+            result
+                .cost_result
+                .snapshot
+                .resolved_dimensions
+                .get("audio_duration_seconds"),
+            Some(&json!(1.25))
+        );
     }
 
     #[test]
@@ -1034,6 +1063,7 @@ mod tests {
                     image_quality: None,
                     image_output_format: None,
                     cache_ttl_minutes: Some(60),
+                    audio_duration_seconds: None,
                 },
             )
             .expect("billing should calculate");
@@ -1078,6 +1108,7 @@ mod tests {
                     image_quality: None,
                     image_output_format: None,
                     cache_ttl_minutes: Some(60),
+                    audio_duration_seconds: None,
                 },
             )
             .expect("billing should calculate");
@@ -1543,6 +1574,7 @@ mod tests {
                     image_quality: Some("medium".to_string()),
                     image_output_format: Some("png".to_string()),
                     cache_ttl_minutes: None,
+                    audio_duration_seconds: None,
                 },
             )
             .expect("billing should calculate");
@@ -1609,6 +1641,7 @@ mod tests {
                     image_quality: Some("medium".to_string()),
                     image_output_format: Some("png".to_string()),
                     cache_ttl_minutes: None,
+                    audio_duration_seconds: None,
                 },
             )
             .expect("billing should calculate");
@@ -1662,6 +1695,7 @@ mod tests {
                     image_quality: Some("medium".to_string()),
                     image_output_format: Some("png".to_string()),
                     cache_ttl_minutes: None,
+                    audio_duration_seconds: None,
                 },
             )
             .expect("billing should calculate");
@@ -1711,6 +1745,7 @@ mod tests {
                     image_quality: Some("medium".to_string()),
                     image_output_format: Some("png".to_string()),
                     cache_ttl_minutes: None,
+                    audio_duration_seconds: None,
                 },
             )
             .expect("billing should calculate");
@@ -1773,6 +1808,7 @@ mod tests {
                     image_quality: Some("medium".to_string()),
                     image_output_format: Some("png".to_string()),
                     cache_ttl_minutes: None,
+                    audio_duration_seconds: None,
                 },
             )
             .expect("billing should calculate");
@@ -1840,6 +1876,7 @@ mod tests {
                     image_quality: Some("medium".to_string()),
                     image_output_format: Some("png".to_string()),
                     cache_ttl_minutes: None,
+                    audio_duration_seconds: None,
                 },
             )
             .expect("billing should calculate");
@@ -1940,6 +1977,7 @@ mod tests {
                     image_quality: None,
                     image_output_format: None,
                     cache_ttl_minutes: Some(5),
+                    audio_duration_seconds: None,
                 },
             )
             .expect("billing should calculate");
@@ -2015,6 +2053,7 @@ mod tests {
                     image_quality: None,
                     image_output_format: None,
                     cache_ttl_minutes: Some(60),
+                    audio_duration_seconds: None,
                 },
             )
             .expect("billing should calculate");

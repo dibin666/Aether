@@ -56,10 +56,10 @@ pub use attempt_loop::{
 };
 pub use attempt_plan::{
     build_ai_execution_decision_from_plan, build_ai_execution_plan_from_decision,
-    extract_ai_auth_header_pair, infer_ai_upstream_base_url,
-    resolve_ai_passthrough_sync_request_body, take_ai_decision_plan_core, take_ai_non_empty_string,
-    take_ai_upstream_auth_pair, trim_ai_owned_non_empty_string, AiDecisionPlanCore,
-    AiExecutionDecisionFromPlanParts, AiExecutionPlanFromDecisionParts, AiUpstreamAuthPair,
+    extract_ai_auth_header_pair, infer_ai_upstream_base_url, resolve_ai_passthrough_request_body,
+    take_ai_decision_plan_core, take_ai_non_empty_string, take_ai_upstream_auth_pair,
+    trim_ai_owned_non_empty_string, AiDecisionPlanCore, AiExecutionDecisionFromPlanParts,
+    AiExecutionPlanFromDecisionParts, AiUpstreamAuthPair,
 };
 pub use candidate_materialization::{
     run_ai_candidate_materialization, AiCandidateMaterializationOutcome,

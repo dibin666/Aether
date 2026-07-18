@@ -20,6 +20,14 @@ pub(super) fn request_wants_stream(
     headers: &http::HeaderMap,
     body: &axum::body::Bytes,
 ) -> bool {
+    if request_context.request_path == "/v1/audio/transcriptions" {
+        return crate::ai_serving::parse_openai_transcription_request(
+            request_context.request_content_type.as_deref(),
+            body.as_ref(),
+        )
+        .map(|metadata| metadata.stream)
+        .unwrap_or(false);
+    }
     if request_context
         .request_path
         .contains(":streamGenerateContent")
@@ -334,6 +342,42 @@ mod tests {
             &request_context,
             &headers,
             &Bytes::from(encoded),
+        ));
+    }
+
+    #[test]
+    fn request_wants_stream_reads_transcription_multipart_body() {
+        let boundary = "frontdoor-transcription-stream-boundary";
+        let request_context = GatewayPublicRequestContext {
+            trace_id: "trace-transcription-stream".to_string(),
+            request_method: Method::POST,
+            request_path: "/v1/audio/transcriptions".to_string(),
+            request_query_string: None,
+            request_content_type: Some(format!("multipart/form-data; boundary={boundary}")),
+            host_header: None,
+            control_decision: None,
+        };
+        let body = format!(
+            concat!(
+                "--{boundary}\r\n",
+                "Content-Disposition: form-data; name=\"model\"\r\n\r\n",
+                "gpt-4o-transcribe\r\n",
+                "--{boundary}\r\n",
+                "Content-Disposition: form-data; name=\"stream\"\r\n\r\n",
+                "true\r\n",
+                "--{boundary}\r\n",
+                "Content-Disposition: form-data; name=\"file\"; filename=\"sample.wav\"\r\n",
+                "Content-Type: audio/wav\r\n\r\n",
+                "RIFF-bytes\r\n",
+                "--{boundary}--\r\n"
+            ),
+            boundary = boundary,
+        );
+
+        assert!(request_wants_stream(
+            &request_context,
+            &HeaderMap::new(),
+            &Bytes::from(body),
         ));
     }
 

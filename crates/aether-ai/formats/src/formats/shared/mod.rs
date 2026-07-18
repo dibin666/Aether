@@ -4,6 +4,8 @@ pub mod error_body;
 pub mod family;
 pub mod image_bridge;
 pub mod model_directives;
+pub mod multipart;
+
 pub mod passthrough;
 pub mod request;
 pub mod request_matrix;

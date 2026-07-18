@@ -26,6 +26,7 @@ pub enum FormatId {
     OpenAiSearch,
     OpenAiEmbedding,
     OpenAiRerank,
+    OpenAiTranscription,
     ClaudeMessages,
     GeminiGenerateContent,
     GeminiInteractions,
@@ -52,7 +53,8 @@ impl FormatId {
             | Self::OpenAiResponsesCompact
             | Self::OpenAiSearch
             | Self::OpenAiEmbedding
-            | Self::OpenAiRerank => FormatFamily::OpenAi,
+            | Self::OpenAiRerank
+            | Self::OpenAiTranscription => FormatFamily::OpenAi,
             Self::ClaudeMessages => FormatFamily::Claude,
             Self::GeminiGenerateContent | Self::GeminiInteractions | Self::GeminiEmbedding => {
                 FormatFamily::Gemini
@@ -78,6 +80,7 @@ impl FormatId {
             Self::OpenAiSearch => "openai:search",
             Self::OpenAiEmbedding => "openai:embedding",
             Self::OpenAiRerank => "openai:rerank",
+            Self::OpenAiTranscription => "openai:transcription",
             Self::ClaudeMessages => "claude:messages",
             Self::GeminiGenerateContent => "gemini:generate_content",
             Self::GeminiInteractions => "gemini:interactions",
@@ -111,6 +114,11 @@ impl FromStr for FormatId {
             }
             "openai:embedding" | "/v1/embeddings" => Ok(Self::OpenAiEmbedding),
             "openai:rerank" | "/v1/rerank" => Ok(Self::OpenAiRerank),
+            "openai:transcription"
+            | "openai_transcription"
+            | "transcription"
+            | "transcriptions"
+            | "/v1/audio/transcriptions" => Ok(Self::OpenAiTranscription),
             "claude:messages" | "/v1/messages" => Ok(Self::ClaudeMessages),
             "gemini:generate_content" => Ok(Self::GeminiGenerateContent),
             "gemini:interactions"
@@ -153,6 +161,7 @@ pub fn api_format_defaults_to_non_stream(value: &str) -> bool {
             | "openai:responses:compact"
             | "openai:search"
             | "openai:image"
+            | "openai:transcription"
             | "claude:messages"
     )
 }
@@ -246,6 +255,7 @@ pub fn api_format_uses_body_stream_field(value: &str) -> bool {
         Some(
             FormatId::OpenAiChat
                 | FormatId::OpenAiResponses
+                | FormatId::OpenAiTranscription
                 | FormatId::ClaudeMessages
                 | FormatId::GeminiInteractions,
         )
@@ -327,6 +337,37 @@ mod tests {
             assert_eq!(normalize_api_format_alias(alias), "openai:search");
         }
         assert!(!api_format_uses_body_stream_field("openai:search"));
+    }
+
+    #[test]
+    fn normalizes_openai_transcription_aliases_and_keeps_scope_independent() {
+        use super::{FormatFamily, FormatProfile};
+
+        for alias in [
+            "openai:transcription",
+            "OPENAI_TRANSCRIPTION",
+            "transcription",
+            "transcriptions",
+            "/v1/audio/transcriptions",
+        ] {
+            assert_eq!(FormatId::parse(alias), Some(FormatId::OpenAiTranscription));
+            assert_eq!(normalize_api_format_alias(alias), "openai:transcription");
+            assert!(api_format_defaults_to_non_stream(alias));
+            assert!(api_format_uses_body_stream_field(alias));
+        }
+        assert_eq!(FormatId::OpenAiTranscription.family(), FormatFamily::OpenAi);
+        assert_eq!(
+            FormatId::OpenAiTranscription.profile(),
+            FormatProfile::Default
+        );
+        assert!(!api_format_permission_covers(
+            "openai:chat",
+            "openai:transcription"
+        ));
+        assert!(!api_format_permission_covers(
+            "openai:responses",
+            "openai:transcription"
+        ));
     }
 
     #[test]

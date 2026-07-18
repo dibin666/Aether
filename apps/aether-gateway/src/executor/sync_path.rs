@@ -182,6 +182,7 @@ impl AiSyncExecutionPathPort for GatewaySyncExecutionPathPort<'_> {
                     self.trace_id,
                     self.decision,
                     self.body_json,
+                    self.body_base64.as_deref(),
                     self.plan_kind,
                 )
                 .await?

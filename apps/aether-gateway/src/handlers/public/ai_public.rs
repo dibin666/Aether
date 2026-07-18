@@ -1,4 +1,7 @@
-use crate::ai_serving::normalize_openai_image_quality;
+use crate::ai_serving::{
+    normalize_openai_image_quality, parse_multipart_fields, parse_openai_transcription_request,
+    MultipartField,
+};
 use crate::async_task::CancelVideoTaskError;
 use crate::control::GatewayControlDecision;
 use crate::control::GatewayPublicRequestContext;
@@ -109,6 +112,9 @@ pub(crate) fn ai_public_local_requires_buffered_body(
                     || (decision.route_family.as_deref() == Some("openai")
                         && decision.route_kind.as_deref() == Some("rerank")
                         && request_context.request_path == "/v1/rerank")
+                    || (decision.route_family.as_deref() == Some("openai")
+                        && decision.route_kind.as_deref() == Some("transcription")
+                        && request_context.request_path == "/v1/audio/transcriptions")
                     || (decision.route_family.as_deref() == Some("antigravity")
                         && decision.route_kind.as_deref() != Some("stream_generate_content")))
         })
@@ -203,6 +209,22 @@ fn maybe_build_local_openai_request_validation_response(
             return Some(build_ai_public_error_response(
                 http::StatusCode::BAD_REQUEST,
                 detail,
+            ));
+        }
+        return None;
+    }
+
+    if decision.route_kind.as_deref() == Some("transcription")
+        && request_context.request_path == "/v1/audio/transcriptions"
+    {
+        let body = request_body.map(Bytes::as_ref).unwrap_or_default();
+        if let Err(error) = parse_openai_transcription_request(
+            request_context.request_content_type.as_deref(),
+            body,
+        ) {
+            return Some(build_ai_public_error_response(
+                http::StatusCode::BAD_REQUEST,
+                error.detail(),
             ));
         }
         return None;
@@ -671,8 +693,8 @@ fn parse_openai_image_validation_input_from_multipart(
     request_body: &Bytes,
     content_type: &str,
 ) -> Result<OpenAiImageValidationInput, &'static str> {
-    let boundary = multipart_boundary(content_type).ok_or(OPENAI_IMAGE_INVALID_MULTIPART_DETAIL)?;
-    let fields = parse_multipart_fields(request_body, &boundary);
+    let fields = parse_multipart_fields(content_type, request_body)
+        .map_err(|_| OPENAI_IMAGE_INVALID_MULTIPART_DETAIL)?;
     if fields.is_empty() {
         return Err(OPENAI_IMAGE_INVALID_MULTIPART_DETAIL);
     }
@@ -680,11 +702,11 @@ fn parse_openai_image_validation_input_from_multipart(
     let model = fields
         .iter()
         .find(|field| field.name.trim() == "model")
-        .map(|field| String::from_utf8_lossy(&field.data).trim().to_string());
+        .map(|field| String::from_utf8_lossy(field.data).trim().to_string());
 
     Ok(OpenAiImageValidationInput {
         model: normalize_openai_image_model_for_operation(model.as_deref()),
-        prompt: multipart_text_field(&fields, "prompt"),
+        prompt: openai_image_multipart_text_field(&fields, "prompt"),
         image_count: fields
             .iter()
             .filter(|field| {
@@ -694,26 +716,28 @@ fn parse_openai_image_validation_input_from_multipart(
                 )
             })
             .count(),
-        n: multipart_text_field(&fields, "n").and_then(|value| value.trim().parse::<u64>().ok()),
-        stream: multipart_text_field(&fields, "stream")
+        n: openai_image_multipart_text_field(&fields, "n")
+            .and_then(|value| value.trim().parse::<u64>().ok()),
+        stream: openai_image_multipart_text_field(&fields, "stream")
             .and_then(|value| parse_bool_string(&value))
             .unwrap_or(false),
-        partial_images: multipart_text_field(&fields, "partial_images")
+        partial_images: openai_image_multipart_text_field(&fields, "partial_images")
             .and_then(|value| value.trim().parse::<u64>().ok()),
-        response_format: multipart_text_field(&fields, "response_format")
+        response_format: openai_image_multipart_text_field(&fields, "response_format")
             .map(|value| value.to_ascii_lowercase()),
-        output_format: multipart_text_field(&fields, "output_format")
+        output_format: openai_image_multipart_text_field(&fields, "output_format")
             .map(|value| value.to_ascii_lowercase()),
-        quality: multipart_text_field(&fields, "quality").map(|value| value.to_ascii_lowercase()),
-        background: multipart_text_field(&fields, "background")
+        quality: openai_image_multipart_text_field(&fields, "quality")
             .map(|value| value.to_ascii_lowercase()),
-        moderation: multipart_text_field(&fields, "moderation")
+        background: openai_image_multipart_text_field(&fields, "background")
             .map(|value| value.to_ascii_lowercase()),
-        input_fidelity: multipart_text_field(&fields, "input_fidelity")
+        moderation: openai_image_multipart_text_field(&fields, "moderation")
             .map(|value| value.to_ascii_lowercase()),
-        output_compression: multipart_text_field(&fields, "output_compression")
+        input_fidelity: openai_image_multipart_text_field(&fields, "input_fidelity")
+            .map(|value| value.to_ascii_lowercase()),
+        output_compression: openai_image_multipart_text_field(&fields, "output_compression")
             .and_then(|value| value.trim().parse::<u64>().ok()),
-        style_present: multipart_text_field(&fields, "style").is_some(),
+        style_present: openai_image_multipart_text_field(&fields, "style").is_some(),
     })
 }
 
@@ -758,94 +782,12 @@ fn parse_bool_string(value: &str) -> Option<bool> {
     }
 }
 
-#[derive(Debug)]
-struct MultipartField {
-    name: String,
-    data: Vec<u8>,
-}
-
-fn multipart_text_field(fields: &[MultipartField], name: &str) -> Option<String> {
+fn openai_image_multipart_text_field(fields: &[MultipartField<'_>], name: &str) -> Option<String> {
     fields
         .iter()
         .find(|field| field.name.trim() == name)
-        .map(|field| String::from_utf8_lossy(&field.data).trim().to_string())
+        .map(|field| String::from_utf8_lossy(field.data).trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn parse_multipart_fields(body: &[u8], boundary: &str) -> Vec<MultipartField> {
-    let delimiter = format!("--{boundary}").into_bytes();
-    let mut parts = Vec::new();
-    let mut cursor = 0usize;
-
-    while let Some(index) = find_subslice(&body[cursor..], &delimiter) {
-        let start = cursor + index + delimiter.len();
-        if body.get(start..start + 2) == Some(b"--") {
-            break;
-        }
-        let mut part = &body[start..];
-        if part.starts_with(b"\r\n") {
-            part = &part[2..];
-        }
-        let Some(next) = find_subslice(part, &delimiter) else {
-            break;
-        };
-        let raw = &part[..next];
-        let raw = raw.strip_suffix(b"\r\n").unwrap_or(raw);
-        if let Some(field) = parse_multipart_field(raw) {
-            parts.push(field);
-        }
-        cursor = start + next;
-    }
-
-    parts
-}
-
-fn multipart_boundary(content_type: &str) -> Option<String> {
-    content_type.split(';').find_map(|segment| {
-        let (key, value) = segment.trim().split_once('=')?;
-        if !key.trim().eq_ignore_ascii_case("boundary") {
-            return None;
-        }
-        let boundary = value.trim().trim_matches('"').trim();
-        (!boundary.is_empty()).then(|| boundary.to_string())
-    })
-}
-
-fn parse_multipart_field(raw: &[u8]) -> Option<MultipartField> {
-    let header_end = find_subslice(raw, b"\r\n\r\n")?;
-    let headers = &raw[..header_end];
-    let data = raw.get(header_end + 4..)?.to_vec();
-    let header_text = String::from_utf8_lossy(headers);
-
-    let mut name = None;
-    for line in header_text.lines() {
-        let trimmed = line.trim();
-        if trimmed
-            .to_ascii_lowercase()
-            .starts_with("content-disposition:")
-        {
-            name = extract_quoted_header_value(trimmed, "name");
-        }
-    }
-
-    Some(MultipartField { name: name?, data })
-}
-
-fn extract_quoted_header_value(header: &str, key: &str) -> Option<String> {
-    let pattern = format!("{key}=\"");
-    let start = header.find(&pattern)? + pattern.len();
-    let rest = &header[start..];
-    let end = rest.find('"')?;
-    Some(rest[..end].to_string())
-}
-
-fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return None;
-    }
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
 }
 
 fn maybe_build_local_ai_public_route_guard_response(

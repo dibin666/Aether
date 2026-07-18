@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -17,10 +18,10 @@ use crate::ai_serving::transport::antigravity::{
     AntigravityRequestSideSupport, AntigravityRequestSideUnsupportedReason,
 };
 use crate::ai_serving::transport::{
-    build_gemini_cli_v1internal_request, build_grok_browser_headers, build_grok_upstream_url,
-    build_same_format_provider_headers, resolve_local_gemini_cli_request_auth,
-    GeminiCliRequestAuth, GeminiCliRequestAuthSupport, GeminiCliRequestEnvelopeSupport,
-    GrokHeaderInput, SameFormatProviderCompatibilityEdit,
+    body_rules_have_enabled_rules, build_gemini_cli_v1internal_request, build_grok_browser_headers,
+    build_grok_upstream_url, build_same_format_provider_headers,
+    resolve_local_gemini_cli_request_auth, GeminiCliRequestAuth, GeminiCliRequestAuthSupport,
+    GeminiCliRequestEnvelopeSupport, GrokHeaderInput, SameFormatProviderCompatibilityEdit,
     SameFormatProviderCompatibilityEditAction, SameFormatProviderHeadersInput,
     GEMINI_CLI_USER_AGENT, GROK_CHAT_PATH,
 };
@@ -30,7 +31,9 @@ use crate::{AppState, GatewayError};
 mod policy;
 mod prepare;
 
-use self::prepare::prepare_local_same_format_provider_candidate;
+use self::prepare::{
+    prepare_local_same_format_provider_candidate, PreparedSameFormatProviderCandidate,
+};
 use super::payload::{
     mark_skipped_local_same_format_provider_candidate,
     mark_skipped_local_same_format_provider_candidate_with_extra_data,
@@ -54,6 +57,8 @@ pub(crate) fn resolve_same_format_provider_transport_unsupported_reason_for_trac
             "openai:responses" => "openai:responses",
             "openai:responses:compact" => "openai:responses:compact",
             "openai:search" => "openai:search",
+            "openai:transcription" => "openai:transcription",
+
             "openai:embedding" => "openai:embedding",
             "openai:rerank" => "openai:rerank",
             "claude:messages" => "claude:messages",
@@ -111,8 +116,10 @@ pub(crate) struct LocalSameFormatProviderCandidatePayloadParts {
     pub(super) upstream_is_stream: bool,
     pub(super) upstream_url: String,
     pub(super) provider_request_headers: BTreeMap<String, String>,
-    pub(super) provider_request_body: Value,
+    pub(super) provider_request_body: Option<Value>,
+    pub(super) provider_request_body_base64: Option<String>,
     pub(super) transport_profile: Option<ResolvedTransportProfile>,
+
     pub(super) compatibility_edits: Vec<SameFormatProviderCompatibilityEdit>,
     pub(super) request_redacted: bool,
 }
@@ -122,6 +129,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
     parts: &http::request::Parts,
     trace_id: &str,
     body_json: &serde_json::Value,
+    body_base64: Option<&str>,
     input: &LocalSameFormatProviderDecisionInput,
     attempt: &LocalSameFormatProviderCandidateAttempt,
     spec: LocalSameFormatProviderSpec,
@@ -140,6 +148,20 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
     else {
         return Ok(None);
     };
+    if spec.api_format == "openai:transcription" {
+        return resolve_local_openai_transcription_candidate_payload_parts(
+            state,
+            parts,
+            trace_id,
+            body_json,
+            body_base64,
+            input,
+            attempt,
+            prepared,
+            spec,
+        )
+        .await;
+    }
     let model_directive_resolution = input
         .model_directive_policy
         .resolve_reasoning(spec.api_format, Some(&input.requested_model));
@@ -488,6 +510,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
             headers: effective_headers,
             provider_request_body: &provider_request_body,
             original_request_body: body_json,
+            content_type: Some("application/json"),
             header_rules: transport.endpoint.header_rules.as_ref(),
             behavior: prepared.behavior,
             auth_header: prepared.auth_header.as_deref(),
@@ -558,9 +581,171 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         upstream_is_stream: prepared.upstream_is_stream,
         upstream_url,
         provider_request_headers,
-        provider_request_body,
+        provider_request_body: Some(provider_request_body),
+        provider_request_body_base64: None,
         transport_profile,
         compatibility_edits,
         request_redacted: redaction.redacted,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_local_openai_transcription_candidate_payload_parts(
+    state: &AppState,
+    parts: &http::request::Parts,
+    trace_id: &str,
+    body_json: &Value,
+    body_base64: Option<&str>,
+    input: &LocalSameFormatProviderDecisionInput,
+    attempt: &LocalSameFormatProviderCandidateAttempt,
+    prepared: PreparedSameFormatProviderCandidate,
+    spec: LocalSameFormatProviderSpec,
+) -> Result<Option<LocalSameFormatProviderCandidatePayloadParts>, GatewayError> {
+    let candidate = &attempt.eligible.candidate;
+    if body_rules_have_enabled_rules(prepared.transport.endpoint.body_rules.as_ref()) {
+        mark_skipped_local_same_format_provider_candidate_with_failure_diagnostic(
+            state,
+            input,
+            trace_id,
+            candidate,
+            attempt.candidate_index,
+            &attempt.candidate_id,
+            "transport_body_rules_unsupported_for_binary_upload",
+            CandidateFailureDiagnostic::body_rules_unsupported_for_binary_upload(
+                spec.api_format,
+                prepared.provider_api_format.as_str(),
+                "openai_transcription_binary_upload",
+            ),
+        )
+        .await;
+        return Ok(None);
+    }
+
+    let encoded = body_base64
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| GatewayError::Client {
+            status: http::StatusCode::BAD_REQUEST,
+            message: crate::ai_serving::OpenAiTranscriptionRequestError::InvalidMultipart
+                .detail()
+                .to_string(),
+        })?;
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| GatewayError::Client {
+            status: http::StatusCode::BAD_REQUEST,
+            message: crate::ai_serving::OpenAiTranscriptionRequestError::InvalidMultipart
+                .detail()
+                .to_string(),
+        })?;
+    let content_type = parts
+        .headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| GatewayError::Client {
+            status: http::StatusCode::BAD_REQUEST,
+            message: crate::ai_serving::OpenAiTranscriptionRequestError::ContentType
+                .detail()
+                .to_string(),
+        })?;
+    let rewritten = crate::ai_serving::rewrite_openai_transcription_model(
+        content_type,
+        &body,
+        &prepared.mapped_model,
+    )
+    .map_err(|error| GatewayError::Client {
+        status: http::StatusCode::BAD_REQUEST,
+        message: error.detail().to_string(),
+    })?;
+
+    let Some(upstream_url) = super::super::request::build_same_format_upstream_url(
+        parts,
+        &prepared.transport,
+        &prepared.mapped_model,
+        prepared.provider_api_format.as_str(),
+        spec,
+        prepared.upstream_is_stream,
+        prepared.kiro_auth.as_ref(),
+        None,
+    ) else {
+        mark_skipped_local_same_format_provider_candidate_with_failure_diagnostic(
+            state,
+            input,
+            trace_id,
+            candidate,
+            attempt.candidate_index,
+            &attempt.candidate_id,
+            "upstream_url_missing",
+            CandidateFailureDiagnostic::upstream_url_missing(
+                spec.api_format,
+                prepared.provider_api_format.as_str(),
+                "openai_transcription_url",
+            ),
+        )
+        .await;
+        return Ok(None);
+    };
+
+    let effective_headers = input.effective_headers(&parts.headers);
+    let extra_headers = BTreeMap::new();
+    let Some(provider_request_headers) =
+        build_same_format_provider_headers(SameFormatProviderHeadersInput {
+            headers: effective_headers,
+            provider_request_body: body_json,
+            original_request_body: body_json,
+            content_type: Some(content_type),
+            header_rules: prepared.transport.endpoint.header_rules.as_ref(),
+            behavior: prepared.behavior,
+            auth_header: prepared.auth_header.as_deref(),
+            auth_value: prepared.auth_value.as_deref(),
+            extra_headers: &extra_headers,
+            key_fingerprint: prepared.transport.key.fingerprint.as_ref(),
+            kiro_auth_config: prepared.kiro_auth.as_ref().map(|auth| &auth.auth_config),
+            kiro_machine_id: prepared
+                .kiro_auth
+                .as_ref()
+                .map(|auth| auth.machine_id.as_str()),
+        })
+    else {
+        mark_skipped_local_same_format_provider_candidate_with_failure_diagnostic(
+            state,
+            input,
+            trace_id,
+            candidate,
+            attempt.candidate_index,
+            &attempt.candidate_id,
+            "transport_header_rules_apply_failed",
+            CandidateFailureDiagnostic::header_rules_apply_failed(
+                spec.api_format,
+                prepared.provider_api_format.as_str(),
+                "openai_transcription_headers",
+            ),
+        )
+        .await;
+        return Ok(None);
+    };
+    let transport_profile =
+        crate::ai_serving::transport::resolve_transport_profile(&prepared.transport);
+
+    Ok(Some(LocalSameFormatProviderCandidatePayloadParts {
+        transport: prepared.transport,
+        is_antigravity: prepared.is_antigravity,
+        is_gemini_cli: prepared.is_gemini_cli,
+        is_kiro: prepared.is_kiro,
+        auth_header: prepared.auth_header,
+        auth_value: prepared.auth_value,
+        provider_api_format: prepared.provider_api_format,
+        mapped_model: prepared.mapped_model,
+        report_kind: prepared.report_kind,
+        upstream_is_stream: prepared.upstream_is_stream,
+        upstream_url,
+        provider_request_headers,
+        provider_request_body: None,
+        provider_request_body_base64: Some(
+            base64::engine::general_purpose::STANDARD.encode(rewritten),
+        ),
+        transport_profile,
+        compatibility_edits: Vec::new(),
+        request_redacted: false,
     }))
 }

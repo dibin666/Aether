@@ -1,5 +1,6 @@
 use crate::ai_serving::planner::plan_builders::{
     build_gemini_stream_plan_from_decision, build_gemini_sync_plan_from_decision,
+    build_passthrough_stream_plan_from_decision, build_passthrough_sync_plan_from_decision,
     build_standard_stream_plan_from_decision, build_standard_sync_plan_from_decision,
     AiStreamAttempt, AiSyncAttempt,
 };
@@ -26,6 +27,14 @@ pub(crate) fn build_sync_plan_from_requested_model_family(
     body_json: &serde_json::Value,
     payload: AiExecutionDecision,
 ) -> Result<Option<AiSyncAttempt>, GatewayError> {
+    if payload
+        .provider_request_body_base64
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return build_passthrough_sync_plan_from_decision(parts, payload);
+    }
+
     match family {
         RequestedModelFamily::Standard => {
             build_standard_sync_plan_from_decision(parts, body_json, payload)
@@ -42,6 +51,14 @@ pub(crate) fn build_stream_plan_from_requested_model_family(
     body_json: &serde_json::Value,
     payload: AiExecutionDecision,
 ) -> Result<Option<AiStreamAttempt>, GatewayError> {
+    if payload
+        .provider_request_body_base64
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return build_passthrough_stream_plan_from_decision(parts, payload);
+    }
+
     match family {
         RequestedModelFamily::Standard => {
             build_standard_stream_plan_from_decision(parts, body_json, payload, false)

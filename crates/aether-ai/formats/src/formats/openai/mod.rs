@@ -7,5 +7,7 @@ pub mod request_contract;
 pub mod rerank;
 pub mod responses;
 pub mod search;
+pub mod transcription;
+
 pub mod shared;
 pub mod video;

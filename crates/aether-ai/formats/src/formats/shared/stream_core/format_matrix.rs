@@ -311,6 +311,7 @@ impl ProviderStreamParser {
             FormatId::OpenAiEmbedding
             | FormatId::OpenAiSearch
             | FormatId::OpenAiRerank
+            | FormatId::OpenAiTranscription
             | FormatId::GeminiEmbedding
             | FormatId::GeminiInteractions
             | FormatId::JinaEmbedding
@@ -412,6 +413,7 @@ impl ClientStreamEmitter {
             FormatId::OpenAiEmbedding
             | FormatId::OpenAiSearch
             | FormatId::OpenAiRerank
+            | FormatId::OpenAiTranscription
             | FormatId::GeminiEmbedding
             | FormatId::GeminiInteractions
             | FormatId::JinaEmbedding
@@ -535,6 +537,7 @@ fn parse_provider_error(
         FormatId::OpenAiEmbedding
         | FormatId::OpenAiSearch
         | FormatId::OpenAiRerank
+        | FormatId::OpenAiTranscription
         | FormatId::GeminiEmbedding
         | FormatId::JinaEmbedding
         | FormatId::JinaRerank

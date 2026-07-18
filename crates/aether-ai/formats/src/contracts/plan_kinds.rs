@@ -5,6 +5,9 @@ pub const GEMINI_FILES_DELETE_PLAN_KIND: &str = "gemini_files_delete";
 pub const GEMINI_FILES_DOWNLOAD_PLAN_KIND: &str = "gemini_files_download";
 pub const OPENAI_IMAGE_STREAM_PLAN_KIND: &str = "openai_image_stream";
 pub const OPENAI_IMAGE_SYNC_PLAN_KIND: &str = "openai_image_sync";
+pub const OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND: &str = "openai_transcription_stream";
+pub const OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND: &str = "openai_transcription_sync";
+
 pub const OPENAI_VIDEO_CONTENT_PLAN_KIND: &str = "openai_video_content";
 pub const OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND: &str = "openai_video_cancel_sync";
 pub const OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND: &str = "openai_video_remix_sync";
@@ -45,4 +48,21 @@ pub fn is_openai_responses_sync_plan_kind(plan_kind: &str) -> bool {
         plan_kind,
         OPENAI_RESPONSES_SYNC_PLAN_KIND | OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND, OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND};
+
+    #[test]
+    fn openai_transcription_plan_kinds_are_stable() {
+        assert_eq!(
+            OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND,
+            "openai_transcription_sync"
+        );
+        assert_eq!(
+            OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND,
+            "openai_transcription_stream"
+        );
+    }
 }

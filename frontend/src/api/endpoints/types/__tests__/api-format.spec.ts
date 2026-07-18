@@ -18,6 +18,9 @@ describe('api format display helpers', () => {
     expect(normalizeApiFormatAlias('OPENAI_SEARCH')).toBe(API_FORMATS.OPENAI_SEARCH)
     expect(normalizeApiFormatAlias('SEARCH')).toBe(API_FORMATS.OPENAI_SEARCH)
     expect(normalizeApiFormatAlias('GEMINI_GENERATE_CONTENT')).toBe(API_FORMATS.GEMINI_GENERATE_CONTENT)
+    expect(normalizeApiFormatAlias('OPENAI_TRANSCRIPTION')).toBe(API_FORMATS.OPENAI_TRANSCRIPTION)
+    expect(normalizeApiFormatAlias('transcriptions')).toBe(API_FORMATS.OPENAI_TRANSCRIPTION)
+    expect(normalizeApiFormatAlias('/v1/audio/transcriptions')).toBe(API_FORMATS.OPENAI_TRANSCRIPTION)
     expect(normalizeApiFormatAlias('OPENAI_EMBEDDING')).toBe(API_FORMATS.OPENAI_EMBEDDING)
     expect(normalizeApiFormatAlias('OPENAI_RERANK')).toBe(API_FORMATS.OPENAI_RERANK)
     expect(normalizeApiFormatAlias('GEMINI_INTERACTIONS')).toBe(API_FORMATS.GEMINI_INTERACTIONS)
@@ -48,6 +51,22 @@ describe('api format display helpers', () => {
       API_FORMATS.OPENAI_SEARCH,
       API_FORMATS.OPENAI_EMBEDDING,
     ])
+  })
+
+  it('formats OpenAI Transcription as an independent selectable format', () => {
+    expect(formatApiFormat(API_FORMATS.OPENAI_TRANSCRIPTION)).toBe('OpenAI Transcription')
+    expect(formatApiFormatShort(API_FORMATS.OPENAI_TRANSCRIPTION)).toBe('OT')
+    expect(sortApiFormats([
+      API_FORMATS.OPENAI_VIDEO,
+      API_FORMATS.OPENAI_TRANSCRIPTION,
+      API_FORMATS.OPENAI_IMAGE,
+    ])).toEqual([
+      API_FORMATS.OPENAI_IMAGE,
+      API_FORMATS.OPENAI_TRANSCRIPTION,
+      API_FORMATS.OPENAI_VIDEO,
+    ])
+    expect(apiFormatPermissionCovers(API_FORMATS.OPENAI, API_FORMATS.OPENAI_TRANSCRIPTION)).toBe(false)
+    expect(apiFormatPermissionCovers(API_FORMATS.OPENAI_RESPONSES, API_FORMATS.OPENAI_TRANSCRIPTION)).toBe(false)
   })
 
   it('applies Responses to Search permissions in one direction', () => {

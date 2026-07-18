@@ -5,8 +5,9 @@ use axum::http::Uri;
 use sha2::{Digest, Sha256};
 use url::form_urlencoded;
 
+use crate::ai_serving::extract_gemini_model_from_path;
 use crate::{
-    ai_serving::extract_gemini_model_from_path,
+    ai_serving::parse_openai_transcription_request,
     headers::{decoded_request_body_bytes, header_value_str, is_json_request},
 };
 
@@ -26,6 +27,15 @@ pub(crate) fn extract_requested_model(
         if let Some(model) = extract_gemini_model_from_path(uri.path()) {
             return Some(model);
         }
+    }
+
+    if decision.route_kind.as_deref() == Some("transcription") {
+        let content_type = headers
+            .get(http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok());
+        return parse_openai_transcription_request(content_type, body)
+            .ok()
+            .map(|metadata| metadata.requested_model);
     }
 
     if !is_json_request(headers) || body.is_empty() {
@@ -443,6 +453,47 @@ mod tests {
         );
 
         assert_eq!(requested_model.as_deref(), Some("gpt-5.4"));
+    }
+
+    #[test]
+    fn extract_requested_model_reads_transcription_multipart_body() {
+        let decision = GatewayControlDecision::synthetic(
+            "/v1/audio/transcriptions",
+            Some("ai_public".to_string()),
+            Some("openai".to_string()),
+            Some("transcription".to_string()),
+            Some("openai:transcription".to_string()),
+        );
+        let boundary = "auth-transcription-boundary";
+        let body = format!(
+            concat!(
+                "--{boundary}\r\n",
+                "Content-Disposition: form-data; name=\"model\"\r\n\r\n",
+                "transcribe-client\r\n",
+                "--{boundary}\r\n",
+                "Content-Disposition: form-data; name=\"file\"; filename=\"sample.wav\"\r\n",
+                "Content-Type: audio/wav\r\n\r\n",
+                "RIFF-bytes\r\n",
+                "--{boundary}--\r\n"
+            ),
+            boundary = boundary,
+        );
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}")
+                .parse()
+                .unwrap(),
+        );
+
+        let requested_model = extract_requested_model(
+            &decision,
+            &uri("/v1/audio/transcriptions"),
+            &headers,
+            &Bytes::from(body),
+        );
+
+        assert_eq!(requested_model.as_deref(), Some("transcribe-client"));
     }
 
     #[test]

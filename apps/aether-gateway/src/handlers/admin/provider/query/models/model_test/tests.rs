@@ -819,6 +819,14 @@ fn provider_query_test_adapter_routes_fixed_provider_endpoint_types() {
         None
     );
     assert_eq!(
+        provider_query_test_adapter_for_provider_api_format("custom", "openai:transcription"),
+        None
+    );
+    assert_eq!(
+        provider_query_unsupported_test_api_format_message("openai:transcription"),
+        "Rust local provider-query model test does not support openai:transcription because it requires multipart audio file input"
+    );
+    assert_eq!(
         provider_query_test_adapter_for_provider_api_format("custom", "gemini:video"),
         None
     );

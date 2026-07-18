@@ -62,6 +62,14 @@ pub(super) fn classify_ai_public_route(
             "openai:search",
             true,
         ))
+    } else if method == http::Method::POST && normalized_path == "/v1/audio/transcriptions" {
+        Some(classified(
+            "ai_public",
+            "openai",
+            "transcription",
+            "openai:transcription",
+            true,
+        ))
     } else if method == http::Method::POST
         && matches!(
             normalized_path,

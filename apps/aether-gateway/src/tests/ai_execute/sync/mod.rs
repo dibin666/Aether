@@ -30,3 +30,4 @@ mod gemini;
 mod image;
 mod pii_redaction_formats;
 mod search;
+mod transcription;

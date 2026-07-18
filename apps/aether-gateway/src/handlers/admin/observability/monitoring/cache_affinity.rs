@@ -107,6 +107,7 @@ fn is_known_admin_monitoring_api_format(value: &str) -> bool {
             | "openai:search"
             | "openai:image"
             | "openai:video"
+            | "openai:transcription"
             | "openai:embedding"
             | "openai:rerank"
             | "claude:messages"

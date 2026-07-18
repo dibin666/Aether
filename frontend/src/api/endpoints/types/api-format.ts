@@ -8,6 +8,7 @@ export const API_FORMATS = {
   OPENAI_RESPONSES_COMPACT: 'openai:responses:compact',
   OPENAI_SEARCH: 'openai:search',
   OPENAI_IMAGE: 'openai:image',
+  OPENAI_TRANSCRIPTION: 'openai:transcription',
   OPENAI_VIDEO: 'openai:video',
   OPENAI_EMBEDDING: 'openai:embedding',
   OPENAI_RERANK: 'openai:rerank',
@@ -33,6 +34,7 @@ export const API_FORMAT_LABELS: Record<string, string> = {
   [API_FORMATS.OPENAI_RESPONSES_COMPACT]: 'OpenAI Responses Compact',
   [API_FORMATS.OPENAI_SEARCH]: 'OpenAI Search',
   [API_FORMATS.OPENAI_IMAGE]: 'OpenAI Image',
+  [API_FORMATS.OPENAI_TRANSCRIPTION]: 'OpenAI Transcription',
   [API_FORMATS.OPENAI_VIDEO]: 'OpenAI Video',
   [API_FORMATS.OPENAI_EMBEDDING]: 'OpenAI Embedding',
   [API_FORMATS.OPENAI_RERANK]: 'OpenAI Rerank',
@@ -52,6 +54,7 @@ export const API_FORMAT_LABELS: Record<string, string> = {
   OPENAI_RESPONSES_COMPACT: 'OpenAI Responses Compact',
   OPENAI_SEARCH: 'OpenAI Search',
   OPENAI_IMAGE: 'OpenAI Image',
+  OPENAI_TRANSCRIPTION: 'OpenAI Transcription',
   OPENAI_VIDEO: 'OpenAI Video',
   OPENAI_EMBEDDING: 'OpenAI Embedding',
   OPENAI_RERANK: 'OpenAI Rerank',
@@ -74,6 +77,7 @@ export const API_FORMAT_SHORT: Record<string, string> = {
   [API_FORMATS.OPENAI_RESPONSES_COMPACT]: 'ORC',
   [API_FORMATS.OPENAI_SEARCH]: 'OS',
   [API_FORMATS.OPENAI_IMAGE]: 'OI',
+  [API_FORMATS.OPENAI_TRANSCRIPTION]: 'OT',
   [API_FORMATS.OPENAI_VIDEO]: 'OV',
   [API_FORMATS.OPENAI_EMBEDDING]: 'OE',
   [API_FORMATS.OPENAI_RERANK]: 'ORR',
@@ -92,6 +96,7 @@ export const API_FORMAT_SHORT: Record<string, string> = {
   OPENAI_RESPONSES_COMPACT: 'ORC',
   OPENAI_SEARCH: 'OS',
   OPENAI_IMAGE: 'OI',
+  OPENAI_TRANSCRIPTION: 'OT',
   OPENAI_VIDEO: 'OV',
   OPENAI_EMBEDDING: 'OE',
   OPENAI_RERANK: 'ORR',
@@ -118,6 +123,7 @@ export const API_FORMAT_ORDER: string[] = [
   API_FORMATS.OPENAI_EMBEDDING,
   API_FORMATS.OPENAI_RERANK,
   API_FORMATS.OPENAI_IMAGE,
+  API_FORMATS.OPENAI_TRANSCRIPTION,
   API_FORMATS.OPENAI_VIDEO,
   API_FORMATS.CLAUDE_MESSAGES,
   API_FORMATS.GEMINI_GENERATE_CONTENT,
@@ -151,6 +157,7 @@ export const API_FORMAT_KIND_LABELS: Record<string, string> = {
   generate_content: 'Generate Content',
   interactions: 'Interactions',
   image: 'Image',
+  transcription: 'Transcription',
   video: 'Video',
   files: 'Files',
   embedding: 'Embedding',
@@ -186,6 +193,10 @@ export function normalizeApiFormatAlias(format: string | null | undefined): stri
       return API_FORMATS.OPENAI_SEARCH
     case 'OPENAI_IMAGE':
       return API_FORMATS.OPENAI_IMAGE
+    case 'OPENAI_TRANSCRIPTION':
+    case 'TRANSCRIPTION':
+    case 'TRANSCRIPTIONS':
+      return API_FORMATS.OPENAI_TRANSCRIPTION
     case 'OPENAI_VIDEO':
       return API_FORMATS.OPENAI_VIDEO
     case 'OPENAI_EMBEDDING':
@@ -216,6 +227,11 @@ export function normalizeApiFormatAlias(format: string | null | undefined): stri
       return API_FORMATS.ALIYUN_MULTIMODAL_EMBEDDING
     default:
       switch (raw.toLowerCase()) {
+        case '/v1/audio/transcriptions':
+        case 'openai_transcription':
+        case 'transcription':
+        case 'transcriptions':
+          return API_FORMATS.OPENAI_TRANSCRIPTION
         case 'dashscope:multimodal_embedding':
         case 'aliyun_multimodal_embedding':
         case 'dashscope_multimodal_embedding':

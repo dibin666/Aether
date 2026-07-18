@@ -933,6 +933,19 @@ mod tests {
     }
 
     #[test]
+    fn same_format_transcription_streams_pass_through_verbatim() {
+        let report_context = json!({
+            "provider_api_format": "openai:transcription",
+            "client_api_format": "openai:transcription",
+            "model": "client-transcription-model",
+            "mapped_model": "gpt-4o-transcribe",
+            "needs_conversion": false,
+        });
+        assert_eq!(resolve_finalize_stream_rewrite_mode(&report_context), None);
+        assert!(maybe_build_ai_surface_stream_rewriter(Some(&report_context)).is_none());
+    }
+
+    #[test]
     fn resolves_model_directive_display_mode_for_same_format_standard_streams() {
         let report_context = json!({
             "provider_api_format": "openai:responses",

@@ -7,6 +7,7 @@ pub(crate) fn normalized_signature(api_format: &str) -> Option<&'static str> {
         "openai:responses:compact" => Some("openai:responses:compact"),
         "openai:search" => Some("openai:search"),
         "openai:image" => Some("openai:image"),
+        "openai:transcription" => Some("openai:transcription"),
         "openai:video" => Some("openai:video"),
         _ => None,
     }
@@ -21,7 +22,26 @@ pub(crate) fn local_path(api_format: &str) -> Option<&'static str> {
         "openai:responses:compact" => Some("/v1/responses/compact"),
         "openai:search" => Some("/v1/alpha/search"),
         "openai:image" => Some("/v1/images/generations"),
+        "openai:transcription" => Some("/v1/audio/transcriptions"),
+
         "openai:video" => Some("/v1/videos"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{local_path, normalized_signature};
+
+    #[test]
+    fn maps_openai_transcription_signature_and_path() {
+        for alias in [
+            "openai:transcription",
+            "transcription",
+            "/v1/audio/transcriptions",
+        ] {
+            assert_eq!(normalized_signature(alias), Some("openai:transcription"));
+            assert_eq!(local_path(alias), Some("/v1/audio/transcriptions"));
+        }
     }
 }

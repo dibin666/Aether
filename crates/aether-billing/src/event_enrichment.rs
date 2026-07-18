@@ -178,6 +178,7 @@ fn calculate_billing_computation(
         image_size: usage_event_dimension_string(&event.data, "image_size"),
         image_quality: usage_event_dimension_string(&event.data, "image_quality"),
         image_output_format: usage_event_dimension_string(&event.data, "image_output_format"),
+        audio_duration_seconds: usage_event_dimension_f64(&event.data, "audio_duration_seconds"),
         cache_ttl_minutes: usage_event_provider_cache_ttl_minutes(&event.data)
             .or(pricing.provider_api_key_cache_ttl_minutes),
     };
@@ -281,6 +282,35 @@ fn metadata_dimension_string(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn usage_event_dimension_f64(
+    data: &aether_usage_runtime::UsageEventData,
+    dimension_key: &str,
+) -> Option<f64> {
+    metadata_dimension_f64(data.request_metadata.as_ref(), "dimensions", dimension_key).or_else(
+        || {
+            metadata_dimension_f64(
+                data.request_metadata.as_ref(),
+                "billing_dimensions",
+                dimension_key,
+            )
+        },
+    )
+}
+
+fn metadata_dimension_f64(
+    metadata: Option<&Value>,
+    bag_key: &str,
+    dimension_key: &str,
+) -> Option<f64> {
+    metadata
+        .and_then(Value::as_object)
+        .and_then(|object| object.get(bag_key))
+        .and_then(Value::as_object)
+        .and_then(|object| object.get(dimension_key))
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value >= 0.0)
 }
 
 fn metadata_dimension_i64(
