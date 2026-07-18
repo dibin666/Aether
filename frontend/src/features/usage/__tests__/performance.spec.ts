@@ -51,6 +51,31 @@ describe('usage performance metrics', () => {
     expect(getDisplayOutputRate(timing)).toBe(50)
   })
 
+  it('uses total response time for streamed OpenAI Responses requests', () => {
+    const timing = {
+      output_tokens: 1320,
+      response_time_ms: 33_000,
+      first_byte_time_ms: 27_600,
+      upstream_is_stream: true,
+      api_format: 'openai:responses',
+      endpoint_api_format: 'openai:responses',
+    }
+
+    expect(getOutputRateDurationMs(timing)).toBe(33_000)
+    expect(calculateOutputRate(timing)).toBe(40)
+    expect(getDisplayOutputRate(timing)).toBe(40)
+  })
+
+  it('normalizes Responses format aliases before choosing the TPS duration', () => {
+    expect(calculateOutputRate({
+      output_tokens: 80,
+      response_time_ms: 12_220,
+      first_byte_time_ms: 7_980,
+      upstream_is_stream: true,
+      endpoint_api_format: 'openai_responses',
+    })).toBeCloseTo(6.5466, 4)
+  })
+
   it('does not calculate output rate without output tokens', () => {
     expect(calculateOutputRate({
       output_tokens: 0,

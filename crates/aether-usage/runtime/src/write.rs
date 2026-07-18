@@ -783,6 +783,7 @@ fn build_terminal_usage_event_from_seed_impl(
     }
 
     if matches!(event_type, UsageEventType::Completed) {
+        apply_completed_chat_usage_estimate(&mut data);
         apply_completed_image_usage_estimate(&mut data);
     }
 
@@ -3047,6 +3048,241 @@ fn extract_token_counts_from_value(value: &Value) -> Option<(u64, u64, u64)> {
     }
 }
 
+fn apply_completed_chat_usage_estimate(data: &mut UsageEventData) {
+    if usage_event_data_is_image(data) || usage_event_data_has_token_signal(data) {
+        return;
+    }
+
+    let request_usage = complete_captured_body(
+        data.provider_request_body.as_ref(),
+        data.provider_request_body_state,
+    )
+    .or_else(|| complete_captured_body(data.request_body.as_ref(), data.request_body_state))
+    .and_then(estimate_request_usage);
+    let response_usage =
+        complete_captured_body(data.response_body.as_ref(), data.response_body_state)
+            .and_then(estimate_response_usage)
+            .or_else(|| {
+                complete_captured_body(
+                    data.client_response_body.as_ref(),
+                    data.client_response_body_state,
+                )
+                .and_then(estimate_response_usage)
+            });
+
+    let input_tokens = request_usage
+        .as_ref()
+        .map(|usage| usage.input_tokens)
+        .unwrap_or_default();
+    let output_tokens = response_usage
+        .as_ref()
+        .map(|usage| usage.output_tokens)
+        .unwrap_or_default();
+    if input_tokens == 0 && output_tokens == 0 {
+        return;
+    }
+
+    if input_tokens > 0 {
+        data.input_tokens = Some(input_tokens);
+    }
+    if output_tokens > 0 {
+        data.output_tokens = Some(output_tokens);
+    }
+    apply_request_cache_usage_estimate(data, request_usage.as_ref());
+    let total_tokens = input_tokens.saturating_add(output_tokens);
+    if total_tokens > 0 {
+        data.total_tokens = Some(total_tokens);
+    }
+    set_usage_dimension_if_absent(data, "token_usage_estimated", Value::Bool(true));
+    set_usage_dimension_if_absent(
+        data,
+        "token_usage_source",
+        Value::String("captured_request_and_response".to_string()),
+    );
+    if let Some(reasoning_tokens) = response_usage
+        .as_ref()
+        .map(|usage| usage.reasoning_tokens)
+        .filter(|tokens| *tokens > 0)
+    {
+        set_usage_dimension_if_absent(data, "reasoning_tokens", json!(reasoning_tokens));
+    }
+}
+
+fn usage_event_data_has_token_signal(data: &UsageEventData) -> bool {
+    [
+        data.input_tokens,
+        data.output_tokens,
+        data.total_tokens,
+        data.cache_creation_input_tokens,
+        data.cache_creation_ephemeral_5m_input_tokens,
+        data.cache_creation_ephemeral_1h_input_tokens,
+        data.cache_read_input_tokens,
+    ]
+    .into_iter()
+    .any(|tokens| positive_tokens(tokens) > 0)
+}
+
+fn complete_captured_body(
+    body: Option<&Value>,
+    state: Option<UsageBodyCaptureState>,
+) -> Option<&Value> {
+    if matches!(
+        state,
+        Some(
+            UsageBodyCaptureState::Truncated
+                | UsageBodyCaptureState::Disabled
+                | UsageBodyCaptureState::Unavailable
+        )
+    ) {
+        return None;
+    }
+    body
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct EstimatedResponseUsage {
+    output_tokens: u64,
+    reasoning_tokens: u64,
+}
+
+impl EstimatedResponseUsage {
+    fn add(&mut self, other: Self) {
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
+        self.reasoning_tokens = self.reasoning_tokens.saturating_add(other.reasoning_tokens);
+    }
+}
+
+fn estimate_response_usage(value: &Value) -> Option<EstimatedResponseUsage> {
+    if let Some(chunks) = value.get("chunks").and_then(Value::as_array) {
+        let mut streamed = EstimatedResponseUsage::default();
+        for chunk in chunks {
+            streamed.add(estimate_stream_chunk_usage(chunk));
+        }
+        if streamed.output_tokens > 0 {
+            return Some(streamed);
+        }
+        return chunks.iter().rev().find_map(estimate_response_object_usage);
+    }
+    estimate_response_object_usage(value)
+}
+
+fn estimate_stream_chunk_usage(chunk: &Value) -> EstimatedResponseUsage {
+    let event_type = chunk
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    match event_type {
+        "content_block_start" => {
+            return estimate_output_content(chunk.get("content_block"), false);
+        }
+        "content_block_delta" => {
+            return estimate_output_content(chunk.get("delta"), false);
+        }
+        value if value.ends_with(".delta") => {
+            let reasoning = value.contains("reasoning") || value.contains("summary");
+            return estimate_output_content(chunk.get("delta"), reasoning);
+        }
+        _ => {}
+    }
+
+    let mut usage = EstimatedResponseUsage::default();
+    if let Some(choices) = chunk.get("choices").and_then(Value::as_array) {
+        for choice in choices {
+            usage.add(estimate_output_content(choice.get("delta"), false));
+        }
+    }
+    usage
+}
+
+fn estimate_response_object_usage(value: &Value) -> Option<EstimatedResponseUsage> {
+    for nested_key in ["response", "message"] {
+        if let Some(nested) = value.get(nested_key) {
+            if let Some(usage) = estimate_response_object_usage(nested) {
+                return Some(usage);
+            }
+        }
+    }
+
+    let mut usage = EstimatedResponseUsage::default();
+    for key in ["content", "output"] {
+        usage.add(estimate_output_content(value.get(key), false));
+    }
+    if let Some(choices) = value.get("choices").and_then(Value::as_array) {
+        for choice in choices {
+            usage.add(estimate_output_content(choice.get("message"), false));
+        }
+    }
+    if let Some(candidate) = value
+        .get("candidates")
+        .and_then(Value::as_array)
+        .and_then(|candidates| candidates.first())
+    {
+        usage.add(estimate_output_content(candidate.get("content"), false));
+    }
+    (usage.output_tokens > 0).then_some(usage)
+}
+
+fn estimate_output_content(value: Option<&Value>, reasoning: bool) -> EstimatedResponseUsage {
+    let Some(value) = value else {
+        return EstimatedResponseUsage::default();
+    };
+    match value {
+        Value::String(text) => estimated_text_response_usage(text, reasoning),
+        Value::Array(items) => {
+            let mut usage = EstimatedResponseUsage::default();
+            for item in items {
+                usage.add(estimate_output_content(Some(item), reasoning));
+            }
+            usage
+        }
+        Value::Object(object) => {
+            let content_type = object
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let reasoning = reasoning
+                || content_type.contains("thinking")
+                || content_type.contains("reasoning")
+                || content_type == "summary_text";
+            let mut usage = EstimatedResponseUsage::default();
+            for key in [
+                "text",
+                "thinking",
+                "reasoning_content",
+                "arguments",
+                "partial_json",
+            ] {
+                if let Some(text) = object.get(key).and_then(Value::as_str) {
+                    usage.add(estimated_text_response_usage(
+                        text,
+                        reasoning || matches!(key, "thinking" | "reasoning_content"),
+                    ));
+                }
+            }
+            if content_type == "tool_use" {
+                if let Some(input) = object.get("input") {
+                    usage.output_tokens = usage
+                        .output_tokens
+                        .saturating_add(estimate_json_tokens(input));
+                }
+            }
+            for key in ["content", "parts", "summary", "tool_calls", "function"] {
+                usage.add(estimate_output_content(object.get(key), reasoning));
+            }
+            usage
+        }
+        _ => EstimatedResponseUsage::default(),
+    }
+}
+
+fn estimated_text_response_usage(text: &str, reasoning: bool) -> EstimatedResponseUsage {
+    let tokens = estimate_text_tokens(text);
+    EstimatedResponseUsage {
+        output_tokens: tokens,
+        reasoning_tokens: reasoning.then_some(tokens).unwrap_or_default(),
+    }
+}
+
 fn apply_completed_image_usage_estimate(data: &mut UsageEventData) {
     if !usage_event_data_is_image(data) {
         return;
@@ -4264,6 +4500,111 @@ mod tests {
                     "has_completion": true
                 }
             }))
+        );
+    }
+
+    #[test]
+    fn completed_claude_stream_estimates_zero_usage_from_captured_bodies() {
+        let request_body = json!({
+            "model": "deepseek-v4-flash",
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": "abcdefghijkl"}]
+            }],
+            "system": [{"type": "text", "text": "abcdefgh"}],
+            "stream": true
+        });
+        let plan = ExecutionPlan {
+            request_id: "req-claude-zero-usage-1".to_string(),
+            candidate_id: Some("cand-claude-zero-usage-1".to_string()),
+            provider_name: Some("DeepSeek".to_string()),
+            provider_id: "provider-1".to_string(),
+            endpoint_id: "endpoint-1".to_string(),
+            key_id: "key-1".to_string(),
+            method: "POST".to_string(),
+            url: "https://example.com/v1/messages".to_string(),
+            headers: BTreeMap::new(),
+            content_type: Some("application/json".to_string()),
+            content_encoding: None,
+            body: RequestBody::from_json(request_body.clone()),
+            stream: true,
+            client_api_format: "claude:messages".to_string(),
+            provider_api_format: "claude:messages".to_string(),
+            model_name: Some("deepseek-v4-flash".to_string()),
+            proxy: None,
+            transport_profile: None,
+            timeouts: None,
+        };
+        let response_body = json!({
+            "chunks": [
+                {
+                    "type": "message_start",
+                    "message": {
+                        "usage": {"input_tokens": 0, "output_tokens": 0}
+                    }
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "thinking_delta", "thinking": "abcdefgh"}
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 1,
+                    "delta": {"type": "text_delta", "text": "abcdefghijkl"}
+                },
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn"},
+                    "usage": {"input_tokens": 0, "output_tokens": 0}
+                },
+                {"type": "message_stop"}
+            ],
+            "metadata": {"stream": true, "stored_chunks": 5, "total_chunks": 5}
+        });
+        let payload = GatewayStreamReportRequest {
+            trace_id: "trace-claude-zero-usage-1".to_string(),
+            report_kind: "claude_chat_stream_success".to_string(),
+            report_context: Some(json!({
+                "client_api_format": "claude:messages",
+                "provider_api_format": "claude:messages",
+                "provider_request_body": request_body
+            })),
+            status_code: 200,
+            headers: BTreeMap::new(),
+            provider_body_base64: Some(
+                base64::engine::general_purpose::STANDARD.encode(response_body.to_string()),
+            ),
+            provider_body_state: Some(UsageBodyCaptureState::Inline),
+            client_body_base64: None,
+            client_body_state: Some(UsageBodyCaptureState::None),
+            terminal_summary: None,
+            telemetry: None,
+        };
+
+        let event =
+            build_stream_terminal_usage_event(&plan, payload.report_context.as_ref(), &payload)
+                .expect("usage event should build");
+        let input_tokens = event.data.input_tokens.expect("input estimate");
+
+        assert!(input_tokens > 0);
+        assert_eq!(event.data.output_tokens, Some(5));
+        assert_eq!(event.data.total_tokens, Some(input_tokens + 5));
+        assert_eq!(
+            event.data.request_metadata.as_ref().and_then(|metadata| {
+                metadata
+                    .get("dimensions")
+                    .and_then(|dimensions| dimensions.get("reasoning_tokens"))
+            }),
+            Some(&json!(2))
+        );
+        assert_eq!(
+            event.data.request_metadata.as_ref().and_then(|metadata| {
+                metadata
+                    .get("dimensions")
+                    .and_then(|dimensions| dimensions.get("token_usage_estimated"))
+            }),
+            Some(&json!(true))
         );
     }
 

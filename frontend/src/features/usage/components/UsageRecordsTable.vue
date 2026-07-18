@@ -1015,7 +1015,7 @@ import {
   formatOutputRate,
   formatOutputRateValue,
   getDisplayOutputRate,
-  getGenerationTimeMs,
+  getOutputRateDurationMs,
 } from '../performance'
 import {
   formatUsageStreamLabel,
@@ -1462,6 +1462,8 @@ function getRecordDisplayOutputRate(record: UsageRecord): number | null {
     first_byte_time_ms: record.first_byte_time_ms,
     is_stream: record.is_stream,
     upstream_is_stream: record.upstream_is_stream,
+    api_format: record.api_format,
+    endpoint_api_format: record.endpoint_api_format,
   })
 }
 
@@ -1470,7 +1472,7 @@ function getRecordPerformanceTitle(record: UsageRecord): string {
   return [
     `首字: ${formatRecordDurationSeconds(record.first_byte_time_ms)}`,
     `总耗时: ${formatRecordDurationSeconds(record.response_time_ms)}`,
-    `生成耗时: ${formatRecordDurationSeconds(getGenerationTimeMs(record))}`,
+    `计速耗时: ${formatRecordDurationSeconds(getOutputRateDurationMs(record))}`,
     `输出速度: ${formatOutputRateTokensPerSecond(outputRate)}`,
   ].join('\n')
 }

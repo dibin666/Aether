@@ -198,11 +198,31 @@ describe('UsageRecordsTable', () => {
     expect(titles).toContain([
       '首字: 0.50s',
       '总耗时: 1.00s',
-      '生成耗时: 0.50s',
+      '计速耗时: 0.50s',
       '输出速度: 100 tokens/s',
     ].join('\n'))
     expect(titles.join('\n')).not.toContain('500ms')
     expect(titles.join('\n')).not.toContain('首字后生成耗时')
+  })
+
+  it('uses total response time for OpenAI Responses TPS', () => {
+    const root = mountUsageRecordsTable([buildRecord({
+      output_tokens: 1320,
+      response_time_ms: 33_000,
+      first_byte_time_ms: 27_600,
+      api_format: 'openai:responses',
+      endpoint_api_format: 'openai:responses',
+    })])
+
+    expect(root.textContent).toContain('40.0 tps')
+    const titles = [...root.querySelectorAll<HTMLElement>('[title]')]
+      .map((element) => element.getAttribute('title'))
+    expect(titles).toContain([
+      '首字: 27.60s',
+      '总耗时: 33.00s',
+      '计速耗时: 33.00s',
+      '输出速度: 40.0 tokens/s',
+    ].join('\n'))
   })
 
   it('shows an output speed placeholder when the rate is unavailable', () => {
@@ -221,7 +241,7 @@ describe('UsageRecordsTable', () => {
     expect(titles).toContain([
       '首字: 0.50s',
       '总耗时: 1.00s',
-      '生成耗时: 0.50s',
+      '计速耗时: 0.50s',
       '输出速度: -',
     ].join('\n'))
   })

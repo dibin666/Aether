@@ -34,11 +34,10 @@ impl UsageMapper {
 
     pub fn map_from_response(response: &serde_json::Value, api_format: &str) -> StandardizedUsage {
         let family = api_family(api_format);
-        let mut usage = if let Some(usage_value) = resolve_usage_value(response, family.as_str()) {
-            Self::map(usage_value, api_format, None)
-        } else {
-            StandardizedUsage::new()
-        };
+        let mut usage = StandardizedUsage::new();
+        visit_response_usage(response, family.as_str(), &mut |raw_usage| {
+            merge_usage_snapshot(&mut usage, Self::map(raw_usage, api_format, None));
+        });
         if is_openai_transcription_api(api_format) {
             apply_openai_transcription_duration_usage(response, &mut usage);
         }
@@ -347,47 +346,95 @@ fn get_nested_value<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a 
     Some(current)
 }
 
-fn resolve_usage_value<'a>(
+fn merge_usage_snapshot(current: &mut StandardizedUsage, snapshot: StandardizedUsage) {
+    if snapshot.input_tokens > 0 {
+        current.input_tokens = snapshot.input_tokens;
+    }
+    if snapshot.output_tokens > 0 {
+        current.output_tokens = snapshot.output_tokens;
+    }
+    if snapshot.cache_creation_tokens > 0 {
+        current.cache_creation_tokens = snapshot.cache_creation_tokens;
+    }
+    if snapshot.cache_creation_ephemeral_5m_tokens > 0 {
+        current.cache_creation_ephemeral_5m_tokens = snapshot.cache_creation_ephemeral_5m_tokens;
+    }
+    if snapshot.cache_creation_ephemeral_1h_tokens > 0 {
+        current.cache_creation_ephemeral_1h_tokens = snapshot.cache_creation_ephemeral_1h_tokens;
+    }
+    if snapshot.cache_read_tokens > 0 {
+        current.cache_read_tokens = snapshot.cache_read_tokens;
+    }
+    if snapshot.reasoning_tokens > 0 {
+        current.reasoning_tokens = snapshot.reasoning_tokens;
+    }
+    if snapshot.cache_storage_token_hours > 0.0 {
+        current.cache_storage_token_hours = snapshot.cache_storage_token_hours;
+    }
+    current.request_count = current.request_count.max(snapshot.request_count);
+    current.dimensions.extend(snapshot.dimensions);
+}
+
+fn visit_response_usage<'a>(
     response: &'a serde_json::Value,
     family: &str,
-) -> Option<&'a serde_json::Value> {
-    match family {
-        "gemini" => {
-            if let Some(usage) = response.get("usageMetadata") {
-                return Some(usage);
-            }
-            if let Some(usage) = response
-                .get("candidates")
-                .and_then(|value| value.get(0))
-                .and_then(|value| value.get("usageMetadata"))
-            {
-                return Some(usage);
-            }
-        }
-        _ => {
-            if let Some(usage) = response.get("usage") {
-                return Some(usage);
-            }
-        }
+    visit: &mut impl FnMut(&'a serde_json::Value),
+) {
+    if let Some(usage) = direct_usage_value(response, family) {
+        visit(usage);
     }
 
     for nested_key in ["response", "message", "item"] {
         if let Some(nested) = response.get(nested_key) {
-            if let Some(usage) = resolve_usage_value(nested, family) {
-                return Some(usage);
-            }
+            visit_response_usage(nested, family, visit);
         }
     }
 
     if let Some(chunks) = response.get("chunks").and_then(serde_json::Value::as_array) {
-        for chunk in chunks.iter().rev() {
-            if let Some(usage) = resolve_usage_value(chunk, family) {
-                return Some(usage);
-            }
+        for chunk in chunks {
+            visit_response_usage(chunk, family, visit);
         }
     }
+}
 
-    None
+fn direct_usage_value<'a>(
+    response: &'a serde_json::Value,
+    family: &str,
+) -> Option<&'a serde_json::Value> {
+    if family == "gemini" {
+        return response.get("usageMetadata").or_else(|| {
+            response
+                .get("candidates")
+                .and_then(|value| value.get(0))
+                .and_then(|value| value.get("usageMetadata"))
+        });
+    }
+    response.get("usage")
+}
+fn resolve_usage_value<'a>(
+    response: &'a serde_json::Value,
+    family: &str,
+) -> Option<&'a serde_json::Value> {
+    if let Some(usage) = direct_usage_value(response, family) {
+        return Some(usage);
+    }
+    for nested_key in ["response", "message", "item"] {
+        if let Some(usage) = response
+            .get(nested_key)
+            .and_then(|nested| resolve_usage_value(nested, family))
+        {
+            return Some(usage);
+        }
+    }
+    response
+        .get("chunks")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|chunks| {
+            chunks
+                .iter()
+                .rev()
+                .find_map(|chunk| resolve_usage_value(chunk, family))
+        })
 }
 
 #[cfg(test)]
@@ -624,6 +671,39 @@ mod tests {
         assert_eq!(usage.output_tokens, 162);
         assert_eq!(usage.cache_creation_tokens, 59_573);
         assert_eq!(usage.cache_read_tokens, 0);
+    }
+
+    #[test]
+    fn merges_claude_usage_across_stream_chunks_without_zeroing_earlier_fields() {
+        let usage = map_usage_from_response(
+            &serde_json::json!({
+                "chunks": [
+                    {
+                        "type": "message_start",
+                        "message": {
+                            "usage": {
+                                "input_tokens": 11,
+                                "cache_creation_input_tokens": 3,
+                                "output_tokens": 0
+                            }
+                        }
+                    },
+                    {
+                        "type": "message_delta",
+                        "usage": {
+                            "input_tokens": 0,
+                            "cache_creation_input_tokens": 0,
+                            "output_tokens": 7
+                        }
+                    }
+                ]
+            }),
+            "claude:messages",
+        );
+
+        assert_eq!(usage.input_tokens, 11);
+        assert_eq!(usage.output_tokens, 7);
+        assert_eq!(usage.cache_creation_tokens, 3);
     }
 
     #[test]

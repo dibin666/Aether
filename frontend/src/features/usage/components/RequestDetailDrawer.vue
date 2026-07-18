@@ -1381,6 +1381,8 @@ const detailOutputRate = computed(() => {
     first_byte_time_ms: detail.value.first_byte_time_ms,
     is_stream: detail.value.is_stream,
     upstream_is_stream: detail.value.upstream_is_stream,
+    api_format: detail.value.api_format,
+    endpoint_api_format: detail.value.endpoint_api_format,
   })
 })
 

@@ -5,6 +5,8 @@ export interface UsagePerformanceTiming {
   first_byte_time_ms?: number | null
   is_stream?: boolean | null
   upstream_is_stream?: boolean | null
+  api_format?: string | null
+  endpoint_api_format?: string | null
 }
 
 export function getGenerationTimeMs(timing: UsagePerformanceTiming): number | null {
@@ -18,7 +20,14 @@ export function getGenerationTimeMs(timing: UsagePerformanceTiming): number | nu
   return responseTimeMs - firstByteTimeMs
 }
 
+function isOpenAIResponsesFormat(value: string | null | undefined): boolean {
+  const normalized = value?.trim().toLowerCase().replaceAll('_', ':')
+  return normalized === 'openai:responses' || normalized?.startsWith('openai:responses:') === true
+}
+
 export function isOutputRateUsingGenerationTime(timing: UsagePerformanceTiming): boolean {
+  const upstreamFormat = timing.endpoint_api_format ?? timing.api_format
+  if (isOpenAIResponsesFormat(upstreamFormat)) return false
   return timing.upstream_is_stream ?? timing.is_stream ?? false
 }
 
@@ -47,7 +56,6 @@ export function calculateOutputRate(timing: UsagePerformanceTiming): number | nu
   const outputRateDurationMs = getOutputRateDurationMs(timing)
 
   if (outputTokens == null || outputTokens <= 0 || outputRateDurationMs == null) return null
-
 
   const outputRateSeconds = outputRateDurationMs / 1000
   if (outputRateSeconds <= 0) return null
