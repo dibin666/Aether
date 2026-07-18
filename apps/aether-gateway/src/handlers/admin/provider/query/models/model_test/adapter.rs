@@ -14,12 +14,10 @@ pub(super) enum ProviderQueryTestAdapter {
     Grok,
     Kiro,
     OpenAiImage,
+    OpenAiTranscription,
     Antigravity,
 }
 pub(super) fn provider_query_unsupported_test_api_format_message(api_format: &str) -> String {
-    if crate::ai_serving::normalize_api_format_alias(api_format) == "openai:transcription" {
-        return "Rust local provider-query model test does not support openai:transcription because it requires multipart audio file input".to_string();
-    }
     let api_format = api_format.trim();
     if api_format.is_empty() {
         "Rust local provider-query model test does not support an empty endpoint format".to_string()
@@ -77,6 +75,7 @@ pub(super) fn provider_query_standard_test_unsupported_reason(
         "openai:responses"
         | "openai:responses:compact"
         | "openai:search"
+        | "openai:transcription"
         | "claude:messages"
         | "openai:embedding"
         | "jina:embedding"
@@ -257,6 +256,9 @@ pub(super) fn provider_query_test_adapter_for_provider_api_format(
     if normalized_api_format == "openai:image" {
         return Some(ProviderQueryTestAdapter::OpenAiImage);
     }
+    if normalized_api_format == "openai:transcription" {
+        return Some(ProviderQueryTestAdapter::OpenAiTranscription);
+    }
     if provider_type.trim().eq_ignore_ascii_case("antigravity")
         && normalized_api_format == "gemini:generate_content"
     {
@@ -304,6 +306,7 @@ pub(super) fn provider_query_model_test_endpoint_priority(
         }
         ProviderQueryTestAdapter::Antigravity => Some(1),
         ProviderQueryTestAdapter::OpenAiImage => Some(2),
+        ProviderQueryTestAdapter::OpenAiTranscription => Some(1),
         ProviderQueryTestAdapter::Standard => {
             if matches!(
                 normalized_api_format.as_str(),
@@ -355,6 +358,14 @@ pub(super) fn provider_query_transport_supports_model_test_execution(
                 "openai:image",
             )
             .is_none()
+        }
+        Some(ProviderQueryTestAdapter::OpenAiTranscription) => {
+            !crate::provider_transport::body_rules_have_enabled_rules(
+                transport.endpoint.body_rules.as_ref(),
+            ) && crate::provider_transport::policy::supports_local_standard_transport_with_network(
+                transport,
+                api_format,
+            )
         }
         Some(ProviderQueryTestAdapter::Antigravity) => {
             provider_query_antigravity_test_unsupported_reason(

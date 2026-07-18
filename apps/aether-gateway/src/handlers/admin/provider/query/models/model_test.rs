@@ -2926,6 +2926,253 @@ async fn provider_query_execute_grok_test_candidate(
     })
 }
 
+const PROVIDER_QUERY_TRANSCRIPTION_TEST_SAMPLE_RATE: u32 = 16_000;
+const PROVIDER_QUERY_TRANSCRIPTION_TEST_DURATION_SECONDS: u32 = 5;
+const PROVIDER_QUERY_TRANSCRIPTION_TEST_FILENAME: &str = "aether-model-test-5s.wav";
+
+fn provider_query_build_transcription_test_wav() -> Vec<u8> {
+    const CHANNELS: u16 = 1;
+    const BITS_PER_SAMPLE: u16 = 16;
+    let data_len = PROVIDER_QUERY_TRANSCRIPTION_TEST_SAMPLE_RATE
+        * PROVIDER_QUERY_TRANSCRIPTION_TEST_DURATION_SECONDS
+        * u32::from(CHANNELS)
+        * u32::from(BITS_PER_SAMPLE / 8);
+    let mut wav = Vec::with_capacity(44 + data_len as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16_u32.to_le_bytes());
+    wav.extend_from_slice(&1_u16.to_le_bytes());
+    wav.extend_from_slice(&CHANNELS.to_le_bytes());
+    wav.extend_from_slice(&PROVIDER_QUERY_TRANSCRIPTION_TEST_SAMPLE_RATE.to_le_bytes());
+    let byte_rate = PROVIDER_QUERY_TRANSCRIPTION_TEST_SAMPLE_RATE
+        * u32::from(CHANNELS)
+        * u32::from(BITS_PER_SAMPLE / 8);
+    wav.extend_from_slice(&byte_rate.to_le_bytes());
+    let block_align = CHANNELS * (BITS_PER_SAMPLE / 8);
+    wav.extend_from_slice(&block_align.to_le_bytes());
+    wav.extend_from_slice(&BITS_PER_SAMPLE.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    wav.resize(44 + data_len as usize, 0);
+    wav
+}
+
+fn provider_query_build_transcription_test_multipart(
+    model: &str,
+    boundary: &str,
+) -> (Vec<u8>, Value) {
+    let wav = provider_query_build_transcription_test_wav();
+    let mut body = Vec::with_capacity(wav.len() + model.len() + 320);
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\n{model}\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{PROVIDER_QUERY_TRANSCRIPTION_TEST_FILENAME}\"\r\nContent-Type: audio/wav\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(&wav);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    let preview = json!({
+        "model": model,
+        "file": {
+            "filename": PROVIDER_QUERY_TRANSCRIPTION_TEST_FILENAME,
+            "content_type": "audio/wav",
+            "duration_seconds": PROVIDER_QUERY_TRANSCRIPTION_TEST_DURATION_SECONDS,
+            "sample_rate_hz": PROVIDER_QUERY_TRANSCRIPTION_TEST_SAMPLE_RATE,
+            "size_bytes": wav.len(),
+        }
+    });
+    (body, preview)
+}
+
+async fn provider_query_execute_openai_transcription_test_candidate(
+    state: &AdminAppState<'_>,
+    provider: &StoredProviderCatalogProvider,
+    candidate: &ProviderQueryTestCandidate,
+    payload: &Value,
+    route_path: &str,
+    trace_id: &str,
+) -> Result<ProviderQueryExecutionOutcome, GatewayError> {
+    let Some(transport) = state
+        .read_provider_transport_snapshot(&provider.id, &candidate.endpoint.id, &candidate.key.id)
+        .await?
+    else {
+        return Ok(provider_query_skipped_execution_outcome(
+            Value::Null,
+            "Provider transport snapshot is unavailable",
+        ));
+    };
+    let provider_api_format = candidate.endpoint.api_format.as_str();
+    let request_body = json!({ "model": candidate.effective_model });
+    if !provider_query_transport_supports_model_test_execution(
+        state,
+        &transport,
+        provider_api_format,
+    ) {
+        return Ok(provider_query_skipped_execution_outcome(
+            request_body,
+            provider_query_standard_test_unsupported_reason(&transport, provider_api_format),
+        ));
+    }
+
+    let behavior = crate::provider_transport::classify_same_format_provider_request_behavior(
+        &transport,
+        crate::provider_transport::SameFormatProviderRequestBehaviorParams {
+            require_streaming: false,
+            provider_api_format,
+            report_kind: "openai_transcription_sync_success",
+        },
+    );
+    let direct_auth = crate::provider_transport::resolve_same_format_provider_direct_auth(
+        &behavior,
+        &transport,
+        crate::provider_transport::SameFormatProviderFamily::Standard,
+        provider_api_format,
+    );
+    let auth = if direct_auth.is_some() {
+        direct_auth
+    } else {
+        state.resolve_local_oauth_header_auth(&transport).await?
+    };
+    let Some((auth_header, auth_value)) = auth else {
+        return Ok(provider_query_skipped_execution_outcome(
+            request_body,
+            format!("Provider auth is unavailable for {provider_api_format}"),
+        ));
+    };
+
+    let boundary = format!("aether-model-test-{}", Uuid::new_v4().simple());
+    let content_type = format!("multipart/form-data; boundary={boundary}");
+    let (multipart_body, request_preview) =
+        provider_query_build_transcription_test_multipart(&candidate.effective_model, &boundary);
+    let incoming_request_headers = provider_query_extract_request_headers(payload);
+    let mut synthetic_request = http::Request::builder()
+        .uri(route_path)
+        .body(())
+        .map_err(|err| GatewayError::Internal(err.to_string()))?;
+    *synthetic_request.headers_mut() = incoming_request_headers;
+    let (parts, _) = synthetic_request.into_parts();
+
+    let request_url = crate::provider_transport::build_transport_request_url_for_request_body(
+        &transport,
+        crate::provider_transport::TransportRequestUrlParams {
+            provider_api_format,
+            mapped_model: Some(&candidate.effective_model),
+            upstream_is_stream: false,
+            request_query: parts.uri.query(),
+            kiro_api_region: None,
+        },
+        None,
+    );
+    let Some(request_url) = request_url else {
+        return Ok(provider_query_skipped_execution_outcome(
+            request_preview,
+            format!("Provider request URL is unavailable for {provider_api_format}"),
+        ));
+    };
+
+    let extra_headers = BTreeMap::new();
+    let Some(mut request_headers) = crate::provider_transport::build_same_format_provider_headers(
+        crate::provider_transport::SameFormatProviderHeadersInput {
+            headers: &parts.headers,
+            provider_request_body: &request_preview,
+            original_request_body: &request_preview,
+            content_type: Some(&content_type),
+            header_rules: transport.endpoint.header_rules.as_ref(),
+            behavior,
+            auth_header: Some(&auth_header),
+            auth_value: Some(&auth_value),
+            extra_headers: &extra_headers,
+            key_fingerprint: transport.key.fingerprint.as_ref(),
+            kiro_auth_config: None,
+            kiro_machine_id: None,
+        },
+    ) else {
+        return Ok(ProviderQueryExecutionOutcome {
+            status: "failed",
+            skip_reason: None,
+            error_message: Some("provider request headers build failed".to_string()),
+            status_code: None,
+            latency_ms: None,
+            request_url,
+            request_headers: BTreeMap::new(),
+            request_body: request_preview,
+            response_headers: BTreeMap::new(),
+            response_body: None,
+        });
+    };
+    crate::provider_transport::apply_local_auth_config_header_overrides(
+        &mut request_headers,
+        transport.key.decrypted_auth_config.as_deref(),
+    );
+    crate::provider_transport::ensure_upstream_auth_header(
+        &mut request_headers,
+        &auth_header,
+        &auth_value,
+    );
+
+    let plan = ExecutionPlan {
+        request_id: trace_id.to_string(),
+        candidate_id: Some(format!("provider-query-{}", candidate.key.id)),
+        provider_name: Some(provider.name.clone()),
+        provider_id: provider.id.clone(),
+        endpoint_id: candidate.endpoint.id.clone(),
+        key_id: candidate.key.id.clone(),
+        method: "POST".to_string(),
+        url: request_url.clone(),
+        headers: request_headers.clone(),
+        content_type: Some(content_type),
+        content_encoding: None,
+        body: RequestBody {
+            json_body: None,
+            body_bytes_b64: Some(base64::engine::general_purpose::STANDARD.encode(multipart_body)),
+            body_ref: None,
+        },
+        stream: false,
+        client_api_format: "openai:transcription".to_string(),
+        provider_api_format: candidate.endpoint.api_format.clone(),
+        model_name: Some(candidate.effective_model.clone()),
+        proxy: state
+            .resolve_transport_proxy_snapshot_with_tunnel_affinity(&transport)
+            .await,
+        transport_profile: state.resolve_transport_profile(&transport),
+        timeouts: state.resolve_transport_execution_timeouts(&transport),
+    };
+    let result = state
+        .execute_execution_runtime_sync_plan(Some(trace_id), &plan)
+        .await?;
+    let response_body = provider_query_execution_json_body(&result);
+    let missing_success_body = result.status_code < 400 && response_body.is_none();
+    let did_fail = result.status_code >= 400 || missing_success_body;
+    let error_message = did_fail.then(|| {
+        provider_query_extract_error_message(&result).unwrap_or_else(|| {
+            format!(
+                "Provider returned HTTP {} without a model-test response body",
+                result.status_code
+            )
+        })
+    });
+
+    Ok(ProviderQueryExecutionOutcome {
+        status: if did_fail { "failed" } else { "success" },
+        skip_reason: None,
+        error_message,
+        status_code: Some(result.status_code),
+        latency_ms: result.telemetry.as_ref().and_then(|value| value.elapsed_ms),
+        request_url,
+        request_headers,
+        request_body: request_preview,
+        response_headers: result.headers,
+        response_body,
+    })
+}
+
 async fn provider_query_execute_standard_test_candidate(
     state: &AdminAppState<'_>,
     provider: &StoredProviderCatalogProvider,
@@ -3840,6 +4087,12 @@ async fn build_admin_provider_query_kiro_failover_response(
                         route_path,
                         &trace_id,
                         &requested_model,
+                    )
+                    .await
+                }
+                Some(ProviderQueryTestAdapter::OpenAiTranscription) => {
+                    provider_query_execute_openai_transcription_test_candidate(
+                        state, &provider, candidate, payload, route_path, &trace_id,
                     )
                     .await
                 }

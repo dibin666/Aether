@@ -74,6 +74,25 @@ describe('buildDefaultModelTestRequestBody', () => {
     expect(body.input).toBeUndefined()
   })
 
+  it('uses the built-in five-second WAV for OpenAI transcription tests', () => {
+    const body = JSON.parse(buildDefaultModelTestRequestBody(
+      'whisper-large-v3-turbo',
+      'openai:transcription',
+    ))
+
+    expect(body).toEqual({
+      model: 'whisper-large-v3-turbo',
+      file: {
+        filename: 'aether-model-test-5s.wav',
+        content_type: 'audio/wav',
+        duration_seconds: 5,
+        sample_rate_hz: 16000,
+      },
+    })
+    expect(body.messages).toBeUndefined()
+    expect(body.stream).toBeUndefined()
+  })
+
   it('uses image prompt payloads for OpenAI image test requests', () => {
     const body = JSON.parse(buildDefaultModelTestRequestBody('gpt-image-2', 'openai:image'))
 

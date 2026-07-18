@@ -736,6 +736,29 @@ fn provider_query_standard_test_rejects_gemini_success_without_visible_output() 
 }
 
 #[test]
+fn provider_query_transcription_test_builds_five_second_wav_multipart() {
+    let wav = provider_query_build_transcription_test_wav();
+    assert_eq!(wav.len(), 44 + 16_000 * 5 * 2);
+    assert_eq!(&wav[0..4], b"RIFF");
+    assert_eq!(&wav[8..12], b"WAVE");
+    assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), 16_000);
+    assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), 160_000);
+
+    let boundary = "model-test-boundary";
+    let (body, preview) =
+        provider_query_build_transcription_test_multipart("whisper-test", boundary);
+    let metadata = crate::ai_serving::parse_openai_transcription_request(
+        Some(&format!("multipart/form-data; boundary={boundary}")),
+        &body,
+    )
+    .expect("generated transcription multipart should be valid");
+    assert_eq!(metadata.requested_model, "whisper-test");
+    assert!(!metadata.stream);
+    assert_eq!(preview["file"]["duration_seconds"], 5);
+    assert_eq!(preview["file"]["size_bytes"], wav.len());
+}
+
+#[test]
 fn provider_query_test_adapter_routes_fixed_provider_endpoint_types() {
     assert_eq!(
         provider_query_test_adapter_for_provider_api_format("custom", "openai:chat"),
@@ -820,11 +843,7 @@ fn provider_query_test_adapter_routes_fixed_provider_endpoint_types() {
     );
     assert_eq!(
         provider_query_test_adapter_for_provider_api_format("custom", "openai:transcription"),
-        None
-    );
-    assert_eq!(
-        provider_query_unsupported_test_api_format_message("openai:transcription"),
-        "Rust local provider-query model test does not support openai:transcription because it requires multipart audio file input"
+        Some(ProviderQueryTestAdapter::OpenAiTranscription)
     );
     assert_eq!(
         provider_query_test_adapter_for_provider_api_format("custom", "gemini:video"),

@@ -200,6 +200,17 @@ export function buildDefaultModelTestRequestBody(
     }, null, 2)
   }
 
+  if (normalizedApiFormat === 'openai:transcription') {
+    return JSON.stringify({
+      model: modelName,
+      file: {
+        filename: 'aether-model-test-5s.wav',
+        content_type: 'audio/wav',
+        duration_seconds: 5,
+        sample_rate_hz: 16000,
+      },
+    }, null, 2)
+  }
   if (normalizedApiFormat === 'openai:image') {
     return JSON.stringify({
       model: modelName,

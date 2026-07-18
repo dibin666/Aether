@@ -109,25 +109,38 @@ fn apply_openai_transcription_duration_usage(
     response: &serde_json::Value,
     usage: &mut StandardizedUsage,
 ) {
-    let Some(raw_usage) = resolve_usage_value(response, "openai") else {
-        return;
-    };
-    if raw_usage.get("type").and_then(serde_json::Value::as_str) != Some("duration") {
-        return;
-    }
-    let Some(seconds) = raw_usage
-        .get("seconds")
+    let raw_usage = resolve_usage_value(response, "openai");
+    let duration_seconds = raw_usage
+        .filter(|raw_usage| {
+            raw_usage.get("type").and_then(serde_json::Value::as_str) == Some("duration")
+        })
+        .and_then(|raw_usage| raw_usage.get("seconds"))
         .and_then(serde_json::Value::as_f64)
-        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
-    else {
-        return;
-    };
+        .or_else(|| {
+            response
+                .get("transcription_info")
+                .and_then(|value| value.get("duration"))
+                .and_then(serde_json::Value::as_f64)
+        })
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0);
+    if let Some(seconds) = duration_seconds {
+        usage.request_count = 1;
+        usage.dimensions.insert(
+            "audio_duration_seconds".to_string(),
+            serde_json::json!(seconds),
+        );
+    }
 
-    usage.request_count = 1;
-    usage.dimensions.insert(
-        "audio_duration_seconds".to_string(),
-        serde_json::json!(seconds),
-    );
+    if usage.output_tokens <= 0 {
+        let word_count = numeric_i64(response.get("word_count")).filter(|value| *value > 0);
+        if let Some(word_count) = word_count {
+            usage.output_tokens = word_count;
+            usage.dimensions.insert(
+                "transcription_output_count_source".to_string(),
+                serde_json::json!("word_count"),
+            );
+        }
+    }
 }
 
 fn apply_openai_image_response_dimensions(
@@ -844,6 +857,37 @@ mod tests {
         assert_eq!(
             usage.dimensions.get("audio_duration_seconds"),
             Some(&serde_json::json!(1.25))
+        );
+    }
+
+    #[test]
+    fn maps_openai_transcription_verbose_usage_fallbacks() {
+        let usage = map_usage_from_response(
+            &serde_json::json!({
+                "text": "hello world",
+                "transcription_info": {
+                    "duration": 59.976,
+                    "language": "en"
+                },
+                "usage": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0
+                },
+                "word_count": 25
+            }),
+            "openai:transcription",
+        );
+
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 25);
+        assert_eq!(
+            usage.dimensions.get("audio_duration_seconds"),
+            Some(&serde_json::json!(59.976))
+        );
+        assert_eq!(
+            usage.dimensions.get("transcription_output_count_source"),
+            Some(&serde_json::json!("word_count"))
         );
     }
 

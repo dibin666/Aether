@@ -89,6 +89,99 @@ const decodeHtmlEntities = (input: string): string => {
   return decoded
 }
 
+type TranscriptionRequestSummary = {
+  model?: string
+  fileName: string
+  mimeType?: string
+  fileSize?: number
+  durationSeconds?: number
+}
+
+const readLe16 = (binary: string, offset: number): number =>
+  binary.charCodeAt(offset) | (binary.charCodeAt(offset + 1) << 8)
+
+const readLe32 = (binary: string, offset: number): number =>
+  (binary.charCodeAt(offset)
+    | (binary.charCodeAt(offset + 1) << 8)
+    | (binary.charCodeAt(offset + 2) << 16)
+    | (binary.charCodeAt(offset + 3) << 24)) >>> 0
+
+const wavDurationSeconds = (binary: string, offset: number, size: number): number | undefined => {
+  if (size < 44 || binary.slice(offset, offset + 4) !== 'RIFF' || binary.slice(offset + 8, offset + 12) !== 'WAVE') {
+    return undefined
+  }
+  const channels = readLe16(binary, offset + 22)
+  const sampleRate = readLe32(binary, offset + 24)
+  const bitsPerSample = readLe16(binary, offset + 34)
+  const dataSize = readLe32(binary, offset + 40)
+  const bytesPerSecond = sampleRate * channels * (bitsPerSample / 8)
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return undefined
+  return dataSize / bytesPerSecond
+}
+
+const parseTranscriptionRequest = (body: RawObject): TranscriptionRequestSummary | null => {
+  const previewFile = body.file
+  if (previewFile && typeof previewFile === 'object' && !Array.isArray(previewFile)) {
+    const file = previewFile as RawObject
+    if (typeof file.filename === 'string' && file.filename.trim()) {
+      return {
+        model: typeof body.model === 'string' ? body.model : undefined,
+        fileName: file.filename,
+        mimeType: typeof file.content_type === 'string' ? file.content_type : undefined,
+        fileSize: typeof file.size_bytes === 'number' ? file.size_bytes : undefined,
+        durationSeconds: typeof file.duration_seconds === 'number' ? file.duration_seconds : undefined,
+      }
+    }
+  }
+
+  if (typeof body.body_bytes_b64 !== 'string' || !body.body_bytes_b64.trim()) return null
+  try {
+    const binary = globalThis.atob(body.body_bytes_b64)
+    const modelMatch = binary.match(/Content-Disposition: form-data; name="model"\r\n\r\n([^\r\n]*)/i)
+    const fileHeader = /Content-Disposition: form-data; name="file"; filename="([^"]+)"\r\n(?:Content-Type: ([^\r\n]+)\r\n)?\r\n/i.exec(binary)
+    if (!fileHeader || fileHeader.index < 0) return null
+    const fileOffset = fileHeader.index + fileHeader[0].length
+    const fileEnd = binary.indexOf('\r\n--', fileOffset)
+    if (fileEnd < fileOffset) return null
+    const fileSize = fileEnd - fileOffset
+    return {
+      model: modelMatch?.[1]?.trim() || undefined,
+      fileName: fileHeader[1],
+      mimeType: fileHeader[2]?.trim(),
+      fileSize,
+      durationSeconds: wavDurationSeconds(binary, fileOffset, fileSize),
+    }
+  } catch {
+    return null
+  }
+}
+
+const transcriptionRequestText = (summary: TranscriptionRequestSummary): string => {
+  const details = [`音频文件：${summary.fileName}`]
+  if (summary.mimeType) details.push(`类型：${summary.mimeType}`)
+  if (typeof summary.fileSize === 'number') details.push(`大小：${summary.fileSize.toLocaleString()} bytes`)
+  if (typeof summary.durationSeconds === 'number') details.push(`时长：${summary.durationSeconds.toFixed(2)} 秒`)
+  return details.join('\n')
+}
+
+const isTranscriptionResponse = (body: RawObject): boolean =>
+  typeof body.text === 'string' && (Array.isArray(body.segments) || body.transcription_info !== undefined)
+
+const transcriptionResponseBadges = (body: RawObject): BadgeRenderBlock[] => {
+  const badges: BadgeRenderBlock[] = [createBadgeBlock('语音转录', 'outline')]
+  const info = body.transcription_info as RawObject | undefined
+  if (typeof info?.language === 'string' && info.language) {
+    badges.push(createBadgeBlock(info.language, 'secondary'))
+  }
+  if (typeof info?.duration === 'number') {
+    badges.push(createBadgeBlock(`${info.duration.toFixed(2)}s`, 'secondary'))
+  }
+  if (typeof body.word_count === 'number') {
+    badges.push(createBadgeBlock(`${body.word_count} words`, 'secondary'))
+  }
+  return badges
+}
+
 /**
  * OpenAI API 格式解析器
  */
@@ -180,6 +273,16 @@ export class OpenAIParser implements ApiFormatParser {
     }
 
     const body = requestBody as RawObject
+
+    const transcription = parseTranscriptionRequest(body)
+    if (transcription) {
+      return {
+        messages: [createMessage('user', [createTextBlock(transcriptionRequestText(transcription))])],
+        isStream: false,
+        apiFormat: 'openai',
+        model: transcription.model,
+      }
+    }
 
     // 检测是否为 CLI 格式
     const isCliFormat = body.input !== undefined || body.instructions !== undefined
@@ -342,6 +445,14 @@ export class OpenAIParser implements ApiFormatParser {
     }
 
     const body = responseBody as RawObject
+
+    if (isTranscriptionResponse(body)) {
+      return {
+        messages: [createMessage('assistant', [createTextBlock(body.text as string)])],
+        isStream: false,
+        apiFormat: 'openai',
+      }
+    }
 
     // 检测是否为 CLI 格式
     const isCliFormat = this.isCliResponseEvent(body) ||
@@ -886,6 +997,18 @@ export class OpenAIParser implements ApiFormatParser {
 
     const body = requestBody as RawObject
 
+    const transcription = parseTranscriptionRequest(body)
+    if (transcription) {
+      const badges = [createBadgeBlock('音频', 'outline')]
+      if (transcription.model) badges.push(createBadgeBlock(transcription.model, 'secondary'))
+      return {
+        blocks: [createMessageBlock('user', [
+          createTextRenderBlock(transcriptionRequestText(transcription)),
+        ], { roleLabel: 'Audio', badges })],
+        isStream: false,
+      }
+    }
+
     // 检测是否为 CLI 格式
     const isCliFormat = body.input !== undefined || body.instructions !== undefined
 
@@ -1046,6 +1169,18 @@ export class OpenAIParser implements ApiFormatParser {
     }
 
     const body = responseBody as RawObject
+
+    if (isTranscriptionResponse(body)) {
+      return {
+        blocks: [createMessageBlock('assistant', [
+          createTextRenderBlock(body.text as string),
+        ], {
+          roleLabel: 'Transcript',
+          badges: transcriptionResponseBadges(body),
+        })],
+        isStream: false,
+      }
+    }
 
     // 检测是否为 CLI 格式
     const isCliFormat = this.isCliResponseEvent(body) ||
