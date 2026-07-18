@@ -113,21 +113,7 @@
                   class="px-2 font-semibold text-center whitespace-nowrap"
                   :style="{ width: desktopColumnWidths.stats }"
                 >
-                  <div class="flex items-center justify-center gap-1.5">
-                    <button
-                      v-if="showCodexStatsModeToggle"
-                      type="button"
-                      class="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                      :title="poolStatsMode === 'current_cycle' ? '切换为总计统计' : '切换为周期统计'"
-                      :aria-label="poolStatsMode === 'current_cycle' ? '切换为总计统计' : '切换为周期统计'"
-                      :aria-pressed="poolStatsMode === 'current_cycle'"
-                      data-testid="pool-stats-mode-control"
-                      @click.stop="togglePoolStatsMode"
-                    >
-                      <Repeat2 class="h-3.5 w-3.5" />
-                    </button>
-                    <span>统计</span>
-                  </div>
+                  <span>统计</span>
                 </TableHead>
                 <SortableTableHead
                   class="font-semibold text-center whitespace-nowrap"
@@ -317,7 +303,7 @@
                 <TableCell class="py-3 px-2 align-middle">
                   <PoolKeyStatsPanel
                     :cycle="isPoolKeyCycleStatsDisplay(key)"
-                    :cycle-rows="getPoolKeyCycleStatsRows(key)"
+                    :cycle-groups="getPoolKeyCycleStatsGroups(key)"
                     :account-metrics="getPoolKeyAccountStatsMetrics(key)"
                   />
                 </TableCell>
@@ -595,7 +581,7 @@
                 <div class="space-y-1 text-center">
                   <PoolKeyStatsPanel
                     :cycle="isPoolKeyCycleStatsDisplay(key)"
-                    :cycle-rows="getPoolKeyCycleStatsRows(key)"
+                    :cycle-groups="getPoolKeyCycleStatsGroups(key)"
                     :account-metrics="getPoolKeyAccountStatsMetrics(key)"
                     variant="mobile"
                   />
@@ -1204,7 +1190,6 @@ import {
   Copy,
   Shield,
   Globe,
-  Repeat2,
   RotateCcw,
   SquarePen,
   Trash2,
@@ -1296,7 +1281,6 @@ import {
   resolvePoolManagementPageAfterLoad,
   type PoolManagementSortBy,
   type PoolManagementSortOrder,
-  type PoolManagementStatsMode,
   type PoolManagementViewState,
   writePoolManagementViewState,
 } from '@/features/pool/utils/poolManagementState'
@@ -1306,7 +1290,9 @@ import {
   type PoolStatsDisplay,
   type PoolStatsMetric,
 } from '@/features/pool/utils/poolStatsDisplay'
+import { getCodexQuotaWindowPresentation } from '@/utils/codexQuotaWindow'
 import { getOAuthOrgBadge } from '@/utils/oauthIdentity'
+import { formatOAuthPlanType, getOAuthPlanTypeClass } from '@/utils/oauthPlanType'
 import { getOAuthRefreshFeedback } from '@/utils/oauthRefreshFeedback'
 import {
   canEditOAuthCredential,
@@ -1711,7 +1697,6 @@ const restoredViewState = readPoolManagementViewState(
     pageSize: getQueryValue('pageSize'),
     sortBy: getQueryValue('sortBy'),
     sortOrder: getQueryValue('sortOrder'),
-    statsMode: getQueryValue('statsMode'),
   },
   poolManagementViewStorage,
 )
@@ -2080,8 +2065,6 @@ const selectedProviderType = computed(() => {
   return String(fromOverview || '').trim().toLowerCase()
 })
 
-const showCodexStatsModeToggle = computed(() => selectedProviderType.value === 'codex')
-
 const selectedProviderStatusText = computed(() => {
   if (!selectedProviderId.value) return ''
   const providerActive = selectedProviderData.value?.is_active
@@ -2164,9 +2147,9 @@ const showAccountQuotaColumn = computed(() => {
 const desktopColumnWidths = computed(() => {
   if (showAccountQuotaColumn.value) {
     return {
-      name: '21%',
+      name: '19%',
       quota: '18%',
-      stats: '13%',
+      stats: '15%',
       imported: '10%',
       lastUsed: '8%',
       score: '9%',
@@ -2266,7 +2249,6 @@ const currentPage = ref(restoredViewState.page)
 const pageSize = ref(restoredViewState.pageSize)
 const sortBy = ref<PoolManagementSortBy | null>(restoredViewState.sortBy)
 const sortOrder = ref<PoolManagementSortOrder>(restoredViewState.sortOrder)
-const poolStatsMode = ref<PoolManagementStatsMode>(restoredViewState.statsMode)
 const hasPoolKeyFilters = computed(() => searchQuery.value.trim().length > 0 || statusFilter.value !== 'all')
 
 function resolvePoolKeyQuickSelectors(status: PoolManagementViewState['status']): string[] {
@@ -2304,12 +2286,6 @@ const keyPermissionsDialogOpen = ref(false)
 const keyFormDialogOpen = ref(false)
 const oauthKeyEditDialogOpen = ref(false)
 const editingKeyDetail = ref<PoolKeyDetail | null>(null)
-
-function togglePoolStatsMode() {
-  poolStatsMode.value = poolStatsMode.value === 'current_cycle'
-    ? 'account_total'
-    : 'current_cycle'
-}
 
 function clearPoolKeyFilters() {
   if (!hasPoolKeyFilters.value) return
@@ -2376,18 +2352,6 @@ watch(
 )
 
 watch(
-  () => readPoolManagementViewState(
-    { statsMode: getQueryValue('statsMode') },
-    poolManagementViewStorage,
-  ).statsMode,
-  (value) => {
-    if (poolStatsMode.value === value) return
-    poolStatsMode.value = value
-  },
-  { immediate: true },
-)
-
-watch(
   () => getQueryValue('providerId'),
   (value) => {
     if (overviewLoading.value) return
@@ -2403,8 +2367,8 @@ watch(
 )
 
 watch(
-  [selectedProviderId, searchQuery, statusFilter, currentPage, pageSize, sortBy, sortOrder, poolStatsMode],
-  ([providerId, search, status, page, pageSizeValue, sortByValue, sortOrderValue, statsMode]) => {
+  [selectedProviderId, searchQuery, statusFilter, currentPage, pageSize, sortBy, sortOrder],
+  ([providerId, search, status, page, pageSizeValue, sortByValue, sortOrderValue]) => {
     const nextState: PoolManagementViewState = {
       providerId,
       search,
@@ -2413,7 +2377,7 @@ watch(
       pageSize: pageSizeValue,
       sortBy: sortByValue,
       sortOrder: sortOrderValue,
-      statsMode: statsMode as PoolManagementStatsMode,
+      statsMode: 'current_cycle',
     }
     patchQuery(buildPoolManagementQueryPatch(nextState))
     writePoolManagementViewState(nextState, poolManagementViewStorage)
@@ -2423,6 +2387,7 @@ watch(
 interface QuotaProgressItem {
   label: string
   remainingPercent: number
+  sortOrder?: number
   detail?: string
   resetAtSeconds?: number | null
   resetSeconds?: number | null
@@ -2437,20 +2402,6 @@ interface QuotaProgressDisplayItem {
   meterText: string
   barClass: string
   meterClass: string
-}
-
-interface PoolCodexCycleStatsRow {
-  key: PoolStatsMetric['key']
-  label: string
-  fiveH: PoolStatsMetric
-  weekly: PoolStatsMetric
-}
-
-const CODEX_CYCLE_STAT_KEYS: Array<PoolStatsMetric['key']> = ['request_count', 'total_tokens', 'total_cost_usd']
-const CODEX_CYCLE_STAT_LABELS: Record<PoolStatsMetric['key'], string> = {
-  request_count: '请求',
-  total_tokens: 'Token',
-  total_cost_usd: '费用',
 }
 
 type PoolKeyUiState = {
@@ -2531,7 +2482,7 @@ const keyUiStateMap = computed<Record<string, PoolKeyUiState>>(() => {
         : '',
       importedAtRelative: formatPoolKeyImportedAt(key),
       lastUsedRelative: key.last_used_at ? formatRelativeTime(key.last_used_at) : '-',
-      statsDisplay: buildPoolStatsDisplay(key, selectedProviderType.value, poolStatsMode.value),
+      statsDisplay: buildPoolStatsDisplay(key, selectedProviderType.value, 'current_cycle'),
       mobileTagItems: getMobileTagItems(key),
       mobileActionIds: splitPoolMobileActions({
         canDownloadOrCopy: true,
@@ -2548,7 +2499,7 @@ const keyUiStateMap = computed<Record<string, PoolKeyUiState>>(() => {
 
 function getPoolKeyStatsDisplay(key: PoolKeyDetail): PoolStatsDisplay {
   return keyUiStateMap.value[key.key_id]?.statsDisplay
-    ?? buildPoolStatsDisplay(key, selectedProviderType.value, poolStatsMode.value)
+    ?? buildPoolStatsDisplay(key, selectedProviderType.value, 'current_cycle')
 }
 
 function isPoolKeyCycleStatsDisplay(key: PoolKeyDetail): boolean {
@@ -2558,39 +2509,6 @@ function isPoolKeyCycleStatsDisplay(key: PoolKeyDetail): boolean {
 function getPoolKeyCycleStatsGroups(key: PoolKeyDetail): PoolCodexCycleStatsGroup[] {
   const display = getPoolKeyStatsDisplay(key)
   return display.kind === 'codex_cycle' ? display.groups : []
-}
-
-function createMissingCycleMetric(key: PoolStatsMetric['key']): PoolStatsMetric {
-  return {
-    key,
-    label: CODEX_CYCLE_STAT_LABELS[key],
-    value: '—',
-    missing: true,
-  }
-}
-
-function findCycleMetric(
-  group: PoolCodexCycleStatsGroup | undefined,
-  key: PoolStatsMetric['key'],
-): PoolStatsMetric {
-  return group?.metrics.find(metric => metric.key === key) ?? createMissingCycleMetric(key)
-}
-
-function getPoolKeyCycleStatsRows(key: PoolKeyDetail): PoolCodexCycleStatsRow[] {
-  const groups = getPoolKeyCycleStatsGroups(key)
-  const fiveHGroup = groups.find(group => group.code === '5h')
-  const weeklyGroup = groups.find(group => group.code === 'weekly')
-
-  return CODEX_CYCLE_STAT_KEYS.map((metricKey) => {
-    const fiveH = findCycleMetric(fiveHGroup, metricKey)
-    const weekly = findCycleMetric(weeklyGroup, metricKey)
-    return {
-      key: metricKey,
-      label: CODEX_CYCLE_STAT_LABELS[metricKey],
-      fiveH,
-      weekly,
-    }
-  })
 }
 
 function getPoolKeyAccountStatsMetrics(key: PoolKeyDetail): PoolStatsMetric[] {
@@ -3723,42 +3641,6 @@ function getMobileTagClass(item: PoolMobileTagItem): string {
   return 'border-border/60 bg-background/80 text-foreground/80'
 }
 
-function formatOAuthPlanType(planType: string): string {
-  const labelMap: Record<string, string> = {
-    plus: 'Plus',
-    pro: 'Pro',
-    free: 'Free',
-    paid: 'Paid',
-    team: 'Team',
-    enterprise: 'Enterprise',
-    ultra: 'Ultra',
-    'pro+': 'Pro+',
-    power: 'Power',
-    basic: 'Basic',
-    super: 'Super',
-    heavy: 'Heavy',
-  }
-  return labelMap[planType.toLowerCase()] || planType
-}
-
-function getOAuthPlanTypeClass(planType: string): string {
-  const classes: Record<string, string> = {
-    plus: 'border-green-500/50 text-green-600 dark:text-green-400',
-    pro: 'border-blue-500/50 text-blue-600 dark:text-blue-400',
-    free: 'border-primary/50 text-primary',
-    paid: 'border-blue-500/50 text-blue-600 dark:text-blue-400',
-    team: 'border-purple-500/50 text-purple-600 dark:text-purple-400',
-    enterprise: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
-    ultra: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
-    'pro+': 'border-purple-500/50 text-purple-600 dark:text-purple-400',
-    power: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
-    basic: 'border-primary/50 text-primary',
-    super: 'border-green-500/50 text-green-600 dark:text-green-400',
-    heavy: 'border-amber-500/50 text-amber-600 dark:text-amber-400',
-  }
-  return classes[planType.toLowerCase()] || ''
-}
-
 function getVisibleOAuthState(key: PoolKeyDetail) {
   return getOAuthStatusDisplayWithFallback(key, countdownTick.value)
 }
@@ -3846,6 +3728,7 @@ function getQuotaProgressLabel(label: string): string {
   if (label === '日') return '日'
   if (label === '5H') return '5H'
   if (label === '周') return '周'
+  if (label === '月') return '月'
   if (label === 'Spark5H') return 'Spark5H'
   if (label === 'Spark周') return 'Spark周'
   if (label === '最低') return '最低'
@@ -3854,7 +3737,7 @@ function getQuotaProgressLabel(label: string): string {
 }
 
 function getQuotaProgressCountdown(item: QuotaProgressItem) {
-  const staticResetLabels = ['日', '5H', '周', 'Spark5H', 'Spark周', 'Auto', 'Fast', 'Expert', 'Heavy', 'Grok 4.3', '生图']
+  const staticResetLabels = ['日', '5H', '周', '月', 'Spark5H', 'Spark周', 'Spark月', 'Auto', 'Fast', 'Expert', 'Heavy', 'Grok 4.3', '生图']
   if (!item.allowDynamicReset && !staticResetLabels.includes(item.label)) return null
   if (item.resetAtSeconds == null && item.resetSeconds == null) return null
   return getCodexResetCountdown(
@@ -3916,15 +3799,17 @@ function getQuotaLabelOrder(label: string): number {
   if (label === '日') return 5
   if (label === '5H') return 6
   if (label === '周') return 7
-  if (label === 'Spark5H') return 8
-  if (label === 'Spark周') return 9
-  if (label === 'Prompt') return 10
-  if (label === 'Flex') return 11
-  if (label === '剩余') return 12
-  if (label === '最低') return 13
-  if (label === '生图') return 14
-  if (label === '速率') return 15
-  if (label === '模型') return 16
+  if (label === '月') return 8
+  if (label === 'Spark5H') return 9
+  if (label === 'Spark周') return 10
+  if (label === 'Spark月') return 11
+  if (label === 'Prompt') return 12
+  if (label === 'Flex') return 13
+  if (label === '剩余') return 14
+  if (label === '最低') return 15
+  if (label === '生图') return 16
+  if (label === '速率') return 17
+  if (label === '模型') return 18
   return 20
 }
 
@@ -4092,27 +3977,24 @@ function buildQuotaProgressItemsFromSnapshot(key: PoolKeyDetail): QuotaProgressI
   const providerType = getQuotaSnapshotProviderType(key)
 
   if (providerType === 'codex') {
-    const items: QuotaProgressItem[] = []
     const quotaResetAtSeconds = getQuotaSnapshotResetAtSeconds(quota)
     const quotaResetSeconds = getQuotaSnapshotResetSeconds(quota)
-    for (const [label, code] of [
-      ['5H', '5h'],
-      ['周', 'weekly'],
-      ['Spark5H', 'spark_5h'],
-      ['Spark周', 'spark_weekly'],
-    ] as const) {
-      const window = getQuotaSnapshotWindow(quota, code)
-      const remainingPercent = getQuotaWindowRemainingPercent(window)
-      if (remainingPercent == null) continue
-      items.push({
-        label,
-        remainingPercent,
-        resetAtSeconds: normalizeUnixSeconds(window?.reset_at ?? quotaResetAtSeconds ?? null),
-        resetSeconds: normalizeRemainingSeconds(window?.reset_seconds ?? quotaResetSeconds ?? null),
-        updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+    return (quota.windows ?? [])
+      .map((window): QuotaProgressItem | null => {
+        const presentation = getCodexQuotaWindowPresentation(window)
+        const remainingPercent = getQuotaWindowRemainingPercent(window)
+        if (!presentation || remainingPercent == null) return null
+        return {
+          label: presentation.label,
+          sortOrder: presentation.sortOrder,
+          remainingPercent,
+          resetAtSeconds: normalizeUnixSeconds(window.reset_at ?? quotaResetAtSeconds ?? null),
+          resetSeconds: normalizeRemainingSeconds(window.reset_seconds ?? quotaResetSeconds ?? null),
+          updatedAtSeconds: getQuotaSnapshotUpdatedAtSeconds(quota),
+          allowDynamicReset: true,
+        }
       })
-    }
-    return items
+      .filter((item): item is QuotaProgressItem => item != null)
   }
 
   if (providerType === 'kiro') {
@@ -4352,7 +4234,7 @@ function parseQuotaProgressItems(key: PoolKeyDetail): QuotaProgressItem[] {
   const snapshotItems = buildQuotaProgressItemsFromSnapshot(key)
   if (snapshotItems.length > 0) {
     return snapshotItems.sort((a, b) => {
-      const orderDiff = getQuotaLabelOrder(a.label) - getQuotaLabelOrder(b.label)
+      const orderDiff = (a.sortOrder ?? getQuotaLabelOrder(a.label)) - (b.sortOrder ?? getQuotaLabelOrder(b.label))
       if (orderDiff !== 0) return orderDiff
       return a.label.localeCompare(b.label, 'zh-Hans-CN')
     })

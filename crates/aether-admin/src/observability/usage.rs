@@ -1247,6 +1247,9 @@ fn admin_usage_active_request_json(
     if let Some(reasoning_effort) = item.provider_reasoning_effort() {
         value["reasoning_effort"] = json!(reasoning_effort);
     }
+    if let Some(requested_reasoning_effort) = item.requested_reasoning_effort() {
+        value["requested_reasoning_effort"] = json!(requested_reasoning_effort);
+    }
     if let Some(service_tier) = item.provider_service_tier() {
         value["service_tier"] = json!(service_tier);
     }
@@ -1287,54 +1290,108 @@ pub fn admin_usage_record_json(
     let client_is_stream = admin_usage_client_is_stream(item);
     let upstream_is_stream = admin_usage_upstream_is_stream(item);
 
-    let mut payload = json!({
-        "id": item.id,
-        "user_id": item.user_id,
-        "user_email": user_email,
-        "username": username,
-        "api_key": item.api_key_id.as_ref().map(|api_key_id| json!({
-            "id": api_key_id,
-            "name": api_key_name.clone(),
-            "display": api_key_name.clone().unwrap_or_else(|| api_key_id.clone()),
-        })),
-        "provider": item.provider_name,
-        "model": item.model,
-        "target_model": item.target_model,
-        "input_tokens": item.input_tokens,
-        "effective_input_tokens": admin_usage_effective_input_tokens(item),
-        "output_tokens": item.output_tokens,
-        "reasoning_tokens": admin_usage_reasoning_tokens(item),
-
-        "cache_creation_input_tokens": cache_creation_input_tokens,
-        "cache_creation_ephemeral_5m_input_tokens": item.cache_creation_ephemeral_5m_input_tokens,
-        "cache_creation_ephemeral_1h_input_tokens": item.cache_creation_ephemeral_1h_input_tokens,
-        "cache_read_input_tokens": item.cache_read_input_tokens,
-        "total_tokens": admin_usage_total_tokens(item),
-        "cost": round_to(item.total_cost_usd, 6),
-        "actual_cost": round_to(item.actual_total_cost_usd, 6),
-        "rate_multiplier": rate_multiplier,
-        "response_time_ms": item.response_time_ms,
-        "first_byte_time_ms": item.first_byte_time_ms,
-        "created_at": unix_secs_to_rfc3339(item.created_at_unix_ms),
-        "input_price_per_1m": input_price_per_1m,
-        "output_price_per_1m": output_price_per_1m,
-        "cache_creation_price_per_1m": cache_creation_price_per_1m,
-        "cache_read_price_per_1m": cache_read_price_per_1m,
-        "status_code": item.status_code,
-        "error_message": item.error_message,
-        "status": item.status,
-        "request_type": item.request_type,
-        "has_fallback": admin_usage_has_fallback(item),
-        "has_retry": false,
-        "has_rectified": false,
-        "is_free_tier": is_free_tier,
-        "api_format": item.api_format,
-        "endpoint_api_format": item.endpoint_api_format,
-        "has_format_conversion": item.has_format_conversion,
-        "api_key_name": api_key_name,
-        "provider_key_name": provider_key_name,
-        "model_version": Value::Null,
-    });
+    let mut payload = Value::Object(serde_json::Map::from_iter([
+        ("id".to_string(), json!(item.id)),
+        ("user_id".to_string(), json!(item.user_id)),
+        ("user_email".to_string(), json!(user_email)),
+        ("username".to_string(), json!(username)),
+        (
+            "api_key".to_string(),
+            json!(item.api_key_id.as_ref().map(|api_key_id| json!({
+                "id": api_key_id,
+                "name": api_key_name.clone(),
+                "display": api_key_name.clone().unwrap_or_else(|| api_key_id.clone()),
+            }))),
+        ),
+        ("provider".to_string(), json!(item.provider_name)),
+        ("model".to_string(), json!(item.model)),
+        ("target_model".to_string(), json!(item.target_model)),
+        ("input_tokens".to_string(), json!(item.input_tokens)),
+        (
+            "effective_input_tokens".to_string(),
+            json!(admin_usage_effective_input_tokens(item)),
+        ),
+        ("output_tokens".to_string(), json!(item.output_tokens)),
+        (
+            "reasoning_tokens".to_string(),
+            json!(admin_usage_reasoning_tokens(item)),
+        ),
+        (
+            "cache_creation_input_tokens".to_string(),
+            json!(cache_creation_input_tokens),
+        ),
+        (
+            "cache_creation_ephemeral_5m_input_tokens".to_string(),
+            json!(item.cache_creation_ephemeral_5m_input_tokens),
+        ),
+        (
+            "cache_creation_ephemeral_1h_input_tokens".to_string(),
+            json!(item.cache_creation_ephemeral_1h_input_tokens),
+        ),
+        (
+            "cache_read_input_tokens".to_string(),
+            json!(item.cache_read_input_tokens),
+        ),
+        (
+            "total_tokens".to_string(),
+            json!(admin_usage_total_tokens(item)),
+        ),
+        ("cost".to_string(), json!(round_to(item.total_cost_usd, 6))),
+        (
+            "actual_cost".to_string(),
+            json!(round_to(item.actual_total_cost_usd, 6)),
+        ),
+        ("rate_multiplier".to_string(), json!(rate_multiplier)),
+        ("response_time_ms".to_string(), json!(item.response_time_ms)),
+        (
+            "first_byte_time_ms".to_string(),
+            json!(item.first_byte_time_ms),
+        ),
+        (
+            "created_at".to_string(),
+            json!(unix_secs_to_rfc3339(item.created_at_unix_ms)),
+        ),
+        (
+            "updated_at".to_string(),
+            json!(unix_secs_to_rfc3339(item.updated_at_unix_secs)),
+        ),
+        ("input_price_per_1m".to_string(), json!(input_price_per_1m)),
+        (
+            "output_price_per_1m".to_string(),
+            json!(output_price_per_1m),
+        ),
+        (
+            "cache_creation_price_per_1m".to_string(),
+            json!(cache_creation_price_per_1m),
+        ),
+        (
+            "cache_read_price_per_1m".to_string(),
+            json!(cache_read_price_per_1m),
+        ),
+        ("status_code".to_string(), json!(item.status_code)),
+        ("error_message".to_string(), json!(item.error_message)),
+        ("status".to_string(), json!(item.status)),
+        ("request_type".to_string(), json!(item.request_type)),
+        (
+            "has_fallback".to_string(),
+            json!(admin_usage_has_fallback(item)),
+        ),
+        ("has_retry".to_string(), Value::Bool(false)),
+        ("has_rectified".to_string(), Value::Bool(false)),
+        ("is_free_tier".to_string(), json!(is_free_tier)),
+        ("api_format".to_string(), json!(item.api_format)),
+        (
+            "endpoint_api_format".to_string(),
+            json!(item.endpoint_api_format),
+        ),
+        (
+            "has_format_conversion".to_string(),
+            json!(item.has_format_conversion),
+        ),
+        ("api_key_name".to_string(), json!(api_key_name)),
+        ("provider_key_name".to_string(), json!(provider_key_name)),
+        ("model_version".to_string(), Value::Null),
+    ]));
     let object = payload
         .as_object_mut()
         .expect("admin usage record payload should be an object");
@@ -1371,6 +1428,12 @@ pub fn admin_usage_record_json(
     );
     if let Some(reasoning_effort) = item.provider_reasoning_effort() {
         object.insert("reasoning_effort".to_string(), json!(reasoning_effort));
+    }
+    if let Some(requested_reasoning_effort) = item.requested_reasoning_effort() {
+        object.insert(
+            "requested_reasoning_effort".to_string(),
+            json!(requested_reasoning_effort),
+        );
     }
     if let Some(service_tier) = item.provider_service_tier() {
         object.insert("service_tier".to_string(), json!(service_tier));
@@ -2741,10 +2804,13 @@ mod tests {
     }
 
     #[test]
-    fn admin_usage_record_includes_provider_reasoning_effort() {
+    fn admin_usage_record_includes_requested_and_provider_reasoning_efforts() {
         let item = StoredRequestUsageAudit {
+            request_body: Some(json!({
+                "reasoning": { "effort": "xhigh" }
+            })),
             provider_request_body: Some(json!({
-                "reasoning": { "effort": "xhigh" },
+                "reasoning": { "effort": "max" },
                 "service_tier": "priority"
             })),
             ..sample_usage("completed", Some(200), None)
@@ -2760,10 +2826,14 @@ mod tests {
         );
         let active = admin_usage_active_request_json(&item, None, None, None);
 
-        assert_eq!(record["reasoning_effort"], "xhigh");
-        assert_eq!(active["reasoning_effort"], "xhigh");
+        assert_eq!(record["requested_reasoning_effort"], "xhigh");
+        assert_eq!(active["requested_reasoning_effort"], "xhigh");
+        assert_eq!(record["reasoning_effort"], "max");
+        assert_eq!(active["reasoning_effort"], "max");
         assert_eq!(record["service_tier"], "priority");
         assert_eq!(active["service_tier"], "priority");
+        assert!(record["updated_at"].is_string());
+        assert_eq!(record["updated_at"], active["updated_at"]);
     }
 
     #[test]
@@ -3547,7 +3617,17 @@ mod tests {
                 "settlement_snapshot": {
                     "schema_version": "3.0",
                     "pricing_snapshot": {
-                        "pricing_source": "provider_override"
+                        "pricing_source": "provider_override",
+                        "tiered_pricing_source": "provider_override",
+                        "billing_processing_tier": "fast",
+                        "processing_tier_price_multiplier": 2.5,
+                        "tiered_pricing": {
+                            "tiers": [{
+                                "up_to": null,
+                                "input_price_per_1m": 7.5,
+                                "output_price_per_1m": 37.5
+                            }]
+                        }
                     }
                 },
                 "billing_snapshot": {
@@ -3587,6 +3667,21 @@ mod tests {
         assert_eq!(
             payload["settlement"]["settlement_snapshot"]["pricing_snapshot"]["pricing_source"],
             "provider_override"
+        );
+        assert_eq!(
+            payload["settlement"]["settlement_snapshot"]["pricing_snapshot"]
+                ["billing_processing_tier"],
+            "fast"
+        );
+        assert_eq!(
+            payload["settlement"]["settlement_snapshot"]["pricing_snapshot"]
+                ["processing_tier_price_multiplier"],
+            2.5
+        );
+        assert_eq!(
+            payload["settlement"]["settlement_snapshot"]["pricing_snapshot"]["tiered_pricing"]
+                ["tiers"][0]["input_price_per_1m"],
+            7.5
         );
         assert_eq!(
             payload["settlement"]["billing_dimensions"]["input_tokens"],
