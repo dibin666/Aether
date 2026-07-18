@@ -7,6 +7,10 @@ description: Synchronize the current branch with the repository's upstream branc
 
 Use this skill when the user asks to synchronize upstream changes or merge an upstream branch into a local feature branch.
 
+## Repository-specific fork contract
+
+For this Aether fork, read [`FORK_DELTA.md`](./FORK_DELTA.md) after fetching and before classifying or resolving conflicts. Refresh its pre-merge refs, divergence counts, overlap paths, and pending-upstream section for the current merge. Treat its P0 invariants as required review points, but still ask the user before resolving functional conflicts. This pre-merge refresh does not replace the mandatory post-merge review below.
+
 ## Safety rules
 
 - Inspect `git status --short --branch` before changing anything. Never discard local work.
@@ -44,7 +48,9 @@ cargo check --workspace
 
 - If either build fails, classify whether it is a merge-resolution regression or an environment/dependency issue. Fix merge regressions in scope; do not claim completion until both compile successfully.
 - Commit the merge only after both builds pass. Do not push unless the user explicitly requests it.
-- Final response must include the merge commit, selected conflict policy, frontend/backend verification results, and any non-blocking warnings (for example dependency audit findings).
+- After creating the verified merge commit, review the merged tree against upstream again and update `FORK_DELTA.md` in a separate documentation commit. Refresh the snapshot date, merged code commit, upstream commit, merge-base/counts, overlap paths, pending-upstream list, feature inventory, conflict rules, and verification commands. Record an explicit “no functional delta change” result when applicable; the review is mandatory even when no feature section changes.
+- Keep the documentation refresh separate from the merge commit so `FORK_DELTA.md` can name the immutable merge commit without a self-referential amend changing its hash. Do not deliver or push until both commits exist and the refreshed document passes `git diff --check`.
+- Final response must include the merge commit, the `FORK_DELTA.md` documentation commit, the post-merge delta review conclusion, selected conflict policy, frontend/backend verification results, and any non-blocking warnings (for example dependency audit findings).
 
 ## Suggested progress updates
 
@@ -52,4 +58,5 @@ cargo check --workspace
 2. Report that fetch and a no-commit merge are in progress.
 3. If conflicts occur, pause with grouped functional choices.
 4. Report resolution and build progress.
-5. Deliver the commit and verification summary.
+5. Report the mandatory post-merge `FORK_DELTA.md` review and documentation commit.
+6. Deliver both commits and the verification summary.
