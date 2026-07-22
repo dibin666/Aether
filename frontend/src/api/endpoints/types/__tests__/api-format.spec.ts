@@ -69,9 +69,11 @@ describe('api format display helpers', () => {
     expect(apiFormatPermissionCovers(API_FORMATS.OPENAI_RESPONSES, API_FORMATS.OPENAI_TRANSCRIPTION)).toBe(false)
   })
 
-  it('applies Responses to Search permissions in one direction', () => {
+  it('applies Responses companion permissions in one direction', () => {
     expect(apiFormatPermissionCovers('OPENAI_RESPONSES', 'openai:search')).toBe(true)
+    expect(apiFormatPermissionCovers('OPENAI_RESPONSES', 'openai:responses:compact')).toBe(true)
     expect(apiFormatPermissionCovers('openai:search', 'openai:responses')).toBe(false)
+    expect(apiFormatPermissionCovers('openai:responses:compact', 'openai:responses')).toBe(false)
   })
 
   it('formats embedding api format ids distinctly from chat formats', () => {

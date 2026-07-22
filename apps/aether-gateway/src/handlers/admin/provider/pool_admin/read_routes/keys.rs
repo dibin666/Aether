@@ -459,7 +459,7 @@ fn admin_pool_key_cost_exhausted(
         >= limit
 }
 
-fn admin_pool_key_visible_status_filter(
+pub(super) fn admin_pool_key_visible_status_filter(
     state: &AdminAppState<'_>,
     key: &StoredProviderCatalogKey,
     provider_type: &str,
@@ -581,7 +581,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
     let sort_by_score = matches!(sort.field, AdminPoolKeySortField::Score);
     let now_unix_secs = admin_pool_current_unix_secs();
 
-    let (keys, total, preloaded_pool_scores_by_key_id) = if status != "all" {
+    let (keys, total, preloaded_pool_scores_by_key_id, quota_summary) = if status != "all" {
         let mut keys = state
             .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
             .await?
@@ -647,24 +647,31 @@ pub(super) async fn build_admin_pool_list_keys_response(
             None
         };
         let total = keys.len();
+        let quota_summary =
+            pool_payloads::build_admin_pool_quota_summary(state, &provider.provider_type, &keys);
         let keys = keys
             .into_iter()
             .skip(page_offset)
             .take(page_size)
             .collect::<Vec<_>>();
-        (keys, total, preloaded_pool_scores_by_key_id)
+        (keys, total, preloaded_pool_scores_by_key_id, quota_summary)
     } else if !quick_selectors.is_empty() || sort_by_score {
+        let use_full_search = !quick_selectors.is_empty();
         let mut keys = state
             .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
             .await?
             .into_iter()
             .filter(|key| {
-                pool_selection::admin_pool_matches_search(
-                    state,
-                    key,
-                    &provider.provider_type,
-                    search.as_deref(),
-                )
+                if use_full_search {
+                    pool_selection::admin_pool_matches_search(
+                        state,
+                        key,
+                        &provider.provider_type,
+                        search.as_deref(),
+                    )
+                } else {
+                    pool_selection::admin_pool_matches_catalog_search(key, search.as_deref())
+                }
             })
             .filter(|key| {
                 quick_selectors.iter().all(|selector| {
@@ -689,12 +696,14 @@ pub(super) async fn build_admin_pool_list_keys_response(
             None
         };
         let total = keys.len();
+        let quota_summary =
+            pool_payloads::build_admin_pool_quota_summary(state, &provider.provider_type, &keys);
         let keys = keys
             .into_iter()
             .skip(page_offset)
             .take(page_size)
             .collect::<Vec<_>>();
-        (keys, total, preloaded_pool_scores_by_key_id)
+        (keys, total, preloaded_pool_scores_by_key_id, quota_summary)
     } else {
         let key_page = state
             .list_provider_catalog_key_page(&ProviderCatalogKeyListQuery {
@@ -706,7 +715,18 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 order: admin_pool_repository_key_order(sort),
             })
             .await?;
-        (key_page.items, key_page.total, None)
+        let quota_summary_keys = state
+            .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
+            .await?
+            .into_iter()
+            .filter(|key| pool_selection::admin_pool_matches_catalog_search(key, search.as_deref()))
+            .collect::<Vec<_>>();
+        let quota_summary = pool_payloads::build_admin_pool_quota_summary(
+            state,
+            &provider.provider_type,
+            &quota_summary_keys,
+        );
+        (key_page.items, key_page.total, None, quota_summary)
     };
 
     let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
@@ -762,6 +782,7 @@ pub(super) async fn build_admin_pool_list_keys_response(
         "page": page,
         "page_size": page_size,
         "keys": items,
+        "quota_summary": quota_summary,
     }))
     .into_response())
 }

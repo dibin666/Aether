@@ -12,7 +12,9 @@ use aether_contracts::{
     ExecutionPlan, ExecutionStreamTerminalSummary, ExecutionTelemetry, StandardizedUsage,
     StreamFrame, StreamFramePayload,
 };
-use aether_data_contracts::repository::candidates::RequestCandidateStatus;
+use aether_data_contracts::repository::candidates::{
+    RequestCandidateStatus, UpsertRequestCandidateRecord,
+};
 use aether_data_contracts::repository::usage::UsageBodyCaptureState;
 use aether_scheduler_core::{
     parse_request_candidate_report_context, SchedulerRequestCandidateStatusUpdate,
@@ -20,6 +22,7 @@ use aether_scheduler_core::{
 use aether_usage_runtime::{
     build_lifecycle_usage_seed, build_stream_terminal_usage_payload_seed,
     build_sync_terminal_usage_payload_seed, build_terminal_usage_context_seed, LifecycleUsageSeed,
+    SyncTerminalUsagePayloadSeed, TerminalUsageContextSeed,
     DEFAULT_USAGE_RESPONSE_BODY_CAPTURE_LIMIT_BYTES,
 };
 use async_stream::stream;
@@ -98,18 +101,20 @@ use crate::execution_runtime::{
 use crate::execution_runtime::{MAX_STREAM_PREFETCH_BYTES, MAX_STREAM_PREFETCH_FRAMES};
 use crate::log_ids::short_request_id;
 use crate::orchestration::{
-    apply_local_execution_effect, build_local_error_flow_metadata, trace_upstream_response_body,
-    with_error_flow_report_context, with_upstream_response_report_context,
-    LocalAdaptiveRateLimitEffect, LocalAdaptiveSuccessEffect, LocalAttemptFailureEffect,
-    LocalExecutionEffect, LocalExecutionEffectContext, LocalHealthFailureEffect,
-    LocalHealthSuccessEffect, LocalOAuthInvalidationEffect, LocalPoolErrorEffect,
+    apply_local_execution_effect, build_local_error_flow_metadata, cyber_continue_failover_enabled,
+    trace_upstream_response_body, with_error_flow_report_context,
+    with_upstream_response_report_context, LocalAdaptiveRateLimitEffect,
+    LocalAdaptiveSuccessEffect, LocalAttemptFailureEffect, LocalExecutionEffect,
+    LocalExecutionEffectContext, LocalHealthFailureEffect, LocalHealthSuccessEffect,
+    LocalOAuthInvalidationEffect, LocalPoolErrorEffect,
 };
 use crate::provider_pool_demand::{
     acquire_provider_pool_in_flight_guard, ProviderPoolInFlightGuard,
 };
 use crate::request_candidate_runtime::{
-    ensure_execution_request_candidate_slot, record_local_request_candidate_status,
-    record_local_request_candidate_status_snapshot, snapshot_local_request_candidate_status,
+    ensure_execution_request_candidate_slot, persist_local_request_candidate_status_record,
+    record_local_request_candidate_status, record_local_request_candidate_status_snapshot,
+    snapshot_local_request_candidate_status, try_enqueue_local_request_candidate_status_snapshot,
     LocalRequestCandidateStatusSnapshot,
 };
 use crate::request_diagnostics::{
@@ -317,12 +322,11 @@ fn parse_direct_passthrough_mode(value: &str) -> DirectPassthroughMode {
     }
 }
 
-fn record_sync_terminal_usage(
-    state: &AppState,
+fn build_sync_terminal_usage_seeds(
     plan: &ExecutionPlan,
     report_context: Option<&serde_json::Value>,
     payload: &GatewaySyncReportRequest,
-) {
+) -> (TerminalUsageContextSeed, SyncTerminalUsagePayloadSeed) {
     let report_context_with_diagnostics =
         attach_current_request_diagnostics_to_report_context(report_context);
     let context_seed = build_terminal_usage_context_seed(
@@ -330,9 +334,58 @@ fn record_sync_terminal_usage(
         report_context_with_diagnostics.as_ref().or(report_context),
     );
     let payload_seed = build_sync_terminal_usage_payload_seed(payload);
-    state
-        .usage_runtime
-        .record_sync_terminal(state.data.as_ref(), context_seed, payload_seed);
+    (context_seed, payload_seed)
+}
+
+async fn record_sync_terminal_usage_with_handoff(
+    state: &AppState,
+    plan: &ExecutionPlan,
+    report_context: Option<&serde_json::Value>,
+    payload: &GatewaySyncReportRequest,
+) {
+    record_sync_terminal_usage_with_handoff_after_spawn(
+        state,
+        plan,
+        report_context,
+        payload,
+        std::future::ready(()),
+    )
+    .await;
+}
+
+async fn record_sync_terminal_usage_with_handoff_after_spawn<F>(
+    state: &AppState,
+    plan: &ExecutionPlan,
+    report_context: Option<&serde_json::Value>,
+    payload: &GatewaySyncReportRequest,
+    before_dispatch: F,
+) where
+    F: Future<Output = ()> + Send + 'static,
+{
+    // Capture request task-local diagnostics before handing the work to a spawned task. Tokio
+    // task-local values do not propagate across spawn boundaries.
+    let (context_seed, payload_seed) =
+        build_sync_terminal_usage_seeds(plan, report_context, payload);
+    let state = state.clone();
+    let task = tokio::spawn(async move {
+        before_dispatch.await;
+        state
+            .usage_runtime
+            .record_sync_terminal(
+                state.usage_lifecycle_data_state().as_ref(),
+                context_seed,
+                payload_seed,
+            )
+            .await;
+    });
+    if let Err(err) = task.await {
+        warn!(
+            event_name = "sync_terminal_usage_handoff_failed",
+            log_type = "ops",
+            error = %err,
+            "gateway sync terminal usage handoff task failed"
+        );
+    }
 }
 
 fn build_stream_sync_payload(
@@ -404,7 +457,7 @@ fn build_stream_error_sync_payload(
     }
 }
 
-fn record_stream_terminal_usage(
+async fn record_stream_terminal_usage(
     state: &AppState,
     plan: &ExecutionPlan,
     report_context: Option<&serde_json::Value>,
@@ -413,12 +466,15 @@ fn record_stream_terminal_usage(
 ) {
     let context_seed = build_terminal_usage_context_seed(plan, report_context);
     let payload_seed = build_stream_terminal_usage_payload_seed(payload);
-    state.usage_runtime.record_stream_terminal(
-        state.data.as_ref(),
-        context_seed,
-        payload_seed,
-        cancelled,
-    );
+    state
+        .usage_runtime
+        .record_stream_terminal(
+            state.usage_lifecycle_data_state().as_ref(),
+            context_seed,
+            payload_seed,
+            cancelled,
+        )
+        .await;
 }
 
 async fn record_stream_admission_timeout_candidate_failure(
@@ -1121,6 +1177,7 @@ fn should_use_direct_sse_passthrough(
         plan.client_api_format.as_str(),
         false,
         false,
+        false,
     )
 }
 
@@ -1259,6 +1316,7 @@ struct DirectPassthroughFinalizerCore {
     request_id_for_log: String,
     candidate_id: Option<String>,
     request_candidate_status_snapshot: Option<LocalRequestCandidateStatusSnapshot>,
+    deferred_request_candidate_status_record: Option<UpsertRequestCandidateRecord>,
     candidate_started_unix_secs: u64,
     status_code: u16,
     headers: BTreeMap<String, String>,
@@ -1461,18 +1519,32 @@ impl DirectPassthroughFinalizer {
         }
     }
 
-    async fn record_client_visible_stream_started_if_needed(&mut self) {
+    fn record_client_visible_stream_started_if_needed(&mut self) {
         let Some(core) = self.core.as_mut() else {
             return;
         };
-        core.record_client_visible_stream_started_if_needed().await;
+        core.record_client_visible_stream_started_if_needed();
     }
 
     async fn finalize(&mut self, downstream_dropped: bool) {
         let Some(core) = self.core.take() else {
             return;
         };
-        core.finalize(downstream_dropped).await;
+        // Move the owned terminal payload into a task before awaiting it. A
+        // client disconnect or an execution timeout may cancel this body
+        // future while terminal admission is backpressured; the handoff must
+        // continue independently so the usage row cannot remain streaming.
+        let task = tokio::spawn(async move {
+            core.finalize(downstream_dropped).await;
+        });
+        if let Err(err) = task.await {
+            warn!(
+                event_name = "direct_passthrough_terminal_handoff_failed",
+                log_type = "ops",
+                error = %err,
+                "gateway direct passthrough terminal handoff task failed"
+            );
+        }
     }
 }
 
@@ -1490,28 +1562,51 @@ impl Drop for DirectPassthroughFinalizer {
     }
 }
 
+fn enqueue_stream_candidate_status_update(
+    state: &AppState,
+    snapshot: LocalRequestCandidateStatusSnapshot,
+    status_update: SchedulerRequestCandidateStatusUpdate,
+) -> Option<UpsertRequestCandidateRecord> {
+    let Err(record) =
+        try_enqueue_local_request_candidate_status_snapshot(state, &snapshot, status_update)
+    else {
+        return None;
+    };
+    if state.request_candidate_queue.is_some() {
+        return Some(record);
+    }
+
+    // Without an async queue, preserve the first-byte path's existing
+    // fire-and-handoff behavior. Queue saturation uses the bounded deferred
+    // record above and does not create one task per waiter.
+    let state = state.clone();
+    tokio::spawn(async move {
+        persist_local_request_candidate_status_record(&state, record).await;
+    });
+    None
+}
+
 impl DirectPassthroughFinalizerCore {
-    async fn record_client_visible_stream_started_if_needed(&mut self) {
+    fn record_client_visible_stream_started_if_needed(&mut self) {
         if self.stream_started_recorded || self.client_stream_bytes == 0 {
             return;
         }
+        self.stream_started_recorded = true;
         if !self.pending_recorded {
             self.pending_recorded = true;
-            let usage_data = self.state.data.as_ref().clone();
-            self.state
-                .usage_runtime
-                .record_pending_direct(&usage_data, self.lifecycle_seed.clone())
-                .await;
+            self.state.usage_runtime.record_pending(
+                self.state.usage_lifecycle_data_state().as_ref(),
+                self.lifecycle_seed.clone(),
+            );
         }
-        self.stream_started_recorded = true;
         self.state.usage_runtime.record_stream_started(
-            self.state.data.as_ref(),
+            self.state.usage_lifecycle_data_state().as_ref(),
             &self.lifecycle_seed,
             self.status_code,
             self.usage_stream_telemetry.as_ref(),
         );
-        if let Some(snapshot) = self.request_candidate_status_snapshot.as_ref() {
-            record_local_request_candidate_status_snapshot(
+        if let Some(snapshot) = self.request_candidate_status_snapshot.take() {
+            self.deferred_request_candidate_status_record = enqueue_stream_candidate_status_update(
                 &self.state,
                 snapshot,
                 SchedulerRequestCandidateStatusUpdate {
@@ -1523,13 +1618,12 @@ impl DirectPassthroughFinalizerCore {
                     started_at_unix_ms: Some(self.candidate_started_unix_secs),
                     finished_at_unix_ms: None,
                 },
-            )
-            .await;
+            );
         }
     }
 
     async fn finalize(mut self, mut downstream_dropped: bool) {
-        self.record_client_visible_stream_started_if_needed().await;
+        self.record_client_visible_stream_started_if_needed();
         observe_gateway_stage_ms(
             "stream_total",
             stream_elapsed_ms_since(self.stream_started_at),
@@ -1554,6 +1648,7 @@ impl DirectPassthroughFinalizerCore {
             request_id_for_log,
             candidate_id,
             request_candidate_status_snapshot: _,
+            deferred_request_candidate_status_record,
             candidate_started_unix_secs,
             status_code,
             headers,
@@ -1578,6 +1673,14 @@ impl DirectPassthroughFinalizerCore {
             _provider_pool_in_flight_guard,
             _upstream_target_permit,
         } = self;
+
+        // Queue backpressure must not keep scarce upstream/provider permits
+        // occupied after the client-visible stream has already ended.
+        drop(_provider_pool_in_flight_guard);
+        drop(_upstream_target_permit);
+        if let Some(record) = deferred_request_candidate_status_record {
+            persist_local_request_candidate_status_record(&state, record).await;
+        }
 
         if downstream_dropped && client_visible_stream_completed && terminal_failure.is_none() {
             debug!(
@@ -1661,7 +1764,8 @@ impl DirectPassthroughFinalizerCore {
                 usage_payload.report_context.as_ref(),
                 &usage_payload,
                 true,
-            );
+            )
+            .await;
             record_local_request_candidate_status(
                 &state,
                 &plan,
@@ -1794,7 +1898,8 @@ impl DirectPassthroughFinalizerCore {
             usage_payload.report_context.as_ref(),
             &usage_payload,
             false,
-        );
+        )
+        .await;
         record_local_request_candidate_status(
             &state,
             &plan,
@@ -1868,7 +1973,6 @@ struct DirectPassthroughInlineBodyState {
     stream_first_byte_timeout: Option<Duration>,
     observed_first_body_poll: bool,
     observed_first_client_yield: bool,
-    start_record_needed: bool,
     upstream_done: bool,
     control_filter_flushed: bool,
     terminal_error_sent: bool,
@@ -1890,7 +1994,6 @@ impl DirectPassthroughInlineBodyState {
             stream_first_byte_timeout,
             observed_first_body_poll: false,
             observed_first_client_yield: false,
-            start_record_needed: false,
             upstream_done: false,
             control_filter_flushed: false,
             terminal_error_sent: false,
@@ -1908,15 +2011,6 @@ impl DirectPassthroughInlineBodyState {
                 finalizer.observe_first_body_poll();
             }
         }
-        if self.start_record_needed {
-            self.start_record_needed = false;
-            if let Some(finalizer) = self.finalizer.as_mut() {
-                finalizer
-                    .record_client_visible_stream_started_if_needed()
-                    .await;
-            }
-        }
-
         loop {
             if self.upstream_done
                 || self
@@ -2030,10 +2124,10 @@ impl DirectPassthroughInlineBodyState {
         finalizer.observe_client_chunk(chunk);
         if !self.observed_first_client_yield {
             self.observed_first_client_yield = true;
-            finalizer.observe_first_client_yield();
             finalizer.release_upstream_target_permit_after_first_yield();
+            finalizer.record_client_visible_stream_started_if_needed();
+            finalizer.observe_first_client_yield();
         }
-        self.start_record_needed = true;
     }
 
     fn log_upstream_read_error_and_fail(&mut self, message: String) {
@@ -2073,7 +2167,10 @@ impl DirectPassthroughInlineBodyState {
 
 impl Drop for DirectPassthroughInlineBodyState {
     fn drop(&mut self) {
-        if self.finalized {
+        // `finalized` only prevents another poll from entering finalization;
+        // the finalizer may still be waiting for its handoff task to finish.
+        // Keep the fallback armed while the finalizer is present.
+        if self.finalizer.is_none() {
             return;
         }
         self.upstream.take();
@@ -2095,7 +2192,7 @@ async fn record_stream_pending_lifecycle(
     stage_trace: &mut RequestStageTrace,
 ) {
     let usage_pending_started_at = Instant::now();
-    let usage_data = state.data.as_ref().clone();
+    let usage_data = state.usage_lifecycle_data_state().as_ref().clone();
     state
         .usage_runtime
         .record_pending_direct(&usage_data, lifecycle_seed.clone())
@@ -2199,7 +2296,7 @@ async fn execute_stream_from_direct_passthrough(
     let passthrough_mode = direct_passthrough_mode();
     if passthrough_mode == DirectPassthroughMode::Legacy {
         state.usage_runtime.record_stream_started(
-            state.data.as_ref(),
+            state.usage_lifecycle_data_state().as_ref(),
             &lifecycle_seed,
             status_code,
             None,
@@ -2222,7 +2319,12 @@ async fn execute_stream_from_direct_passthrough(
         }
     }
 
+    let response_header_rules_started_at = Instant::now();
     apply_endpoint_response_header_rules(state, &plan, &mut headers, None).await?;
+    observe_gateway_stage_ms(
+        "stream_response_header_rules",
+        response_header_rules_started_at.elapsed().as_millis() as u64,
+    );
     let headers_for_report = headers.clone();
     headers.insert(CONTROL_REQUEST_ID_HEADER.to_string(), request_id.clone());
     if let Some(candidate_id) = candidate_id
@@ -2276,6 +2378,7 @@ async fn execute_stream_from_direct_passthrough(
             request_id_for_log,
             candidate_id,
             request_candidate_status_snapshot,
+            deferred_request_candidate_status_record: None,
             candidate_started_unix_secs,
             status_code,
             headers: headers_for_report,
@@ -2666,7 +2769,8 @@ async fn execute_stream_from_direct_passthrough(
                 usage_payload.report_context.as_ref(),
                 &usage_payload,
                 true,
-            );
+            )
+            .await;
             record_local_request_candidate_status(
                 &state_for_report,
                 &plan_for_report,
@@ -2832,7 +2936,8 @@ async fn execute_stream_from_direct_passthrough(
             usage_payload.report_context.as_ref(),
             &usage_payload,
             false,
-        );
+        )
+        .await;
         record_local_request_candidate_status(
             &state_for_report,
             &plan_for_report,
@@ -2931,7 +3036,6 @@ async fn execute_execution_runtime_stream_inner(
         "stream_candidate_slot",
         candidate_slot_started_at.elapsed().as_millis() as u64,
     );
-    let lifecycle_seed = build_lifecycle_usage_seed(&plan, report_context.as_ref());
     let request_candidate_status_snapshot =
         snapshot_local_request_candidate_status(&plan, report_context.as_ref());
     let defer_stream_pending_for_direct_inline = should_defer_stream_pending_for_direct_inline(
@@ -2940,9 +3044,13 @@ async fn execute_execution_runtime_stream_inner(
         plan_kind,
         report_context.as_ref(),
     );
+    // Inline passthrough records its lifecycle seed after upstream headers are
+    // available. Avoid constructing a throwaway seed on the common path.
+    let mut lifecycle_seed = (!defer_stream_pending_for_direct_inline)
+        .then(|| build_lifecycle_usage_seed(&plan, report_context.as_ref()));
     let mut lifecycle_pending_recorded = false;
-    if !defer_stream_pending_for_direct_inline {
-        record_stream_pending_lifecycle(state, &lifecycle_seed, &mut stage_trace).await;
+    if let Some(seed) = lifecycle_seed.as_ref() {
+        record_stream_pending_lifecycle(state, seed, &mut stage_trace).await;
         lifecycle_pending_recorded = true;
     }
     let candidate_started_unix_secs = current_request_candidate_unix_ms();
@@ -3001,6 +3109,7 @@ async fn execute_execution_runtime_stream_inner(
                 candidate_started_unix_secs,
                 stream_started_at,
                 stage_trace,
+                lifecycle_pending_recorded,
                 grok_stream.frame_stream,
                 provider_pool_in_flight_guard.take(),
             )
@@ -3054,6 +3163,7 @@ async fn execute_execution_runtime_stream_inner(
                 candidate_started_unix_secs,
                 stream_started_at,
                 stage_trace,
+                lifecycle_pending_recorded,
                 windsurf_stream.frame_stream,
                 provider_pool_in_flight_guard.take(),
             )
@@ -3107,6 +3217,7 @@ async fn execute_execution_runtime_stream_inner(
                 candidate_started_unix_secs,
                 stream_started_at,
                 stage_trace,
+                lifecycle_pending_recorded,
                 kiro_web_search.frame_stream,
                 provider_pool_in_flight_guard.take(),
             )
@@ -3160,6 +3271,7 @@ async fn execute_execution_runtime_stream_inner(
                 candidate_started_unix_secs,
                 stream_started_at,
                 stage_trace,
+                lifecycle_pending_recorded,
                 chatgpt_web_image.frame_stream,
                 provider_pool_in_flight_guard.take(),
             )
@@ -3284,7 +3396,9 @@ async fn execute_execution_runtime_stream_inner(
             .await;
         }
         if !lifecycle_pending_recorded {
-            record_stream_pending_lifecycle(state, &lifecycle_seed, &mut stage_trace).await;
+            let seed = lifecycle_seed
+                .get_or_insert_with(|| build_lifecycle_usage_seed(&plan, report_context.as_ref()));
+            record_stream_pending_lifecycle(state, seed, &mut stage_trace).await;
             lifecycle_pending_recorded = true;
         }
         let frame_stream = build_direct_execution_frame_stream(execution).boxed();
@@ -3299,6 +3413,7 @@ async fn execute_execution_runtime_stream_inner(
             candidate_started_unix_secs,
             stream_started_at,
             stage_trace,
+            lifecycle_pending_recorded,
             frame_stream,
             provider_pool_in_flight_guard.take(),
         )
@@ -3396,7 +3511,10 @@ async fn execute_execution_runtime_stream_inner(
                 .await;
             }
             if !lifecycle_pending_recorded {
-                record_stream_pending_lifecycle(state, &lifecycle_seed, &mut stage_trace).await;
+                let seed = lifecycle_seed.get_or_insert_with(|| {
+                    build_lifecycle_usage_seed(&plan, report_context.as_ref())
+                });
+                record_stream_pending_lifecycle(state, seed, &mut stage_trace).await;
                 lifecycle_pending_recorded = true;
             }
             let frame_stream = build_direct_execution_frame_stream(execution).boxed();
@@ -3411,6 +3529,7 @@ async fn execute_execution_runtime_stream_inner(
                 candidate_started_unix_secs,
                 stream_started_at,
                 stage_trace,
+                lifecycle_pending_recorded,
                 frame_stream,
                 provider_pool_in_flight_guard.take(),
             )
@@ -3498,6 +3617,7 @@ async fn execute_execution_runtime_stream_inner(
             candidate_started_unix_secs,
             stream_started_at,
             stage_trace,
+            lifecycle_pending_recorded,
             frame_stream,
             provider_pool_in_flight_guard.take(),
         )
@@ -4038,7 +4158,7 @@ fn maybe_record_first_stream_event_started(
         return;
     };
     state.usage_runtime.record_stream_started(
-        state.data.as_ref(),
+        state.usage_lifecycle_data_state().as_ref(),
         lifecycle_seed,
         status_code,
         Some(telemetry),
@@ -4074,8 +4194,13 @@ fn should_skip_direct_finalize_prefetch(
     client_api_format: &str,
     has_private_stream_normalizer: bool,
     has_local_stream_rewriter: bool,
+    force_prefetch: bool,
 ) -> bool {
     if direct_stream_finalize_kind.is_none() {
+        return false;
+    }
+
+    if force_prefetch {
         return false;
     }
 
@@ -4101,6 +4226,36 @@ fn should_skip_direct_finalize_prefetch(
     }
 
     !(content_type.contains("json") || content_type.ends_with("+json"))
+}
+
+fn prefetched_openai_responses_body_has_output_boundary(body: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(body) else {
+        return true;
+    };
+    for line in text.lines() {
+        let Some(data) = line.trim().strip_prefix("data:").map(str::trim) else {
+            continue;
+        };
+        if data.is_empty() {
+            continue;
+        }
+        if data == "[DONE]" {
+            return true;
+        }
+        let Ok(event) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+        let event_type = event.get("type").and_then(Value::as_str).map(str::trim);
+        if !event_type.is_some_and(|event_type| {
+            matches!(
+                event_type,
+                "response.created" | "response.in_progress" | "response.queued"
+            )
+        }) {
+            return true;
+        }
+    }
+    false
 }
 
 fn should_probe_success_failover_before_stream(headers: &BTreeMap<String, String>) -> bool {
@@ -4155,6 +4310,7 @@ async fn execute_stream_from_frame_stream(
     candidate_started_unix_secs: u64,
     stream_started_at: Instant,
     mut stage_trace: RequestStageTrace,
+    lifecycle_pending_recorded: bool,
     frame_stream: BoxStream<'static, Result<Bytes, IoError>>,
     in_flight_guard: Option<ProviderPoolInFlightGuard>,
 ) -> Result<Option<Response<Body>>, GatewayError> {
@@ -4164,6 +4320,9 @@ async fn execute_stream_from_frame_stream(
     let provider_name = plan.provider_name.as_deref().unwrap_or("-");
     let model_name = plan.model_name.as_deref().unwrap_or("-");
     let lifecycle_seed = build_lifecycle_usage_seed(&plan, report_context.as_ref());
+    if !lifecycle_pending_recorded {
+        record_stream_pending_lifecycle(state, &lifecycle_seed, &mut stage_trace).await;
+    }
     let request_candidate_status_snapshot =
         snapshot_local_request_candidate_status(&plan, report_context.as_ref());
     let candidate_index = parse_request_candidate_report_context(report_context.as_ref())
@@ -4521,7 +4680,13 @@ async fn execute_stream_from_frame_stream(
             payload_client_body_json,
             None,
         );
-        record_sync_terminal_usage(state, &plan, payload.report_context.as_ref(), &payload);
+        record_sync_terminal_usage_with_handoff(
+            state,
+            &plan,
+            payload.report_context.as_ref(),
+            &payload,
+        )
+        .await;
         let terminal_unix_secs = current_request_candidate_unix_ms();
         record_local_request_candidate_status(
             state,
@@ -4577,6 +4742,9 @@ async fn execute_stream_from_frame_stream(
         headers.insert("content-type".to_string(), "text/event-stream".to_string());
     }
     let upstream_content_type = upstream_headers.get("content-type").map(String::as_str);
+    let prefetch_for_cyber_failover =
+        is_openai_responses_family_format(plan.provider_api_format.as_str())
+            && cyber_continue_failover_enabled(state).await;
     let skip_direct_finalize_prefetch = should_skip_direct_finalize_prefetch(
         direct_stream_finalize_kind.as_deref(),
         upstream_content_type,
@@ -4584,6 +4752,7 @@ async fn execute_stream_from_frame_stream(
         plan.client_api_format.as_str(),
         private_stream_normalizer.is_some(),
         local_stream_rewriter.is_some(),
+        prefetch_for_cyber_failover,
     );
     let limit_direct_finalize_prefetch =
         should_limit_direct_finalize_prefetch(plan_kind, local_stream_rewriter.is_some());
@@ -4787,12 +4956,13 @@ async fn execute_stream_from_frame_stream(
                                 None,
                                 prefetched_usage_telemetry.clone(),
                             );
-                            record_sync_terminal_usage(
+                            record_sync_terminal_usage_with_handoff(
                                 state,
                                 &plan,
                                 payload.report_context.as_ref(),
                                 &payload,
-                            );
+                            )
+                            .await;
                             let response = submit_local_core_error_or_sync_finalize(
                                 state, trace_id, decision, payload,
                             )
@@ -4930,7 +5100,12 @@ async fn execute_stream_from_frame_stream(
                         prefetched_chunks.push(Bytes::from(rewritten_chunk));
                     }
 
-                    if matches!(inspection, StreamPrefetchInspection::NonError) {
+                    if matches!(inspection, StreamPrefetchInspection::NonError)
+                        && (!prefetch_for_cyber_failover
+                            || prefetched_openai_responses_body_has_output_boundary(
+                                &prefetched_inspection_body,
+                            ))
+                    {
                         break;
                     }
                 }
@@ -4985,7 +5160,7 @@ async fn execute_stream_from_frame_stream(
             .map(|telemetry| usage_refresh_telemetry(telemetry, None))
     });
     state.usage_runtime.record_stream_started(
-        state.data.as_ref(),
+        state.usage_lifecycle_data_state().as_ref(),
         &lifecycle_seed,
         status_code,
         initial_usage_telemetry.as_ref(),
@@ -5344,7 +5519,7 @@ async fn execute_stream_from_frame_stream(
                             &mut usage_stream_telemetry,
                         ) {
                             state_for_report.usage_runtime.record_stream_started(
-                                state_for_report.data.as_ref(),
+                                state_for_report.usage_lifecycle_data_state().as_ref(),
                                 &lifecycle_seed_for_report,
                                 status_code,
                                 usage_stream_telemetry.as_ref(),
@@ -5892,7 +6067,8 @@ async fn execute_stream_from_frame_stream(
                 usage_payload.report_context.as_ref(),
                 &usage_payload,
                 true,
-            );
+            )
+            .await;
             record_local_request_candidate_status(
                 &state_for_report,
                 &plan_for_report,
@@ -6059,7 +6235,8 @@ async fn execute_stream_from_frame_stream(
             usage_payload.report_context.as_ref(),
             &usage_payload,
             false,
-        );
+        )
+        .await;
         record_local_request_candidate_status(
             &state_for_report,
             &plan_for_report,
@@ -6155,26 +6332,41 @@ fn apply_stream_summary_report_context(
 mod tests {
     use std::collections::BTreeMap;
     use std::convert::Infallible;
-    use std::sync::Arc;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
     use std::time::{Duration, Instant};
 
     use aether_contracts::{
         ExecutionError, ExecutionErrorKind, ExecutionPhase, ExecutionPlan,
-        ExecutionStreamTerminalSummary, ExecutionTimeouts, RequestBody, StandardizedUsage,
-        StreamFrame, StreamFramePayload, StreamFrameType,
+        ExecutionStreamTerminalSummary, ExecutionTelemetry, ExecutionTimeouts, RequestBody,
+        StandardizedUsage, StreamFrame, StreamFramePayload, StreamFrameType,
     };
     use aether_data::repository::candidates::InMemoryRequestCandidateRepository;
     use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
     use aether_data::repository::usage::InMemoryUsageReadRepository;
     use aether_data_contracts::repository::candidates::{
-        RequestCandidateReadRepository, RequestCandidateStatus,
+        PublicHealthStatusCount, PublicHealthTimelineBucket, RequestCandidateReadRepository,
+        RequestCandidateStatus, RequestCandidateWriteRepository, StoredRequestCandidate,
+        UpsertRequestCandidateRecord,
     };
     use aether_data_contracts::repository::provider_catalog::{
         StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
     };
+    use aether_data_contracts::repository::settlement::{
+        StoredUsageSettlement, UsageSettlementInput,
+    };
     use aether_data_contracts::repository::usage::UsageReadRepository;
-    use aether_usage_runtime::UsageRuntimeConfig;
+    use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UpsertUsageRecord};
+    use aether_data_contracts::DataLayerError;
+    use aether_usage_runtime::{
+        UsageBillingEventEnricher, UsageBodyCapturePolicy, UsageEvent, UsageEventData,
+        UsageEventType, UsageRecordWriter, UsageRuntimeAccess, UsageRuntimeConfig,
+        UsageSettlementWriter,
+    };
     use async_stream::stream;
+    use async_trait::async_trait;
     use axum::body::{to_bytes, Body, Bytes};
     use axum::extract::ws::Message;
     use axum::extract::Request;
@@ -6186,17 +6378,22 @@ mod tests {
     use tokio::sync::{mpsc, watch, Notify};
 
     use super::{
-        build_sse_body_stream, client_format_allows_proxy_generated_sse_control_blocks,
+        build_sse_body_stream, build_stream_sync_payload,
+        client_format_allows_proxy_generated_sse_control_blocks,
         ensure_stream_terminal_summary_for_missing_observed_finish,
         execute_execution_runtime_stream, execute_stream_from_frame_stream,
         maybe_apply_kiro_prompt_cache_usage_to_stream_summary, merge_stream_terminal_summary,
-        parse_direct_passthrough_mode, should_limit_direct_finalize_prefetch,
+        parse_direct_passthrough_mode, prefetched_openai_responses_body_has_output_boundary,
+        record_sync_terminal_usage_with_handoff,
+        record_sync_terminal_usage_with_handoff_after_spawn, should_limit_direct_finalize_prefetch,
         should_probe_success_failover_before_stream, should_skip_direct_finalize_prefetch,
         stream_chunk_contains_sse_done, stream_requires_observed_terminal_event,
         stream_terminal_summary_missing_observed_finish,
         stream_terminal_summary_missing_observed_finish_with_requirement,
         stream_terminal_summary_represents_failure_with_requirement,
-        ClientVisibleStreamCompletionTracker, DirectPassthroughMode, ProviderStreamErrorInspection,
+        ClientVisibleStreamCompletionTracker, DirectPassthroughFinalizer,
+        DirectPassthroughFinalizerCore, DirectPassthroughInlineBodyState, DirectPassthroughMode,
+        ProviderStreamErrorInspection,
     };
     use crate::control::GatewayControlDecision;
     use crate::stage_metrics::RequestStageTrace;
@@ -6205,6 +6402,20 @@ mod tests {
 
     fn provider_catalog_stop_429_for_plan(
         plan: &ExecutionPlan,
+    ) -> InMemoryProviderCatalogReadRepository {
+        provider_catalog_for_plan(
+            plan,
+            Some(json!({
+                "failover_rules": {
+                    "stop_status_codes": [429]
+                }
+            })),
+        )
+    }
+
+    fn provider_catalog_for_plan(
+        plan: &ExecutionPlan,
+        provider_config: Option<Value>,
     ) -> InMemoryProviderCatalogReadRepository {
         let provider_type = plan.provider_name.as_deref().unwrap_or("custom");
         let provider = StoredProviderCatalogProvider::new(
@@ -6223,11 +6434,7 @@ mod tests {
             None,
             None,
             None,
-            Some(json!({
-                "failover_rules": {
-                    "stop_status_codes": [429]
-                }
-            })),
+            provider_config,
         );
         let endpoint = StoredProviderCatalogEndpoint::new(
             plan.endpoint_id.clone(),
@@ -6274,6 +6481,119 @@ mod tests {
         InMemoryProviderCatalogReadRepository::seed(vec![provider], vec![endpoint], vec![key])
     }
 
+    fn codex_cyber_policy_plan(request_id: &str) -> ExecutionPlan {
+        ExecutionPlan {
+            request_id: request_id.to_string(),
+            candidate_id: Some(format!("candidate-{request_id}")),
+            provider_name: Some("codex".to_string()),
+            provider_id: format!("provider-{request_id}"),
+            endpoint_id: format!("endpoint-{request_id}"),
+            key_id: format!("key-{request_id}"),
+            method: "POST".to_string(),
+            url: "https://chatgpt.com/backend-api/codex/responses".to_string(),
+            headers: BTreeMap::from([
+                ("content-type".to_string(), "application/json".to_string()),
+                ("accept".to_string(), "text/event-stream".to_string()),
+            ]),
+            content_type: Some("application/json".to_string()),
+            content_encoding: None,
+            body: RequestBody::from_json(json!({
+                "model": "gpt-5.5",
+                "input": [],
+                "stream": true
+            })),
+            stream: true,
+            client_api_format: "openai:responses".to_string(),
+            provider_api_format: "openai:responses".to_string(),
+            model_name: Some("gpt-5.5".to_string()),
+            proxy: None,
+            transport_profile: None,
+            timeouts: None,
+        }
+    }
+
+    async fn execute_prefetched_codex_cyber_policy_failure(
+        continue_failover: bool,
+    ) -> Option<axum::http::Response<Body>> {
+        let request_id = if continue_failover {
+            "req-cyber-policy-retry"
+        } else {
+            "req-cyber-policy-stop"
+        };
+        let plan = codex_cyber_policy_plan(request_id);
+        let provider_catalog = provider_catalog_for_plan(&plan, None);
+        let data_state = crate::data::GatewayDataState::with_provider_transport_reader_for_tests(
+            Arc::new(provider_catalog),
+            "development-key",
+        );
+        let data_state = if continue_failover {
+            data_state.with_system_config_values_for_tests([(
+                crate::orchestration::CYBER_CONTINUE_FAILOVER_CONFIG_KEY.to_string(),
+                json!(true),
+            )])
+        } else {
+            data_state
+        };
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(data_state);
+        let upstream_setup = "event: response.created\ndata: {\"type\":\"response.created\"}\n\n";
+        let upstream_error = "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"type\":\"invalid_request\",\"message\":\"cyber policy rejected the request\",\"code\":\"cyber_policy_violation\",\"param\":\"input\"}}}\n\n";
+        let frame_stream = stream! {
+            yield Ok::<Bytes, std::io::Error>(ndjson_frame(StreamFrame {
+                frame_type: StreamFrameType::Headers,
+                payload: StreamFramePayload::Headers {
+                    status_code: 200,
+                    headers: BTreeMap::from([(
+                        "content-type".to_string(),
+                        "text/event-stream".to_string(),
+                    )]),
+                },
+            }));
+            yield Ok::<Bytes, std::io::Error>(ndjson_frame(StreamFrame {
+                frame_type: StreamFrameType::Data,
+                payload: StreamFramePayload::Data {
+                    chunk_b64: None,
+                    text: Some(upstream_setup.to_string()),
+                },
+            }));
+            yield Ok::<Bytes, std::io::Error>(ndjson_frame(StreamFrame {
+                frame_type: StreamFrameType::Data,
+                payload: StreamFramePayload::Data {
+                    chunk_b64: None,
+                    text: Some(upstream_error.to_string()),
+                },
+            }));
+            yield Ok::<Bytes, std::io::Error>(ndjson_frame(StreamFrame::eof()));
+        }
+        .boxed();
+
+        execute_stream_from_frame_stream(
+            &state,
+            plan,
+            &format!("trace-{request_id}"),
+            &test_decision(),
+            "openai_responses_stream",
+            Some("openai_responses_stream_success".to_string()),
+            Some(json!({
+                "request_id": request_id,
+                "candidate_id": format!("candidate-{request_id}"),
+                "candidate_index": 0,
+                "retry_index": 0,
+                "provider_api_format": "openai:responses",
+                "client_api_format": "openai:responses"
+            })),
+            crate::clock::current_unix_ms(),
+            Instant::now(),
+            RequestStageTrace::from_env(),
+            true,
+            frame_stream,
+            None,
+        )
+        .await
+        .expect("execution should succeed")
+    }
+
     fn test_decision() -> GatewayControlDecision {
         GatewayControlDecision::synthetic(
             "/v1/chat/completions",
@@ -6287,6 +6607,558 @@ mod tests {
 
     fn test_state() -> AppState {
         AppState::new().expect("gateway state should build")
+    }
+
+    struct BlockingStreamingRequestCandidateRepository {
+        inner: InMemoryRequestCandidateRepository,
+        block_streaming: AtomicBool,
+        streaming_started: Notify,
+        release_streaming: Notify,
+    }
+
+    impl Default for BlockingStreamingRequestCandidateRepository {
+        fn default() -> Self {
+            Self {
+                inner: InMemoryRequestCandidateRepository::default(),
+                block_streaming: AtomicBool::new(true),
+                streaming_started: Notify::new(),
+                release_streaming: Notify::new(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RequestCandidateReadRepository for BlockingStreamingRequestCandidateRepository {
+        async fn list_by_request_id(
+            &self,
+            request_id: &str,
+        ) -> Result<Vec<StoredRequestCandidate>, DataLayerError> {
+            self.inner.list_by_request_id(request_id).await
+        }
+
+        async fn list_recent(
+            &self,
+            limit: usize,
+        ) -> Result<Vec<StoredRequestCandidate>, DataLayerError> {
+            self.inner.list_recent(limit).await
+        }
+
+        async fn list_by_provider_id(
+            &self,
+            provider_id: &str,
+            limit: usize,
+        ) -> Result<Vec<StoredRequestCandidate>, DataLayerError> {
+            self.inner.list_by_provider_id(provider_id, limit).await
+        }
+
+        async fn list_finalized_by_endpoint_ids_since(
+            &self,
+            endpoint_ids: &[String],
+            since_unix_secs: u64,
+            limit: usize,
+        ) -> Result<Vec<StoredRequestCandidate>, DataLayerError> {
+            self.inner
+                .list_finalized_by_endpoint_ids_since(endpoint_ids, since_unix_secs, limit)
+                .await
+        }
+
+        async fn count_finalized_statuses_by_endpoint_ids_since(
+            &self,
+            endpoint_ids: &[String],
+            since_unix_secs: u64,
+        ) -> Result<Vec<PublicHealthStatusCount>, DataLayerError> {
+            self.inner
+                .count_finalized_statuses_by_endpoint_ids_since(endpoint_ids, since_unix_secs)
+                .await
+        }
+
+        async fn aggregate_finalized_timeline_by_endpoint_ids_since(
+            &self,
+            endpoint_ids: &[String],
+            since_unix_secs: u64,
+            until_unix_secs: u64,
+            segments: u32,
+        ) -> Result<Vec<PublicHealthTimelineBucket>, DataLayerError> {
+            self.inner
+                .aggregate_finalized_timeline_by_endpoint_ids_since(
+                    endpoint_ids,
+                    since_unix_secs,
+                    until_unix_secs,
+                    segments,
+                )
+                .await
+        }
+    }
+
+    #[async_trait]
+    impl RequestCandidateWriteRepository for BlockingStreamingRequestCandidateRepository {
+        async fn upsert(
+            &self,
+            candidate: UpsertRequestCandidateRecord,
+        ) -> Result<StoredRequestCandidate, DataLayerError> {
+            if candidate.status == RequestCandidateStatus::Streaming
+                && self.block_streaming.swap(false, Ordering::AcqRel)
+            {
+                self.streaming_started.notify_one();
+                self.release_streaming.notified().await;
+            }
+            self.inner.upsert(candidate).await
+        }
+
+        async fn delete_created_before(
+            &self,
+            created_before_unix_secs: u64,
+            limit: usize,
+        ) -> Result<usize, DataLayerError> {
+            self.inner
+                .delete_created_before(created_before_unix_secs, limit)
+                .await
+        }
+    }
+
+    fn stage_metric_count(stage: &str) -> u64 {
+        crate::stage_metrics::gateway_stage_metric_samples()
+            .into_iter()
+            .find(|sample| {
+                sample.name == "gateway_stage_latency_count"
+                    && sample
+                        .labels
+                        .iter()
+                        .any(|label| label.key == "stage" && label.value == stage)
+            })
+            .map(|sample| sample.value)
+            .unwrap_or_default()
+    }
+
+    #[derive(Clone)]
+    struct BlockingUsageAccess {
+        policy_started: Arc<Notify>,
+        release_policy: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl UsageRecordWriter for BlockingUsageAccess {
+        async fn upsert_usage_record(
+            &self,
+            _record: UpsertUsageRecord,
+        ) -> Result<Option<StoredRequestUsageAudit>, DataLayerError> {
+            Ok(None)
+        }
+    }
+
+    #[async_trait]
+    impl UsageSettlementWriter for BlockingUsageAccess {
+        fn has_usage_settlement_writer(&self) -> bool {
+            false
+        }
+
+        async fn settle_usage(
+            &self,
+            _input: UsageSettlementInput,
+        ) -> Result<Option<StoredUsageSettlement>, DataLayerError> {
+            Ok(None)
+        }
+    }
+
+    #[async_trait]
+    impl UsageBillingEventEnricher for BlockingUsageAccess {
+        async fn enrich_usage_event(&self, _event: &mut UsageEvent) -> Result<(), DataLayerError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl UsageRuntimeAccess for BlockingUsageAccess {
+        fn has_usage_writer(&self) -> bool {
+            true
+        }
+
+        fn has_usage_worker_queue(&self) -> bool {
+            false
+        }
+
+        fn usage_worker_queue(&self) -> Option<Arc<dyn aether_runtime_state::RuntimeQueueStore>> {
+            None
+        }
+
+        fn supports_first_byte_usage_fast_path(&self) -> bool {
+            false
+        }
+
+        async fn body_capture_policy(&self) -> Result<UsageBodyCapturePolicy, DataLayerError> {
+            self.policy_started.notify_one();
+            self.release_policy.notified().await;
+            Ok(UsageBodyCapturePolicy::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn inline_first_chunk_does_not_wait_for_candidate_streaming_persistence() {
+        let request_id = "req-inline-first-chunk-candidate-handoff";
+        let request_candidate_repository =
+            Arc::new(BlockingStreamingRequestCandidateRepository::default());
+        let usage_repository = Arc::new(InMemoryUsageReadRepository::default());
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(
+                crate::data::GatewayDataState::with_request_candidate_and_usage_repository_for_tests(
+                    Arc::clone(&request_candidate_repository),
+                    Arc::clone(&usage_repository),
+                ),
+            )
+            .with_usage_runtime_for_tests(UsageRuntimeConfig {
+                enabled: true,
+                ..UsageRuntimeConfig::default()
+            });
+        let plan = codex_cyber_policy_plan(request_id);
+        let lifecycle_seed = aether_usage_runtime::build_lifecycle_usage_seed(&plan, None);
+        let request_candidate_status_snapshot =
+            crate::request_candidate_runtime::snapshot_local_request_candidate_status(&plan, None);
+        let stream_started_at = Instant::now();
+        let finalizer = DirectPassthroughFinalizer::new(DirectPassthroughFinalizerCore {
+            state,
+            trace_id: "trace-inline-first-chunk-candidate-handoff".to_string(),
+            report_kind: None,
+            report_context: None,
+            lifecycle_seed,
+            direct_stream_finalize_kind: None,
+            stream_started_at,
+            stage_trace: RequestStageTrace::from_env(),
+            request_diagnostics: None,
+            request_id_for_log: request_id.to_string(),
+            candidate_id: plan.candidate_id.clone(),
+            request_candidate_status_snapshot,
+            deferred_request_candidate_status_record: None,
+            candidate_started_unix_secs: crate::clock::current_unix_ms(),
+            status_code: 200,
+            headers: BTreeMap::new(),
+            stream_usage_report_context: None,
+            stream_usage_observer: None,
+            stream_usage_observer_buffered: Vec::new(),
+            provider_error_inspection: ProviderStreamErrorInspection::default(),
+            provider_buffered_body: Vec::new(),
+            buffered_body: Vec::new(),
+            provider_body_truncated: false,
+            client_body_truncated: false,
+            client_stream_completion_tracker: ClientVisibleStreamCompletionTracker::default(),
+            client_visible_stream_completed: false,
+            usage_stream_telemetry: Some(ExecutionTelemetry {
+                ttfb_ms: Some(7),
+                elapsed_ms: Some(7),
+                upstream_bytes: Some(2),
+            }),
+            telemetry: None,
+            provider_stream_bytes: 2,
+            client_stream_bytes: 0,
+            last_client_chunk_elapsed_ms: 0,
+            pending_recorded: false,
+            stream_started_recorded: false,
+            terminal_failure: None,
+            _provider_pool_in_flight_guard: None,
+            _upstream_target_permit: None,
+            plan,
+        });
+        let mut body_state = DirectPassthroughInlineBodyState {
+            finalizer: Some(finalizer),
+            upstream: None,
+            upstream_control_filter: None,
+            upstream_started_at: stream_started_at,
+            stream_first_byte_timeout: None,
+            observed_first_body_poll: true,
+            observed_first_client_yield: false,
+            upstream_done: false,
+            control_filter_flushed: false,
+            terminal_error_sent: false,
+            finalized: false,
+        };
+        let first_yield_count = stage_metric_count("stream_first_client_yield");
+
+        body_state.prepare_client_chunk_yield(&Bytes::from_static(b"hi"));
+
+        assert!(body_state.observed_first_client_yield);
+        assert!(
+            stage_metric_count("stream_first_client_yield") > first_yield_count,
+            "the first-yield metric must be recorded before candidate persistence completes"
+        );
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            request_candidate_repository.streaming_started.notified(),
+        )
+        .await
+        .expect("candidate streaming persistence should be handed off");
+        assert!(
+            request_candidate_repository
+                .list_by_request_id(request_id)
+                .await
+                .expect("candidate read should succeed")
+                .is_empty(),
+            "the first chunk must return while candidate persistence is still blocked"
+        );
+
+        let live_usage = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(usage) = usage_repository
+                    .find_by_request_id(request_id)
+                    .await
+                    .expect("usage read should succeed")
+                {
+                    if usage.status == "streaming" {
+                        break usage;
+                    }
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("ordered usage lifecycle should reach streaming independently");
+        assert_eq!(live_usage.billing_status, "pending");
+        assert_eq!(live_usage.first_byte_time_ms, Some(7));
+
+        request_candidate_repository.release_streaming.notify_one();
+        let candidate = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(candidate) = request_candidate_repository
+                    .list_by_request_id(request_id)
+                    .await
+                    .expect("candidate read should succeed")
+                    .into_iter()
+                    .next()
+                {
+                    break candidate;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("candidate handoff should finish after release");
+        assert_eq!(candidate.status, RequestCandidateStatus::Streaming);
+
+        if let Some(mut finalizer) = body_state.finalizer.take() {
+            finalizer.core.take();
+        }
+    }
+
+    #[tokio::test]
+    async fn frame_stream_records_deferred_pending_before_waiting_for_headers() {
+        let request_id = "req-frame-stream-deferred-pending";
+        let usage_repository = Arc::new(InMemoryUsageReadRepository::default());
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(
+                crate::data::GatewayDataState::with_usage_repository_for_tests(Arc::clone(
+                    &usage_repository,
+                )),
+            )
+            .with_usage_runtime_for_tests(UsageRuntimeConfig {
+                enabled: true,
+                ..UsageRuntimeConfig::default()
+            });
+        let plan = codex_cyber_policy_plan(request_id);
+        let release_headers = Arc::new(Notify::new());
+        let release_headers_for_stream = Arc::clone(&release_headers);
+        let frame_stream = stream! {
+            release_headers_for_stream.notified().await;
+            yield Ok::<Bytes, std::io::Error>(ndjson_frame(StreamFrame {
+                frame_type: StreamFrameType::Headers,
+                payload: StreamFramePayload::Headers {
+                    status_code: 200,
+                    headers: BTreeMap::from([(
+                        "content-type".to_string(),
+                        "text/event-stream".to_string(),
+                    )]),
+                },
+            }));
+        }
+        .boxed();
+        let state_for_execution = state.clone();
+        let execution = tokio::spawn(async move {
+            execute_stream_from_frame_stream(
+                &state_for_execution,
+                plan,
+                "trace-frame-stream-deferred-pending",
+                &test_decision(),
+                "openai_responses_stream",
+                None,
+                Some(json!({
+                    "provider_api_format": "openai:responses",
+                    "client_api_format": "openai:responses",
+                })),
+                crate::clock::current_unix_ms(),
+                Instant::now(),
+                RequestStageTrace::from_env(),
+                false,
+                frame_stream,
+                None,
+            )
+            .await
+        });
+
+        let pending = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(usage) = usage_repository
+                    .find_by_request_id(request_id)
+                    .await
+                    .expect("usage should read")
+                {
+                    break usage;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("deferred pending usage should be recorded before headers");
+
+        assert_eq!(pending.status, "pending");
+        assert_eq!(pending.billing_status, "pending");
+        assert!(
+            !execution.is_finished(),
+            "frame execution should still be waiting for upstream headers"
+        );
+
+        execution.abort();
+        let _ = execution.await;
+    }
+
+    #[tokio::test]
+    async fn sync_terminal_handoff_survives_cancellation_during_admission_backpressure() {
+        let blocker_request_id = "req-sync-terminal-admission-blocker";
+        let target_request_id = "req-sync-terminal-handoff-cancelled";
+        let usage_repository = Arc::new(InMemoryUsageReadRepository::default());
+        let state = AppState::new()
+            .expect("app state should build")
+            .with_data_state_for_tests(
+                crate::data::GatewayDataState::with_usage_repository_for_tests(Arc::clone(
+                    &usage_repository,
+                )),
+            )
+            .with_usage_runtime_for_tests(UsageRuntimeConfig {
+                enabled: true,
+                terminal_submission_max_in_flight: 1,
+                ..UsageRuntimeConfig::default()
+            });
+        let policy_started = Arc::new(Notify::new());
+        let release_policy = Arc::new(Notify::new());
+        let blocker = BlockingUsageAccess {
+            policy_started: Arc::clone(&policy_started),
+            release_policy: Arc::clone(&release_policy),
+        };
+
+        state
+            .usage_runtime
+            .submit_terminal_event(
+                &blocker,
+                UsageEvent::new(
+                    UsageEventType::Completed,
+                    blocker_request_id,
+                    UsageEventData {
+                        provider_name: "test".to_string(),
+                        model: "test-model".to_string(),
+                        status_code: Some(200),
+                        ..UsageEventData::default()
+                    },
+                ),
+            )
+            .await;
+        tokio::time::timeout(Duration::from_secs(1), policy_started.notified())
+            .await
+            .expect("first terminal submission should be blocked in body policy");
+
+        let plan = codex_cyber_policy_plan(target_request_id);
+        let payload = build_stream_sync_payload(
+            "trace-sync-terminal-handoff-cancelled",
+            "openai_responses_stream".to_string(),
+            Some(json!({
+                "request_id": target_request_id,
+                "provider_api_format": "openai:responses",
+                "client_api_format": "openai:responses"
+            })),
+            500,
+            BTreeMap::new(),
+            Some(json!({"error": "synthetic terminal failure"})),
+            None,
+            None,
+        );
+        let state_for_handoff = state.clone();
+        let child_started = Arc::new(Notify::new());
+        let release_child = Arc::new(Notify::new());
+        let child_started_for_handoff = Arc::clone(&child_started);
+        let release_child_for_handoff = Arc::clone(&release_child);
+        let handoff = tokio::spawn(async move {
+            record_sync_terminal_usage_with_handoff_after_spawn(
+                &state_for_handoff,
+                &plan,
+                payload.report_context.as_ref(),
+                &payload,
+                async move {
+                    child_started_for_handoff.notify_one();
+                    release_child_for_handoff.notified().await;
+                },
+            )
+            .await;
+        });
+        tokio::time::timeout(Duration::from_secs(1), child_started.notified())
+            .await
+            .expect("detached terminal child should start before cancellation");
+
+        handoff.abort();
+        if let Err(err) = handoff.await {
+            assert!(err.is_cancelled(), "terminal handoff task should not panic");
+        }
+        release_child.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if state
+                    .usage_runtime
+                    .metrics_snapshot()
+                    .terminal_submission_pending
+                    >= 2
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("second terminal submission should reach the ordered backlog");
+
+        release_policy.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if state
+                    .usage_runtime
+                    .metrics_snapshot()
+                    .terminal_submission_pending
+                    == 0
+                    && state
+                        .usage_runtime
+                        .metrics_snapshot()
+                        .lifecycle_submission_pending
+                        == 0
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached terminal handoff should release admission");
+
+        let record = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(record) = usage_repository
+                    .find_by_request_id(target_request_id)
+                    .await
+                    .expect("usage repository read should succeed")
+                {
+                    break record;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached terminal handoff should persist the target row");
+        assert_eq!(record.status, "failed");
+        assert_eq!(record.billing_status, "void");
     }
 
     #[test]
@@ -6363,6 +7235,25 @@ mod tests {
             Some(&json!("cyber_policy_violation"))
         );
         assert_eq!(detected.pointer("/error/param"), Some(&json!("input")));
+    }
+
+    #[tokio::test]
+    async fn prefetched_codex_cyber_policy_violation_stops_failover_by_default() {
+        let response = execute_prefetched_codex_cyber_policy_failure(false)
+            .await
+            .expect("default Codex cyber policy handling should return the provider error");
+
+        assert_eq!(response.status().as_u16(), 200);
+    }
+
+    #[tokio::test]
+    async fn prefetched_codex_cyber_policy_violation_retries_when_system_setting_is_enabled() {
+        assert!(
+            execute_prefetched_codex_cyber_policy_failure(true)
+                .await
+                .is_none(),
+            "enabling cyber failover should retry the next candidate"
+        );
     }
 
     fn tunnel_proxy_snapshot(base_url: String) -> aether_contracts::ProxySnapshot {
@@ -7258,6 +8149,7 @@ mod tests {
             "claude:messages",
             false,
             false,
+            false,
         ));
     }
 
@@ -7268,6 +8160,7 @@ mod tests {
             None,
             "claude:messages",
             "claude:messages",
+            false,
             false,
             false,
         ));
@@ -7282,6 +8175,7 @@ mod tests {
             "claude:messages",
             false,
             false,
+            false,
         ));
     }
 
@@ -7294,6 +8188,30 @@ mod tests {
             "claude:messages",
             false,
             true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn cyber_failover_setting_forces_prefetch_for_event_streams() {
+        assert!(!should_skip_direct_finalize_prefetch(
+            Some("openai_responses_sync_finalize"),
+            Some("text/event-stream"),
+            "openai:responses",
+            "openai:responses",
+            false,
+            false,
+            true,
+        ));
+    }
+
+    #[test]
+    fn cyber_prefetch_waits_through_response_setup_until_output() {
+        assert!(!prefetched_openai_responses_body_has_output_boundary(
+            b"event: response.created\ndata: {\"type\":\"response.created\"}\n\n"
+        ));
+        assert!(prefetched_openai_responses_body_has_output_boundary(
+            b"event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"
         ));
     }
 
@@ -7682,6 +8600,7 @@ mod tests {
             crate::clock::current_unix_ms(),
             Instant::now(),
             RequestStageTrace::from_env(),
+            true,
             frame_stream,
             None,
         )
@@ -7792,6 +8711,7 @@ mod tests {
             crate::clock::current_unix_ms(),
             Instant::now(),
             RequestStageTrace::from_env(),
+            true,
             frame_stream,
             None,
         )
@@ -7899,6 +8819,7 @@ mod tests {
             crate::clock::current_unix_ms(),
             Instant::now(),
             RequestStageTrace::from_env(),
+            true,
             frame_stream,
             None,
         )
@@ -8036,6 +8957,7 @@ mod tests {
             crate::clock::current_unix_ms(),
             Instant::now(),
             RequestStageTrace::from_env(),
+            true,
             frame_stream,
             None,
         )
@@ -8162,6 +9084,7 @@ mod tests {
             crate::clock::current_unix_ms(),
             Instant::now(),
             RequestStageTrace::from_env(),
+            true,
             frame_stream,
             None,
         )
@@ -8342,6 +9265,7 @@ mod tests {
             crate::clock::current_unix_ms(),
             Instant::now(),
             RequestStageTrace::from_env(),
+            true,
             frame_stream,
             None,
         )
@@ -8482,6 +9406,7 @@ mod tests {
             crate::clock::current_unix_ms(),
             Instant::now(),
             RequestStageTrace::from_env(),
+            true,
             frame_stream,
             None,
         )

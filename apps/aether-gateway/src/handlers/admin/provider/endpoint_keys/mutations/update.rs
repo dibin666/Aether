@@ -1,6 +1,7 @@
 use crate::handlers::admin::admin_provider_pool_config;
 use crate::handlers::admin::provider::shared::paths::admin_update_key_id;
 use crate::handlers::admin::provider::shared::payloads::AdminProviderKeyUpdatePatch;
+use crate::handlers::admin::provider::write::keys::admin_provider_key_update_requires_immediate_model_fetch;
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::maintenance::ensure_provider_key_pool_scores_for_keys;
 use crate::provider_key_auth::provider_key_effective_api_formats;
@@ -81,15 +82,24 @@ pub(super) async fn maybe_handle(
         Ok(record) => record,
         Err(detail) => return Ok(Some(bad_request_response(detail))),
     };
-    let Some(updated) = state.update_provider_catalog_key(&updated_record).await? else {
+    let Some(mut updated) = state.update_provider_catalog_key(&updated_record).await? else {
         return Ok(None);
     };
-    let auto_fetch_filters_changed = existing_key.model_include_patterns
-        != updated.model_include_patterns
-        || existing_key.model_exclude_patterns != updated.model_exclude_patterns;
-    // 自动获取开启后，调整过滤规则也要立即刷新 allowed_models。
-    let should_overwrite_allowed_models_immediately = updated.auto_fetch_models
-        && (!existing_key.auto_fetch_models || auto_fetch_filters_changed);
+    if updated_record.learned_rpm_limit != existing_key.learned_rpm_limit {
+        let Some(reloaded) = state
+            .set_provider_catalog_key_learned_rpm_limit(
+                &key_id,
+                updated_record.learned_rpm_limit,
+                updated_record.updated_at_unix_secs,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        updated = reloaded;
+    }
+    let should_overwrite_allowed_models_immediately =
+        admin_provider_key_update_requires_immediate_model_fetch(&existing_key, &updated);
     let updated = if should_overwrite_allowed_models_immediately {
         let summary =
             perform_model_fetch_for_key(state.as_ref(), &provider.id, &updated.id).await?;

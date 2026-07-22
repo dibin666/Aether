@@ -1,10 +1,18 @@
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
-use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite};
+use sqlx::{
+    query::Query,
+    sqlite::{SqliteArguments, SqliteRow},
+    QueryBuilder, Row, Sqlite,
+};
 
 use aether_data_contracts::repository::provider_catalog::{
-    ProviderCatalogKeyListOrder, ProviderCatalogKeyListQuery, ProviderCatalogReadRepository,
-    ProviderCatalogUpstreamMetadataNamespaceUpdate, ProviderCatalogWriteRepository,
-    StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
+    ProviderCatalogKeyAdaptiveStateUpdate, ProviderCatalogKeyHealthStateUpdate,
+    ProviderCatalogKeyListOrder, ProviderCatalogKeyListQuery,
+    ProviderCatalogKeyRuntimeMetadataUpdate, ProviderCatalogKeyStatusSnapshotUpdate,
+    ProviderCatalogReadRepository, ProviderCatalogUpstreamMetadataNamespaceUpdate,
+    ProviderCatalogWriteRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
     StoredProviderCatalogKeyMaintenanceSummary, StoredProviderCatalogKeyPage,
     StoredProviderCatalogKeyStats, StoredProviderCatalogProvider,
 };
@@ -1093,87 +1101,7 @@ WHERE id = ?
     ) -> Result<StoredProviderCatalogKey, DataLayerError> {
         validate_key(key)?;
         let updated_at = key.updated_at_unix_secs.unwrap_or_else(current_unix_secs) as i64;
-        let rows_affected = sqlx::query(key_update_sql())
-            .bind(&key.provider_id)
-            .bind(&key.name)
-            .bind(&key.encrypted_api_key)
-            .bind(&key.auth_type)
-            .bind(optional_json_to_string(
-                &key.capabilities,
-                "provider_api_keys.capabilities",
-            )?)
-            .bind(key.is_active)
-            .bind(optional_json_to_string(
-                &key.api_formats,
-                "provider_api_keys.api_formats",
-            )?)
-            .bind(optional_json_to_string(
-                &key.auth_type_by_format,
-                "provider_api_keys.auth_type_by_format",
-            )?)
-            .bind(optional_json_to_string(
-                &key.allow_auth_channel_mismatch_formats,
-                "provider_api_keys.allow_auth_channel_mismatch_formats",
-            )?)
-            .bind(&key.encrypted_auth_config)
-            .bind(&key.note)
-            .bind(key.internal_priority)
-            .bind(optional_json_to_string(
-                &key.rate_multipliers,
-                "provider_api_keys.rate_multipliers",
-            )?)
-            .bind(optional_json_to_string(
-                &key.global_priority_by_format,
-                "provider_api_keys.global_priority_by_format",
-            )?)
-            .bind(optional_json_to_string(
-                &key.allowed_models,
-                "provider_api_keys.allowed_models",
-            )?)
-            .bind(optional_i64_from_u64(
-                key.expires_at_unix_secs,
-                "provider_api_keys.expires_at",
-            )?)
-            .bind(key.cache_ttl_minutes)
-            .bind(key.max_probe_interval_minutes)
-            .bind(optional_json_to_string(
-                &key.proxy,
-                "provider_api_keys.proxy",
-            )?)
-            .bind(optional_json_to_string(
-                &key.fingerprint,
-                "provider_api_keys.fingerprint",
-            )?)
-            .bind(optional_i64_from_u32(key.rpm_limit))
-            .bind(key.concurrent_limit)
-            .bind(optional_i64_from_u32(key.learned_rpm_limit))
-            .bind(optional_i64_from_u32(key.concurrent_429_count).unwrap_or(0))
-            .bind(optional_i64_from_u32(key.rpm_429_count).unwrap_or(0))
-            .bind(optional_i64_from_u64(
-                key.last_429_at_unix_secs,
-                "provider_api_keys.last_429_at",
-            )?)
-            .bind(&key.last_429_type)
-            .bind(optional_json_to_string(
-                &key.adjustment_history,
-                "provider_api_keys.adjustment_history",
-            )?)
-            .bind(optional_json_to_string(
-                &key.utilization_samples,
-                "provider_api_keys.utilization_samples",
-            )?)
-            .bind(optional_i64_from_u64(
-                key.last_probe_increase_at_unix_secs,
-                "provider_api_keys.last_probe_increase_at",
-            )?)
-            .bind(optional_i64_from_u32(key.last_rpm_peak))
-            .bind(optional_i64_from_u64(
-                key.last_models_fetch_at_unix_secs,
-                "provider_api_keys.last_models_fetch_at",
-            )?)
-            .bind(&key.last_models_fetch_error)
-            .bind(updated_at)
-            .bind(&key.id)
+        let rows_affected = key_update_query(key, updated_at)?
             .execute(&self.pool)
             .await
             .map_sql_err()?
@@ -1186,6 +1114,53 @@ WHERE id = ?
             )));
         }
         self.reload_key(&key.id, "updated").await
+    }
+
+    pub async fn update_keys(
+        &self,
+        keys: &[StoredProviderCatalogKey],
+    ) -> Result<Vec<StoredProviderCatalogKey>, DataLayerError> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        for key in keys {
+            validate_key(key)?;
+        }
+
+        let updated_at = current_unix_secs() as i64;
+        let mut transaction = self.pool.begin().await.map_sql_err()?;
+        for key in keys {
+            let key_updated_at = key.updated_at_unix_secs.unwrap_or(updated_at as u64) as i64;
+            let rows_affected = key_update_query(key, key_updated_at)?
+                .execute(&mut *transaction)
+                .await
+                .map_sql_err()?
+                .rows_affected();
+            if rows_affected == 0 {
+                return Err(DataLayerError::UnexpectedValue(format!(
+                    "provider catalog key {} not found",
+                    key.id
+                )));
+            }
+        }
+        transaction.commit().await.map_sql_err()?;
+        let key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
+        let mut reloaded = self
+            .list_keys_by_ids(&key_ids)
+            .await?
+            .into_iter()
+            .map(|key| (key.id.clone(), key))
+            .collect::<BTreeMap<_, _>>();
+        keys.iter()
+            .map(|key| {
+                reloaded.remove(&key.id).ok_or_else(|| {
+                    DataLayerError::UnexpectedValue(format!(
+                        "updated provider catalog key {} could not be reloaded",
+                        key.id
+                    ))
+                })
+            })
+            .collect()
     }
 
     pub async fn delete_key(&self, key_id: &str) -> Result<bool, DataLayerError> {
@@ -1436,6 +1411,38 @@ WHERE id = ?
         Ok(rows_affected > 0)
     }
 
+    pub async fn update_key_oauth_runtime_state(
+        &self,
+        key_id: &str,
+        oauth_invalid_at_unix_secs: Option<u64>,
+        oauth_invalid_reason: Option<&str>,
+        encrypted_auth_config_update: Option<&str>,
+        updated_at_unix_secs: Option<u64>,
+    ) -> Result<bool, DataLayerError> {
+        validate_non_empty(key_id, "provider catalog key_id")?;
+        let rows_affected = sqlx::query(
+            r#"
+UPDATE provider_api_keys
+SET oauth_invalid_at = ?, oauth_invalid_reason = ?,
+    auth_config = COALESCE(?, auth_config), updated_at = ?
+WHERE id = ?
+"#,
+        )
+        .bind(optional_i64_from_u64(
+            oauth_invalid_at_unix_secs,
+            "provider_api_keys.oauth_invalid_at",
+        )?)
+        .bind(oauth_invalid_reason)
+        .bind(encrypted_auth_config_update)
+        .bind(updated_at_unix_secs.unwrap_or_else(current_unix_secs) as i64)
+        .bind(key_id)
+        .execute(&self.pool)
+        .await
+        .map_sql_err()?
+        .rows_affected();
+        Ok(rows_affected > 0)
+    }
+
     pub async fn update_key_health_state(
         &self,
         key_id: &str,
@@ -1462,6 +1469,260 @@ WHERE id = ?
         )?)
         .bind(current_unix_secs() as i64)
         .bind(key_id)
+        .execute(&self.pool)
+        .await
+        .map_sql_err()?
+        .rows_affected();
+        Ok(rows_affected > 0)
+    }
+
+    pub async fn reset_key_error_count(&self, key_id: &str) -> Result<bool, DataLayerError> {
+        validate_non_empty(key_id, "provider catalog key_id")?;
+        let rows_affected = sqlx::query(
+            r#"
+UPDATE provider_api_keys
+SET error_count = 0, updated_at = ?
+WHERE id = ?
+"#,
+        )
+        .bind(current_unix_secs() as i64)
+        .bind(key_id)
+        .execute(&self.pool)
+        .await
+        .map_sql_err()?
+        .rows_affected();
+        Ok(rows_affected > 0)
+    }
+
+    pub async fn compare_and_update_key_adaptive_state(
+        &self,
+        update: &ProviderCatalogKeyAdaptiveStateUpdate,
+    ) -> Result<bool, DataLayerError> {
+        validate_non_empty(&update.key_id, "provider catalog key_id")?;
+        let status_snapshot_patch = adaptive_status_snapshot_patch(&update.status_snapshot_patch)?;
+        let expected = update.expected.canonicalized();
+        let next = update.next.canonicalized();
+        let mut builder =
+            QueryBuilder::<Sqlite>::new("UPDATE provider_api_keys SET learned_rpm_limit = ");
+        builder
+            .push_bind(optional_i64_from_u32(next.learned_rpm_limit))
+            .push(", rpm_429_count = ")
+            .push_bind(optional_i64_from_u32(next.rpm_429_count))
+            .push(", last_429_at = ")
+            .push_bind(optional_i64_from_u64(
+                next.last_429_at_unix_secs,
+                "provider_api_keys.last_429_at",
+            )?)
+            .push(", last_429_type = ")
+            .push_bind(&next.last_429_type)
+            .push(", adjustment_history = ")
+            .push_bind(optional_json_to_string(
+                &next.adjustment_history,
+                "provider_api_keys.adjustment_history",
+            )?)
+            .push(", utilization_samples = ")
+            .push_bind(optional_json_to_string(
+                &next.utilization_samples,
+                "provider_api_keys.utilization_samples",
+            )?)
+            .push(", last_probe_increase_at = ")
+            .push_bind(optional_i64_from_u64(
+                next.last_probe_increase_at_unix_secs,
+                "provider_api_keys.last_probe_increase_at",
+            )?)
+            .push(", last_rpm_peak = ")
+            .push_bind(optional_i64_from_u32(next.last_rpm_peak))
+            .push(", concurrent_429_count = ")
+            .push_bind(optional_i64_from_u32(next.concurrent_429_count))
+            .push(", status_snapshot = ");
+        push_status_snapshot_shallow_patch(&mut builder, &status_snapshot_patch)?;
+        builder
+            .push(", updated_at = ")
+            .push_bind(
+                update
+                    .updated_at_unix_secs
+                    .unwrap_or_else(current_unix_secs) as i64,
+            )
+            .push(" WHERE id = ")
+            .push_bind(&update.key_id)
+            .push(" AND learned_rpm_limit IS ")
+            .push_bind(optional_i64_from_u32(expected.learned_rpm_limit))
+            .push(" AND rpm_429_count IS ")
+            .push_bind(optional_i64_from_u32(expected.rpm_429_count))
+            .push(" AND last_429_at IS ")
+            .push_bind(optional_i64_from_u64(
+                expected.last_429_at_unix_secs,
+                "provider_api_keys.last_429_at",
+            )?)
+            .push(" AND last_429_type IS ")
+            .push_bind(&expected.last_429_type)
+            .push(" AND json(adjustment_history) IS json(")
+            .push_bind(optional_json_to_string(
+                &expected.adjustment_history,
+                "provider_api_keys.adjustment_history",
+            )?)
+            .push(")")
+            .push(" AND json(utilization_samples) IS json(")
+            .push_bind(optional_json_to_string(
+                &expected.utilization_samples,
+                "provider_api_keys.utilization_samples",
+            )?)
+            .push(")")
+            .push(" AND last_probe_increase_at IS ")
+            .push_bind(optional_i64_from_u64(
+                expected.last_probe_increase_at_unix_secs,
+                "provider_api_keys.last_probe_increase_at",
+            )?)
+            .push(" AND last_rpm_peak IS ")
+            .push_bind(optional_i64_from_u32(expected.last_rpm_peak))
+            .push(" AND concurrent_429_count IS ")
+            .push_bind(optional_i64_from_u32(expected.concurrent_429_count));
+        let rows_affected = builder
+            .build()
+            .execute(&self.pool)
+            .await
+            .map_sql_err()?
+            .rows_affected();
+        Ok(rows_affected > 0)
+    }
+
+    pub async fn update_key_runtime_metadata(
+        &self,
+        update: &ProviderCatalogKeyRuntimeMetadataUpdate,
+    ) -> Result<bool, DataLayerError> {
+        validate_runtime_metadata_update(update)?;
+        let namespace_path = format!(
+            "$.{}",
+            serde_json::to_string(&update.namespace).map_err(|err| {
+                DataLayerError::UnexpectedValue(format!(
+                    "provider_api_keys.upstream_metadata namespace is not serializable: {err}"
+                ))
+            })?
+        );
+        let metadata_value =
+            serde_json::to_string(&update.upstream_metadata_value).map_err(|err| {
+                DataLayerError::UnexpectedValue(format!(
+                    "provider_api_keys.upstream_metadata value is not serializable: {err}"
+                ))
+            })?;
+        let expected_metadata_value = update
+            .expected_upstream_metadata_value
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|err| {
+                DataLayerError::UnexpectedValue(format!(
+                    "provider_api_keys.upstream_metadata expected value is not serializable: {err}"
+                ))
+            })?;
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            "UPDATE provider_api_keys SET upstream_metadata = json_set(\
+             COALESCE(NULLIF(upstream_metadata, ''), '{}'), ",
+        );
+        builder
+            .push_bind(namespace_path.clone())
+            .push(", json(")
+            .push_bind(metadata_value)
+            .push(")), status_snapshot = ");
+        push_status_snapshot_shallow_patch(&mut builder, &update.status_snapshot_patch)?;
+        builder
+            .push(", updated_at = ")
+            .push_bind(
+                update
+                    .updated_at_unix_secs
+                    .unwrap_or_else(current_unix_secs) as i64,
+            )
+            .push(" WHERE id = ")
+            .push_bind(&update.key_id);
+        if let Some(expected_metadata_value) = expected_metadata_value {
+            builder
+                .push(" AND json_type(COALESCE(NULLIF(upstream_metadata, ''), '{}'), ")
+                .push_bind(namespace_path.clone())
+                .push(") = json_type(json(")
+                .push_bind(expected_metadata_value.clone())
+                .push(")) AND json_extract(COALESCE(NULLIF(upstream_metadata, ''), '{}'), ")
+                .push_bind(namespace_path)
+                .push(") IS json_extract(json_object('value', json(")
+                .push_bind(expected_metadata_value)
+                .push(")), '$.value')");
+        } else {
+            builder
+                .push(" AND json_type(COALESCE(NULLIF(upstream_metadata, ''), '{}'), ")
+                .push_bind(namespace_path)
+                .push(") IS NULL");
+        }
+        let rows_affected = builder
+            .build()
+            .execute(&self.pool)
+            .await
+            .map_sql_err()?
+            .rows_affected();
+        Ok(rows_affected > 0)
+    }
+
+    pub async fn update_key_status_snapshot(
+        &self,
+        update: &ProviderCatalogKeyStatusSnapshotUpdate,
+    ) -> Result<bool, DataLayerError> {
+        validate_non_empty(&update.key_id, "provider catalog key_id")?;
+        if !update.status_snapshot_patch.is_object() {
+            return Err(DataLayerError::InvalidInput(
+                "provider catalog status snapshot patch must be an object".to_string(),
+            ));
+        }
+        let mut builder =
+            QueryBuilder::<Sqlite>::new("UPDATE provider_api_keys SET status_snapshot = ");
+        push_status_snapshot_shallow_patch(&mut builder, &update.status_snapshot_patch)?;
+        builder
+            .push(", updated_at = ")
+            .push_bind(
+                update
+                    .updated_at_unix_secs
+                    .unwrap_or_else(current_unix_secs) as i64,
+            )
+            .push(" WHERE id = ")
+            .push_bind(&update.key_id);
+        let rows_affected = builder
+            .build()
+            .execute(&self.pool)
+            .await
+            .map_sql_err()?
+            .rows_affected();
+        Ok(rows_affected > 0)
+    }
+
+    pub async fn compare_and_update_key_health_state(
+        &self,
+        update: &ProviderCatalogKeyHealthStateUpdate,
+    ) -> Result<bool, DataLayerError> {
+        validate_non_empty(&update.key_id, "provider catalog key_id")?;
+        let rows_affected = sqlx::query(
+            r#"
+UPDATE provider_api_keys
+SET health_by_format = ?, circuit_breaker_by_format = ?, updated_at = ?
+WHERE id = ?
+  AND json(health_by_format) IS json(?)
+  AND json(circuit_breaker_by_format) IS json(?)
+"#,
+        )
+        .bind(optional_json_to_string(
+            &update.health_by_format,
+            "provider_api_keys.health_by_format",
+        )?)
+        .bind(optional_json_to_string(
+            &update.circuit_breaker_by_format,
+            "provider_api_keys.circuit_breaker_by_format",
+        )?)
+        .bind(current_unix_secs() as i64)
+        .bind(&update.key_id)
+        .bind(optional_json_to_string(
+            &update.expected_health_by_format,
+            "provider_api_keys.health_by_format",
+        )?)
+        .bind(optional_json_to_string(
+            &update.expected_circuit_breaker_by_format,
+            "provider_api_keys.circuit_breaker_by_format",
+        )?)
         .execute(&self.pool)
         .await
         .map_sql_err()?
@@ -1661,6 +1922,13 @@ impl ProviderCatalogWriteRepository for SqliteProviderCatalogReadRepository {
         Self::update_key(self, key).await
     }
 
+    async fn update_keys(
+        &self,
+        keys: &[StoredProviderCatalogKey],
+    ) -> Result<Vec<StoredProviderCatalogKey>, DataLayerError> {
+        Self::update_keys(self, keys).await
+    }
+
     async fn update_key_upstream_metadata(
         &self,
         key_id: &str,
@@ -1751,6 +2019,25 @@ impl ProviderCatalogWriteRepository for SqliteProviderCatalogReadRepository {
         .await
     }
 
+    async fn update_key_oauth_runtime_state(
+        &self,
+        key_id: &str,
+        oauth_invalid_at_unix_secs: Option<u64>,
+        oauth_invalid_reason: Option<&str>,
+        encrypted_auth_config_update: Option<&str>,
+        updated_at_unix_secs: Option<u64>,
+    ) -> Result<bool, DataLayerError> {
+        Self::update_key_oauth_runtime_state(
+            self,
+            key_id,
+            oauth_invalid_at_unix_secs,
+            oauth_invalid_reason,
+            encrypted_auth_config_update,
+            updated_at_unix_secs,
+        )
+        .await
+    }
+
     async fn update_key_health_state(
         &self,
         key_id: &str,
@@ -1766,6 +2053,38 @@ impl ProviderCatalogWriteRepository for SqliteProviderCatalogReadRepository {
             circuit_breaker_by_format,
         )
         .await
+    }
+
+    async fn reset_key_error_count(&self, key_id: &str) -> Result<bool, DataLayerError> {
+        Self::reset_key_error_count(self, key_id).await
+    }
+
+    async fn compare_and_update_key_adaptive_state(
+        &self,
+        update: &ProviderCatalogKeyAdaptiveStateUpdate,
+    ) -> Result<bool, DataLayerError> {
+        Self::compare_and_update_key_adaptive_state(self, update).await
+    }
+
+    async fn update_key_runtime_metadata(
+        &self,
+        update: &ProviderCatalogKeyRuntimeMetadataUpdate,
+    ) -> Result<bool, DataLayerError> {
+        Self::update_key_runtime_metadata(self, update).await
+    }
+
+    async fn update_key_status_snapshot(
+        &self,
+        update: &ProviderCatalogKeyStatusSnapshotUpdate,
+    ) -> Result<bool, DataLayerError> {
+        Self::update_key_status_snapshot(self, update).await
+    }
+
+    async fn compare_and_update_key_health_state(
+        &self,
+        update: &ProviderCatalogKeyHealthStateUpdate,
+    ) -> Result<bool, DataLayerError> {
+        Self::compare_and_update_key_health_state(self, update).await
     }
 }
 
@@ -1834,6 +2153,87 @@ fn validate_non_empty(value: &str, field_name: &str) -> Result<(), DataLayerErro
             "{field_name} is empty"
         )));
     }
+    Ok(())
+}
+
+fn adaptive_status_snapshot_patch(
+    patch: &serde_json::Value,
+) -> Result<serde_json::Value, DataLayerError> {
+    const OWNED_FIELDS: [&str; 6] = [
+        "observation_count",
+        "header_observation_count",
+        "latest_upstream_limit",
+        "learning_confidence",
+        "enforcement_active",
+        "known_boundary",
+    ];
+    let object = patch.as_object().ok_or_else(|| {
+        DataLayerError::InvalidInput(
+            "provider catalog adaptive status snapshot patch must be an object".to_string(),
+        )
+    })?;
+    Ok(serde_json::Value::Object(
+        OWNED_FIELDS
+            .into_iter()
+            .filter_map(|field| {
+                object
+                    .get(field)
+                    .cloned()
+                    .map(|value| (field.to_string(), value))
+            })
+            .collect(),
+    ))
+}
+
+fn validate_runtime_metadata_update(
+    update: &ProviderCatalogKeyRuntimeMetadataUpdate,
+) -> Result<(), DataLayerError> {
+    validate_non_empty(&update.key_id, "provider catalog key_id")?;
+    validate_non_empty(
+        &update.namespace,
+        "provider catalog runtime metadata namespace",
+    )?;
+    if !update.status_snapshot_patch.is_object() {
+        return Err(DataLayerError::InvalidInput(
+            "provider catalog runtime status snapshot patch must be an object".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn push_status_snapshot_shallow_patch<'args>(
+    builder: &mut QueryBuilder<'args, Sqlite>,
+    patch: &serde_json::Value,
+) -> Result<(), DataLayerError> {
+    let object = patch.as_object().ok_or_else(|| {
+        DataLayerError::InvalidInput(
+            "provider catalog status snapshot patch must be an object".to_string(),
+        )
+    })?;
+    if object.is_empty() {
+        builder.push("COALESCE(NULLIF(status_snapshot, ''), '{}')");
+        return Ok(());
+    }
+
+    builder.push("json_set(COALESCE(NULLIF(status_snapshot, ''), '{}')");
+    for (field, value) in object {
+        let path = format!(
+            "$.{}",
+            serde_json::to_string(field).map_err(|err| {
+                DataLayerError::UnexpectedValue(format!(
+                    "provider_api_keys.status_snapshot field is not serializable: {err}"
+                ))
+            })?
+        );
+        let value = serde_json::to_string(value).map_err(|err| {
+            DataLayerError::UnexpectedValue(format!(
+                "provider_api_keys.status_snapshot value is not serializable: {err}"
+            ))
+        })?;
+        builder.push(", ").push_bind(path).push(", json(");
+        builder.push_bind(value).push(")");
+    }
+    builder.push(")");
     Ok(())
 }
 
@@ -1967,20 +2367,87 @@ SET
   fingerprint = ?,
   rpm_limit = ?,
   concurrent_limit = ?,
-  learned_rpm_limit = ?,
-  concurrent_429_count = ?,
-  rpm_429_count = ?,
-  last_429_at = ?,
-  last_429_type = ?,
-  adjustment_history = ?,
-  utilization_samples = ?,
-  last_probe_increase_at = ?,
-  last_rpm_peak = ?,
-  last_models_fetch_at = ?,
-  last_models_fetch_error = ?,
+  auto_fetch_models = ?,
+  locked_models = ?,
+  model_include_patterns = ?,
+  model_exclude_patterns = ?,
   updated_at = ?
 WHERE id = ?
 "#
+}
+
+fn key_update_query(
+    key: &StoredProviderCatalogKey,
+    updated_at: i64,
+) -> Result<Query<'_, Sqlite, SqliteArguments<'_>>, DataLayerError> {
+    Ok(sqlx::query(key_update_sql())
+        .bind(&key.provider_id)
+        .bind(&key.name)
+        .bind(&key.encrypted_api_key)
+        .bind(&key.auth_type)
+        .bind(optional_json_to_string(
+            &key.capabilities,
+            "provider_api_keys.capabilities",
+        )?)
+        .bind(key.is_active)
+        .bind(optional_json_to_string(
+            &key.api_formats,
+            "provider_api_keys.api_formats",
+        )?)
+        .bind(optional_json_to_string(
+            &key.auth_type_by_format,
+            "provider_api_keys.auth_type_by_format",
+        )?)
+        .bind(optional_json_to_string(
+            &key.allow_auth_channel_mismatch_formats,
+            "provider_api_keys.allow_auth_channel_mismatch_formats",
+        )?)
+        .bind(&key.encrypted_auth_config)
+        .bind(&key.note)
+        .bind(key.internal_priority)
+        .bind(optional_json_to_string(
+            &key.rate_multipliers,
+            "provider_api_keys.rate_multipliers",
+        )?)
+        .bind(optional_json_to_string(
+            &key.global_priority_by_format,
+            "provider_api_keys.global_priority_by_format",
+        )?)
+        .bind(optional_json_to_string(
+            &key.allowed_models,
+            "provider_api_keys.allowed_models",
+        )?)
+        .bind(optional_i64_from_u64(
+            key.expires_at_unix_secs,
+            "provider_api_keys.expires_at",
+        )?)
+        .bind(key.cache_ttl_minutes)
+        .bind(key.max_probe_interval_minutes)
+        .bind(optional_json_to_string(
+            &key.proxy,
+            "provider_api_keys.proxy",
+        )?)
+        .bind(optional_json_to_string(
+            &key.fingerprint,
+            "provider_api_keys.fingerprint",
+        )?)
+        .bind(optional_i64_from_u32(key.rpm_limit))
+        .bind(key.concurrent_limit)
+        .bind(key.auto_fetch_models)
+        .bind(optional_json_to_string(
+            &key.locked_models,
+            "provider_api_keys.locked_models",
+        )?)
+        .bind(optional_json_to_string(
+            &key.model_include_patterns,
+            "provider_api_keys.model_include_patterns",
+        )?)
+        .bind(optional_json_to_string(
+            &key.model_exclude_patterns,
+            "provider_api_keys.model_exclude_patterns",
+        )?)
+        .bind(updated_at)
+        .bind(&key.id))
 }
 
 fn optional_json_from_string(
@@ -2332,7 +2799,9 @@ mod tests {
     use super::SqliteProviderCatalogReadRepository;
     use crate::run_migrations;
     use aether_data_contracts::repository::provider_catalog::{
-        ProviderCatalogKeyListOrder, ProviderCatalogKeyListQuery,
+        ProviderCatalogKeyAdaptiveState, ProviderCatalogKeyAdaptiveStateUpdate,
+        ProviderCatalogKeyHealthStateUpdate, ProviderCatalogKeyListOrder,
+        ProviderCatalogKeyListQuery, ProviderCatalogKeyRuntimeMetadataUpdate,
         ProviderCatalogUpstreamMetadataNamespaceUpdate, StoredProviderCatalogEndpoint,
         StoredProviderCatalogKey, StoredProviderCatalogProvider,
     };
@@ -2394,6 +2863,176 @@ mod tests {
             .await
             .expect("stats should load");
         assert_eq!(stats[0].active_keys, 1);
+    }
+
+    #[tokio::test]
+    async fn sqlite_runtime_key_mutations_are_field_scoped_and_compare_and_swap() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool should connect");
+        run_migrations(&pool)
+            .await
+            .expect("sqlite migrations should run");
+        let repository = SqliteProviderCatalogReadRepository::new(pool);
+        repository
+            .create_provider(
+                &StoredProviderCatalogProvider::new(
+                    "runtime-provider".to_string(),
+                    "Runtime Provider".to_string(),
+                    None,
+                    "custom".to_string(),
+                )
+                .expect("provider should build"),
+                None,
+            )
+            .await
+            .expect("provider should create");
+        let mut key = StoredProviderCatalogKey::new(
+            "runtime-key".to_string(),
+            "runtime-provider".to_string(),
+            "Runtime Key".to_string(),
+            "api_key".to_string(),
+            None,
+            false,
+        )
+        .expect("key should build")
+        .with_rate_limit_fields(
+            None,
+            None,
+            Some(10),
+            None,
+            Some(1),
+            Some(100),
+            Some(json!([{"limit":10}])),
+            None,
+            None,
+        )
+        .with_health_fields(
+            Some(json!({"openai:chat":{"consecutive_failures":1}})),
+            None,
+        );
+        key.upstream_metadata = Some(json!({
+            "codex": {"remaining": 5},
+            "grok": {"remaining": 7}
+        }));
+        key.status_snapshot = Some(json!({
+            "quota": {"remaining": 5, "window": "day"},
+            "oauth": {"invalid": false},
+            "observation_count": 1,
+            "known_boundary": "old"
+        }));
+        let mut stale_admin_key = key.clone();
+        repository
+            .create_key(&key)
+            .await
+            .expect("key should create");
+
+        let health_update = ProviderCatalogKeyHealthStateUpdate {
+            key_id: "runtime-key".to_string(),
+            expected_health_by_format: key.health_by_format.clone(),
+            expected_circuit_breaker_by_format: None,
+            health_by_format: Some(json!({"openai:chat":{"consecutive_failures":2}})),
+            circuit_breaker_by_format: None,
+        };
+        assert!(repository
+            .compare_and_update_key_health_state(&health_update)
+            .await
+            .expect("health CAS should succeed"));
+        assert!(!repository
+            .compare_and_update_key_health_state(&health_update)
+            .await
+            .expect("stale health CAS should conflict"));
+
+        let adaptive_current = repository
+            .list_keys_by_ids(&["runtime-key".to_string()])
+            .await
+            .expect("key should reload before adaptive CAS")
+            .pop()
+            .expect("key should exist");
+        let expected = ProviderCatalogKeyAdaptiveState::from(&adaptive_current);
+        let mut next = expected.clone();
+        next.learned_rpm_limit = Some(8);
+        next.rpm_429_count = Some(2);
+        assert!(repository
+            .compare_and_update_key_adaptive_state(&ProviderCatalogKeyAdaptiveStateUpdate {
+                key_id: "runtime-key".to_string(),
+                expected: expected.clone(),
+                next,
+                status_snapshot_patch: json!({
+                    "observation_count": 2,
+                    "learning_confidence": 0.5,
+                    "known_boundary": null,
+                    "quota": {"remaining": 0}
+                }),
+                updated_at_unix_secs: Some(200),
+            })
+            .await
+            .expect("adaptive CAS should succeed"));
+        assert!(!repository
+            .compare_and_update_key_adaptive_state(&ProviderCatalogKeyAdaptiveStateUpdate {
+                key_id: "runtime-key".to_string(),
+                expected: expected.clone(),
+                next: expected,
+                status_snapshot_patch: json!({}),
+                updated_at_unix_secs: Some(201),
+            })
+            .await
+            .expect("stale adaptive CAS should conflict"));
+
+        assert!(repository
+            .update_key_runtime_metadata(&ProviderCatalogKeyRuntimeMetadataUpdate {
+                key_id: "runtime-key".to_string(),
+                namespace: "codex".to_string(),
+                expected_upstream_metadata_value: Some(json!({"remaining":5})),
+                upstream_metadata_value: json!({"remaining":3}),
+                status_snapshot_patch: json!({"quota":{"remaining":3}}),
+                updated_at_unix_secs: Some(300),
+            })
+            .await
+            .expect("runtime metadata should update"));
+
+        stale_admin_key.name = "Admin Renamed".to_string();
+        stale_admin_key.is_active = true;
+        repository
+            .update_key(&stale_admin_key)
+            .await
+            .expect("stale admin update should preserve runtime fields");
+
+        let stored = repository
+            .list_keys_by_ids(&["runtime-key".to_string()])
+            .await
+            .expect("key should reload")
+            .pop()
+            .expect("key should exist");
+        assert_eq!(stored.name, "Admin Renamed");
+        assert!(stored.is_active);
+        assert_eq!(stored.learned_rpm_limit, Some(8));
+        assert_eq!(stored.rpm_429_count, Some(2));
+        assert_eq!(
+            stored.health_by_format,
+            Some(json!({"openai:chat":{"consecutive_failures":2}}))
+        );
+        assert_eq!(
+            stored.upstream_metadata.as_ref().unwrap()["codex"],
+            json!({"remaining":3})
+        );
+        assert_eq!(
+            stored.upstream_metadata.as_ref().unwrap()["grok"],
+            json!({"remaining":7})
+        );
+        let status = stored.status_snapshot.expect("status should exist");
+        assert_eq!(status["quota"], json!({"remaining":3}));
+        assert!(status["quota"].get("window").is_none());
+        assert_eq!(status["oauth"], json!({"invalid":false}));
+        assert_eq!(status["observation_count"], json!(2));
+        assert_eq!(status["learning_confidence"], json!(0.5));
+        assert!(status
+            .as_object()
+            .expect("status should be an object")
+            .contains_key("known_boundary"));
+        assert_eq!(status["known_boundary"], serde_json::Value::Null);
     }
 
     #[tokio::test]
@@ -2548,6 +3187,13 @@ mod tests {
             created_key.last_models_fetch_error.as_deref(),
             Some("stale models fetch error")
         );
+        let mut second_key = key.clone();
+        second_key.id = "key-write-2".to_string();
+        second_key.name = "Secondary Key".to_string();
+        let created_second_key = repository
+            .create_key(&second_key)
+            .await
+            .expect("second key should create");
 
         let mut updated_key = created_key.clone();
         updated_key.name = "Updated Key".to_string();
@@ -2563,9 +3209,62 @@ mod tests {
         assert!(!updated_key.is_active);
         assert_eq!(
             updated_key.last_models_fetch_at_unix_secs,
-            Some(1_730_000_200)
+            Some(1_730_000_100)
         );
-        assert_eq!(updated_key.last_models_fetch_error, None);
+        assert_eq!(
+            updated_key.last_models_fetch_error.as_deref(),
+            Some("stale models fetch error")
+        );
+        assert_eq!(updated_key.upstream_metadata, created_key.upstream_metadata);
+
+        let mut batch_first = updated_key.clone();
+        batch_first.auto_fetch_models = true;
+        batch_first.allowed_models = Some(json!(["gpt-4.1", "gpt-4.1-mini"]));
+        batch_first.locked_models = Some(json!(["gpt-4.1"]));
+        batch_first.model_include_patterns = Some(json!(["gpt-*"]));
+        batch_first.model_exclude_patterns = Some(json!(["*-preview"]));
+        let mut batch_second = created_second_key;
+        batch_second.auto_fetch_models = true;
+        batch_second.allowed_models = batch_first.allowed_models.clone();
+        batch_second.locked_models = batch_first.locked_models.clone();
+        batch_second.model_include_patterns = batch_first.model_include_patterns.clone();
+        batch_second.model_exclude_patterns = batch_first.model_exclude_patterns.clone();
+
+        let batch_updated = repository
+            .update_keys(&[batch_first, batch_second])
+            .await
+            .expect("keys should update in one transaction");
+        assert_eq!(batch_updated.len(), 2);
+        assert!(batch_updated.iter().all(|key| key.auto_fetch_models));
+        assert!(batch_updated
+            .iter()
+            .all(|key| key.locked_models == Some(json!(["gpt-4.1"]))));
+        assert!(batch_updated
+            .iter()
+            .all(|key| key.model_include_patterns == Some(json!(["gpt-*"]))));
+        assert!(batch_updated
+            .iter()
+            .all(|key| key.model_exclude_patterns == Some(json!(["*-preview"]))));
+
+        let mut valid_change = batch_updated
+            .iter()
+            .find(|key| key.id == "key-write-1")
+            .expect("first key should be returned")
+            .clone();
+        valid_change.name = "Must Roll Back".to_string();
+        let mut missing_change = valid_change.clone();
+        missing_change.id = "missing-key".to_string();
+        assert!(repository
+            .update_keys(&[valid_change, missing_change])
+            .await
+            .is_err());
+        let rolled_back = repository
+            .list_keys_by_ids(&["key-write-1".to_string()])
+            .await
+            .expect("first key should reload")
+            .pop()
+            .expect("first key should exist");
+        assert_eq!(rolled_back.name, "Updated Key");
 
         assert!(repository
             .update_key_upstream_metadata(
@@ -2664,6 +3363,10 @@ mod tests {
             .delete_key("key-write-1")
             .await
             .expect("key should delete"));
+        assert!(repository
+            .delete_key("key-write-2")
+            .await
+            .expect("second key should delete"));
         assert!(repository
             .delete_endpoint("endpoint-write-1")
             .await

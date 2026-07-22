@@ -18,22 +18,29 @@
         :provider-proxy-desktop-open="providerProxyDesktopPopoverOpen"
         :provider-proxy-button-title="getProviderProxyButtonTitle()"
         :saving-provider-proxy="savingProviderProxy"
-        :pool-scheduling-label="poolSchedulingLabel"
-        :show-adaptive-hot-pool-metrics-button="showAdaptiveHotPoolMetricsButton"
         :provider-toggle-button-title="getProviderToggleButtonTitle()"
         :provider-toggle-button-class="getProviderToggleButtonClass()"
         :toggling-provider-status="togglingProviderStatus"
+        :pool-scheduling-label="poolSchedulingLabel"
+        :show-adaptive-hot-pool-metrics-button="showAdaptiveHotPoolMetricsButton"
+        :selected-count="selectedKeyCount"
+        :is-all-filtered-selected="isAllFilteredPoolKeysSelected"
+        :selection-disabled="keyPage.total === 0 || poolKeySelectionBusy"
+        :batch-actions-disabled="selectedKeyCount === 0 || poolKeySelectionBusy"
         :refresh-loading="refreshCurrentPageLoading"
         :refresh-title="refreshButtonTitle"
-        @import="showImportDialog = true"
+        @view-provider="openProviderDrawer"
         @scheduling="openSchedulingDialog"
+        @import="showImportDialog = true"
         @refresh-worker="openRefreshWorkerDialog"
         @account-batch="showAccountBatchDialog = true"
         @edit-provider="openProviderEditDialog"
         @edit-endpoint="openEndpointEditDialog"
+        @toggle-provider="toggleSelectedProviderStatus"
         @demand-metrics="showDemandMetricsDialog = true"
         @advanced="showAdvancedDialog = true"
-        @toggle-provider="toggleSelectedProviderStatus"
+        @toggle-select-all="toggleAllFilteredPoolKeys"
+        @batch-action="openAccountBatchDialog"
         @refresh="refreshCurrentPage"
         @update:provider-proxy-mobile-open="handleProviderProxyPopoverToggle('mobile', $event)"
         @update:provider-proxy-desktop-open="handleProviderProxyPopoverToggle('desktop', $event)"
@@ -94,13 +101,47 @@
           class="hidden xl:block overflow-x-auto"
         >
           <Table class="w-full table-fixed">
+            <colgroup>
+              <col :style="{ width: desktopColumnWidths.name }">
+              <col
+                v-if="showAccountQuotaColumn"
+                :style="{ width: desktopColumnWidths.quota }"
+              >
+              <col :style="{ width: desktopColumnWidths.stats }">
+              <col :style="{ width: desktopColumnWidths.imported }">
+              <col :style="{ width: desktopColumnWidths.lastUsed }">
+              <col :style="{ width: desktopColumnWidths.score }">
+              <col :style="{ width: desktopColumnWidths.status }">
+              <col :style="{ width: desktopColumnWidths.actions }">
+            </colgroup>
             <TableHeader>
               <TableRow class="border-b border-border/60 hover:bg-transparent">
                 <TableHead
-                  class="font-semibold whitespace-nowrap"
+                  class="px-4 font-semibold whitespace-nowrap"
                   :style="{ width: desktopColumnWidths.name }"
                 >
-                  名称
+                  <div class="flex items-center gap-2">
+                    <Checkbox
+                      class="h-3.5 w-3.5 shrink-0"
+                      :checked="selectAllFilteredPoolKeys || isCurrentPoolKeyPageFullySelected"
+                      :indeterminate="!selectAllFilteredPoolKeys && isCurrentPoolKeyPagePartiallySelected"
+                      :disabled="keyPage.keys.length === 0 || poolKeySelectionBusy || selectAllFilteredPoolKeys"
+                      aria-label="选择当前页账号"
+                      data-testid="pool-select-page-desktop"
+                      @update:checked="toggleCurrentPoolKeyPage"
+                    />
+                    <div class="flex items-baseline gap-2">
+                      <span class="leading-none">名称</span>
+                      <span
+                        v-if="selectedKeyCount > 0"
+                        class="text-[11px] font-medium leading-none tabular-nums text-primary"
+                        aria-live="polite"
+                        data-testid="pool-selected-count-desktop"
+                      >
+                        {{ selectedKeyCountLabel }}
+                      </span>
+                    </div>
+                  </div>
                 </TableHead>
                 <TableHead
                   v-if="showAccountQuotaColumn"
@@ -186,106 +227,116 @@
                 v-for="key in keyPage.keys"
                 :key="key.key_id"
                 class="border-b border-border/40 last:border-b-0 hover:bg-muted/30 transition-colors"
-                :class="keyUiStateMap[key.key_id]?.rowClass || ''"
+                :class="getPoolKeyRowClass(key.key_id)"
               >
                 <TableCell
-                  class="py-3"
+                  class="px-4 py-3"
                 >
-                  <div class="min-w-0">
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <span class="text-sm truncate block">
-                        {{ key.key_name || '未命名' }}
-                      </span>
-                    </div>
-                    <div class="flex items-center flex-wrap gap-1 text-[11px] text-muted-foreground mt-0.5 min-w-0">
-                      <input
-                        v-if="editingPriorityKeyId === key.key_id"
-                        :value="editingPriorityValue"
-                        type="number"
-                        min="1"
-                        max="999999"
-                        autofocus
-                        class="h-[18px] w-10 rounded border border-primary/50 bg-background px-1 text-[10px] tabular-nums text-foreground outline-none ring-1 ring-primary/30 shrink-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                        @input="(e) => editingPriorityValue = Number((e.target as HTMLInputElement).value || 0)"
-                        @blur="(e) => finishEditInternalPriority(key, e)"
-                        @keydown.enter.prevent="(e) => finishEditInternalPriority(key, e)"
-                        @keydown.esc.prevent="cancelEditInternalPriority"
-                      >
-                      <button
-                        v-else
-                        type="button"
-                        class="h-4 px-1 rounded text-[10px] tabular-nums text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors shrink-0"
-                        title="点击编辑优先级"
-                        @click="startEditInternalPriority(key)"
-                      >
-                        P{{ key.internal_priority ?? 50 }}
-                      </button>
-                      <Button
-                        v-if="canExportOAuthCredential(key)"
-                        variant="ghost"
-                        size="icon"
-                        class="h-4 w-4 shrink-0"
-                        title="下载 OAuth 授权文件"
-                        @click.stop="downloadRefreshToken(key)"
-                      >
-                        <Download class="w-2.5 h-2.5" />
-                      </Button>
-                      <Button
-                        v-else
-                        variant="ghost"
-                        size="icon"
-                        class="h-4 w-4 shrink-0"
-                        title="复制密钥"
-                        @click.stop="copyFullKey(key)"
-                      >
-                        <Copy class="w-2.5 h-2.5" />
-                      </Button>
-                      <span class="font-mono">
-                        {{ getProviderMaskedSecretLabel(key, selectedProviderType) }}
-                      </span>
-                      <template v-if="keyUiStateMap[key.key_id]?.showOAuthRefreshControl">
+                  <div class="flex min-w-0 items-center gap-2">
+                    <Checkbox
+                      class="h-3.5 w-3.5 shrink-0"
+                      :checked="isPoolKeySelected(key.key_id)"
+                      :disabled="poolKeySelectionBusy || selectAllFilteredPoolKeys"
+                      :aria-label="`选择账号 ${key.key_name || key.key_id}`"
+                      :data-testid="`pool-select-desktop-${key.key_id}`"
+                      @update:checked="togglePoolKeySelection(key.key_id, $event === true)"
+                    />
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center gap-1.5 min-w-0">
+                        <span class="text-sm truncate block">
+                          {{ key.key_name || '未命名' }}
+                        </span>
+                      </div>
+                      <div class="flex items-center flex-wrap gap-1 text-[11px] text-muted-foreground mt-0.5 min-w-0">
+                        <input
+                          v-if="editingPriorityKeyId === key.key_id"
+                          :value="editingPriorityValue"
+                          type="number"
+                          min="1"
+                          max="999999"
+                          autofocus
+                          class="h-[18px] w-10 rounded border border-primary/50 bg-background px-1 text-[10px] tabular-nums text-foreground outline-none ring-1 ring-primary/30 shrink-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                          @input="(e) => editingPriorityValue = Number((e.target as HTMLInputElement).value || 0)"
+                          @blur="(e) => finishEditInternalPriority(key, e)"
+                          @keydown.enter.prevent="(e) => finishEditInternalPriority(key, e)"
+                          @keydown.esc.prevent="cancelEditInternalPriority"
+                        >
+                        <button
+                          v-else
+                          type="button"
+                          class="h-4 px-1 rounded text-[10px] tabular-nums text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors shrink-0"
+                          title="点击编辑优先级"
+                          @click="startEditInternalPriority(key)"
+                        >
+                          P{{ key.internal_priority ?? 50 }}
+                        </button>
                         <Button
+                          v-if="canExportOAuthCredential(key)"
                           variant="ghost"
                           size="icon"
                           class="h-4 w-4 shrink-0"
-                          :disabled="refreshingOAuthKeyId === key.key_id || !keyUiStateMap[key.key_id]?.canRefreshToken"
-                          :title="keyUiStateMap[key.key_id]?.oauthRefreshButtonTitle || ''"
-                          @click.stop="handleRefreshOAuth(key)"
+                          title="下载 OAuth 授权文件"
+                          @click.stop="downloadRefreshToken(key)"
                         >
-                          <RefreshCw
-                            class="w-2.5 h-2.5"
-                            :class="{ 'animate-spin': refreshingOAuthKeyId === key.key_id }"
-                          />
+                          <Download class="w-2.5 h-2.5" />
                         </Button>
-                        <span
-                          v-if="keyUiStateMap[key.key_id]?.visibleOAuthState"
-                          class="text-[10px]"
-                          :class="{
-                            'text-destructive': keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid || keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired,
-                            'text-warning': keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpiringSoon && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid,
-                            'text-muted-foreground': !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpiringSoon && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid
-                          }"
-                          :title="keyUiStateMap[key.key_id]?.oauthStatusTitle || ''"
+                        <Button
+                          v-else
+                          variant="ghost"
+                          size="icon"
+                          class="h-4 w-4 shrink-0"
+                          title="复制密钥"
+                          @click.stop="copyFullKey(key)"
                         >
-                          {{ keyUiStateMap[key.key_id]?.visibleOAuthState?.text }}
+                          <Copy class="w-2.5 h-2.5" />
+                        </Button>
+                        <span class="font-mono">
+                          {{ getProviderMaskedSecretLabel(key, selectedProviderType) }}
                         </span>
-                      </template>
-                      <Badge
-                        v-if="keyUiStateMap[key.key_id]?.planLabel"
-                        variant="outline"
-                        class="text-[9px] px-1 py-0 h-4 shrink-0"
-                        :class="keyUiStateMap[key.key_id]?.planClass || ''"
-                      >
-                        {{ keyUiStateMap[key.key_id]?.planLabel }}
-                      </Badge>
-                      <Badge
-                        v-if="keyUiStateMap[key.key_id]?.oauthOrgBadge"
-                        variant="secondary"
-                        class="text-[9px] px-1 py-0 h-4 shrink-0"
-                        :title="keyUiStateMap[key.key_id]?.oauthOrgBadge?.title"
-                      >
-                        {{ keyUiStateMap[key.key_id]?.oauthOrgBadge?.label }}
-                      </Badge>
+                        <template v-if="keyUiStateMap[key.key_id]?.showOAuthRefreshControl">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            class="h-4 w-4 shrink-0"
+                            :disabled="refreshingOAuthKeyId === key.key_id || !keyUiStateMap[key.key_id]?.canRefreshToken"
+                            :title="keyUiStateMap[key.key_id]?.oauthRefreshButtonTitle || ''"
+                            @click.stop="handleRefreshOAuth(key)"
+                          >
+                            <RefreshCw
+                              class="w-2.5 h-2.5"
+                              :class="{ 'animate-spin': refreshingOAuthKeyId === key.key_id }"
+                            />
+                          </Button>
+                          <span
+                            v-if="keyUiStateMap[key.key_id]?.visibleOAuthState"
+                            class="text-[10px]"
+                            :class="{
+                              'text-destructive': keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid || keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired,
+                              'text-warning': keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpiringSoon && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid,
+                              'text-muted-foreground': !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpired && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isExpiringSoon && !keyUiStateMap[key.key_id]?.visibleOAuthState?.isInvalid
+                            }"
+                            :title="keyUiStateMap[key.key_id]?.oauthStatusTitle || ''"
+                          >
+                            {{ keyUiStateMap[key.key_id]?.visibleOAuthState?.text }}
+                          </span>
+                        </template>
+                        <Badge
+                          v-if="keyUiStateMap[key.key_id]?.planLabel"
+                          variant="outline"
+                          class="text-[9px] px-1 py-0 h-4 shrink-0"
+                          :class="keyUiStateMap[key.key_id]?.planClass || ''"
+                        >
+                          {{ keyUiStateMap[key.key_id]?.planLabel }}
+                        </Badge>
+                        <Badge
+                          v-if="keyUiStateMap[key.key_id]?.oauthOrgBadge"
+                          variant="secondary"
+                          class="text-[9px] px-1 py-0 h-4 shrink-0"
+                          :title="keyUiStateMap[key.key_id]?.oauthOrgBadge?.title"
+                        >
+                          {{ keyUiStateMap[key.key_id]?.oauthOrgBadge?.label }}
+                        </Badge>
+                      </div>
                     </div>
                   </div>
                 </TableCell>
@@ -515,11 +566,21 @@
             v-for="key in keyPage.keys"
             :key="key.key_id"
             class="p-4 sm:p-5 hover:bg-muted/30 transition-colors"
-            :class="keyUiStateMap[key.key_id]?.rowClass || ''"
+            :class="getPoolKeyRowClass(key.key_id)"
           >
             <div class="space-y-3">
-              <div class="text-sm font-medium truncate">
-                {{ key.key_name || '未命名' }}
+              <div class="flex items-center gap-1.5">
+                <Checkbox
+                  class="h-3.5 w-3.5 shrink-0"
+                  :checked="isPoolKeySelected(key.key_id)"
+                  :disabled="poolKeySelectionBusy || selectAllFilteredPoolKeys"
+                  :aria-label="`选择账号 ${key.key_name || key.key_id}`"
+                  :data-testid="`pool-select-mobile-${key.key_id}`"
+                  @update:checked="togglePoolKeySelection(key.key_id, $event === true)"
+                />
+                <div class="min-w-0 truncate text-sm font-medium">
+                  {{ key.key_name || '未命名' }}
+                </div>
               </div>
 
               <div class="flex flex-wrap items-center gap-1.5">
@@ -1127,6 +1188,16 @@
       :provider-name="selectedProviderOverview?.provider_name"
       :samples="providerDemandMetricSamples"
     />
+    <ProviderDetailDrawer
+      v-if="providerDrawerOpen && selectedProviderId"
+      :open="providerDrawerOpen"
+      :provider-id="selectedProviderId"
+      :initial-provider="selectedProviderData"
+      @update:open="providerDrawerOpen = $event"
+      @edit="openProviderEditDialog"
+      @toggle-status="toggleSelectedProviderStatus"
+      @refresh="handleProviderDrawerRefresh"
+    />
     <ProviderFormDialog
       v-model="providerEditDialogOpen"
       :provider="providerToEdit"
@@ -1148,7 +1219,23 @@
       :provider-name="selectedProviderData?.name || ''"
       :provider-type="selectedProviderData?.provider_type || selectedProviderType"
       :batch-concurrency="selectedProviderConfig?.batch_concurrency"
+      :selected-keys="selectedPoolKeys"
+      :select-all-filtered="selectAllFilteredPoolKeys"
+      :selected-count="selectedKeyCount"
+      :selection-filters="poolKeySelectionFilters"
+      :initial-action="pendingAccountBatchAction"
       @changed="handleAccountBatchChanged"
+      @edit-config="openKeyBatchEditDialog"
+    />
+    <PoolKeyBatchEditDialog
+      v-if="selectedProviderId"
+      :open="keyBatchEditDialogOpen"
+      :provider-id="selectedProviderId"
+      :provider-name="selectedProviderData?.name || ''"
+      :key-ids="keyBatchEditKeyIds"
+      :available-api-formats="selectedProviderData?.api_formats || []"
+      @close="closeKeyBatchEditDialog"
+      @saved="handleKeyBatchEditSaved"
     />
     <KeyFormDialog
       v-if="selectedProviderId"
@@ -1179,7 +1266,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue'
 import {
   Upload,
   RefreshCw,
@@ -1194,6 +1281,7 @@ import {
   SquarePen,
   Trash2,
   CircleHelp,
+  X,
 } from 'lucide-vue-next'
 
 import {
@@ -1201,6 +1289,7 @@ import {
   Dialog,
   Badge,
   Button,
+  Checkbox,
   Table,
   TableHeader,
   TableBody,
@@ -1219,6 +1308,8 @@ import { useClipboard } from '@/composables/useClipboard'
 import { useCountdownTimer, getCodexResetCountdown } from '@/composables/useCountdownTimer'
 import { useConfirm } from '@/composables/useConfirm'
 import { useRouteQuery } from '@/composables/useRouteQuery'
+import { useBatchSelection } from '@/composables/useBatchSelection'
+import { useI18n } from '@/i18n'
 import { parseApiError } from '@/utils/errorParser'
 import {
   getPoolOverview,
@@ -1238,6 +1329,7 @@ import { refreshProviderOAuth } from '@/api/endpoints/provider_oauth'
 import type {
   PoolOverviewItem,
   PoolKeyDetail,
+  PoolKeySelectionRequest,
   PoolKeysPageResponse,
   PoolKeysQuery,
   PoolPresetMeta,
@@ -1258,6 +1350,7 @@ import PoolSchedulingDialog from '@/features/pool/components/PoolSchedulingDialo
 import PoolAdvancedDialog from '@/features/pool/components/PoolAdvancedDialog.vue'
 import PoolDemandMetricsDialog from '@/features/pool/components/PoolDemandMetricsDialog.vue'
 import PoolAccountBatchDialog from '@/features/pool/components/PoolAccountBatchDialog.vue'
+import PoolKeyBatchEditDialog from '@/features/pool/components/PoolKeyBatchEditDialog.vue'
 import PoolManagementHeader from '@/features/pool/components/PoolManagementHeader.vue'
 import PoolKeyQuotaPanel from '@/features/pool/components/PoolKeyQuotaPanel.vue'
 import PoolKeyStatsPanel from '@/features/pool/components/PoolKeyStatsPanel.vue'
@@ -1284,6 +1377,7 @@ import {
   type PoolManagementViewState,
   writePoolManagementViewState,
 } from '@/features/pool/utils/poolManagementState'
+import type { PoolBatchActionValue } from '@/features/pool/utils/poolBatchActions'
 import {
   buildPoolStatsDisplay,
   type PoolCodexCycleStatsGroup,
@@ -1317,9 +1411,14 @@ import {
   getQuotaDisplayText,
 } from '@/utils/providerKeyQuota'
 
+const ProviderDetailDrawer = defineAsyncComponent(
+  () => import('@/features/providers/components/ProviderDetailDrawer.vue'),
+)
+
 type PoolKeyScore = NonNullable<PoolKeyDetail['pool_score']>
 
 const { success, error: showError, warning: showWarning } = useToast()
+const { legacyT } = useI18n()
 const { confirm } = useConfirm()
 const { copyToClipboard } = useClipboard()
 const { tick: countdownTick, start: startCountdownTimer } = useCountdownTimer()
@@ -1709,6 +1808,7 @@ let selectProviderRequestId = 0
 let providerDataRequestId = 0
 let keysRequestId = 0
 let keysSearchDebounceTimer: number | null = null
+const keysSearchPending = ref(false)
 let demandMetricsPollingTimer: number | null = null
 let demandMetricsRequestId = 0
 let suppressFiltersWatch = false
@@ -1823,10 +1923,11 @@ async function loadOverview(options: { cacheTtlMs?: number, silent?: boolean } =
       selectedProviderId.value = null
       selectedProviderData.value = null
       keysLoadedOnce.value = false
-      endpointEditDialogOpen.value = false
-      providerEndpointsForEdit.value = []
+      resetPoolKeySelection(true)
+      providerDrawerOpen.value = false
       showAccountBatchDialog.value = false
-      closeProviderProxyPopovers()
+      keyBatchEditDialogOpen.value = false
+      keyBatchEditKeyIds.value = []
       resetKeyPage()
     }
   } catch (err) {
@@ -2182,14 +2283,15 @@ async function selectProvider(
   hasHydratedInitialProviderSelection = true
   selectedProviderId.value = id
   selectedProviderData.value = null
-  endpointEditDialogOpen.value = false
-  providerEndpointsForEdit.value = []
+  resetPoolKeySelection(true)
+  providerDrawerOpen.value = false
   editingKeyDetail.value = null
   showAccountBatchDialog.value = false
+  keyBatchEditDialogOpen.value = false
+  keyBatchEditKeyIds.value = []
   keyPermissionsDialogOpen.value = false
   keyFormDialogOpen.value = false
   oauthKeyEditDialogOpen.value = false
-  closeProviderProxyPopovers()
   proxyDesktopPopoverOpenKeyId.value = null
   proxyMobilePopoverOpenKeyId.value = null
   scoreDesktopPopoverOpenKeyId.value = null
@@ -2209,6 +2311,7 @@ async function selectProvider(
     clearTimeout(keysSearchDebounceTimer)
     keysSearchDebounceTimer = null
   }
+  keysSearchPending.value = false
   keysLoadedOnce.value = false
   resetKeyPage(currentPage.value, pageSize.value)
   const keysTask = loadKeys({ cacheTtlMs: options.cacheTtlMs ?? 0 })
@@ -2241,10 +2344,67 @@ function createEmptyKeyPage(page = 1, pageSizeValue = 50): PoolKeysPageResponse 
 
 const keyPage = ref<PoolKeysPageResponse>(createEmptyKeyPage())
 const keysLoading = ref(false)
+const poolKeySelectionBusy = computed(() => keysLoading.value || keysSearchPending.value)
 const keysLoadedOnce = ref(false)
+const poolKeyPageItems = computed(() => keyPage.value.keys)
+const poolKeyFilteredTotal = computed(() => keyPage.value.total)
+const {
+  selectedIds: selectedPoolKeyIds,
+  selectedIdSet: selectedPoolKeyIdSet,
+  selectedCount: selectedKeyCount,
+  selectAllFiltered: selectAllFilteredPoolKeys,
+  isAllFilteredSelected: isAllFilteredPoolKeysSelected,
+  isCurrentPageFullySelected: isCurrentPoolKeyPageFullySelected,
+  rememberItems: rememberPoolKeys,
+  knownItemsById: knownPoolKeysById,
+  resetSelection: resetPoolKeySelection,
+  toggleOne: togglePoolKeySelection,
+  toggleSelectFiltered: toggleSelectFilteredPoolKeys,
+  toggleSelectCurrentPage: toggleCurrentPoolKeyPage,
+} = useBatchSelection<PoolKeyDetail>({
+  pageItems: poolKeyPageItems,
+  filteredTotal: poolKeyFilteredTotal,
+  getItemId: key => key.key_id,
+})
+const selectedKeyCountLabel = computed(() => legacyT(`已选 ${selectedKeyCount.value} 个`))
+const selectedPoolKeys = computed(() => selectedPoolKeyIds.value
+  .map(keyId => knownPoolKeysById.value[keyId])
+  .filter((key): key is PoolKeyDetail => Boolean(key)))
+const selectedOnCurrentPoolKeyPageCount = computed(() => poolKeyPageItems.value
+  .filter(key => selectedPoolKeyIdSet.value.has(key.key_id)).length)
+const isCurrentPoolKeyPagePartiallySelected = computed(() => (
+  selectedOnCurrentPoolKeyPageCount.value > 0
+  && !isCurrentPoolKeyPageFullySelected.value
+))
+
+watch(poolKeyPageItems, (keys) => rememberPoolKeys(keys), { immediate: true })
+
+function isPoolKeySelected(keyId: string): boolean {
+  return selectAllFilteredPoolKeys.value || selectedPoolKeyIdSet.value.has(keyId)
+}
+
+function toggleAllFilteredPoolKeys(): void {
+  if (poolKeySelectionBusy.value || keyPage.value.total === 0) return
+  toggleSelectFilteredPoolKeys(!isAllFilteredPoolKeysSelected.value)
+}
+
+function getPoolKeyRowClass(keyId: string): string {
+  return [
+    keyUiStateMap.value[keyId]?.rowClass || '',
+    isPoolKeySelected(keyId) ? 'bg-primary/5' : '',
+  ].filter(Boolean).join(' ')
+}
+
 const refreshingCurrentPageQuota = ref(false)
 const searchQuery = ref(restoredViewState.search)
 const statusFilter = ref(restoredViewState.status)
+const poolKeySelectionFilters = computed<PoolKeySelectionRequest>(() => {
+  const search = searchQuery.value.trim()
+  return {
+    ...(search ? { search } : {}),
+    status: statusFilter.value,
+  }
+})
 const currentPage = ref(restoredViewState.page)
 const pageSize = ref(restoredViewState.pageSize)
 const sortBy = ref<PoolManagementSortBy | null>(restoredViewState.sortBy)
@@ -2284,11 +2444,19 @@ const prioritySavingKeyId = ref<string | null>(null)
 
 const keyPermissionsDialogOpen = ref(false)
 const keyFormDialogOpen = ref(false)
+const keyBatchEditDialogOpen = ref(false)
+const keyBatchEditKeyIds = ref<string[]>([])
 const oauthKeyEditDialogOpen = ref(false)
 const editingKeyDetail = ref<PoolKeyDetail | null>(null)
 
 function clearPoolKeyFilters() {
   if (!hasPoolKeyFilters.value) return
+  resetPoolKeySelection(true)
+  if (keysSearchDebounceTimer !== null) {
+    clearTimeout(keysSearchDebounceTimer)
+    keysSearchDebounceTimer = null
+  }
+  keysSearchPending.value = false
   suppressFiltersWatch = true
   searchQuery.value = ''
   statusFilter.value = 'all'
@@ -2735,12 +2903,22 @@ async function loadKeys(options: { cacheTtlMs?: number } = {}) {
   }
 }
 
-watch([currentPage, pageSize], () => {
+watch(currentPage, () => {
+  void loadKeys({ cacheTtlMs: POOL_KEYS_CACHE_TTL_MS })
+})
+
+watch(pageSize, () => {
   void loadKeys({ cacheTtlMs: POOL_KEYS_CACHE_TTL_MS })
 })
 
 watch(statusFilter, () => {
   if (suppressFiltersWatch) return
+  resetPoolKeySelection(true)
+  if (keysSearchDebounceTimer !== null) {
+    clearTimeout(keysSearchDebounceTimer)
+    keysSearchDebounceTimer = null
+  }
+  keysSearchPending.value = false
   currentPage.value = 1
   void loadKeys({ cacheTtlMs: POOL_KEYS_CACHE_TTL_MS })
 })
@@ -2755,12 +2933,15 @@ watch([sortBy, sortOrder], () => {
 
 watch(searchQuery, () => {
   if (suppressFiltersWatch) return
+  resetPoolKeySelection(true)
   currentPage.value = 1
   if (keysSearchDebounceTimer !== null) {
     clearTimeout(keysSearchDebounceTimer)
   }
+  keysSearchPending.value = true
   keysSearchDebounceTimer = window.setTimeout(() => {
     keysSearchDebounceTimer = null
+    keysSearchPending.value = false
     void loadKeys({ cacheTtlMs: POOL_KEYS_CACHE_TTL_MS })
   }, 300)
 })
@@ -2913,6 +3094,21 @@ function handleKeyPermissions(key: PoolKeyDetail) {
   keyPermissionsDialogOpen.value = true
 }
 
+function openKeyBatchEditDialog(keyIds: string[]): void {
+  keyBatchEditKeyIds.value = [...new Set(keyIds)]
+  keyBatchEditDialogOpen.value = keyBatchEditKeyIds.value.length > 0
+}
+
+function closeKeyBatchEditDialog(): void {
+  keyBatchEditDialogOpen.value = false
+  keyBatchEditKeyIds.value = []
+}
+
+async function handleKeyBatchEditSaved(): Promise<void> {
+  resetPoolKeySelection(true)
+  await Promise.all([loadKeys(), loadOverview()])
+}
+
 async function handleDialogSaved() {
   editingKeyDetail.value = null
   await loadKeys()
@@ -3018,6 +3214,7 @@ async function handleDeleteKey(key: PoolKeyDetail) {
   try {
     await deleteEndpointKey(key.key_id)
     success('账号已删除')
+    togglePoolKeySelection(key.key_id, false)
     // 乐观更新：直接从本地列表移除，避免等待网络重载
     keyPage.value.keys = keyPage.value.keys.filter(k => k.key_id !== key.key_id)
     keyPage.value.total = Math.max(0, keyPage.value.total - 1)
@@ -3188,23 +3385,52 @@ async function toggleKeyActive(key: PoolKeyDetail) {
 const showImportDialog = ref(false)
 const showSchedulingDialog = ref(false)
 const showAdvancedDialog = ref(false)
+const providerDrawerOpen = ref(false)
 const providerEditDialogOpen = ref(false)
 const providerToEdit = ref<ProviderWithEndpointsSummary | null>(null)
 const endpointEditDialogOpen = ref(false)
 const providerEndpointsForEdit = ref<ProviderEndpoint[]>([])
-const showAccountBatchDialog = ref(false)
 const providerProxyMobilePopoverOpen = ref(false)
 const providerProxyDesktopPopoverOpen = ref(false)
 const savingProviderProxy = ref(false)
-const togglingProviderStatus = ref(false)
 let endpointEditRequestId = 0
+const showAccountBatchDialog = ref(false)
+const pendingAccountBatchAction = ref<PoolBatchActionValue | null>(null)
+const togglingProviderStatus = ref(false)
 
 function openSchedulingDialog() {
   showSchedulingDialog.value = true
 }
 
-async function openProviderEditDialog(): Promise<void> {
+function openAccountBatchDialog(action: PoolBatchActionValue = 'refresh_quota'): void {
+  if (!selectedProviderId.value || selectedKeyCount.value === 0) return
+  pendingAccountBatchAction.value = action
+  showAccountBatchDialog.value = true
+}
+
+watch(showAccountBatchDialog, (open) => {
+  if (!open) pendingAccountBatchAction.value = null
+})
+
+function openProviderDrawer(): void {
+  if (!selectedProviderId.value) return
+  providerDrawerOpen.value = true
+}
+
+async function handleProviderDrawerRefresh(): Promise<void> {
   const providerId = selectedProviderId.value
+  if (!providerId) return
+
+  await Promise.all([
+    loadKeys(),
+    loadOverview({ silent: true }),
+    loadProviderData(providerId),
+  ])
+  resetPoolKeySelection(true)
+}
+
+async function openProviderEditDialog(provider?: ProviderWithEndpointsSummary): Promise<void> {
+  const providerId = provider?.id || selectedProviderId.value
   if (!providerId) return
 
   try {
@@ -3214,11 +3440,12 @@ async function openProviderEditDialog(): Promise<void> {
     providerToEdit.value = latest
   } catch (err) {
     if (selectedProviderId.value !== providerId) return
-    if (!selectedProviderData.value) {
+    const fallbackProvider = provider ?? selectedProviderData.value
+    if (!fallbackProvider) {
       showError(parseApiError(err, '刷新提供商状态失败'))
       return
     }
-    providerToEdit.value = selectedProviderData.value
+    providerToEdit.value = fallbackProvider
   }
 
   providerEditDialogOpen.value = true
@@ -3294,14 +3521,10 @@ function closeProviderProxyPopovers(): void {
 function handleProviderProxyPopoverToggle(scope: 'mobile' | 'desktop', open: boolean): void {
   if (scope === 'mobile') {
     providerProxyMobilePopoverOpen.value = open
-    if (open) {
-      providerProxyDesktopPopoverOpen.value = false
-    }
+    if (open) providerProxyDesktopPopoverOpen.value = false
   } else {
     providerProxyDesktopPopoverOpen.value = open
-    if (open) {
-      providerProxyMobilePopoverOpen.value = false
-    }
+    if (open) providerProxyMobilePopoverOpen.value = false
   }
   if (open) {
     proxyNodesStore.ensureLoaded()
@@ -3318,9 +3541,7 @@ async function setProviderProxy(nodeId: string): Promise<void> {
     const updated = await updateProvider(providerId, {
       proxy: { node_id: nodeId, enabled: true },
     })
-    if (selectedProviderId.value === providerId) {
-      selectedProviderData.value = updated
-    }
+    if (selectedProviderId.value === providerId) selectedProviderData.value = updated
     closeProviderProxyPopovers()
     success('提供商代理已设置')
   } catch (err) {
@@ -3336,9 +3557,7 @@ async function clearProviderProxy(): Promise<void> {
   savingProviderProxy.value = true
   try {
     const updated = await updateProvider(providerId, { proxy: null })
-    if (selectedProviderId.value === providerId) {
-      selectedProviderData.value = updated
-    }
+    if (selectedProviderId.value === providerId) selectedProviderData.value = updated
     closeProviderProxyPopovers()
     success('提供商代理已清除')
   } catch (err) {
@@ -3349,18 +3568,19 @@ async function clearProviderProxy(): Promise<void> {
 }
 
 function getProviderToggleButtonTitle(): string {
-  const active = selectedProviderData.value?.is_active !== false
-  return active ? '当前状态：已启用，点击禁用提供商' : '当前状态：已禁用，点击启用提供商'
+  return selectedProviderData.value?.is_active === false
+    ? '当前状态：已禁用，点击启用提供商'
+    : '当前状态：已启用，点击禁用提供商'
 }
 
 function getProviderToggleButtonClass(): string {
   return ''
 }
 
-async function toggleSelectedProviderStatus(): Promise<void> {
+async function toggleSelectedProviderStatus(provider?: ProviderWithEndpointsSummary): Promise<void> {
   if (togglingProviderStatus.value) return
   const providerId = selectedProviderId.value
-  const current = selectedProviderData.value
+  const current = provider?.id === providerId ? provider : selectedProviderData.value
   if (!providerId || !current) return
 
   const nextStatus = !current.is_active
@@ -3377,6 +3597,7 @@ async function toggleSelectedProviderStatus(): Promise<void> {
   togglingProviderStatus.value = true
   try {
     const updated = await updateProvider(providerId, { is_active: nextStatus })
+    Object.assign(current, updated)
     if (selectedProviderId.value === providerId) {
       selectedProviderData.value = updated
     }
@@ -3390,6 +3611,7 @@ async function toggleSelectedProviderStatus(): Promise<void> {
 }
 
 async function handleAccountBatchChanged(): Promise<void> {
+  resetPoolKeySelection(true)
   await Promise.all([loadKeys(), loadOverview()])
 }
 
@@ -4368,6 +4590,7 @@ onBeforeUnmount(() => {
     clearTimeout(keysSearchDebounceTimer)
     keysSearchDebounceTimer = null
   }
+  keysSearchPending.value = false
   overviewRequestId += 1
   selectProviderRequestId += 1
   providerDataRequestId += 1

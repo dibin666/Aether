@@ -24,6 +24,27 @@ pub(crate) async fn build_admin_update_provider_key_record(
     existing: &StoredProviderCatalogKey,
     patch: AdminProviderKeyUpdatePatch,
 ) -> Result<StoredProviderCatalogKey, String> {
+    let existing_keys = state
+        .as_ref()
+        .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
+        .await
+        .map_err(|err| format!("{err:?}"))?;
+    build_admin_update_provider_key_record_with_existing_keys(
+        state,
+        provider,
+        existing,
+        &existing_keys,
+        patch,
+    )
+}
+
+pub(crate) fn build_admin_update_provider_key_record_with_existing_keys(
+    state: &AdminAppState<'_>,
+    provider: &StoredProviderCatalogProvider,
+    existing: &StoredProviderCatalogKey,
+    existing_keys: &[StoredProviderCatalogKey],
+    patch: AdminProviderKeyUpdatePatch,
+) -> Result<StoredProviderCatalogKey, String> {
     let state = state.as_ref();
     let mut updated = existing.clone();
     let (fields, payload) = patch.into_parts();
@@ -57,10 +78,18 @@ pub(crate) async fn build_admin_update_provider_key_record(
         .and_then(serde_json::Value::as_object)
         .cloned();
 
-    let existing_keys = state
-        .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
-        .await
-        .map_err(|err| format!("{err:?}"))?;
+    if target_auth_type == "oauth"
+        && provider.provider_type.trim().eq_ignore_ascii_case("codex")
+        && auth_config
+            .as_ref()
+            .is_some_and(aether_provider_transport::is_codex_agent_identity_auth_config_value)
+    {
+        aether_provider_transport::validate_codex_agent_identity_auth_config(
+            auth_config
+                .as_ref()
+                .expect("Agent Identity auth_config was checked"),
+        )?;
+    }
 
     match target_auth_type.as_str() {
         "api_key" | "bearer" => {
@@ -307,7 +336,7 @@ pub(crate) async fn build_admin_update_provider_key_record(
     if let Some(auto_fetch_models) = payload.auto_fetch_models {
         updated.auto_fetch_models = auto_fetch_models;
     }
-    if auto_fetch_disabled {
+    if auto_fetch_disabled && !fields.contains("allowed_models") {
         updated.allowed_models = None;
     }
     if fields.contains("locked_models") {
@@ -346,6 +375,17 @@ pub(crate) async fn build_admin_update_provider_key_record(
         .ok()
         .map(|duration| duration.as_secs());
     Ok(updated)
+}
+
+pub(crate) fn admin_provider_key_update_requires_immediate_model_fetch(
+    existing: &StoredProviderCatalogKey,
+    updated: &StoredProviderCatalogKey,
+) -> bool {
+    let filters_changed = existing.model_include_patterns != updated.model_include_patterns
+        || existing.model_exclude_patterns != updated.model_exclude_patterns;
+    let locked_models_changed = existing.locked_models != updated.locked_models;
+    updated.auto_fetch_models
+        && (!existing.auto_fetch_models || filters_changed || locked_models_changed)
 }
 
 fn raw_secret_auth_type(value: &str) -> bool {
