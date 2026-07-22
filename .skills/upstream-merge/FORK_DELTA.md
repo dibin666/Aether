@@ -17,24 +17,25 @@
 
 ## 最近一次合并后复核
 
-- 合并基线：merge commit `3cb7afba997d79a7ca8d83dab9291913ee1c14f5`，上游 `6c33b8d8fb55ee2a707d1306bef49cc910b924b3`；请求详情冲突选择 `1C`（manual hybrid）。
-- 结论：无功能差异变化。Fork 的 P0/P1/P2 功能清单无新增、改变、被上游吸收或移除；上游待合入的 20 个提交已全部接入。
-- 实现复核：`admin_usage_record_json` 改用扁平 `serde_json::Map` 构造以消除合并后 `json!` 递归上限，JSON 字段契约不变。
+- 合并基线：merge commit `d0b046a08b77fe210a538fda263001f15ca18f1b`，上游 `c7cc8fd7db185cdfdbc2e7fc453689ee469d62af`；冲突组选择 `1C, 2C, 3C, 4C`（均为 manual hybrid）。
+- 功能结论：无功能差异变化。Fork 的 P0/P1/P2 功能清单无新增、改变、被上游吸收或移除；upstream-only 为 0 个提交、0 个路径。
+- 路径级复核：相对合并前 fork-only 集合，`frontend/src/features/usage/types.ts` 已被上游吸收；`apps/aether-gateway/src/handlers/admin/provider/pool_admin/read_routes/mod.rs` 按上游目录化要求移除；`apps/aether-gateway/src/handlers/admin/provider/pool_admin/read_routes/keys.rs` 重接 `quota_summary` 响应。以上均未丢失 fork 功能。
+- 实现复核：pool key 列表保留动态 cycle、score、batch 和筛选行为，并在所有筛选分支返回 quota summary；空的 pool read-route shim 已删除。
 
 ## 基线快照
 
-快照日期：2026-07-18（已执行 `git fetch --prune upstream`）。
+快照日期：2026-07-22（已执行 `git fetch --prune upstream`，并完成合并后复核）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline | `3cb7afba997d79a7ca8d83dab9291913ee1c14f5`（已验证的不可变 merge commit） |
-| upstream HEAD | `6c33b8d8fb55ee2a707d1306bef49cc910b924b3` |
-| merge-base | `6c33b8d8fb55ee2a707d1306bef49cc910b924b3` |
-| 分叉计数 | fork-only 108，upstream-only 0 |
-| fork 侧净改动 | 186 个路径，`+10461/-763` |
+| fork code baseline | `d0b046a08b77fe210a538fda263001f15ca18f1b`（已验证的不可变 merge commit） |
+| upstream HEAD | `c7cc8fd7db185cdfdbc2e7fc453689ee469d62af` |
+| merge-base | `c7cc8fd7db185cdfdbc2e7fc453689ee469d62af` |
+| 分叉计数 | fork-only 111，upstream-only 0 |
+| fork 侧净改动 | 185 个路径，`+11236/-810` |
 | upstream 侧净改动 | 0 个路径，`+0/-0` |
 | 双边同时改动 | 0 个路径 |
 
@@ -262,31 +263,23 @@ Provider 级覆盖位于 `provider.config.oauth_token_refresh`：`enabled`、`lo
 
 ## 当前 0 个双边改动路径
 
-合并后 `merge-base` 已等于 `upstream/main`，upstream-only 为 0 个提交、0 个路径，因此当前没有双边改动路径。下一次 `git fetch --prune upstream` 后必须重新计算，不能沿用本次的 0。
+合并后 `merge-base` 已等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，因此当前没有双边改动路径。下一次 `git fetch --prune upstream` 后必须重新计算，不能沿用本次的 0。
 
-### 本次冲突记录
+按行为分组解决：
 
-| 组 | 路径 | 用户决策 | 结果 |
+| 组 | 上游必须接入 | Fork 必须重放 | 默认决策 |
 |---|---|---|---|
-| Usage request detail UI | `frontend/src/features/usage/components/RequestDetailDrawer.vue`、`frontend/src/views/shared/Usage.vue` | `1C` manual hybrid | 保留 self/admin scope、普通用户禁 cURL/replay，并接入 upstream `summaryRecord` 协调 |
+| Provider identity / key lifecycle | agent identity、历史 key identity、active flag 同步、批量配置基础设施 | OAuth 自动刷新、quota summary、消费统计使用稳定 key 身份 | hybrid，以 upstream identity 模型为底 |
+| Pool / routing | 批量账号操作、cyber/group policy、正式 Gemini 格式 | cache affinity、score toggle、倒计时、消费统计、刷新日志与路由 | hybrid，以 upstream batch/policy 模型为底 |
+| AI formats / execution | Responses V2 compact、响应边界与热路径优化 | transcription format、multipart 二进制保真、同步/流式与 audio usage | hybrid，以 upstream execution transport 为底 |
+| Billing / usage persistence | fast-tier metadata、进行态生命周期、reset expiry、历史 identity | audio duration、pool key 聚合、自助详情与历史消费事实 | hybrid，以 upstream persistence/lifecycle 为底 |
+| Usage / pool UI | compact/detail badge、模型映射约束、批量操作 UI | self/admin scope、禁 cURL/replay、转写展示、score/OAuth/quota 页面入口 | hybrid，逐组件 merge |
 
-其余 26 个合并前双边路径由 Git 自动合并；编译复核在 `crates/aether-admin/src/observability/usage.rs` 发现并修正大型 `json!` 递归上限问题，字段集合不变。
+P0 复核重点：转写格式和 transport、pool 路由与 OAuth 状态、usage/billing 跨数据库契约、self-scope 请求详情、`disable_circuit_breaker` 行为都必须在自动合并后显式验证。
 
 ## 当前尚未合入的上游功能
 
-截至本次合并后快照，`upstream/main` 比 fork 多 0 个提交，待合入列表为空。
-
-`3cb7afba9` 已接入合并前的 20 个上游提交（含 3 个 merge commit），功能包括：
-
-- Codex/OpenAI Responses 缓存身份一致性；
-- 动态 quota windows 与 pool cycle stats 样式；
-- usage audit metadata、reasoning/detail 视图增强与 fast tier 样式；
-- processing tier multipliers 与零倍率修正；
-- 同步 Responses 流 capture/finalize 修正；
-- S3 backup User-Agent 配置；
-- OpenAI Chat Completions Developer role → `system`。
-
-每次 fetch/合并后更新本节和上面的 refs/counts/双边路径记录。
+无。`upstream/main` 已并入 merge commit `d0b046a08b77fe210a538fda263001f15ca18f1b`；`git rev-list HEAD..upstream/main` 为 0。下一次 fetch 后重新计算本节和上面的 refs/counts/双边路径记录。
 
 ## 配置与 API 契约速查
 
@@ -332,21 +325,28 @@ cargo test -p aether-gateway transcription
 cargo test -p aether-scheduler-core disable_circuit_breaker
 cargo test -p aether-gateway pool
 
+```
+
 # 前端关键契约
+
+```sh
 cd frontend
 npm run test:run -- \
+  src/api/endpoints/types/__tests__/api-format.spec.ts \
+  src/features/pool/components/__tests__/PoolManagementHeader.spec.ts \
+  src/features/pool/utils/__tests__/poolManagementState.spec.ts \
   src/features/usage/conversation/__tests__/openai.spec.ts \
   src/features/usage/components/__tests__/UsageRecordsTable.spec.ts \
-  src/features/pool/utils/__tests__/poolManagementState.spec.ts \
   src/views/admin/__tests__/PoolManagement.codex-cycle-stats.spec.ts
 ```
 
-本次 `3cb7afba9` 验证结果：
+本次 `d0b046a08` 验证结果：
 
 - `cd frontend && npm run build`：通过；非阻塞警告为 `caniuse-lite` 数据已 10 个月未更新。
-- `cargo check --workspace`：通过；曾发现的 `json!` 递归上限属于合并回归，修正后复跑通过。
-- 上述 4 个前端测试文件：46/46 通过；PoolManagement 测试存在既有的未解析 stub 组件 Vue 警告。
-- 4 个 Rust 行为测试因并行 Cargo 锁争用按用户要求停止，不记录为通过；后续需要时按上面的顺序串行执行。
+- `cargo check --workspace`：通过。
+- Rust 行为测试串行通过：`aether-ai-formats transcription` 10/10，`aether-gateway transcription` 7/7，`aether-scheduler-core disable_circuit_breaker` 1/1，`aether-gateway pool` 223/223。
+- 上述 6 个前端测试文件：65/65 通过；PoolManagement 测试存在既有的未解析 `Input`/`Select*` stub 组件 Vue 警告。
+- `cargo fmt --package aether-gateway -- --check` 与 `git diff --check`：通过。
 - 浏览器烟测未自动执行；当前会话未授权浏览器自动化，需人工完成下列检查。
 
 还必须做四个烟测：
