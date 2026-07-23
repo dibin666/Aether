@@ -302,6 +302,7 @@ struct OAuthTokenRefreshCandidate {
     key_name: String,
     key: StoredProviderCatalogKey,
     transport: crate::provider_transport::GatewayProviderTransportSnapshot,
+    needs_agent_task_recovery: bool,
     proxy_node_id_override: Option<Option<String>>,
     provider_concurrency: usize,
 }
@@ -418,11 +419,24 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 continue;
             };
             let decrypted_auth_config = transport.key.decrypted_auth_config.as_deref();
-            if !auth_config_has_refresh_token(decrypted_auth_config) {
+            let is_agent_identity =
+                crate::provider_transport::is_codex_agent_identity_transport(&transport);
+            let needs_agent_task_recovery = is_agent_identity
+                && agent_identity_needs_task_recovery(
+                    decrypted_auth_config,
+                    key.oauth_invalid_reason.as_deref(),
+                );
+            if !needs_agent_task_recovery && !auth_config_has_refresh_token(decrypted_auth_config) {
                 summary.skipped = summary.skipped.saturating_add(1);
                 continue;
             }
-            if !oauth_refresh_due_for_cutoff(key, decrypted_auth_config, refresh_cutoff_unix_secs) {
+            if !needs_agent_task_recovery
+                && !oauth_refresh_due_for_cutoff(
+                    key,
+                    decrypted_auth_config,
+                    refresh_cutoff_unix_secs,
+                )
+            {
                 summary.skipped = summary.skipped.saturating_add(1);
                 continue;
             }
@@ -436,6 +450,7 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 key_name: key.name.clone(),
                 key: key.clone(),
                 transport,
+                needs_agent_task_recovery,
                 proxy_node_id_override: provider_config.proxy_node_id_override.clone(),
                 provider_concurrency: provider_config.concurrency,
             });
@@ -473,14 +488,25 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 .acquire_owned()
                 .await
                 .expect("oauth refresh provider semaphore closed");
-            let refreshed_entry = state
-                .force_local_oauth_refresh_entry_for_auto_refresh_with_proxy_override(
-                    &candidate.transport,
-                    candidate.proxy_node_id_override.clone(),
-                )
-                .await;
-            match refreshed_entry {
-                Ok(Some(_entry)) => {
+            let refresh_result = if candidate.needs_agent_task_recovery {
+                state
+                    .force_local_oauth_refresh_entry_for_auto_refresh_with_proxy_override(
+                        &candidate.transport,
+                        candidate.proxy_node_id_override.clone(),
+                    )
+                    .await
+                    .map(|entry| entry.map(|_| ()))
+            } else {
+                state
+                    .resolve_local_oauth_request_auth_for_auto_refresh_with_proxy_override(
+                        &candidate.transport,
+                        candidate.proxy_node_id_override.clone(),
+                    )
+                    .await
+                    .map(|auth| auth.map(|_| ()))
+            };
+            match refresh_result {
+                Ok(Some(())) => {
                     match provider_key_credentials_changed(state, &candidate.key).await {
                         Ok(refreshed) => OAuthTokenRefreshCandidateOutcome::Resolved {
                             provider_id: candidate.provider_id,
@@ -717,13 +743,23 @@ fn oauth_refresh_candidate(
     provider: &StoredProviderCatalogProvider,
     key: &StoredProviderCatalogKey,
 ) -> bool {
+    let has_auth_config = key
+        .encrypted_auth_config
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    // Catalog credentials are encrypted at this point. Defer exact Agent
+    // Identity detection until the transport snapshot provides auth_config.
+    let possible_agent_candidate = provider.provider_type.trim().eq_ignore_ascii_case("codex")
+        && key.auth_type.trim().eq_ignore_ascii_case("oauth")
+        && (key.expires_at_unix_secs.is_none()
+            || key
+                .oauth_invalid_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains(OAUTH_REFRESH_FAILED_PREFIX)));
     key.is_active
-        && oauth_invalid_state_allows_refresh(key)
-        && key
-            .encrypted_auth_config
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty())
+        && has_auth_config
+        && (oauth_invalid_state_allows_refresh(key) || possible_agent_candidate)
         && provider_key_is_oauth_managed(key, provider.provider_type.as_str())
 }
 
@@ -803,7 +839,20 @@ fn oauth_invalid_state_allows_refresh(key: &StoredProviderCatalogKey) -> bool {
 
     saw_oauth_expired || key.oauth_invalid_at_unix_secs.is_none()
 }
-
+fn agent_identity_needs_task_recovery(
+    auth_config: Option<&str>,
+    oauth_invalid_reason: Option<&str>,
+) -> bool {
+    if oauth_invalid_reason.is_some_and(|reason| reason.contains(OAUTH_REFRESH_FAILED_PREFIX)) {
+        return true;
+    }
+    auth_config
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .is_some_and(|config| {
+            crate::provider_transport::is_codex_agent_identity_auth_config_value(&config)
+                && !crate::provider_transport::codex_agent_identity_auth_config_has_task_id(&config)
+        })
+}
 async fn provider_key_credentials_changed(
     state: &AppState,
     before: &StoredProviderCatalogKey,
@@ -846,8 +895,8 @@ fn now_unix_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        oauth_refresh_candidate, oauth_refresh_due_for_cutoff, StoredProviderCatalogKey,
-        StoredProviderCatalogProvider,
+        agent_identity_needs_task_recovery, oauth_refresh_candidate, oauth_refresh_due_for_cutoff,
+        StoredProviderCatalogKey, StoredProviderCatalogProvider,
     };
 
     fn sample_provider() -> StoredProviderCatalogProvider {
@@ -856,6 +905,16 @@ mod tests {
             "Codex".to_string(),
             None,
             "codex".to_string(),
+        )
+        .expect("provider should build")
+    }
+
+    fn sample_non_codex_provider() -> StoredProviderCatalogProvider {
+        StoredProviderCatalogProvider::new(
+            "provider-1".to_string(),
+            "OpenAI".to_string(),
+            None,
+            "openai".to_string(),
         )
         .expect("provider should build")
     }
@@ -896,13 +955,23 @@ mod tests {
 
     #[test]
     fn oauth_refresh_candidate_skips_refresh_token_failure_invalid_state() {
-        let provider = sample_provider();
+        let provider = sample_non_codex_provider();
         let mut key = sample_oauth_key();
         key.oauth_invalid_at_unix_secs = Some(90);
         key.oauth_invalid_reason =
             Some("[REFRESH_FAILED] Token 续期失败 (401): refresh_token 无效".to_string());
 
         assert!(!oauth_refresh_candidate(&provider, &key));
+    }
+
+    #[test]
+    fn oauth_refresh_candidate_allows_codex_refresh_failure_for_agent_recovery() {
+        let provider = sample_provider();
+        let mut key = sample_oauth_key();
+        key.oauth_invalid_at_unix_secs = Some(90);
+        key.oauth_invalid_reason = Some("[REFRESH_FAILED] Agent task missing".to_string());
+
+        assert!(oauth_refresh_candidate(&provider, &key));
     }
 
     #[test]
@@ -921,5 +990,26 @@ mod tests {
         let auth_config = r#"{"refresh_token":"refresh-token","expires_at":100}"#;
 
         assert!(!oauth_refresh_due_for_cutoff(&key, Some(auth_config), 120));
+    }
+
+    #[test]
+    fn pending_agent_identity_without_task_is_recoverable() {
+        let config = serde_json::json!({
+            "auth_mode": "agentIdentity",
+            "agent_runtime_id": "runtime-1",
+            "agent_private_key": "private-key-present",
+        });
+        assert!(agent_identity_needs_task_recovery(
+            Some(&config.to_string()),
+            None,
+        ));
+    }
+
+    #[test]
+    fn refresh_failure_marker_forces_agent_task_recovery() {
+        assert!(agent_identity_needs_task_recovery(
+            Some("{}"),
+            Some("[REFRESH_FAILED] temporary"),
+        ));
     }
 }
