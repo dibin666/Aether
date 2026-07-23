@@ -296,6 +296,7 @@ const filteredProviderGroups = computed<CountdownProviderGroup[]>(() => {
 function getQuotaLabelBadgeClass(label: string): string {
   if (label === '5H') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
   if (label === '周') return 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300'
+  if (label === '月') return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
   if (label === '剩余') return 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'
   if (label === '最低') return 'bg-pink-100 text-pink-700 dark:bg-pink-900/40 dark:text-pink-300'
   return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'

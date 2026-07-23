@@ -8,6 +8,7 @@ const DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS = 24 * 60 * 60
 const QUOTA_COUNTDOWN_WINDOWS: Record<string, number> = {
   '5H': 5 * 60 * 60,
   '周': 7 * 24 * 60 * 60,
+  '月': 30 * 24 * 60 * 60,
   Spark5H: 5 * 60 * 60,
   Spark周: 7 * 24 * 60 * 60,
   Auto: DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS,
@@ -39,11 +40,12 @@ function getQuotaLabelOrder(label: string): number {
   if (label === 'Grok 4.3') return 4
   if (label === '5H') return 0
   if (label === '周') return 1
-  if (label === 'Spark5H') return 2
-  if (label === 'Spark周') return 3
-  if (label === '剩余') return 4
-  if (label === '最低') return 5
-  if (label === '生图') return 6
+  if (label === '月') return 2
+  if (label === 'Spark5H') return 3
+  if (label === 'Spark周') return 4
+  if (label === '剩余') return 5
+  if (label === '最低') return 6
+  if (label === '生图') return 7
   return 10
 }
 
@@ -61,6 +63,7 @@ function normalizeQuotaLabel(label: string): string {
   if (/spark/i.test(normalized) && normalized.includes('周')) return 'Spark周'
   if (normalized.includes('5H')) return '5H'
   if (normalized.includes('周')) return '周'
+  if (normalized.includes('月')) return '月'
   if (normalized.includes('最低剩余')) return '最低'
   if (normalized === '剩余' || normalized.includes('剩余')) return '剩余'
   return normalized
@@ -224,6 +227,7 @@ function buildQuotaProgressItemsFromSnapshot(
     for (const [label, code] of [
       ['5H', '5h'],
       ['周', 'weekly'],
+      ['月', 'monthly'],
       ['Spark5H', 'spark_5h'],
       ['Spark周', 'spark_weekly'],
     ] as const) {
@@ -359,6 +363,7 @@ function resolveCodexQuotaCountdown(
   const codexWindowCodeByLabel: Record<string, string> = {
     '5H': '5h',
     '周': 'weekly',
+    '月': 'monthly',
     Spark5H: 'spark_5h',
     Spark周: 'spark_weekly',
   }

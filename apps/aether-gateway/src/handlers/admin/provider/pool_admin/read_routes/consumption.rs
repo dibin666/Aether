@@ -248,6 +248,9 @@ fn build_pool_consumption_accounts(
         .iter()
         .filter_map(|key| {
             let aggregate = aggregates.get(&key.id)?;
+            if !pool_consumption_summary_has_usage(aggregate) {
+                return None;
+            }
             Some(PoolConsumptionAccount {
                 key_id: key.id.clone(),
                 key_name: key.name.clone(),
@@ -267,6 +270,16 @@ fn build_pool_consumption_accounts(
 
     accounts.sort_by(compare_pool_consumption_accounts_desc);
     accounts
+}
+
+fn pool_consumption_summary_has_usage(aggregate: &StoredProviderApiKeyWindowUsageSummary) -> bool {
+    aggregate.request_count > 0
+        || aggregate.input_tokens > 0
+        || aggregate.output_tokens > 0
+        || aggregate.cache_creation_tokens > 0
+        || aggregate.cache_read_tokens > 0
+        || aggregate.total_tokens > 0
+        || aggregate.total_cost_usd != 0.0
 }
 
 fn build_pool_consumption_summary_json(accounts: &[PoolConsumptionAccount]) -> Value {
@@ -368,4 +381,75 @@ fn format_pool_cost_usd(value: f64) -> String {
         0.0
     };
     format!("{safe:.8}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_key(key_id: &str) -> StoredProviderCatalogKey {
+        StoredProviderCatalogKey::new(
+            key_id.to_string(),
+            "provider-codex".to_string(),
+            key_id.to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .expect("sample key should build")
+    }
+
+    fn sample_summary(
+        key_id: &str,
+        request_count: u64,
+        total_tokens: u64,
+        total_cost_usd: f64,
+    ) -> StoredProviderApiKeyWindowUsageSummary {
+        StoredProviderApiKeyWindowUsageSummary {
+            provider_api_key_id: key_id.to_string(),
+            window_code: "today".to_string(),
+            request_count,
+            input_tokens: total_tokens,
+            output_tokens: 0,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            total_tokens,
+            total_cost_usd,
+        }
+    }
+
+    #[test]
+    fn pool_consumption_accounts_exclude_unused_keys() {
+        let keys = vec![sample_key("used-key"), sample_key("unused-key")];
+        let aggregates = BTreeMap::from([
+            (
+                "used-key".to_string(),
+                sample_summary("used-key", 2, 160, 3.5),
+            ),
+            (
+                "unused-key".to_string(),
+                sample_summary("unused-key", 0, 0, 0.0),
+            ),
+        ]);
+
+        let accounts = build_pool_consumption_accounts(&keys, "codex", &aggregates);
+
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].key_id, "used-key");
+        assert_eq!(accounts[0].request_count, 2);
+    }
+
+    #[test]
+    fn pool_consumption_accounts_keep_request_only_usage() {
+        let keys = vec![sample_key("request-only-key")];
+        let aggregates = BTreeMap::from([(
+            "request-only-key".to_string(),
+            sample_summary("request-only-key", 1, 0, 0.0),
+        )]);
+
+        let accounts = build_pool_consumption_accounts(&keys, "codex", &aggregates);
+
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].key_id, "request-only-key");
+    }
 }
