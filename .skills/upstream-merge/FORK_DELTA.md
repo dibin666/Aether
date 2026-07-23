@@ -17,27 +17,32 @@
 
 ## 最近一次合并后复核
 
-- 合并基线：merge commit `d0b046a08b77fe210a538fda263001f15ca18f1b`，上游 `c7cc8fd7db185cdfdbc2e7fc453689ee469d62af`；冲突组选择 `1C, 2C, 3C, 4C`（均为 manual hybrid）。
-- 功能结论：无功能差异变化。Fork 的 P0/P1/P2 功能清单无新增、改变、被上游吸收或移除；upstream-only 为 0 个提交、0 个路径。
-- 路径级复核：相对合并前 fork-only 集合，`frontend/src/features/usage/types.ts` 已被上游吸收；`apps/aether-gateway/src/handlers/admin/provider/pool_admin/read_routes/mod.rs` 按上游目录化要求移除；`apps/aether-gateway/src/handlers/admin/provider/pool_admin/read_routes/keys.rs` 重接 `quota_summary` 响应。以上均未丢失 fork 功能。
-- 实现复核：pool key 列表保留动态 cycle、score、batch 和筛选行为，并在所有筛选分支返回 quota summary；空的 pool read-route shim 已删除。
+- 合并基线：merge commit `3cb11e4ff0c34b17cc68d7a6bc82a5c251c0d429`，上游 `a0767d957c4c75a4a4047296030ab6843cbebc98`；冲突组选择 `1C, 2C`（均为 manual hybrid）。
+- 功能结论：无功能差异变化。Fork 的 P0/P1/P2 功能清单无新增、改变、被上游吸收或移除；`upstream/main` 已成为 merge commit 的祖先（upstream-only 为 0 个提交、0 个路径）。
+- 上游接入：Codex Agent Identity OAuth 生命周期、在线模型价格目录、Responses transport metadata 兼容和 pool 账号状态同步已接入。OAuth 自动刷新保留 fork 的全局/Provider 配置、并发限制、代理覆盖和任务事件，同时使用上游的 Agent Identity 恢复、配置代际护栏与 CAS 持久化。
+- 路径级复核：合并前 14 个双边路径均已重放到上游结构；真实冲突仅位于 `maintenance/runtime/oauth_token_refresh.rs` 和 `state/oauth.rs`。普通 OAuth 的 refresh failure 仍跳过，只有经传输快照确认为 Codex Agent Identity 的账号可进入 task recovery。
+- 验证：`cargo test -p aether-gateway oauth_token_refresh` 通过（8 tests）；`npm --prefix frontend run build` 和 `cargo check --workspace` 均通过。
 
 ## 基线快照
 
-快照日期：2026-07-22（已执行 `git fetch --prune upstream`，并完成合并后复核）。
+快照日期：2026-07-23（已执行 `git fetch --prune upstream`，完成上游接入、验证和合并后复核）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline | `d0b046a08b77fe210a538fda263001f15ca18f1b`（已验证的不可变 merge commit） |
-| upstream HEAD | `c7cc8fd7db185cdfdbc2e7fc453689ee469d62af` |
-| merge-base | `c7cc8fd7db185cdfdbc2e7fc453689ee469d62af` |
-| 分叉计数 | fork-only 111，upstream-only 0 |
-| fork 侧净改动 | 185 个路径，`+11236/-810` |
+| fork code baseline | `3cb11e4ff0c34b17cc68d7a6bc82a5c251c0d429`（已验证的不可变 merge commit） |
+| upstream HEAD | `a0767d957c4c75a4a4047296030ab6843cbebc98` |
+| merge-base | `a0767d957c4c75a4a4047296030ab6843cbebc98` |
+| 分叉计数 | fork-only 113，upstream-only 0 |
+| fork 侧净改动 | 185 个路径，`+11260/-818` |
 | upstream 侧净改动 | 0 个路径，`+0/-0` |
-| 双边同时改动 | 0 个路径 |
+| 双边同时改动 | 0 个路径（上游已为基线祖先；合并前的 14 个路径已复核） |
+
+## 当前待合入上游功能
+
+- 无。`upstream/main` 已完整合入 merge baseline `3cb11e4ff0c34b17cc68d7a6bc82a5c251c0d429`。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -68,6 +73,7 @@ git diff --name-status HEAD..upstream/main
 4. 以当前净差异和行为测试为准。不要恢复已经被 revert 的旧调度实现。
 5. 处理生成 SQL、导出列表和 trait 签名时，先合并真实契约，再传播到所有数据库适配器和测试替身。
 6. 请求详情 UI 与上游再次冲突时，必须同时保留 `detailScope` 权限域和 `summaryRecord` 最新摘要协调；`Usage.vue` 同时传入两者，不能退回 admin-only 或取消 self-scope。
+7. Agent Identity OAuth 与自动刷新再次冲突时，保留 fork 的全局/Provider 限流、代理覆盖和任务事件；接入上游的 Agent Identity task recovery、认证配置代际护栏及 CAS 持久化。普通 OAuth 的 `[REFRESH_FAILED]` 仍不可重试。
 
 ## Fork 特有功能清单
 
