@@ -1639,9 +1639,9 @@ impl AppState {
     > {
         let distributed_lock = self.runtime_state.as_ref();
         let lock_owner = format!("{lock_owner_prefix}-{}", std::process::id());
-        let initial_transport = transport.clone();
         let mut current_transport = transport.clone();
         current_transport.key.decrypted_api_key = "__placeholder__".to_string();
+        let initial_transport = current_transport.clone();
         let expected_refresh_fingerprint =
             provider_transport::codex_agent_identity_refresh_fingerprint(&current_transport, None);
         let executor = GatewayLocalOAuthHttpExecutor {
