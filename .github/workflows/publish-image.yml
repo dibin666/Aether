@@ -2,9 +2,6 @@ name: Publish Aether M image
 
 on:
   push:
-    branches:
-      - main
-      - master
 
 permissions:
   contents: read
