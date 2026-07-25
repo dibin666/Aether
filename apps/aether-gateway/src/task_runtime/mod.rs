@@ -57,7 +57,7 @@ const RETRY_THREE: RetryPolicy = RetryPolicy { max_attempts: 3 };
 const BACKGROUND_TASK_RUN_ID_MAX_BYTES: usize = 64;
 const WORKER_BOOT_RUN_ID_HASH_HEX_BYTES: usize = 20;
 
-fn build_worker_boot_run_id(task_key: &str, instance_id: &str) -> String {
+pub(crate) fn build_worker_boot_run_id(task_key: &str, instance_id: &str) -> String {
     let full_run_id = format!("boot:{task_key}:{instance_id}");
     if full_run_id.len() <= BACKGROUND_TASK_RUN_ID_MAX_BYTES {
         return full_run_id;
@@ -206,14 +206,6 @@ const TASK_DEFINITIONS: &[TaskDefinition] = &[
     ),
     TaskDefinition::new(
         TASK_KEY_POOL_MONITOR,
-        TaskKind::Scheduled,
-        "interval",
-        true,
-        true,
-        RETRY_ONCE,
-    ),
-    TaskDefinition::new(
-        TASK_KEY_POOL_QUOTA_PROBE,
         TaskKind::Scheduled,
         "interval",
         true,
@@ -387,7 +379,7 @@ pub(crate) fn task_definition(task_key: &str) -> Option<TaskDefinition> {
 
 #[cfg(test)]
 mod tests {
-    use super::{task_definition, TaskKind, TASK_KEY_POOL_QUOTA_PROBE};
+    use super::{task_definition, task_definitions, TaskKind, TASK_KEY_POOL_QUOTA_PROBE};
 
     #[test]
     fn pool_quota_probe_task_is_registered_as_scheduled_interval() {
@@ -398,6 +390,18 @@ mod tests {
         assert_eq!(definition.trigger, "interval");
         assert!(definition.singleton);
         assert!(definition.persist_history);
+    }
+
+    #[test]
+    fn task_definitions_have_unique_keys() {
+        let mut keys = std::collections::BTreeSet::new();
+        for definition in task_definitions() {
+            assert!(
+                keys.insert(definition.key),
+                "duplicate task definition: {}",
+                definition.key,
+            );
+        }
     }
 }
 
@@ -526,23 +530,28 @@ pub(crate) async fn append_event_with_logging(
     }
 }
 
-pub(crate) fn spawn_record_worker_boot(
-    app: AppState,
-    task_key: &'static str,
-    kind: BackgroundTaskKind,
-    trigger: &'static str,
-) -> JoinHandle<()> {
-    spawn_named("task-runtime-record-worker-boot", async move {
+pub(crate) async fn ensure_worker_boot_run(app: &AppState, task_key: &str) -> Option<String> {
+    if !app.has_background_task_data_writer() {
+        return None;
+    }
+    let definition = task_definition(task_key)?;
+    let run_id = build_worker_boot_run_id(task_key, app.tunnel.local_instance_id());
+    if app
+        .find_background_task_run(&run_id)
+        .await
+        .ok()
+        .flatten()
+        .is_none()
+    {
         let now = now_unix_secs();
-        let run_id = build_worker_boot_run_id(task_key, app.tunnel.local_instance_id());
         let run = UpsertBackgroundTaskRun {
             id: run_id.clone(),
             task_key: task_key.to_string(),
-            kind,
-            trigger: trigger.to_string(),
+            kind: background_task_kind(definition.kind),
+            trigger: definition.trigger.to_string(),
             status: BackgroundTaskStatus::Running,
             attempt: 1,
-            max_attempts: 1,
+            max_attempts: definition.retry_policy.max_attempts,
             owner_instance: Some(app.tunnel.local_instance_id().to_string()),
             progress_percent: 0,
             progress_message: Some("worker booted".to_string()),
@@ -556,7 +565,16 @@ pub(crate) fn spawn_record_worker_boot(
             finished_at_unix_secs: None,
             updated_at_unix_secs: now,
         };
-        let _ = upsert_run_with_logging(&app, run).await;
+        upsert_run_with_logging(app, run).await?;
+    }
+    Some(run_id)
+}
+
+pub(crate) fn spawn_record_worker_boot(app: AppState, task_key: &'static str) -> JoinHandle<()> {
+    spawn_named("task-runtime-record-worker-boot", async move {
+        let Some(run_id) = ensure_worker_boot_run(&app, task_key).await else {
+            return;
+        };
         append_event_with_logging(
             &app,
             &run_id,

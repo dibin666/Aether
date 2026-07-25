@@ -1949,14 +1949,9 @@ impl AppState {
             if !background_state.has_background_task_data_writer() {
                 return;
             }
-            let Some(definition) = crate::task_runtime::task_definition(task_key) else {
-                return;
-            };
             std::mem::drop(crate::task_runtime::spawn_record_worker_boot(
                 background_state.clone(),
                 task_key,
-                crate::task_runtime::background_task_kind(definition.kind),
-                definition.trigger,
             ));
         };
 

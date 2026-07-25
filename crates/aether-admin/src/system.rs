@@ -2181,6 +2181,38 @@ fn validate_model_directives_config_value(value: &Value) -> Result<(), ()> {
     Ok(())
 }
 
+fn normalize_bounded_u64_config_value(
+    value: Value,
+    default_value: u64,
+    min_value: u64,
+    max_value: u64,
+) -> Result<Value, ()> {
+    let value = if value.is_null() {
+        default_value
+    } else {
+        value.as_u64().ok_or(())?
+    };
+    (min_value..=max_value)
+        .contains(&value)
+        .then(|| json!(value))
+        .ok_or(())
+}
+
+fn normalize_oauth_refresh_proxy_node_id(value: Value) -> Result<Value, ()> {
+    match value {
+        Value::Null => Ok(Value::Null),
+        Value::String(raw) => {
+            let normalized = raw.trim();
+            if normalized.is_empty() {
+                Ok(Value::Null)
+            } else {
+                Ok(json!(normalized))
+            }
+        }
+        _ => Err(()),
+    }
+}
+
 pub fn parse_admin_system_config_update(
     requested_key: &str,
     request_body: &[u8],
@@ -2236,6 +2268,7 @@ pub fn parse_admin_system_config_update(
     match normalized_key.as_str() {
         "cyber_continue_failover"
         | "enable_model_directives"
+        | "enable_oauth_token_refresh"
         | "module.important_notification.enabled"
         | "module.important_notification.email_enabled"
         | "module.server_chan_push.enabled"
@@ -2397,6 +2430,49 @@ pub fn parse_admin_system_config_update(
                 ));
             }
         },
+        "oauth_token_refresh_lookahead_seconds" => {
+            value = normalize_bounded_u64_config_value(value, 120, 0, 30 * 24 * 60 * 60).map_err(
+                |_| {
+                    (
+                        http::StatusCode::BAD_REQUEST,
+                        json!({ "detail": "OAuth 自动刷新提前量必须是 0 到 2592000 之间的整数" }),
+                    )
+                },
+            )?;
+        }
+        "oauth_token_refresh_interval_seconds" => {
+            value =
+                normalize_bounded_u64_config_value(value, 60, 15, 24 * 60 * 60).map_err(|_| {
+                    (
+                        http::StatusCode::BAD_REQUEST,
+                        json!({ "detail": "OAuth 自动刷新扫描间隔必须是 15 到 86400 之间的整数" }),
+                    )
+                })?;
+        }
+        "oauth_token_refresh_concurrency" => {
+            value = normalize_bounded_u64_config_value(value, 4, 1, 64).map_err(|_| {
+                (
+                    http::StatusCode::BAD_REQUEST,
+                    json!({ "detail": "OAuth 自动刷新并发数必须是 1 到 64 之间的整数" }),
+                )
+            })?;
+        }
+        "oauth_token_refresh_max_per_run" => {
+            value = normalize_bounded_u64_config_value(value, 50, 1, 10_000).map_err(|_| {
+                (
+                    http::StatusCode::BAD_REQUEST,
+                    json!({ "detail": "OAuth 自动刷新每轮账号数必须是 1 到 10000 之间的整数" }),
+                )
+            })?;
+        }
+        "oauth_token_refresh_proxy_node_id" => {
+            value = normalize_oauth_refresh_proxy_node_id(value).map_err(|_| {
+                (
+                    http::StatusCode::BAD_REQUEST,
+                    json!({ "detail": "OAuth 自动刷新代理必须是代理节点 ID、direct 或空值" }),
+                )
+            })?;
+        }
         _ => {}
     }
 
@@ -3173,6 +3249,68 @@ mod tests {
             admin_system_config_default_value("oauth_token_refresh_proxy_node_id"),
             Some(serde_json::Value::Null)
         );
+    }
+
+    #[test]
+    fn oauth_refresh_config_update_normalizes_valid_panel_values() {
+        for (key, body, expected) in [
+            (
+                "oauth_token_refresh_lookahead_seconds",
+                r#"{"value":0}"#,
+                json!(0),
+            ),
+            (
+                "oauth_token_refresh_interval_seconds",
+                r#"{"value":15}"#,
+                json!(15),
+            ),
+            (
+                "oauth_token_refresh_concurrency",
+                r#"{"value":64}"#,
+                json!(64),
+            ),
+            (
+                "oauth_token_refresh_max_per_run",
+                r#"{"value":10000}"#,
+                json!(10000),
+            ),
+            (
+                "oauth_token_refresh_proxy_node_id",
+                r#"{"value":"  direct  "}"#,
+                json!("direct"),
+            ),
+        ] {
+            let update = parse_admin_system_config_update(key, body.as_bytes())
+                .expect("valid OAuth refresh panel setting should parse");
+            assert_eq!(
+                update.value, expected,
+                "unexpected normalized value for {key}"
+            );
+        }
+
+        let reset = parse_admin_system_config_update(
+            "oauth_token_refresh_proxy_node_id",
+            br#"{"value":"  "}"#,
+        )
+        .expect("empty proxy should reset to automatic selection");
+        assert_eq!(reset.value, Value::Null);
+    }
+
+    #[test]
+    fn oauth_refresh_config_update_rejects_invalid_panel_values() {
+        for (key, body) in [
+            ("enable_oauth_token_refresh", r#"{"value":"true"}"#),
+            ("oauth_token_refresh_lookahead_seconds", r#"{"value":-1}"#),
+            ("oauth_token_refresh_interval_seconds", r#"{"value":14}"#),
+            ("oauth_token_refresh_concurrency", r#"{"value":65}"#),
+            ("oauth_token_refresh_max_per_run", r#"{"value":1.5}"#),
+            ("oauth_token_refresh_proxy_node_id", r#"{"value":42}"#),
+        ] {
+            assert!(
+                parse_admin_system_config_update(key, body.as_bytes()).is_err(),
+                "invalid OAuth refresh panel setting should fail for {key}",
+            );
+        }
     }
 
     #[test]

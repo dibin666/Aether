@@ -2,11 +2,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use aether_data_contracts::repository::{
-    background_tasks::{BackgroundTaskKind, BackgroundTaskStatus, UpsertBackgroundTaskRun},
-    provider_catalog::{
-        StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
-    },
+use aether_data_contracts::repository::provider_catalog::{
+    StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
 use futures_util::{stream, StreamExt};
 use serde_json::{Map, Value};
@@ -16,7 +13,7 @@ use tracing::{info, warn};
 use crate::admin_api::provider_oauth_maintenance_endpoint_for_provider;
 use crate::provider_key_auth::provider_key_is_oauth_managed;
 use crate::task_runtime::{
-    append_event_with_logging, task_definition, upsert_run_with_logging,
+    append_event_with_logging, build_worker_boot_run_id, ensure_worker_boot_run,
     TASK_KEY_OAUTH_TOKEN_REFRESH,
 };
 use crate::{AppState, GatewayError};
@@ -243,47 +240,6 @@ pub(crate) async fn oauth_token_refresh_interval(state: &AppState) -> Duration {
         .unwrap_or_else(|_| Duration::from_secs(OAUTH_TOKEN_REFRESH_DEFAULT_INTERVAL_SECS))
 }
 
-async fn ensure_oauth_token_refresh_run(state: &AppState, now_ts: u64) {
-    if !state.has_background_task_data_writer() {
-        return;
-    }
-    let run_id = oauth_token_refresh_run_id(state);
-    if state
-        .find_background_task_run(&run_id)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        return;
-    }
-    let max_attempts = task_definition(TASK_KEY_OAUTH_TOKEN_REFRESH)
-        .map(|item| item.retry_policy.max_attempts)
-        .unwrap_or(1);
-    let run = UpsertBackgroundTaskRun {
-        id: run_id,
-        task_key: TASK_KEY_OAUTH_TOKEN_REFRESH.to_string(),
-        kind: BackgroundTaskKind::Scheduled,
-        trigger: "interval".to_string(),
-        status: BackgroundTaskStatus::Running,
-        attempt: 1,
-        max_attempts,
-        owner_instance: Some(state.tunnel.local_instance_id().to_string()),
-        progress_percent: 0,
-        progress_message: Some("oauth token refresh worker running".to_string()),
-        payload_json: None,
-        result_json: None,
-        error_message: None,
-        cancel_requested: false,
-        created_by: Some("system".to_string()),
-        created_at_unix_secs: now_ts,
-        started_at_unix_secs: Some(now_ts),
-        finished_at_unix_secs: None,
-        updated_at_unix_secs: now_ts,
-    };
-    let _ = upsert_run_with_logging(state, run).await;
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 pub(crate) struct OAuthTokenRefreshRunSummary {
     pub(crate) scanned: usize,
@@ -349,7 +305,11 @@ pub(crate) async fn perform_oauth_token_refresh_once(
 
     let config = OAuthTokenRefreshWorkerConfig::load(state).await?;
     let now_ts = now_unix_secs();
-    ensure_oauth_token_refresh_run(state, now_ts).await;
+    let task_run_id = build_worker_boot_run_id(
+        TASK_KEY_OAUTH_TOKEN_REFRESH,
+        state.tunnel.local_instance_id(),
+    );
+    let _ = ensure_worker_boot_run(state, TASK_KEY_OAUTH_TOKEN_REFRESH).await;
     let providers = state.list_provider_catalog_providers(true).await?;
     let provider_ids = providers
         .iter()
@@ -568,7 +528,7 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                     account_events_recorded = account_events_recorded.saturating_add(1);
                     append_event_with_logging(
                         state,
-                        &oauth_token_refresh_run_id(state),
+                        &task_run_id,
                         if refreshed {
                             "oauth_refresh_account_refreshed"
                         } else {
@@ -607,7 +567,7 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                     account_events_recorded = account_events_recorded.saturating_add(1);
                     append_event_with_logging(
                         state,
-                        &oauth_token_refresh_run_id(state),
+                        &task_run_id,
                         "oauth_refresh_account_skipped",
                         "oauth token refresh skipped",
                         Some(serde_json::json!({
@@ -643,25 +603,27 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                     error = %error,
                     "gateway oauth token auto refresh failed"
                 );
-                account_events_recorded = account_events_recorded.saturating_add(1);
-                append_event_with_logging(
-                    state,
-                    &oauth_token_refresh_run_id(state),
-                    "oauth_refresh_failed",
-                    "oauth token refresh failed",
-                    Some(serde_json::json!({
-                        "provider_id": provider_id,
-                        "provider_name": provider_name,
-                        "provider_type": provider_type,
-                        "key_id": key_id,
-                        "key_name": key_name,
-                        "action": "oauth_refresh",
-                        "status": "failed",
-                        "message": "Token 刷新失败",
-                        "error": error,
-                    })),
-                )
-                .await;
+                if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
+                    account_events_recorded = account_events_recorded.saturating_add(1);
+                    append_event_with_logging(
+                        state,
+                        &task_run_id,
+                        "oauth_refresh_failed",
+                        "oauth token refresh failed",
+                        Some(serde_json::json!({
+                            "provider_id": provider_id,
+                            "provider_name": provider_name,
+                            "provider_type": provider_type,
+                            "key_id": key_id,
+                            "key_name": key_name,
+                            "action": "oauth_refresh",
+                            "status": "failed",
+                            "message": "Token 刷新失败",
+                            "error": error,
+                        })),
+                    )
+                    .await;
+                }
             }
         }
     }
@@ -681,7 +643,7 @@ pub(crate) async fn perform_oauth_token_refresh_once(
         );
         append_event_with_logging(
             state,
-            &oauth_token_refresh_run_id(state),
+            &task_run_id,
             "oauth_refresh_completed",
             "oauth token refresh scan completed",
             Some(serde_json::json!({
@@ -703,14 +665,6 @@ pub(crate) async fn perform_oauth_token_refresh_once(
     }
 
     Ok(summary)
-}
-
-fn oauth_token_refresh_run_id(state: &AppState) -> String {
-    format!(
-        "boot:{}:{}",
-        TASK_KEY_OAUTH_TOKEN_REFRESH,
-        state.tunnel.local_instance_id()
-    )
 }
 
 fn group_endpoints_by_provider(

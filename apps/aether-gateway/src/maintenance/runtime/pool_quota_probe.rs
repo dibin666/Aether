@@ -30,6 +30,9 @@ use crate::provider_pool_demand::{
     provider_pool_burst_pending_key, read_provider_pool_demand_snapshot,
     sample_provider_pool_demand, ProviderPoolDemandSnapshot,
 };
+use crate::task_runtime::{
+    append_event_with_logging, ensure_worker_boot_run, TASK_KEY_POOL_QUOTA_PROBE,
+};
 
 use super::pool_score_rebuild::ensure_provider_key_pool_scores_for_keys;
 
@@ -43,6 +46,7 @@ const POOL_QUOTA_PROBE_PROVIDER_LOCK_TTL_MS: u64 = 30_000;
 const POOL_QUOTA_PROBE_BURST_TRIGGER_LOCK_TTL_MS: u64 = 30_000;
 const POOL_QUOTA_PROBE_BURST_PENDING_PREFIX: &str = "ap:quota_probe:burst_pending";
 const POOL_QUOTA_PROBE_BURST_PENDING_TTL_SECONDS: u64 = 30;
+const POOL_QUOTA_PROBE_ACCOUNT_EVENT_LIMIT: usize = 200;
 const POOL_QUOTA_PROBE_BURST_RETRY_GUARD_SECONDS: u64 = 15;
 const POOL_QUOTA_PROBE_AUTO_MIN_INTERVAL_SECONDS: u64 = 30;
 const POOL_QUOTA_PROBE_AUTO_MAX_INTERVAL_SECONDS: u64 = 10 * 60;
@@ -1226,6 +1230,155 @@ fn probe_result_hard_state(item: &Value) -> Option<PoolMemberHardState> {
     }
 }
 
+fn pool_quota_probe_result_for_key<'a>(
+    payload: Option<&'a Value>,
+    key_id: &str,
+) -> Option<&'a Value> {
+    let results = payload?.get("results")?.as_array()?;
+    results
+        .iter()
+        .find(|item| item.get("key_id").and_then(Value::as_str) == Some(key_id))
+        .or_else(|| (results.len() == 1).then(|| &results[0]))
+}
+
+async fn append_pool_quota_probe_account_event(
+    state: &AppState,
+    run_id: &str,
+    provider: &StoredProviderCatalogProvider,
+    provider_type: &str,
+    key_id: &str,
+    key_name: &str,
+    payload: Option<&Value>,
+    worker_error: Option<&str>,
+) {
+    let result = pool_quota_probe_result_for_key(payload, key_id);
+    let status = worker_error
+        .map(|_| "worker_error")
+        .or_else(|| {
+            result
+                .and_then(|item| item.get("status"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("missing_result");
+    let auto_removed = status.eq_ignore_ascii_case("auto_removed")
+        || result
+            .and_then(|item| item.get("auto_removed"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    let succeeded = status.eq_ignore_ascii_case("success");
+    let message = worker_error
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            result
+                .and_then(|item| item.get("message").or_else(|| item.get("error")))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| {
+            if succeeded {
+                "额度已刷新".to_string()
+            } else if auto_removed {
+                "账号已自动删除".to_string()
+            } else {
+                "额度刷新失败".to_string()
+            }
+        });
+    let mut event_payload = serde_json::json!({
+        "provider_id": provider.id,
+        "provider_name": provider.name,
+        "provider_type": provider_type,
+        "key_id": key_id,
+        "key_name": key_name,
+        "action": "quota_refresh",
+        "status": status,
+        "message": message,
+        "auto_removed": auto_removed,
+    });
+    if let Some(object) = event_payload.as_object_mut() {
+        for field in ["status_code", "reason", "error"] {
+            if let Some(value) = result
+                .and_then(|item| item.get(field))
+                .filter(|value| !value.is_null())
+            {
+                object.insert(field.to_string(), value.clone());
+            }
+        }
+        if let Some(error) = worker_error {
+            object.insert("error".to_string(), serde_json::json!(error));
+        }
+    }
+    append_event_with_logging(
+        state,
+        run_id,
+        if succeeded {
+            "quota_refresh_account_succeeded"
+        } else if auto_removed {
+            "quota_refresh_account_auto_removed"
+        } else {
+            "quota_refresh_account_failed"
+        },
+        if succeeded {
+            "quota refreshed"
+        } else if auto_removed {
+            "quota account auto removed"
+        } else {
+            "quota refresh failed"
+        },
+        Some(event_payload),
+    )
+    .await;
+}
+
+async fn append_pool_quota_probe_summary_event(
+    state: &AppState,
+    run_id: Option<&str>,
+    summary: &PoolQuotaProbeRunSummary,
+    mode: PoolQuotaProbeMode,
+    account_events_recorded: usize,
+    provider: Option<&StoredProviderCatalogProvider>,
+) {
+    let Some(run_id) = run_id else {
+        return;
+    };
+    if summary.selected_keys == 0 && summary.failed == 0 && summary.auto_removed == 0 {
+        return;
+    }
+    let mut payload = serde_json::json!({
+        "providers_checked": summary.providers_checked,
+        "providers_probed": summary.providers_probed,
+        "providers_skipped": summary.providers_skipped,
+        "providers_busy": summary.providers_busy,
+        "selected_keys": summary.selected_keys,
+        "succeeded": summary.succeeded,
+        "failed": summary.failed,
+        "auto_removed": summary.auto_removed,
+        "mode": mode.as_str(),
+        "account_events_recorded": account_events_recorded,
+        "account_event_limit": POOL_QUOTA_PROBE_ACCOUNT_EVENT_LIMIT,
+    });
+    if let (Some(provider), Some(object)) = (provider, payload.as_object_mut()) {
+        object.insert("provider_id".to_string(), serde_json::json!(provider.id));
+        object.insert(
+            "provider_name".to_string(),
+            serde_json::json!(provider.name),
+        );
+        object.insert(
+            "provider_type".to_string(),
+            serde_json::json!(provider.provider_type),
+        );
+    }
+    append_event_with_logging(
+        state,
+        run_id,
+        "quota_refresh_completed",
+        "quota refresh scan completed",
+        Some(payload),
+    )
+    .await;
+}
+
 async fn perform_pool_quota_probe_for_provider(
     state: &AppState,
     admin_state: &AdminAppState<'_>,
@@ -1236,6 +1389,8 @@ async fn perform_pool_quota_probe_for_provider(
     config: PoolQuotaProbeWorkerConfig,
     mode: PoolQuotaProbeMode,
     now_ts: u64,
+    task_run_id: Option<&str>,
+    account_events_recorded: &mut usize,
 ) -> Result<PoolQuotaProbeRunSummary, GatewayError> {
     let mut summary = PoolQuotaProbeRunSummary::empty();
     let provider_short_id = provider.id.chars().take(8).collect::<String>();
@@ -1318,6 +1473,10 @@ async fn perform_pool_quota_probe_for_provider(
     summary.selected_keys += selected_count;
 
     let selected_key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
+    let key_names_by_id = keys
+        .iter()
+        .map(|key| (key.id.clone(), key.name.clone()))
+        .collect::<BTreeMap<_, _>>();
     let score_ensure_budget = (pool_config.score_fallback_scan_limit as usize)
         .min(50_000)
         .max(selected_count.min(50_000));
@@ -1406,8 +1565,28 @@ async fn perform_pool_quota_probe_for_provider(
                     &successful_key_ids,
                 )
                 .await;
+                if *account_events_recorded < POOL_QUOTA_PROBE_ACCOUNT_EVENT_LIMIT {
+                    if let Some(run_id) = task_run_id {
+                        append_pool_quota_probe_account_event(
+                            state,
+                            run_id,
+                            provider,
+                            provider_type,
+                            &key_id,
+                            key_names_by_id
+                                .get(&key_id)
+                                .map(String::as_str)
+                                .unwrap_or_default(),
+                            payload.as_ref(),
+                            None,
+                        )
+                        .await;
+                        *account_events_recorded = account_events_recorded.saturating_add(1);
+                    }
+                }
             }
             Err(err) => {
+                let error_detail = format!("{err:?}");
                 summary.failed += 1;
                 probe_failed += 1;
                 record_score_probe_result_for_key(
@@ -1421,11 +1600,30 @@ async fn perform_pool_quota_probe_for_provider(
                         "last_probe": {
                             "source": "pool_quota_probe",
                             "status": "worker_error",
-                            "message": format!("{err:?}")
+                            "message": error_detail.clone()
                         }
                     }),
                 )
                 .await;
+                if *account_events_recorded < POOL_QUOTA_PROBE_ACCOUNT_EVENT_LIMIT {
+                    if let Some(run_id) = task_run_id {
+                        append_pool_quota_probe_account_event(
+                            state,
+                            run_id,
+                            provider,
+                            provider_type,
+                            &key_id,
+                            key_names_by_id
+                                .get(&key_id)
+                                .map(String::as_str)
+                                .unwrap_or_default(),
+                            None,
+                            Some(&error_detail),
+                        )
+                        .await;
+                        *account_events_recorded = account_events_recorded.saturating_add(1);
+                    }
+                }
                 warn!(
                     provider_id = %provider_short_id,
                     provider_type,
@@ -1501,6 +1699,8 @@ pub(crate) async fn perform_pool_quota_probe_once_with_config(
 
     let admin_state = AdminAppState::new(state);
     let now_ts = now_unix_secs();
+    let task_run_id = ensure_worker_boot_run(state, TASK_KEY_POOL_QUOTA_PROBE).await;
+    let mut account_events_recorded = 0usize;
     let mut summary = PoolQuotaProbeRunSummary {
         providers_checked: providers.len(),
         ..PoolQuotaProbeRunSummary::empty()
@@ -1517,6 +1717,8 @@ pub(crate) async fn perform_pool_quota_probe_once_with_config(
             config,
             PoolQuotaProbeMode::Base,
             now_ts,
+            task_run_id.as_deref(),
+            &mut account_events_recorded,
         )
         .await?;
         summary.providers_skipped += provider_summary.providers_skipped;
@@ -1527,6 +1729,16 @@ pub(crate) async fn perform_pool_quota_probe_once_with_config(
         summary.failed += provider_summary.failed;
         summary.auto_removed += provider_summary.auto_removed;
     }
+
+    append_pool_quota_probe_summary_event(
+        state,
+        task_run_id.as_deref(),
+        &summary,
+        PoolQuotaProbeMode::Base,
+        account_events_recorded,
+        None,
+    )
+    .await;
 
     Ok(summary)
 }
@@ -1589,6 +1801,8 @@ async fn perform_pool_quota_probe_once_for_provider_with_mode(
     }
 
     let admin_state = AdminAppState::new(state);
+    let task_run_id = ensure_worker_boot_run(state, TASK_KEY_POOL_QUOTA_PROBE).await;
+    let mut account_events_recorded = 0usize;
     let provider_summary = perform_pool_quota_probe_for_provider(
         state,
         &admin_state,
@@ -1599,9 +1813,11 @@ async fn perform_pool_quota_probe_once_for_provider_with_mode(
         config,
         mode,
         now_unix_secs(),
+        task_run_id.as_deref(),
+        &mut account_events_recorded,
     )
     .await?;
-    Ok(PoolQuotaProbeRunSummary {
+    let summary = PoolQuotaProbeRunSummary {
         providers_checked: 1,
         providers_probed: provider_summary.providers_probed,
         providers_skipped: provider_summary.providers_skipped,
@@ -1610,7 +1826,17 @@ async fn perform_pool_quota_probe_once_for_provider_with_mode(
         succeeded: provider_summary.succeeded,
         failed: provider_summary.failed,
         auto_removed: provider_summary.auto_removed,
-    })
+    };
+    append_pool_quota_probe_summary_event(
+        state,
+        task_run_id.as_deref(),
+        &summary,
+        mode,
+        account_events_recorded,
+        Some(&provider),
+    )
+    .await;
+    Ok(summary)
 }
 
 pub(crate) async fn perform_pool_quota_probe_once_for_provider_with_config(
@@ -1742,6 +1968,28 @@ mod tests {
         .expect("key should build");
         key.upstream_metadata = upstream_metadata;
         key
+    }
+
+    #[test]
+    fn quota_probe_log_result_matches_the_requested_account() {
+        let payload = json!({
+            "results": [
+                { "key_id": "key-a", "status": "success" },
+                { "key_id": "key-b", "status": "error", "message": "denied" }
+            ]
+        });
+
+        let result = pool_quota_probe_result_for_key(Some(&payload), "key-b")
+            .expect("matching quota result");
+        assert_eq!(result["status"], json!("error"));
+        assert!(pool_quota_probe_result_for_key(Some(&payload), "missing").is_none());
+
+        let single = json!({ "results": [{ "status": "success" }] });
+        assert_eq!(
+            pool_quota_probe_result_for_key(Some(&single), "key-without-id")
+                .expect("single-result payload should use its only account result")["status"],
+            json!("success"),
+        );
     }
 
     #[test]
