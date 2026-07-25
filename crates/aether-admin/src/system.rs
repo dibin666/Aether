@@ -3260,6 +3260,16 @@ mod tests {
                 json!(0),
             ),
             (
+                "oauth_token_refresh_lookahead_seconds",
+                r#"{"value":259200}"#,
+                json!(259200),
+            ),
+            (
+                "oauth_token_refresh_interval_seconds",
+                r#"{"value":300}"#,
+                json!(300),
+            ),
+            (
                 "oauth_token_refresh_interval_seconds",
                 r#"{"value":15}"#,
                 json!(15),

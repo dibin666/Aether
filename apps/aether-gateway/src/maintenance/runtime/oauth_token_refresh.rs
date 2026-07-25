@@ -258,7 +258,6 @@ struct OAuthTokenRefreshCandidate {
     key_name: String,
     key: StoredProviderCatalogKey,
     transport: crate::provider_transport::GatewayProviderTransportSnapshot,
-    needs_agent_task_recovery: bool,
     proxy_node_id_override: Option<Option<String>>,
     provider_concurrency: usize,
 }
@@ -410,7 +409,6 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 key_name: key.name.clone(),
                 key: key.clone(),
                 transport,
-                needs_agent_task_recovery,
                 proxy_node_id_override: provider_config.proxy_node_id_override.clone(),
                 provider_concurrency: provider_config.concurrency,
             });
@@ -448,23 +446,14 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 .acquire_owned()
                 .await
                 .expect("oauth refresh provider semaphore closed");
-            let refresh_result = if candidate.needs_agent_task_recovery {
-                state
-                    .force_local_oauth_refresh_entry_for_auto_refresh_with_proxy_override(
-                        &candidate.transport,
-                        candidate.proxy_node_id_override.clone(),
-                    )
-                    .await
-                    .map(|entry| entry.map(|_| ()))
-            } else {
-                state
-                    .resolve_local_oauth_request_auth_for_auto_refresh_with_proxy_override(
-                        &candidate.transport,
-                        candidate.proxy_node_id_override.clone(),
-                    )
-                    .await
-                    .map(|auth| auth.map(|_| ()))
-            };
+            let refresh_result = state
+                .force_local_oauth_refresh_entry_for_auto_refresh_with_proxy_override(
+                    &candidate.transport,
+                    candidate.proxy_node_id_override.clone(),
+                )
+                .await
+                .map(|entry| entry.map(|_| ()));
+
             match refresh_result {
                 Ok(Some(())) => {
                     match provider_key_credentials_changed(state, &candidate.key).await {
@@ -628,41 +617,39 @@ pub(crate) async fn perform_oauth_token_refresh_once(
         }
     }
 
-    if summary.eligible > 0 || summary.refreshed > 0 || summary.failed > 0 {
-        info!(
-            event_name = "oauth_token_refresh_completed",
-            log_type = "ops",
-            worker = "oauth_token_refresh",
-            scanned = summary.scanned,
-            eligible = summary.eligible,
-            refreshed = summary.refreshed,
-            resolved = summary.resolved,
-            skipped = summary.skipped,
-            failed = summary.failed,
-            "gateway completed oauth token auto refresh scan"
-        );
-        append_event_with_logging(
-            state,
-            &task_run_id,
-            "oauth_refresh_completed",
-            "oauth token refresh scan completed",
-            Some(serde_json::json!({
-                "scanned": summary.scanned,
-                "eligible": summary.eligible,
-                "resolved": summary.resolved,
-                "refreshed": summary.refreshed,
-                "skipped": summary.skipped,
-                "failed": summary.failed,
-                "lookahead_seconds": config.lookahead_seconds,
-                "interval_seconds": config.interval.as_secs(),
-                "concurrency": config.concurrency,
-                "max_per_run": config.max_per_run,
-                "account_events_recorded": account_events_recorded,
-                "account_event_limit": OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT,
-            })),
-        )
-        .await;
-    }
+    info!(
+        event_name = "oauth_token_refresh_completed",
+        log_type = "ops",
+        worker = "oauth_token_refresh",
+        scanned = summary.scanned,
+        eligible = summary.eligible,
+        refreshed = summary.refreshed,
+        resolved = summary.resolved,
+        skipped = summary.skipped,
+        failed = summary.failed,
+        "gateway completed oauth token auto refresh scan"
+    );
+    append_event_with_logging(
+        state,
+        &task_run_id,
+        "oauth_refresh_completed",
+        "oauth token refresh scan completed",
+        Some(serde_json::json!({
+            "scanned": summary.scanned,
+            "eligible": summary.eligible,
+            "resolved": summary.resolved,
+            "refreshed": summary.refreshed,
+            "skipped": summary.skipped,
+            "failed": summary.failed,
+            "lookahead_seconds": config.lookahead_seconds,
+            "interval_seconds": config.interval.as_secs(),
+            "concurrency": config.concurrency,
+            "max_per_run": config.max_per_run,
+            "account_events_recorded": account_events_recorded,
+            "account_event_limit": OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT,
+        })),
+    )
+    .await;
 
     Ok(summary)
 }
@@ -935,6 +922,17 @@ mod tests {
         let auth_config = r#"{"refresh_token":"refresh-token","expires_at":100}"#;
 
         assert!(oauth_refresh_due_for_cutoff(&key, Some(auth_config), 120));
+    }
+
+    #[test]
+    fn oauth_refresh_due_when_one_day_twenty_one_hours_remain_in_three_day_window() {
+        const NOW: u64 = 1_000_000;
+        const ONE_DAY_TWENTY_ONE_HOURS: u64 = 24 * 60 * 60 + 21 * 60 * 60;
+        const THREE_DAYS: u64 = 3 * 24 * 60 * 60;
+        let mut key = sample_oauth_key();
+        key.expires_at_unix_secs = Some(NOW + ONE_DAY_TWENTY_ONE_HOURS);
+
+        assert!(oauth_refresh_due_for_cutoff(&key, None, NOW + THREE_DAYS,));
     }
 
     #[test]
