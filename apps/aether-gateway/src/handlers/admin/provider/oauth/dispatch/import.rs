@@ -20,9 +20,10 @@ use super::super::state::{
 use super::helpers::admin_provider_oauth_key_name_from_auth_config;
 use super::token_import::{
     build_provider_access_token_import_auth_config, decode_access_token_expires_at,
+    flatten_claude_code_credentials_payload, is_claude_session_key,
     normalize_provider_import_tokens, normalize_provider_oauth_import_headers_from_object,
     provider_oauth_import_authorization_bearer_token_from_object,
-    provider_type_supports_access_token_import,
+    provider_type_supports_access_token_import, validate_claude_access_token_import,
 };
 use crate::handlers::admin::provider::shared::paths::admin_provider_oauth_import_provider_id;
 use crate::handlers::admin::request::{
@@ -343,10 +344,15 @@ async fn resolve_admin_provider_oauth_codex_access_token_agent_identity_import(
     request_proxy: Option<ProxySnapshot>,
 ) -> Result<AdminProviderOAuthSingleImportTokens, Response<Body>> {
     let executor = crate::oauth::GatewayOAuthHttpExecutor::new(*state);
+    let is_fedramp_account = identity_hints
+        .get("is_fedramp")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     let mut auth_config =
         aether_provider_transport::register_codex_agent_identity_from_access_token(
             &executor,
             access_token,
+            aether_provider_transport::CodexAgentIdentityRegistrationOptions { is_fedramp_account },
             OAuthNetworkContext::provider_operation(request_proxy),
         )
         .await
@@ -482,6 +488,29 @@ fn apply_single_import_hints(
         }
         return;
     }
+    if provider_type == "claude_code" {
+        for (target, keys) in [
+            (
+                "org_uuid",
+                &["org_uuid", "organization_uuid", "organizationUuid"][..],
+            ),
+            (
+                "subscription_type",
+                &["subscription_type", "subscriptionType"][..],
+            ),
+            ("rate_limit_tier", &["rate_limit_tier", "rateLimitTier"][..]),
+        ] {
+            if let Some(value) = import_payload_string_any(payload, keys) {
+                auth_config
+                    .entry(target.to_string())
+                    .or_insert_with(|| json!(value));
+            }
+        }
+        if let Some(scopes) = payload.get("scopes").cloned() {
+            auth_config.entry("scopes".to_string()).or_insert(scopes);
+        }
+        return;
+    }
     if !matches!(provider_type.as_str(), "codex" | "chatgpt_web" | "grok") {
         return;
     }
@@ -612,7 +641,9 @@ async fn resolve_admin_provider_oauth_single_import_tokens(
         {
             Ok(payload) => payload,
             Err(response) => {
-                if provider_type_supports_access_token_import(provider_type) {
+                if !provider_type.eq_ignore_ascii_case("claude_code")
+                    && provider_type_supports_access_token_import(provider_type)
+                {
                     if let Some(access_token) = access_token
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
@@ -666,10 +697,25 @@ async fn resolve_admin_provider_oauth_single_import_tokens(
             "Refresh Token 或 Access Token 不能为空",
         ));
     };
+    if provider_type.eq_ignore_ascii_case("claude_code") {
+        let now_unix_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        if let Err(detail) =
+            validate_claude_access_token_import(access_token, imported_expires_at, now_unix_secs)
+        {
+            return Err(build_internal_control_error_response(
+                http::StatusCode::BAD_REQUEST,
+                detail,
+            ));
+        }
+    }
     if !provider_type_supports_access_token_import(provider_type) {
         return Err(build_internal_control_error_response(
             http::StatusCode::BAD_REQUEST,
-            "Access Token 导入仅支持 Codex / ChatGPT Web / Grok Provider",
+            "Access Token 导入仅支持 Claude Code / Codex / ChatGPT Web / Grok Provider",
         ));
     }
 
@@ -771,7 +817,7 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
             "请求体必须是合法的 JSON 对象",
         ));
     };
-    let raw_payload = match serde_json::from_slice::<serde_json::Value>(request_body) {
+    let mut raw_payload = match serde_json::from_slice::<serde_json::Value>(request_body) {
         Ok(serde_json::Value::Object(map)) => map,
         _ => {
             return Ok(build_internal_control_error_response(
@@ -792,21 +838,6 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
     } else {
         None
     };
-    let refresh_token_input = import_payload_string(&raw_payload, "refresh_token", "refreshToken");
-    let access_token_input = import_payload_string_any(
-        &raw_payload,
-        &[
-            "access_token",
-            "accessToken",
-            "sso_token",
-            "ssoToken",
-            "session_token",
-            "sessionToken",
-        ],
-    )
-    .or_else(|| provider_oauth_import_authorization_bearer_token_from_object(&raw_payload));
-    let imported_expires_at =
-        import_payload_u64_any(&raw_payload, &["expires_at", "expiresAt", "expired"]);
     let name = raw_payload
         .get("name")
         .and_then(serde_json::Value::as_str)
@@ -832,11 +863,41 @@ pub(super) async fn handle_admin_provider_oauth_import_refresh_token(
         ));
     };
     let provider_type = provider.provider_type.trim().to_ascii_lowercase();
+    if provider_type == "claude_code" {
+        flatten_claude_code_credentials_payload(&mut raw_payload);
+    }
+    let refresh_token_input = import_payload_string(&raw_payload, "refresh_token", "refreshToken");
+    let access_token_input = import_payload_string_any(
+        &raw_payload,
+        &[
+            "access_token",
+            "accessToken",
+            "sso_token",
+            "ssoToken",
+            "session_token",
+            "sessionToken",
+        ],
+    )
+    .or_else(|| provider_oauth_import_authorization_bearer_token_from_object(&raw_payload));
+    let imported_expires_at =
+        import_payload_u64_any(&raw_payload, &["expires_at", "expiresAt", "expired"]);
     let (refresh_token_input, access_token_input) = normalize_provider_import_tokens(
         &provider_type,
         refresh_token_input.as_deref(),
         access_token_input.as_deref(),
     );
+    if provider_type == "claude_code"
+        && refresh_token_input
+            .as_deref()
+            .into_iter()
+            .chain(access_token_input.as_deref())
+            .any(is_claude_session_key)
+    {
+        return Ok(build_internal_control_error_response(
+            http::StatusCode::BAD_REQUEST,
+            "Claude sessionKey 请使用 Cookie 授权，不能作为导入凭据",
+        ));
+    }
     if !create_agent_identity && refresh_token_input.is_none() && access_token_input.is_none() {
         return Ok(build_internal_control_error_response(
             http::StatusCode::BAD_REQUEST,
@@ -1278,7 +1339,8 @@ mod tests {
             "https://api.openai.com/auth": {
                 "chatgpt_account_id": "account-1",
                 "chatgpt_user_id": "user-1",
-                "chatgpt_plan_type": "plus"
+                "chatgpt_plan_type": "plus",
+                "chatgpt_account_is_fedramp": true
             },
             "https://api.openai.com/profile": {
                 "email": "agent@example.com"
@@ -1291,6 +1353,7 @@ mod tests {
         assert_eq!(hints.get("account_id"), Some(&json!("account-1")));
         assert_eq!(hints.get("user_id"), Some(&json!("user-1")));
         assert_eq!(hints.get("plan_type"), Some(&json!("plus")));
+        assert_eq!(hints.get("is_fedramp"), Some(&json!(true)));
         assert_eq!(hints.get("email"), Some(&json!("agent@example.com")));
         assert!(!hints.contains_key("access_token"));
         assert!(!hints.contains_key("id_token"));

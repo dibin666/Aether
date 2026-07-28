@@ -91,8 +91,9 @@
             class="h-8 w-8 shrink-0"
             :class="action.key === 'toggleProvider' ? providerToggleButtonClass : ''"
             :disabled="action.key === 'toggleProvider' ? togglingProviderStatus : false"
-            :data-testid="action.key === 'refreshWorker' ? 'pool-refresh-worker-button' : undefined"
             :title="action.title"
+            @pointerenter="action.key === 'viewProvider' && emit('prefetchProvider')"
+            @focus="action.key === 'viewProvider' && emit('prefetchProvider')"
             @click="emit(action.event)"
           >
             <component
@@ -272,8 +273,10 @@
           class="h-8 w-8"
           :class="action.key === 'toggleProvider' ? providerToggleButtonClass : ''"
           :disabled="action.key === 'toggleProvider' ? togglingProviderStatus : false"
-          :data-testid="action.key === 'demandMetrics' ? 'pool-demand-metrics-button' : action.key === 'refreshWorker' ? 'pool-refresh-worker-button' : undefined"
+          :data-testid="action.key === 'demandMetrics' ? 'pool-demand-metrics-button' : undefined"
           :title="action.title"
+          @pointerenter="action.key === 'viewProvider' && emit('prefetchProvider')"
+          @focus="action.key === 'viewProvider' && emit('prefetchProvider')"
           @click="emit(action.event)"
         >
           <component
@@ -348,14 +351,10 @@ import { computed } from 'vue'
 import {
   Activity,
   ChevronDown,
-  Edit,
   Eye,
-  History,
   ListChecks,
-  Plug,
   Power,
   Upload,
-  Users,
   Search,
   Settings2,
   SlidersHorizontal,
@@ -387,10 +386,6 @@ type HeaderActionEvent =
   | 'import'
   | 'scheduling'
   | 'viewProvider'
-  | 'accountBatch'
-  | 'editProvider'
-  | 'editEndpoint'
-  | 'refreshWorker'
   | 'demandMetrics'
   | 'advanced'
   | 'toggleProvider'
@@ -399,10 +394,6 @@ type HeaderActionKey =
   | 'import'
   | 'scheduling'
   | 'viewProvider'
-  | 'accountBatch'
-  | 'editProvider'
-  | 'editEndpoint'
-  | 'refreshWorker'
   | 'demandMetrics'
   | 'advanced'
   | 'toggleProvider'
@@ -455,13 +446,10 @@ const emit = defineEmits<{
   'update:providerId': [value: string]
   'update:status': [value: string]
   'update:search': [value: string]
-  scheduling: []
   import: []
+  prefetchProvider: []
+  scheduling: []
   viewProvider: []
-  accountBatch: []
-  editProvider: []
-  editEndpoint: []
-  refreshWorker: []
   demandMetrics: []
   advanced: []
   toggleProvider: []
@@ -498,12 +486,8 @@ const selectedCountLabel = computed(() => legacyT(`已选 ${Math.max(0, props.se
 const mobileActions = computed<HeaderAction[]>(() => {
   const actions: HeaderAction[] = [
     { key: 'viewProvider', title: legacyT('查看详情'), event: 'viewProvider', icon: Eye },
-    { key: 'import', title: legacyT('添加账号'), event: 'import', icon: Upload },
+    { key: 'import', title: legacyT('导入账号'), event: 'import', icon: Upload },
     { key: 'scheduling', title: legacyT('号池调度'), event: 'scheduling', icon: SlidersHorizontal },
-    { key: 'refreshWorker', title: legacyT('自动刷新配置和日志'), event: 'refreshWorker', icon: History },
-    { key: 'accountBatch', title: legacyT('账号批量操作'), event: 'accountBatch', icon: Users },
-    { key: 'editProvider', title: legacyT('编辑提供商'), event: 'editProvider', icon: Edit },
-    { key: 'editEndpoint', title: legacyT('编辑端点'), event: 'editEndpoint', icon: Plug },
   ]
   if (props.showAdaptiveHotPoolMetricsButton) {
     actions.push({ key: 'demandMetrics', title: legacyT('查看自适应热池指标'), event: 'demandMetrics', icon: Activity })
@@ -518,11 +502,7 @@ const mobileActions = computed<HeaderAction[]>(() => {
 const desktopActions = computed<HeaderAction[]>(() => {
   const actions: HeaderAction[] = [
     { key: 'viewProvider', title: legacyT('查看详情'), event: 'viewProvider', icon: Eye },
-    { key: 'import', title: legacyT('添加账号'), event: 'import', icon: Upload },
-    { key: 'editProvider', title: legacyT('编辑提供商'), event: 'editProvider', icon: Edit },
-    { key: 'editEndpoint', title: legacyT('编辑端点'), event: 'editEndpoint', icon: Plug },
-    { key: 'refreshWorker', title: legacyT('自动刷新配置和日志'), event: 'refreshWorker', icon: History },
-    { key: 'accountBatch', title: legacyT('账号批量操作'), event: 'accountBatch', icon: Users },
+    { key: 'import', title: legacyT('导入账号'), event: 'import', icon: Upload },
   ]
   if (props.showAdaptiveHotPoolMetricsButton) {
     actions.push({ key: 'demandMetrics', title: legacyT('查看自适应热池指标'), event: 'demandMetrics', icon: Activity })

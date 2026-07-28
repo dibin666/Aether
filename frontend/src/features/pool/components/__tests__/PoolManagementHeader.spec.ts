@@ -37,8 +37,9 @@ describe('PoolManagementHeader', () => {
           refreshLoading: false,
           refreshTitle: '刷新',
           onViewProvider: () => events.push('viewProvider'),
+          onImport: () => events.push('import'),
+          onPrefetchProvider: () => events.push('prefetchProvider'),
           onScheduling: () => events.push('scheduling'),
-          onRefreshWorker: () => events.push('refreshWorker'),
           onDemandMetrics: () => events.push('demandMetrics'),
           onAdvanced: () => events.push('advanced'),
           onToggleSelectAll: () => events.push('toggleSelectAll'),
@@ -54,9 +55,11 @@ describe('PoolManagementHeader', () => {
     app.use(createI18n())
     app.mount(root)
 
-    root.querySelector<HTMLButtonElement>('[title="查看详情"]')?.click()
+    const mobileViewProviderButton = root.querySelector<HTMLButtonElement>('[title="查看详情"]')
+    mobileViewProviderButton?.dispatchEvent(new Event('pointerenter'))
+    mobileViewProviderButton?.click()
+    root.querySelector<HTMLButtonElement>('[title="导入账号"]')?.click()
     root.querySelector<HTMLButtonElement>('[title="点击调整号池调度"]')?.click()
-    root.querySelector<HTMLButtonElement>('[title="自动刷新配置和日志"]')?.click()
     root.querySelector<HTMLButtonElement>('[title="查看自适应热池指标"]')?.click()
     const desktopActions = root.querySelector('[data-testid="pool-header-actions"]')
     const advancedButton = desktopActions?.querySelector<HTMLButtonElement>('[title="高级设置"]')
@@ -71,25 +74,30 @@ describe('PoolManagementHeader', () => {
     root.querySelector<HTMLButtonElement>('[title="刷新"]')?.click()
 
     expect(events).toEqual([
+      'prefetchProvider',
       'viewProvider',
+      'import',
       'scheduling',
-      'refreshWorker',
       'demandMetrics',
       'advanced',
       'toggleSelectAll',
       'batchAction:refresh_quota',
       'refresh',
     ])
+    const viewProviderButton = desktopActions?.querySelector<HTMLButtonElement>('[title="查看详情"]')
+    const importButton = desktopActions?.querySelector<HTMLButtonElement>('[title="导入账号"]')
     expect(selectAllButton?.textContent?.trim()).toBe('')
     expect(selectAllButton?.getAttribute('title')).toBe('全选')
+    expect(viewProviderButton?.nextElementSibling).toBe(importButton)
     expect(advancedButton?.nextElementSibling).toBe(selectAllButton)
     expect(selectAllButton?.nextElementSibling).toBe(batchActionsButton)
     expect(batchActionsButton?.getAttribute('title')).toBe('选择执行动作')
-    expect(root.querySelector('[title="账号批量操作"]')).not.toBeNull()
-    expect(root.querySelector('[title="添加账号"]')).not.toBeNull()
+    expect(root.querySelector('[title="账号批量操作"]')).toBeNull()
+    expect(root.querySelector('[title="添加账号"]')).toBeNull()
+    expect(root.querySelector('[title="导入账号"]')).not.toBeNull()
     expect(root.querySelector('[title="提供商代理（未设置）"]')).not.toBeNull()
-    expect(root.querySelector('[title="编辑端点"]')).not.toBeNull()
-    expect(root.querySelector('[title="编辑提供商"]')).not.toBeNull()
+    expect(root.querySelector('[title="编辑端点"]')).toBeNull()
+    expect(root.querySelector('[title="编辑提供商"]')).toBeNull()
     expect(root.querySelector('[title="当前状态：已启用，点击禁用提供商"]')).not.toBeNull()
     expect(root.textContent).toContain('2 维度')
     expect(root.querySelector('[data-testid="pool-selected-count-desktop"]')).toBeNull()

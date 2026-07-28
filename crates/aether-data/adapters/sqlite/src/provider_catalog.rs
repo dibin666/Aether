@@ -10,10 +10,10 @@ use sqlx::{
 use aether_data_contracts::repository::provider_catalog::{
     ProviderCatalogKeyAdaptiveStateUpdate, ProviderCatalogKeyHealthStateUpdate,
     ProviderCatalogKeyListOrder, ProviderCatalogKeyListQuery,
-    ProviderCatalogKeyOAuthRuntimeStateCasUpdate, ProviderCatalogKeyRuntimeMetadataUpdate,
-    ProviderCatalogKeyStatusSnapshotUpdate, ProviderCatalogReadRepository,
-    ProviderCatalogUpstreamMetadataNamespaceUpdate, ProviderCatalogWriteRepository,
-    StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
+    ProviderCatalogKeyOAuthCredentialCasDelete, ProviderCatalogKeyOAuthRuntimeStateCasUpdate,
+    ProviderCatalogKeyRuntimeMetadataUpdate, ProviderCatalogKeyStatusSnapshotUpdate,
+    ProviderCatalogReadRepository, ProviderCatalogUpstreamMetadataNamespaceUpdate,
+    ProviderCatalogWriteRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
     StoredProviderCatalogKeyMaintenanceSummary, StoredProviderCatalogKeyPage,
     StoredProviderCatalogKeyStats, StoredProviderCatalogProvider,
 };
@@ -1175,6 +1175,53 @@ WHERE id = ?
         Ok(rows_affected > 0)
     }
 
+    pub async fn compare_and_delete_key_oauth_credential(
+        &self,
+        delete: &ProviderCatalogKeyOAuthCredentialCasDelete,
+    ) -> Result<bool, DataLayerError> {
+        validate_non_empty(&delete.key_id, "provider catalog key_id")?;
+        let expected = &delete.expected_credential;
+        if expected
+            .encrypted_api_key
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+            || expected.auth_type.trim().is_empty()
+            || expected.provider_id.trim().is_empty()
+            || expected.provider_type.trim().is_empty()
+        {
+            return Err(DataLayerError::InvalidInput(
+                "provider catalog OAuth credential CAS delete contains empty fields".to_string(),
+            ));
+        }
+        let rows_affected = sqlx::query(
+            r#"
+DELETE FROM provider_api_keys
+WHERE id = ?
+  AND auth_config IS ?
+  AND api_key IS ?
+  AND auth_type = ?
+  AND provider_id = ?
+  AND EXISTS (
+    SELECT 1
+    FROM providers
+    WHERE providers.id = provider_api_keys.provider_id
+      AND providers.provider_type = ?
+  )
+"#,
+        )
+        .bind(&delete.key_id)
+        .bind(delete.expected_encrypted_auth_config.as_deref())
+        .bind(expected.encrypted_api_key.as_deref())
+        .bind(&expected.auth_type)
+        .bind(&expected.provider_id)
+        .bind(&expected.provider_type)
+        .execute(&self.pool)
+        .await
+        .map_sql_err()?
+        .rows_affected();
+        Ok(rows_affected > 0)
+    }
+
     pub async fn update_key_upstream_metadata(
         &self,
         key_id: &str,
@@ -1462,6 +1509,19 @@ WHERE id = ?
                 "provider catalog OAuth api_key update must not be empty".to_string(),
             ));
         }
+        if update.expected_credential.as_ref().is_some_and(|expected| {
+            expected
+                .encrypted_api_key
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+                || expected.auth_type.trim().is_empty()
+                || expected.provider_id.trim().is_empty()
+                || expected.provider_type.trim().is_empty()
+        }) {
+            return Err(DataLayerError::InvalidInput(
+                "provider catalog OAuth credential fence must not contain empty fields".to_string(),
+            ));
+        }
         if !update.status_snapshot_patch.is_object() {
             return Err(DataLayerError::InvalidInput(
                 "provider catalog status snapshot patch must be an object".to_string(),
@@ -1518,6 +1578,22 @@ WHERE id = ?
             .push_bind(&update.key_id)
             .push(" AND auth_config IS ")
             .push_bind(update.expected_encrypted_auth_config.as_deref());
+        if let Some(expected) = update.expected_credential.as_ref() {
+            builder
+                .push(" AND api_key IS ")
+                .push_bind(expected.encrypted_api_key.as_deref())
+                .push(" AND auth_type = ")
+                .push_bind(&expected.auth_type)
+                .push(" AND provider_id = ")
+                .push_bind(&expected.provider_id)
+                .push(
+                    " AND EXISTS (SELECT 1 FROM providers WHERE \
+                     providers.id = provider_api_keys.provider_id \
+                     AND providers.provider_type = ",
+                )
+                .push_bind(&expected.provider_type)
+                .push(")");
+        }
         let rows_affected = builder
             .build()
             .execute(&self.pool)
@@ -2090,6 +2166,13 @@ impl ProviderCatalogWriteRepository for SqliteProviderCatalogReadRepository {
 
     async fn delete_key(&self, key_id: &str) -> Result<bool, DataLayerError> {
         Self::delete_key(self, key_id).await
+    }
+
+    async fn compare_and_delete_key_oauth_credential(
+        &self,
+        delete: &ProviderCatalogKeyOAuthCredentialCasDelete,
+    ) -> Result<bool, DataLayerError> {
+        Self::compare_and_delete_key_oauth_credential(self, delete).await
     }
 
     async fn clear_key_oauth_invalid_marker(&self, key_id: &str) -> Result<bool, DataLayerError> {
@@ -2938,7 +3021,8 @@ mod tests {
     use aether_data_contracts::repository::provider_catalog::{
         ProviderCatalogKeyAdaptiveState, ProviderCatalogKeyAdaptiveStateUpdate,
         ProviderCatalogKeyHealthStateUpdate, ProviderCatalogKeyListOrder,
-        ProviderCatalogKeyListQuery, ProviderCatalogKeyOAuthRuntimeStateCasUpdate,
+        ProviderCatalogKeyListQuery, ProviderCatalogKeyOAuthCredentialCasDelete,
+        ProviderCatalogKeyOAuthCredentialFence, ProviderCatalogKeyOAuthRuntimeStateCasUpdate,
         ProviderCatalogKeyRuntimeMetadataUpdate, ProviderCatalogUpstreamMetadataNamespaceUpdate,
         StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
     };
@@ -3246,6 +3330,12 @@ mod tests {
         let update = ProviderCatalogKeyOAuthRuntimeStateCasUpdate {
             key_id: key.id.clone(),
             expected_encrypted_auth_config: Some("encrypted-auth-v1".to_string()),
+            expected_credential: Some(ProviderCatalogKeyOAuthCredentialFence {
+                encrypted_api_key: Some("encrypted-api-key".to_string()),
+                auth_type: "oauth".to_string(),
+                provider_id: "oauth-cas-provider".to_string(),
+                provider_type: "codex".to_string(),
+            }),
             encrypted_auth_config: "encrypted-auth-v2".to_string(),
             encrypted_api_key_update: Some("encrypted-api-v2".to_string()),
             expires_at_unix_secs_update: Some(Some(4_102_555_900)),
@@ -3304,6 +3394,24 @@ mod tests {
         assert_eq!(status["admin"], json!({"label": "keep"}));
         assert_eq!(status["runtime"], json!({"generation": 2}));
 
+        let stale_api_key_update = ProviderCatalogKeyOAuthRuntimeStateCasUpdate {
+            expected_encrypted_auth_config: Some("encrypted-auth-v2".to_string()),
+            expected_credential: Some(ProviderCatalogKeyOAuthCredentialFence {
+                encrypted_api_key: Some("encrypted-api-key".to_string()),
+                auth_type: "oauth".to_string(),
+                provider_id: "oauth-cas-provider".to_string(),
+                provider_type: "codex".to_string(),
+            }),
+            encrypted_auth_config: "encrypted-auth-v3".to_string(),
+            status_snapshot_patch: json!({}),
+            updated_at_unix_secs: Some(201),
+            ..update.clone()
+        };
+        assert!(!repository
+            .compare_and_update_key_oauth_runtime_state(&stale_api_key_update)
+            .await
+            .expect("stale API key generation should conflict"));
+
         let stale_update = ProviderCatalogKeyOAuthRuntimeStateCasUpdate {
             expected_encrypted_auth_config: Some("encrypted-auth-v1".to_string()),
             encrypted_auth_config: "encrypted-auth-v3".to_string(),
@@ -3337,6 +3445,41 @@ mod tests {
             stored_after_stale.upstream_metadata.as_ref().unwrap()["codex"]["remaining"],
             3
         );
+
+        let stale_delete = ProviderCatalogKeyOAuthCredentialCasDelete {
+            key_id: stored_after_stale.id.clone(),
+            expected_encrypted_auth_config: Some("encrypted-auth-v1".to_string()),
+            expected_credential: ProviderCatalogKeyOAuthCredentialFence {
+                encrypted_api_key: Some("encrypted-api-key".to_string()),
+                auth_type: "oauth".to_string(),
+                provider_id: "oauth-cas-provider".to_string(),
+                provider_type: "codex".to_string(),
+            },
+        };
+        assert!(!repository
+            .compare_and_delete_key_oauth_credential(&stale_delete)
+            .await
+            .expect("stale credential delete should conflict"));
+
+        let current_delete = ProviderCatalogKeyOAuthCredentialCasDelete {
+            key_id: stored_after_stale.id.clone(),
+            expected_encrypted_auth_config: stored_after_stale.encrypted_auth_config.clone(),
+            expected_credential: ProviderCatalogKeyOAuthCredentialFence {
+                encrypted_api_key: stored_after_stale.encrypted_api_key.clone(),
+                auth_type: stored_after_stale.auth_type.clone(),
+                provider_id: stored_after_stale.provider_id.clone(),
+                provider_type: "codex".to_string(),
+            },
+        };
+        assert!(repository
+            .compare_and_delete_key_oauth_credential(&current_delete)
+            .await
+            .expect("current credential generation should delete"));
+        assert!(repository
+            .list_keys_by_ids(&[stored_after_stale.id])
+            .await
+            .expect("deleted key lookup should succeed")
+            .is_empty());
     }
 
     #[tokio::test]

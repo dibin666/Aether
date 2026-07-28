@@ -11,10 +11,10 @@ use sqlx::{
 use aether_data_contracts::repository::provider_catalog::{
     ProviderCatalogKeyAdaptiveStateUpdate, ProviderCatalogKeyHealthStateUpdate,
     ProviderCatalogKeyListOrder, ProviderCatalogKeyListQuery,
-    ProviderCatalogKeyOAuthRuntimeStateCasUpdate, ProviderCatalogKeyRuntimeMetadataUpdate,
-    ProviderCatalogKeyStatusSnapshotUpdate, ProviderCatalogReadRepository,
-    ProviderCatalogUpstreamMetadataNamespaceUpdate, ProviderCatalogWriteRepository,
-    StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
+    ProviderCatalogKeyOAuthCredentialCasDelete, ProviderCatalogKeyOAuthRuntimeStateCasUpdate,
+    ProviderCatalogKeyRuntimeMetadataUpdate, ProviderCatalogKeyStatusSnapshotUpdate,
+    ProviderCatalogReadRepository, ProviderCatalogUpstreamMetadataNamespaceUpdate,
+    ProviderCatalogWriteRepository, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
     StoredProviderCatalogKeyMaintenanceSummary, StoredProviderCatalogKeyPage,
     StoredProviderCatalogKeyStats, StoredProviderCatalogProvider,
 };
@@ -892,6 +892,15 @@ WHERE id = $1
                 .encrypted_api_key_update
                 .as_deref()
                 .is_some_and(|value| value.trim().is_empty())
+            || update.expected_credential.as_ref().is_some_and(|expected| {
+                expected
+                    .encrypted_api_key
+                    .as_deref()
+                    .is_some_and(|value| value.trim().is_empty())
+                    || expected.auth_type.trim().is_empty()
+                    || expected.provider_id.trim().is_empty()
+                    || expected.provider_type.trim().is_empty()
+            })
             || !update.status_snapshot_patch.is_object()
             || update
                 .upstream_metadata_patch
@@ -934,6 +943,18 @@ SET
   END
 WHERE id = $1
   AND auth_config IS NOT DISTINCT FROM $12
+  AND ($13::boolean IS FALSE OR api_key IS NOT DISTINCT FROM $14)
+  AND ($15::text IS NULL OR auth_type = $15)
+  AND ($16::text IS NULL OR provider_id = $16)
+  AND (
+    $17::text IS NULL
+    OR EXISTS (
+      SELECT 1
+      FROM providers
+      WHERE providers.id = provider_api_keys.provider_id
+        AND providers.provider_type = $17
+    )
+  )
 "#,
         )
         .bind(&update.key_id)
@@ -953,6 +974,31 @@ WHERE id = $1
         .bind(update.reset_error_count)
         .bind(update.updated_at_unix_secs.map(|value| value as f64))
         .bind(update.expected_encrypted_auth_config.as_deref())
+        .bind(update.expected_credential.is_some())
+        .bind(
+            update
+                .expected_credential
+                .as_ref()
+                .and_then(|expected| expected.encrypted_api_key.as_deref()),
+        )
+        .bind(
+            update
+                .expected_credential
+                .as_ref()
+                .map(|expected| expected.auth_type.as_str()),
+        )
+        .bind(
+            update
+                .expected_credential
+                .as_ref()
+                .map(|expected| expected.provider_id.as_str()),
+        )
+        .bind(
+            update
+                .expected_credential
+                .as_ref()
+                .map(|expected| expected.provider_type.as_str()),
+        )
         .execute(&self.pool)
         .await
         .map_postgres_err()?
@@ -2029,6 +2075,53 @@ WHERE id = $1
         Ok(rows_affected > 0)
     }
 
+    pub async fn compare_and_delete_key_oauth_credential(
+        &self,
+        delete: &ProviderCatalogKeyOAuthCredentialCasDelete,
+    ) -> Result<bool, DataLayerError> {
+        let expected = &delete.expected_credential;
+        if delete.key_id.trim().is_empty()
+            || expected
+                .encrypted_api_key
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+            || expected.auth_type.trim().is_empty()
+            || expected.provider_id.trim().is_empty()
+            || expected.provider_type.trim().is_empty()
+        {
+            return Err(DataLayerError::InvalidInput(
+                "provider catalog OAuth credential CAS delete contains empty fields".to_string(),
+            ));
+        }
+        let rows_affected = sqlx::query(
+            r#"
+DELETE FROM provider_api_keys
+WHERE id = $1
+  AND auth_config IS NOT DISTINCT FROM $2
+  AND api_key IS NOT DISTINCT FROM $3
+  AND auth_type = $4
+  AND provider_id = $5
+  AND EXISTS (
+    SELECT 1
+    FROM providers
+    WHERE providers.id = provider_api_keys.provider_id
+      AND providers.provider_type = $6
+  )
+"#,
+        )
+        .bind(&delete.key_id)
+        .bind(delete.expected_encrypted_auth_config.as_deref())
+        .bind(expected.encrypted_api_key.as_deref())
+        .bind(&expected.auth_type)
+        .bind(&expected.provider_id)
+        .bind(&expected.provider_type)
+        .execute(&self.pool)
+        .await
+        .map_postgres_err()?
+        .rows_affected();
+        Ok(rows_affected > 0)
+    }
+
     pub async fn update_key_upstream_metadata(
         &self,
         key_id: &str,
@@ -2644,6 +2737,13 @@ impl ProviderCatalogWriteRepository for SqlxProviderCatalogReadRepository {
 
     async fn delete_key(&self, key_id: &str) -> Result<bool, DataLayerError> {
         Self::delete_key(self, key_id).await
+    }
+
+    async fn compare_and_delete_key_oauth_credential(
+        &self,
+        delete: &ProviderCatalogKeyOAuthCredentialCasDelete,
+    ) -> Result<bool, DataLayerError> {
+        Self::compare_and_delete_key_oauth_credential(self, delete).await
     }
 
     async fn clear_key_oauth_invalid_marker(&self, key_id: &str) -> Result<bool, DataLayerError> {

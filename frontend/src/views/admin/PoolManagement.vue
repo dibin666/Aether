@@ -30,15 +30,16 @@
         :refresh-loading="refreshCurrentPageLoading"
         :refresh-title="refreshButtonTitle"
         @view-provider="openProviderDrawer"
-        @scheduling="openSchedulingDialog"
+        @prefetch-provider="prefetchProviderDetailDrawer"
         @import="showImportDialog = true"
+        @scheduling="openSchedulingDialog"
         @refresh-worker="openRefreshWorkerDialog"
         @account-batch="showAccountBatchDialog = true"
         @edit-provider="openProviderEditDialog"
         @edit-endpoint="openEndpointEditDialog"
         @toggle-provider="toggleSelectedProviderStatus"
         @demand-metrics="showDemandMetricsDialog = true"
-        @advanced="showAdvancedDialog = true"
+        @advanced="openAdvancedDialog"
         @toggle-select-all="toggleAllFilteredPoolKeys"
         @batch-action="openAccountBatchDialog"
         @refresh="refreshCurrentPage"
@@ -972,7 +973,7 @@
       :samples="providerDemandMetricSamples"
     />
     <ProviderDetailDrawer
-      v-if="providerDrawerOpen && selectedProviderId"
+      v-if="providerDrawerMounted && selectedProviderId"
       :open="providerDrawerOpen"
       :provider-id="selectedProviderId"
       :initial-provider="selectedProviderData"
@@ -1195,9 +1196,12 @@ import {
   getQuotaDisplayText,
 } from '@/utils/providerKeyQuota'
 
-const ProviderDetailDrawer = defineAsyncComponent(
-  () => import('@/features/providers/components/ProviderDetailDrawer.vue'),
-)
+const loadProviderDetailDrawer = () => import('@/features/providers/components/ProviderDetailDrawer.vue')
+const ProviderDetailDrawer = defineAsyncComponent(loadProviderDetailDrawer)
+
+function prefetchProviderDetailDrawer(): void {
+  void loadProviderDetailDrawer().catch(() => {})
+}
 
 type PoolKeyScore = NonNullable<PoolKeyDetail['pool_score']>
 
@@ -1237,6 +1241,8 @@ let selectProviderRequestId = 0
 let providerDataRequestId = 0
 let keysRequestId = 0
 let keysSearchDebounceTimer: number | null = null
+let providerDetailDrawerPrefetchIdleId: number | null = null
+let providerDetailDrawerPrefetchTimer: number | null = null
 const keysSearchPending = ref(false)
 let demandMetricsPollingTimer: number | null = null
 let demandMetricsRequestId = 0
@@ -1247,6 +1253,38 @@ const POOL_KEYS_CACHE_TTL_MS = 10 * 1000
 const POOL_SCHEDULING_PRESETS_CACHE_TTL_MS = 5 * 60 * 1000
 const POOL_DEMAND_METRICS_SAMPLES_LIMIT = 120
 const POOL_DEMAND_METRICS_POLL_INTERVAL_MS = 10 * 1000
+
+type IdleCallbackWindow = typeof window & {
+  requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number
+  cancelIdleCallback?: (handle: number) => void
+}
+
+function scheduleProviderDetailDrawerPrefetch(): void {
+  const idleWindow = window as IdleCallbackWindow
+  if (idleWindow.requestIdleCallback) {
+    providerDetailDrawerPrefetchIdleId = idleWindow.requestIdleCallback(() => {
+      providerDetailDrawerPrefetchIdleId = null
+      prefetchProviderDetailDrawer()
+    }, { timeout: 1500 })
+    return
+  }
+  providerDetailDrawerPrefetchTimer = window.setTimeout(() => {
+    providerDetailDrawerPrefetchTimer = null
+    prefetchProviderDetailDrawer()
+  }, 800)
+}
+
+function cancelProviderDetailDrawerPrefetch(): void {
+  const idleWindow = window as IdleCallbackWindow
+  if (providerDetailDrawerPrefetchIdleId !== null) {
+    idleWindow.cancelIdleCallback?.(providerDetailDrawerPrefetchIdleId)
+    providerDetailDrawerPrefetchIdleId = null
+  }
+  if (providerDetailDrawerPrefetchTimer !== null) {
+    clearTimeout(providerDetailDrawerPrefetchTimer)
+    providerDetailDrawerPrefetchTimer = null
+  }
+}
 
 interface PoolDemandMetricSample {
   providerId: string
@@ -1374,13 +1412,12 @@ async function loadOverview(options: { cacheTtlMs?: number, silent?: boolean } =
 }
 
 async function handleSchedulingSaved(updatedProvider: ProviderWithEndpointsSummary) {
+  if (!selectedProviderId.value || updatedProvider.id !== selectedProviderId.value) return
   // 优先回写保存接口返回值，避免弹窗立即重开时读到旧配置。
-  if (selectedProviderId.value && updatedProvider.id === selectedProviderId.value) {
-    if (selectedProviderData.value) {
-      Object.assign(selectedProviderData.value, updatedProvider)
-    } else {
-      selectedProviderData.value = updatedProvider
-    }
+  if (selectedProviderData.value) {
+    Object.assign(selectedProviderData.value, updatedProvider)
+  } else {
+    selectedProviderData.value = updatedProvider
   }
   showSchedulingDialog.value = false
   showAdvancedDialog.value = false
@@ -1411,10 +1448,13 @@ const selectedProviderClaudeConfig = computed(() => {
   return (selectedProviderData.value as Record<string, unknown> | null)?.claude_code_advanced as ClaudeCodeAdvancedConfig | null ?? null
 })
 
-const DEFAULT_ENABLED_PRESETS = new Set(['cache_affinity', 'recent_refresh'])
+function defaultEnabledPresetCount(providerType: string): number {
+  return ['codex', 'windsurf'].includes(providerType) ? 2 : 1
+}
 
 const DEFAULT_PRESET_LABELS: Record<string, string> = {
   lru: 'LRU',
+  free_team_first: 'Free/Team',
   free_first: 'Free',
   team_first: 'Team',
   plus_first: 'Plus',
@@ -1552,7 +1592,7 @@ const poolSchedulingLabel = computed(() => {
   const cfg = selectedProviderConfig.value
 
   // No pool_advanced config at all: use default enabled presets count
-  if (!cfg) return `${DEFAULT_ENABLED_PRESETS.size} 维度`
+  if (!cfg) return `${defaultEnabledPresetCount(selectedProviderType.value)} 维度`
 
   const presets = Array.isArray(cfg.scheduling_presets) ? cfg.scheduling_presets : []
   const presetLabels = presetLabelsByName.value
@@ -1588,7 +1628,7 @@ const poolSchedulingLabel = computed(() => {
   if (lruEnabled && stickyEnabled) return 'LRU + 粘性'
   if (lruEnabled) return 'LRU'
   if (!cfg.scheduling_mode && (cfg.lru_enabled === null || cfg.lru_enabled === undefined)) {
-    return `${DEFAULT_ENABLED_PRESETS.size} 维度`
+    return `${defaultEnabledPresetCount(selectedProviderType.value)} 维度`
   }
   if (stickyEnabled) return '粘性'
   return '随机'
@@ -1718,6 +1758,8 @@ async function selectProvider(
   hasHydratedInitialProviderSelection = true
   selectedProviderId.value = id
   selectedProviderData.value = null
+  showSchedulingDialog.value = false
+  showAdvancedDialog.value = false
   resetPoolKeySelection(true)
   providerDrawerOpen.value = false
   editingKeyDetail.value = null
@@ -2892,6 +2934,7 @@ const showImportDialog = ref(false)
 const showSchedulingDialog = ref(false)
 const showAdvancedDialog = ref(false)
 const providerDrawerOpen = ref(false)
+const providerDrawerMounted = ref(false)
 const providerEditDialogOpen = ref(false)
 const providerToEdit = ref<ProviderWithEndpointsSummary | null>(null)
 const endpointEditDialogOpen = ref(false)
@@ -2904,8 +2947,27 @@ const showAccountBatchDialog = ref(false)
 const pendingAccountBatchAction = ref<PoolBatchActionValue | null>(null)
 const togglingProviderStatus = ref(false)
 
-function openSchedulingDialog() {
-  showSchedulingDialog.value = true
+async function ensureSelectedProviderDetail(): Promise<boolean> {
+  const providerId = selectedProviderId.value
+  if (!providerId) return false
+  if (selectedProviderData.value?.id !== providerId) {
+    await loadProviderData(providerId, { preserveOnError: true })
+  }
+  if (selectedProviderData.value?.id === providerId) return true
+  showWarning('Provider 详情尚未加载，无法编辑调度配置')
+  return false
+}
+
+async function openSchedulingDialog() {
+  if (await ensureSelectedProviderDetail()) {
+    showSchedulingDialog.value = true
+  }
+}
+
+async function openAdvancedDialog() {
+  if (await ensureSelectedProviderDetail()) {
+    showAdvancedDialog.value = true
+  }
 }
 
 function openAccountBatchDialog(action: PoolBatchActionValue = 'refresh_quota'): void {
@@ -2919,7 +2981,9 @@ watch(showAccountBatchDialog, (open) => {
 })
 
 function openProviderDrawer(): void {
+  prefetchProviderDetailDrawer()
   if (!selectedProviderId.value) return
+  providerDrawerMounted.value = true
   providerDrawerOpen.value = true
 }
 
@@ -4102,9 +4166,11 @@ onMounted(() => {
   startCountdownTimer()
   void loadSchedulingPresetMetas({ cacheTtlMs: POOL_SCHEDULING_PRESETS_CACHE_TTL_MS })
   void loadOverview({ cacheTtlMs: POOL_OVERVIEW_CACHE_TTL_MS })
+  scheduleProviderDetailDrawerPrefetch()
 })
 
 onBeforeUnmount(() => {
+  cancelProviderDetailDrawerPrefetch()
   stopDemandMetricsPolling()
   if (keysSearchDebounceTimer !== null) {
     clearTimeout(keysSearchDebounceTimer)

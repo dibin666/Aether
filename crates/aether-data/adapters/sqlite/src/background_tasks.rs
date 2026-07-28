@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(page.items[0].id, "run-1");
 
         let events = repository
-            .list_events("run-1", 0, 10)
+            .list_events("run-1", 0, 10, false)
             .await
             .expect("background task events should list");
         assert_eq!(events.len(), 1);
