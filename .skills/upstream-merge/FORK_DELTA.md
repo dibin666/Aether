@@ -26,24 +26,30 @@
 
 ## 基线快照
 
-快照日期：2026-07-28（已执行 `git fetch --prune upstream`，完成上游接入、验证和合并后复核）。
+快照日期：2026-07-30（已执行 `git fetch upstream`，以下为本轮上游合并前快照）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline | `68f2636fe4de81f670057ecd03ed64a139e05483`（已验证的不可变 merge commit） |
-| upstream HEAD | `37df5b93b1582165116fc1206dc1abefc15799eb` |
+| fork code baseline | `108645ff93ca7bcc596da48ce4a4c9c067d883d5`（本轮合并前 HEAD） |
+| upstream HEAD | `12057db476ca145a3a721d5d223e85fc871719ba` |
 | merge-base | `37df5b93b1582165116fc1206dc1abefc15799eb` |
-| 分叉计数 | fork-only 122，upstream-only 0 |
-| fork 侧净改动 | 193 个路径，`+12422/-874` |
-| upstream 侧净改动 | 0 个路径，`+0/-0` |
-| 双边同时改动 | 0 个路径（上游已为 merge baseline 祖先；合并前 56 个路径已复核） |
+| 分叉计数 | fork-only 123，upstream-only 16 |
+| fork 侧净改动 | 193 个路径，`+12435/-874` |
+| upstream 侧净改动 | 157 个路径，`+6619/-1647` |
+| 双边同时改动 | 30 个路径 |
 
 ## 当前待合入上游功能
 
-- 无。`upstream/main` 已完整合入 merge baseline `68f2636fe4de81f670057ecd03ed64a139e05483`。
+截至本轮合并前快照，`upstream/main` 比 fork 多 16 个提交：
+
+- Responses continuation history：`118f44102` 持久化 OpenAI Responses continuation history，`ff47d8d48` 将 response history 接入 AI seam，`ef5f36cc2` 补齐相关 clippy 修正。
+- Replay/failover/usage diagnostics：`a04673a90` 加固 failover 与 payload 处理，`050eb7750` 加固 Responses replay 与失败诊断，`1ab4f079c` 恢复 failover/usage diagnostics，`6c733f759` 在 event seed 中保留请求诊断。
+- Admin pool：`d8902ea61` 缓冲 batch update request body；`20399b004` 为其合并提交。
+- 测试与 CI：`d7d8db45b` 对齐 tunnel 错误夹具，`8cf9af79d`、`e55793c76`、`f8000012f` 修正工作流与 clippy 基线。
+- 其余承载提交：`12057db47`、`84022c4d4`、`a97acc07f`。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -275,9 +281,42 @@ Provider 级覆盖位于 `provider.config.oauth_token_refresh`：`enabled`、`lo
 - `.gitignore` 中 `.cursor`、`.trellis`、`AGENTS.md`、`.agents` 是本地工具忽略规则。
 - `.skills/upstream-merge/**` 本身只存在于 fork，合并时保留。
 
-## 当前 0 个双边改动路径
+## 当前 30 个双边改动路径
 
-合并后 `merge-base` 已等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，因此当前没有双边改动路径。下一次 `git fetch --prune upstream` 后必须重新计算，不能沿用本次的 0。
+以下路径在 fork 与本轮 upstream-only 变更中都从 merge-base 修改过，必须按行为检查；不得按整文件自动选择一侧：
+
+```text
+README.md
+apps/aether-gateway/src/ai_serving/mod.rs
+apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/request.rs
+apps/aether-gateway/src/ai_serving/pure/mod.rs
+apps/aether-gateway/src/control/tests/admin_pool.rs
+apps/aether-gateway/src/execution_runtime/transport.rs
+apps/aether-gateway/src/executor/orchestration.rs
+apps/aether-gateway/src/handlers/admin/request/system/import.rs
+apps/aether-gateway/src/handlers/public/support/user_me_usage.rs
+apps/aether-gateway/src/tests/control/admin/pool.rs
+crates/aether-admin/src/observability/usage.rs
+crates/aether-admin/src/system.rs
+crates/aether-ai/formats/src/api.rs
+crates/aether-ai/formats/src/formats/registry.rs
+crates/aether-ai/formats/src/formats/shared/stream_core/format_matrix.rs
+crates/aether-ai/formats/src/formats/shared/stream_rewrite.rs
+crates/aether-ai/serving/src/lib.rs
+crates/aether-data/adapters/postgres/src/provider_catalog.rs
+crates/aether-data/contracts/src/repository/usage/types.rs
+crates/aether-provider/transport/src/request_url/mod.rs
+crates/aether-provider/transport/src/same_format_provider/mod.rs
+crates/aether-usage/runtime/src/write.rs
+frontend/src/api/dashboard.ts
+frontend/src/api/endpoints/types/provider.ts
+frontend/src/api/me.ts
+frontend/src/api/usage.ts
+frontend/src/features/usage/components/RequestDetailDrawer.vue
+frontend/src/features/usage/components/UsageRecordsTable.vue
+frontend/src/features/usage/components/__tests__/UsageRecordsTable.spec.ts
+frontend/src/i18n/messages.ts
+```
 
 本次合并前共有 56 个双边路径，实际冲突为 15 个文件、17 个冲突块。用户选择及结果：
 
@@ -293,7 +332,7 @@ P0 复核结果：除上述 `2B`、`5B` 两项显式变化外，转写、cache a
 
 ## 当前尚未合入的上游功能
 
-无。`upstream/main` 已并入 merge commit `68f2636fe4de81f670057ecd03ed64a139e05483`；`git rev-list HEAD..upstream/main` 为 0。下一次 fetch 后重新计算本节和上面的 refs/counts/双边路径记录。
+与“当前待合入上游功能”相同：本轮共有 16 个 upstream-only 提交，重点是 Responses continuation history、failover/replay/usage diagnostics 与 admin pool batch body buffering。合并后必须重新计算并记录吸收结果。
 
 ## 配置与 API 契约速查
 
