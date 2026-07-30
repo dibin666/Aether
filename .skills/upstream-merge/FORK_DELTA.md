@@ -17,39 +17,33 @@
 
 ## 最近一次合并后复核
 
-- 合并基线：merge commit `68f2636fe4de81f670057ecd03ed64a139e05483`，上游 `37df5b93b1582165116fc1206dc1abefc15799eb`；冲突组选择 `1C, 2B, 3C, 4C, 5B`。
-- 功能结论：存在两项显式功能变化。选择 `2B` 后，`pool_advanced.score_ranking_enabled` 仍可被配置和 UI 保存，但 scheduler 不再读取该字段，分数候选阶段始终按上游分页流程运行；选择 `5B` 后，号池页头采用上游详情预取与“导入账号”，不再提供刷新日志、编辑 Provider/Endpoint 和账号批量操作快捷入口。
-- 保留结论：转写 multipart/同步/流式/audio usage、cache affinity、动态 quota/消费统计、OAuth 自动刷新后端与代理覆盖、永不熔断、self-scope 请求详情、chunk 恢复及其余 P0/P1/P2 行为未发现变化。OAuth/Provider 融合同时保留 `oauth_token_refresh` 和上游 transfer-limit 字段；SQLite 窗口聚合保留 fork 全字段并优先使用 settlement snapshot。
-- 上游接入：fast pricing/model sync、provider 详情与 transfer limits、portable SQL parity、可折叠导航、provider request/routed pool 加固、credential-fenced OAuth cleanup、Responses agent metadata、动态 Codex quota label 和 FedRAMP identity 已接入。
-- 路径级复核：合并前 56 个双边路径中 15 个文件产生 17 个冲突块；AI、OAuth/Provider、Usage 采用 manual hybrid，Pool scheduler 与 Pool header 采用 upstream。合并后 `merge-base` 等于 `upstream/main`，upstream-only 为 0 个提交、0 个路径。
-- 验证：前端生产构建、`cargo check --workspace`、75 个前端测试及转写/熔断/pool/OAuth/SQLite 行为测试均通过；pool 测试需 `RUST_MIN_STACK=8388608`，默认测试线程栈会在大型 `AppState` 夹具中溢出。
+- 合并基线：merge commit `a4cd5b8bf5567416a9b9e7d57ef10a40316d3771`，上游 `12057db476ca145a3a721d5d223e85fc871719ba`；冲突组选择 `1C, 2C`，均为 manual hybrid。
+- 功能结论：无 fork 功能差异变化。AI 导出同时保留上游 Responses continuation history 与 fork transcription；Usage 同时保留上游端到端/成功候选时序和 fork reasoning token、格式感知 TPS 语义。
+- 保留结论：转写 multipart/同步/流式/audio usage、cache affinity、动态 quota/消费统计、OAuth 自动刷新后端与代理覆盖、永不熔断、self-scope 请求详情、chunk 恢复及其余 P0/P1/P2 行为未发现变化；上一轮明确采用的 upstream pool score phase 与 Pool header 行为也未改变。
+- 上游接入：Responses continuation history 持久化、replay/failover/usage diagnostics、端到端请求时序、admin pool batch body buffering 及相关 CI 修正已接入。
+- 路径级复核：合并前 30 个双边路径中 4 个文件产生 6 个冲突块；AI export 与 Usage diagnostics 两组均按用户选择 manual hybrid。合并后 `merge-base` 等于 `upstream/main`，upstream-only 为 0 个提交、0 个路径。
+- 验证：前端生产构建、`cargo check --workspace`、77 个前端关键测试及 transcription/response-history/usage/熔断/pool/OAuth/SQLite/self-usage 行为测试均通过；`cargo fmt --all -- --check` 通过。非阻塞警告仅为 `caniuse-lite` 数据已 10 个月未更新；未获授权执行浏览器自动化，四项浏览器烟测仍需人工完成。
 
 ## 基线快照
 
-快照日期：2026-07-30（已执行 `git fetch upstream`，以下为本轮上游合并前快照）。
+快照日期：2026-07-30（已执行 `git fetch upstream`，完成上游接入、验证和合并后复核）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline | `108645ff93ca7bcc596da48ce4a4c9c067d883d5`（本轮合并前 HEAD） |
+| fork code baseline | `a4cd5b8bf5567416a9b9e7d57ef10a40316d3771`（已验证的不可变 merge commit） |
 | upstream HEAD | `12057db476ca145a3a721d5d223e85fc871719ba` |
-| merge-base | `37df5b93b1582165116fc1206dc1abefc15799eb` |
-| 分叉计数 | fork-only 123，upstream-only 16 |
-| fork 侧净改动 | 193 个路径，`+12435/-874` |
-| upstream 侧净改动 | 157 个路径，`+6619/-1647` |
-| 双边同时改动 | 30 个路径 |
+| merge-base | `12057db476ca145a3a721d5d223e85fc871719ba` |
+| 分叉计数 | fork-only 125，upstream-only 0 |
+| fork 侧净改动 | 193 个路径，`+12485/-875` |
+| upstream 侧净改动 | 0 个路径，`+0/-0` |
+| 双边同时改动 | 0 个路径（上游已为 merge baseline 祖先；合并前 30 个路径已复核） |
 
 ## 当前待合入上游功能
 
-截至本轮合并前快照，`upstream/main` 比 fork 多 16 个提交：
-
-- Responses continuation history：`118f44102` 持久化 OpenAI Responses continuation history，`ff47d8d48` 将 response history 接入 AI seam，`ef5f36cc2` 补齐相关 clippy 修正。
-- Replay/failover/usage diagnostics：`a04673a90` 加固 failover 与 payload 处理，`050eb7750` 加固 Responses replay 与失败诊断，`1ab4f079c` 恢复 failover/usage diagnostics，`6c733f759` 在 event seed 中保留请求诊断。
-- Admin pool：`d8902ea61` 缓冲 batch update request body；`20399b004` 为其合并提交。
-- 测试与 CI：`d7d8db45b` 对齐 tunnel 错误夹具，`8cf9af79d`、`e55793c76`、`f8000012f` 修正工作流与 clippy 基线。
-- 其余承载提交：`12057db47`、`84022c4d4`、`a97acc07f`。
+- 无。`upstream/main` 已完整合入 merge baseline `a4cd5b8bf5567416a9b9e7d57ef10a40316d3771`；Responses continuation history、failover/replay/usage diagnostics 与 admin pool batch body buffering 均已接入。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -83,6 +77,7 @@ git diff --name-status HEAD..upstream/main
 7. Agent Identity OAuth 与自动刷新再次冲突时，保留 fork 的全局/Provider 限流、代理覆盖和任务事件；接入上游的 Agent Identity task recovery、认证配置代际护栏及 CAS 持久化。普通 OAuth 的 `[REFRESH_FAILED]` 仍不可重试。
 
 8. `68f2636fe` 已显式采用 upstream 的 pool scheduler 与 Pool header 冲突侧；未来不得把 score gate 或已移除的页头快捷入口当成当前不变量静默恢复，恢复前需要新的产品决策。
+9. Responses continuation history 与端到端时序现已属于 upstream baseline。AI export 冲突必须同时保留 history hydrate/record/storage 与 transcription；Usage 冲突必须同时保留端到端/候选时序、reasoning token 和格式感知 TPS，并让“计速耗时”对应实际 TPS 分母。
 
 ## Fork 特有功能清单
 
@@ -113,7 +108,7 @@ git diff --name-status HEAD..upstream/main
 合并规则：
 
 - 上游若重构 AI registry/planner，采用新结构，但上述格式、二进制保真、同步/流式和 usage/计费契约必须全部重接。
-- `crates/aether-ai/formats/src/api.rs` 与 `apps/aether-gateway/src/ai_serving/pure/mod.rs` 当前还承载上游 Codex 缓存身份导出；必须同时保留上游导出和转写导出。
+- `crates/aether-ai/formats/src/api.rs` 与 `apps/aether-gateway/src/ai_serving/pure/mod.rs` 同时承载上游 Codex 缓存身份、Responses continuation history 和 fork transcription 导出；合并导出列表时三者必须并存。
 - 上游正在重构 processing-tier 计费和 usage body capture。以其新结算语义为主，再补回 `audio_duration_seconds`；不要用 fork 旧版 `pricing.rs`/`service.rs` 覆盖上游文件。
 
 ### P0：号池调度不变量
@@ -281,58 +276,22 @@ Provider 级覆盖位于 `provider.config.oauth_token_refresh`：`enabled`、`lo
 - `.gitignore` 中 `.cursor`、`.trellis`、`AGENTS.md`、`.agents` 是本地工具忽略规则。
 - `.skills/upstream-merge/**` 本身只存在于 fork，合并时保留。
 
-## 当前 30 个双边改动路径
+## 当前 0 个双边改动路径
 
-以下路径在 fork 与本轮 upstream-only 变更中都从 merge-base 修改过，必须按行为检查；不得按整文件自动选择一侧：
+合并后 `merge-base` 已等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，因此当前没有双边改动路径。下一次 `git fetch upstream` 后必须重新计算，不能沿用本次的 0。
 
-```text
-README.md
-apps/aether-gateway/src/ai_serving/mod.rs
-apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/request.rs
-apps/aether-gateway/src/ai_serving/pure/mod.rs
-apps/aether-gateway/src/control/tests/admin_pool.rs
-apps/aether-gateway/src/execution_runtime/transport.rs
-apps/aether-gateway/src/executor/orchestration.rs
-apps/aether-gateway/src/handlers/admin/request/system/import.rs
-apps/aether-gateway/src/handlers/public/support/user_me_usage.rs
-apps/aether-gateway/src/tests/control/admin/pool.rs
-crates/aether-admin/src/observability/usage.rs
-crates/aether-admin/src/system.rs
-crates/aether-ai/formats/src/api.rs
-crates/aether-ai/formats/src/formats/registry.rs
-crates/aether-ai/formats/src/formats/shared/stream_core/format_matrix.rs
-crates/aether-ai/formats/src/formats/shared/stream_rewrite.rs
-crates/aether-ai/serving/src/lib.rs
-crates/aether-data/adapters/postgres/src/provider_catalog.rs
-crates/aether-data/contracts/src/repository/usage/types.rs
-crates/aether-provider/transport/src/request_url/mod.rs
-crates/aether-provider/transport/src/same_format_provider/mod.rs
-crates/aether-usage/runtime/src/write.rs
-frontend/src/api/dashboard.ts
-frontend/src/api/endpoints/types/provider.ts
-frontend/src/api/me.ts
-frontend/src/api/usage.ts
-frontend/src/features/usage/components/RequestDetailDrawer.vue
-frontend/src/features/usage/components/UsageRecordsTable.vue
-frontend/src/features/usage/components/__tests__/UsageRecordsTable.spec.ts
-frontend/src/i18n/messages.ts
-```
-
-本次合并前共有 56 个双边路径，实际冲突为 15 个文件、17 个冲突块。用户选择及结果：
+本轮合并前共有 30 个双边路径，实际冲突为 4 个文件、6 个冲突块。用户选择及结果：
 
 | 组 | 选择 | 合并后行为 |
 |---|---|---|
-| AI planning / execution | `1C` manual hybrid | 上游 Claude Count Tokens、operation gate、transfer tracker、错误响应与 tunnel affinity；保留转写导出、multipart 二进制保真及同步/流式计划 |
-| Pool / routing | `2B` upstream | 采用 routed allowed-key 与分页 score phase；`score_ranking_enabled` 不再门禁运行时，生产 `free_first`/`team_first` 策略仍在 |
-| Provider / OAuth admin | `3C` manual hybrid | 采用 credential fence/fingerprint 与 transfer limits；保留自动刷新代理、上下文、任务事件和 `oauth_token_refresh` 摘要 |
-| Data / billing | `4C` manual hybrid | SQLite 账号窗口聚合保留 input/output/cache/total/cost 全字段，优先 settlement snapshot 并回退 usage |
-| Frontend Pool header | `5B` upstream | 保留详情预取和“导入账号”；移除刷新日志、编辑 Provider/Endpoint、账号批量操作快捷入口 |
+| AI planning / execution exports | `1C` manual hybrid | 采用上游 Responses continuation history 的 hydrate/record/storage 导出，同时保留 transcription multipart、模型重写、类型与 plan-kind 导出 |
+| Usage diagnostics / performance | `2C` manual hybrid | Rust 同时保留 reasoning 与端到端 metadata helper；前端同时展示端到端、成功候选、生成及实际计速耗时，TPS 继续扣除 reasoning tokens 并对 Responses 使用总耗时；保留双方测试 |
 
-P0 复核结果：除上述 `2B`、`5B` 两项显式变化外，转写、cache affinity、quota/消费统计、OAuth 后端、usage/billing 跨数据库契约、self-scope 请求详情与 `disable_circuit_breaker` 均保留。
+P0 复核结果：无功能差异变化。转写、cache affinity、动态 quota/消费统计、OAuth 自动刷新、usage/billing 跨数据库契约、self-scope 请求详情、`disable_circuit_breaker`、chunk 恢复均保留；上一轮 `68f2636fe` 明确采用的 upstream pool score phase 与 Pool header 行为未改变。
 
 ## 当前尚未合入的上游功能
 
-与“当前待合入上游功能”相同：本轮共有 16 个 upstream-only 提交，重点是 Responses continuation history、failover/replay/usage diagnostics 与 admin pool batch body buffering。合并后必须重新计算并记录吸收结果。
+无。`upstream/main` 已并入 merge commit `a4cd5b8bf5567416a9b9e7d57ef10a40316d3771`；`git rev-list HEAD..upstream/main` 为 0。下一次 fetch 后重新计算本节和 refs/counts/双边路径记录。
 
 ## 配置与 API 契约速查
 
@@ -370,9 +329,15 @@ cargo check --workspace
 再按冲突面串行执行行为验证，避免多个 Cargo 进程争用 package/artifact lock：
 
 ```sh
-# 转写 multipart、同步/流式、模型映射与 failover
+# 转写 multipart、Responses continuation history、同步/流式与 failover
 cargo test -p aether-ai-formats transcription
+cargo test -p aether-ai-formats response_history
 cargo test -p aether-gateway transcription
+
+# Usage hybrid：reasoning、端到端时序和 self-scope 路由
+cargo test -p aether-admin usage_record_exposes_reasoning_tokens_from_dimensions
+cargo test -p aether-admin admin_usage_payloads_project_end_to_end_timings_from_metadata
+RUST_MIN_STACK=8388608 cargo test -p aether-gateway users_me_usage
 
 # 永不熔断、pool 调度与 OAuth 自动刷新
 cargo test -p aether-scheduler-core disable_circuit_breaker
@@ -397,21 +362,22 @@ npm run test:run -- \
   src/views/admin/__tests__/PoolManagement.codex-cycle-stats.spec.ts
 ```
 
-本次 `68f2636fe` 验证结果：
+本次 `a4cd5b8bf` 验证结果：
 
 - `cd frontend && npm run build`：通过；非阻塞警告为 `caniuse-lite` 数据已 10 个月未更新。
 - `cargo check --workspace`：通过。
-- Rust 行为测试串行通过：`aether-ai-formats transcription` 10/10，`aether-gateway transcription` 7/7，`aether-scheduler-core disable_circuit_breaker` 1/1，`aether-gateway pool` 242/242，`aether-gateway oauth_token_refresh` 9/9，SQLite canonical 聚合 1/1。
-- pool 套件在默认测试线程栈下可复现 `gateway_cleans_up_admin_pool_banned_keys_locally_with_trusted_admin_principal` 的夹具栈溢出；设置 `RUST_MIN_STACK=8388608` 后该单测及完整套件通过。这是测试运行环境要求，不是业务递归。
-- 上述 7 个前端测试文件：75/75 通过。
+- Rust 行为测试串行通过：`aether-ai-formats transcription` 10/10、`response_history` 3/3，`aether-gateway transcription` 7/7、`users_me_usage` 6/6，`aether-admin` reasoning 与端到端时序投影各 1/1，`aether-scheduler-core disable_circuit_breaker` 1/1，`aether-gateway pool` 242/242、`oauth_token_refresh` 9/9，SQLite canonical 聚合 1/1。
+- pool 与 users-me 套件按已知大型 `AppState` 测试夹具要求使用 `RUST_MIN_STACK=8388608`；两者均通过。
+- 上述 7 个前端测试文件：77/77 通过。
 - `cargo fmt --all -- --check` 与文档 `git diff --check`：通过。
 - 浏览器烟测未自动执行；当前会话未授权浏览器自动化，需人工完成下列检查。
 
-还必须做四个烟测：
+还必须做五个烟测：
 
 1. 向 `/v1/audio/transcriptions` 上传含二进制和伪 boundary 的音频，确认上游收到的文件字节不变且 model 已映射；分别测 `stream=false/true`。
 2. 打开 pool 管理页，确认动态 quota windows、Provider 详情预取和“导入账号”存在；页头不再显示刷新日志、编辑 Provider/Endpoint、账号批量操作快捷入口。`score_ranking_enabled` 仍可保存，但不得据此预期跳过 score phase。
 3. 普通用户关闭/开启 `usage_request_detail` 各测一次：关闭为 403；开启只能看自己的记录，header 已脱敏且无 cURL/replay。
 4. 访问 `/admin/quota-countdown`、`/admin/pool-consumption`，确认路由可达且 consumption 历史不随 Codex quota window 重置丢失。
+5. 使用同一 API Key 连续调用 OpenAI Responses，确认 `previous_response_id` 可从持久化 history 恢复；制造一次候选失败后确认 usage 详情保留端到端与成功候选时序，前端 tooltip 同时显示生成耗时和实际计速耗时。
 
 如果上游改变了任一契约或测试命令，更新本文件，不要保留失效说明。
