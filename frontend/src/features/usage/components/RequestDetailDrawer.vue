@@ -176,7 +176,7 @@
                       <span>
                         <span class="text-muted-foreground">耗时</span>
                         <span class="ml-1 font-bold">
-                          {{ formatDurationMs(detail.first_byte_time_ms) }} / {{ formatDurationMs(detail.response_time_ms) }}
+                          {{ formatDurationMs(detail.end_to_end_first_byte_time_ms ?? detail.first_byte_time_ms) }} / {{ formatDurationMs(detail.end_to_end_time_ms ?? detail.response_time_ms) }}
                         </span>
                       </span>
                       <span class="text-muted-foreground">|</span>
@@ -198,7 +198,7 @@
                       <span class="whitespace-nowrap">
                         <span class="text-muted-foreground">耗时</span>
                         <span class="ml-1 font-bold">
-                          {{ formatDurationMs(detail.first_byte_time_ms) }} / {{ formatDurationMs(detail.response_time_ms) }}
+                          {{ formatDurationMs(detail.end_to_end_first_byte_time_ms ?? detail.first_byte_time_ms) }} / {{ formatDurationMs(detail.end_to_end_time_ms ?? detail.response_time_ms) }}
                         </span>
                       </span>
                       <span class="text-muted-foreground">|</span>

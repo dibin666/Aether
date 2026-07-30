@@ -196,8 +196,11 @@ describe('UsageRecordsTable', () => {
     const titles = [...root.querySelectorAll<HTMLElement>('[title]')]
       .map((element) => element.getAttribute('title'))
     expect(titles).toContain([
-      '首字: 0.50s',
-      '总耗时: 1.00s',
+      '端到端首字: 0.50s',
+      '端到端总耗时: 1.00s',
+      '成功候选首字: 0.50s',
+      '成功候选耗时: 1.00s',
+      '生成耗时: 0.50s',
       '计速耗时: 0.50s',
       '输出速度: 100 tokens/s',
     ].join('\n'))
@@ -218,10 +221,64 @@ describe('UsageRecordsTable', () => {
     const titles = [...root.querySelectorAll<HTMLElement>('[title]')]
       .map((element) => element.getAttribute('title'))
     expect(titles).toContain([
-      '首字: 27.60s',
-      '总耗时: 33.00s',
+      '端到端首字: 27.60s',
+      '端到端总耗时: 33.00s',
+      '成功候选首字: 27.60s',
+      '成功候选耗时: 33.00s',
+      '生成耗时: 5.40s',
       '计速耗时: 33.00s',
       '输出速度: 40.0 tokens/s',
+    ].join('\n'))
+  })
+
+  it('shows end-to-end latency while keeping output TPS scoped to the successful candidate', () => {
+    const root = mountUsageRecordsTable([buildRecord({
+      output_tokens: 50,
+      response_time_ms: 626,
+      first_byte_time_ms: 100,
+      end_to_end_time_ms: 10_626,
+      end_to_end_first_byte_time_ms: 10_120,
+    })])
+
+    const performanceCell = root.querySelector('table tbody tr td:last-child') as HTMLElement
+    expect(performanceCell.textContent).toContain('10.12s / 10.63s')
+    expect(performanceCell.textContent).toContain('95.1 tps')
+    expect(performanceCell.textContent).not.toContain('98.8 tps')
+
+    const titles = [...root.querySelectorAll<HTMLElement>('[title]')]
+      .map((element) => element.getAttribute('title'))
+    expect(titles).toContain([
+      '端到端首字: 10.12s',
+      '端到端总耗时: 10.63s',
+      '成功候选首字: 0.10s',
+      '成功候选耗时: 0.63s',
+      '生成耗时: 0.53s',
+      '计速耗时: 0.53s',
+      '输出速度: 95.1 tokens/s',
+    ].join('\n'))
+  })
+
+  it('shows end-to-end latency when candidate timing fields are unavailable', () => {
+    const root = mountUsageRecordsTable([buildRecord({
+      response_time_ms: null,
+      first_byte_time_ms: null,
+      end_to_end_time_ms: 10_626,
+      end_to_end_first_byte_time_ms: 10_120,
+    })])
+
+    const performanceCell = root.querySelector('table tbody tr td:last-child') as HTMLElement
+    expect(performanceCell.textContent).toContain('10.12s / 10.63s')
+
+    const titles = [...root.querySelectorAll<HTMLElement>('[title]')]
+      .map((element) => element.getAttribute('title'))
+    expect(titles).toContain([
+      '端到端首字: 10.12s',
+      '端到端总耗时: 10.63s',
+      '成功候选首字: -',
+      '成功候选耗时: -',
+      '生成耗时: -',
+      '计速耗时: -',
+      '输出速度: -',
     ].join('\n'))
   })
 
@@ -239,8 +296,11 @@ describe('UsageRecordsTable', () => {
 
     const titles = [...root.querySelectorAll<HTMLElement>('[title]')].map((element) => element.title)
     expect(titles).toContain([
-      '首字: 0.50s',
-      '总耗时: 1.00s',
+      '端到端首字: 0.50s',
+      '端到端总耗时: 1.00s',
+      '成功候选首字: 0.50s',
+      '成功候选耗时: 1.00s',
+      '生成耗时: 0.50s',
       '计速耗时: 0.50s',
       '输出速度: -',
     ].join('\n'))
