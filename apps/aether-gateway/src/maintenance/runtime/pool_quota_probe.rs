@@ -31,7 +31,7 @@ use crate::provider_pool_demand::{
     sample_provider_pool_demand, ProviderPoolDemandSnapshot,
 };
 use crate::task_runtime::{
-    append_event_with_logging, ensure_worker_boot_run, TASK_KEY_POOL_QUOTA_PROBE,
+    append_event_with_logging, ensure_worker_execution_run, TASK_KEY_POOL_QUOTA_PROBE,
 };
 
 use super::pool_score_rebuild::ensure_provider_key_pool_scores_for_keys;
@@ -1699,7 +1699,7 @@ pub(crate) async fn perform_pool_quota_probe_once_with_config(
 
     let admin_state = AdminAppState::new(state);
     let now_ts = now_unix_secs();
-    let task_run_id = ensure_worker_boot_run(state, TASK_KEY_POOL_QUOTA_PROBE).await;
+    let task_run_id = ensure_worker_execution_run(state, TASK_KEY_POOL_QUOTA_PROBE).await;
     let mut account_events_recorded = 0usize;
     let mut summary = PoolQuotaProbeRunSummary {
         providers_checked: providers.len(),
@@ -1800,8 +1800,8 @@ async fn perform_pool_quota_probe_once_for_provider_with_mode(
             .push(endpoint);
     }
 
+    let task_run_id = ensure_worker_execution_run(state, TASK_KEY_POOL_QUOTA_PROBE).await;
     let admin_state = AdminAppState::new(state);
-    let task_run_id = ensure_worker_boot_run(state, TASK_KEY_POOL_QUOTA_PROBE).await;
     let mut account_events_recorded = 0usize;
     let provider_summary = perform_pool_quota_probe_for_provider(
         state,

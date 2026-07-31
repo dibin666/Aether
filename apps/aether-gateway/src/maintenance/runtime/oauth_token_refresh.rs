@@ -13,8 +13,7 @@ use tracing::{info, warn};
 use crate::admin_api::provider_oauth_maintenance_endpoint_for_provider;
 use crate::provider_key_auth::provider_key_is_oauth_managed;
 use crate::task_runtime::{
-    append_event_with_logging, build_worker_boot_run_id, ensure_worker_boot_run,
-    TASK_KEY_OAUTH_TOKEN_REFRESH,
+    append_event_with_logging, ensure_worker_execution_run, TASK_KEY_OAUTH_TOKEN_REFRESH,
 };
 use crate::{AppState, GatewayError};
 
@@ -304,11 +303,7 @@ pub(crate) async fn perform_oauth_token_refresh_once(
 
     let config = OAuthTokenRefreshWorkerConfig::load(state).await?;
     let now_ts = now_unix_secs();
-    let task_run_id = build_worker_boot_run_id(
-        TASK_KEY_OAUTH_TOKEN_REFRESH,
-        state.tunnel.local_instance_id(),
-    );
-    let _ = ensure_worker_boot_run(state, TASK_KEY_OAUTH_TOKEN_REFRESH).await;
+    let task_run_id = ensure_worker_execution_run(state, TASK_KEY_OAUTH_TOKEN_REFRESH).await;
     let providers = state.list_provider_catalog_providers(true).await?;
     let provider_ids = providers
         .iter()
@@ -513,34 +508,36 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 if refreshed {
                     summary.refreshed = summary.refreshed.saturating_add(1);
                 }
-                if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
-                    account_events_recorded = account_events_recorded.saturating_add(1);
-                    append_event_with_logging(
-                        state,
-                        &task_run_id,
-                        if refreshed {
-                            "oauth_refresh_account_refreshed"
-                        } else {
-                            "oauth_refresh_account_checked"
-                        },
-                        if refreshed {
-                            "oauth token refreshed"
-                        } else {
-                            "oauth token checked"
-                        },
-                        Some(serde_json::json!({
-                            "provider_id": provider_id,
-                            "provider_name": provider_name,
-                            "provider_type": provider_type,
-                            "key_id": key_id,
-                            "key_name": key_name,
-                            "action": "oauth_refresh",
-                            "status": if refreshed { "refreshed" } else { "checked" },
-                            "message": if refreshed { "Token 已刷新" } else { "Token 已检查，无需更新" },
-                            "refreshed": refreshed,
-                        })),
-                    )
-                    .await;
+                if let Some(task_run_id) = task_run_id.as_deref() {
+                    if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
+                        account_events_recorded = account_events_recorded.saturating_add(1);
+                        append_event_with_logging(
+                            state,
+                            task_run_id,
+                            if refreshed {
+                                "oauth_refresh_account_refreshed"
+                            } else {
+                                "oauth_refresh_account_checked"
+                            },
+                            if refreshed {
+                                "oauth token refreshed"
+                            } else {
+                                "oauth token checked"
+                            },
+                            Some(serde_json::json!({
+                                "provider_id": provider_id,
+                                "provider_name": provider_name,
+                                "provider_type": provider_type,
+                                "key_id": key_id,
+                                "key_name": key_name,
+                                "action": "oauth_refresh",
+                                "status": if refreshed { "refreshed" } else { "checked" },
+                                "message": if refreshed { "Token 已刷新" } else { "Token 已检查，无需更新" },
+                                "refreshed": refreshed,
+                            })),
+                        )
+                        .await;
+                    }
                 }
             }
             OAuthTokenRefreshCandidateOutcome::Skipped {
@@ -552,26 +549,28 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                 reason,
             } => {
                 summary.skipped = summary.skipped.saturating_add(1);
-                if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
-                    account_events_recorded = account_events_recorded.saturating_add(1);
-                    append_event_with_logging(
-                        state,
-                        &task_run_id,
-                        "oauth_refresh_account_skipped",
-                        "oauth token refresh skipped",
-                        Some(serde_json::json!({
-                            "provider_id": provider_id,
-                            "provider_name": provider_name,
-                            "provider_type": provider_type,
-                            "key_id": key_id,
-                            "key_name": key_name,
-                            "action": "oauth_refresh",
-                            "status": "skipped",
-                            "message": "Token 刷新已跳过",
-                            "reason": reason,
-                        })),
-                    )
-                    .await;
+                if let Some(task_run_id) = task_run_id.as_deref() {
+                    if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
+                        account_events_recorded = account_events_recorded.saturating_add(1);
+                        append_event_with_logging(
+                            state,
+                            task_run_id,
+                            "oauth_refresh_account_skipped",
+                            "oauth token refresh skipped",
+                            Some(serde_json::json!({
+                                "provider_id": provider_id,
+                                "provider_name": provider_name,
+                                "provider_type": provider_type,
+                                "key_id": key_id,
+                                "key_name": key_name,
+                                "action": "oauth_refresh",
+                                "status": "skipped",
+                                "message": "Token 刷新已跳过",
+                                "reason": reason,
+                            })),
+                        )
+                        .await;
+                    }
                 }
             }
             OAuthTokenRefreshCandidateOutcome::Failed {
@@ -592,26 +591,28 @@ pub(crate) async fn perform_oauth_token_refresh_once(
                     error = %error,
                     "gateway oauth token auto refresh failed"
                 );
-                if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
-                    account_events_recorded = account_events_recorded.saturating_add(1);
-                    append_event_with_logging(
-                        state,
-                        &task_run_id,
-                        "oauth_refresh_failed",
-                        "oauth token refresh failed",
-                        Some(serde_json::json!({
-                            "provider_id": provider_id,
-                            "provider_name": provider_name,
-                            "provider_type": provider_type,
-                            "key_id": key_id,
-                            "key_name": key_name,
-                            "action": "oauth_refresh",
-                            "status": "failed",
-                            "message": "Token 刷新失败",
-                            "error": error,
-                        })),
-                    )
-                    .await;
+                if let Some(task_run_id) = task_run_id.as_deref() {
+                    if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
+                        account_events_recorded = account_events_recorded.saturating_add(1);
+                        append_event_with_logging(
+                            state,
+                            task_run_id,
+                            "oauth_refresh_failed",
+                            "oauth token refresh failed",
+                            Some(serde_json::json!({
+                                "provider_id": provider_id,
+                                "provider_name": provider_name,
+                                "provider_type": provider_type,
+                                "key_id": key_id,
+                                "key_name": key_name,
+                                "action": "oauth_refresh",
+                                "status": "failed",
+                                "message": "Token 刷新失败",
+                                "error": error,
+                            })),
+                        )
+                        .await;
+                    }
                 }
             }
         }
@@ -629,27 +630,29 @@ pub(crate) async fn perform_oauth_token_refresh_once(
         failed = summary.failed,
         "gateway completed oauth token auto refresh scan"
     );
-    append_event_with_logging(
-        state,
-        &task_run_id,
-        "oauth_refresh_completed",
-        "oauth token refresh scan completed",
-        Some(serde_json::json!({
-            "scanned": summary.scanned,
-            "eligible": summary.eligible,
-            "resolved": summary.resolved,
-            "refreshed": summary.refreshed,
-            "skipped": summary.skipped,
-            "failed": summary.failed,
-            "lookahead_seconds": config.lookahead_seconds,
-            "interval_seconds": config.interval.as_secs(),
-            "concurrency": config.concurrency,
-            "max_per_run": config.max_per_run,
-            "account_events_recorded": account_events_recorded,
-            "account_event_limit": OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT,
-        })),
-    )
-    .await;
+    if let Some(task_run_id) = task_run_id.as_deref() {
+        append_event_with_logging(
+            state,
+            task_run_id,
+            "oauth_refresh_completed",
+            "oauth token refresh scan completed",
+            Some(serde_json::json!({
+                "scanned": summary.scanned,
+                "eligible": summary.eligible,
+                "resolved": summary.resolved,
+                "refreshed": summary.refreshed,
+                "skipped": summary.skipped,
+                "failed": summary.failed,
+                "lookahead_seconds": config.lookahead_seconds,
+                "interval_seconds": config.interval.as_secs(),
+                "concurrency": config.concurrency,
+                "max_per_run": config.max_per_run,
+                "account_events_recorded": account_events_recorded,
+                "account_event_limit": OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT,
+            })),
+        )
+        .await;
+    }
 
     Ok(summary)
 }
