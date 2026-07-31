@@ -17,33 +17,34 @@
 
 ## 最近一次合并后复核
 
-- 合并基线：merge commit `a4cd5b8bf5567416a9b9e7d57ef10a40316d3771`，上游 `12057db476ca145a3a721d5d223e85fc871719ba`；冲突组选择 `1C, 2C`，均为 manual hybrid。
-- 功能结论：无 fork 功能差异变化。AI 导出同时保留上游 Responses continuation history 与 fork transcription；Usage 同时保留上游端到端/成功候选时序和 fork reasoning token、格式感知 TPS 语义。
-- 保留结论：转写 multipart/同步/流式/audio usage、cache affinity、动态 quota/消费统计、OAuth 自动刷新后端与代理覆盖、永不熔断、self-scope 请求详情、chunk 恢复及其余 P0/P1/P2 行为未发现变化；上一轮明确采用的 upstream pool score phase 与 Pool header 行为也未改变。
-- 上游接入：Responses continuation history 持久化、replay/failover/usage diagnostics、端到端请求时序、admin pool batch body buffering 及相关 CI 修正已接入。
-- 路径级复核：合并前 30 个双边路径中 4 个文件产生 6 个冲突块；AI export 与 Usage diagnostics 两组均按用户选择 manual hybrid。合并后 `merge-base` 等于 `upstream/main`，upstream-only 为 0 个提交、0 个路径。
-- 验证：前端生产构建、`cargo check --workspace`、77 个前端关键测试及 transcription/response-history/usage/熔断/pool/OAuth/SQLite/self-usage 行为测试均通过；`cargo fmt --all -- --check` 通过。非阻塞警告仅为 `caniuse-lite` 数据已 10 个月未更新；未获授权执行浏览器自动化，四项浏览器烟测仍需人工完成。
+- 合并基线：merge commit `b07a5f630167d5e5c4880ac11691de408a3bace9`，上游 `0318808db98a342066c1c32640f29f4c1ee89cd8`；冲突组选择 `1C`，为 manual hybrid。
+- 功能结论：无 fork 功能差异变化。本轮上游功能已接入，fork 特有的转写、额度/消费统计、OAuth 自动刷新、永不熔断、self-scope 请求详情、chunk 恢复、Responses history 与 Usage 诊断等行为继续保留。
+- 上游接入：Provider 创建 transfer limits、worker registration cleanup 及三数据库清理迁移、Provider key auth mismatch formats reconciliation、admin external model catalog proxy selection 与 proxy-node 管理能力。
+- 冲突复核：采用上游按 task key 的共享 boot registration、去重迁移和 gateway instance 事件 payload；OAuth/pool 诊断事件改用 per-instance execution run，并仅在 execution run 成功确保后追加事件，避免写入悬空事件。
+- P0 复核：cache affinity、pool scheduler score phase 与 Pool header 行为、动态 quota/消费统计、usage/billing 跨数据库契约、`disable_circuit_breaker`、self-scope 权限边界及 Responses/Usage 诊断均未发现丢失或改变。
+- 路径级复核：合并前 6 个双边路径中 1 个文件产生 1 个功能冲突组，其余 5 个路径自动合并；合并后 `merge-base` 等于 `upstream/main`，upstream-only 为 0 个提交、0 个路径，双边重叠为 0 个路径。
+- 验证：前端生产构建、`cargo check --workspace`、`cargo fmt --all -- --check`、合并差异 `git diff --check` 均通过。非阻塞警告仅为 `caniuse-lite` 数据已 10 个月未更新；未授权执行浏览器自动化，浏览器烟测仍需人工完成。
 
 ## 基线快照
 
-快照日期：2026-07-30（已执行 `git fetch upstream`，完成上游接入、验证和合并后复核）。
+快照日期：2026-07-31（已执行 `git fetch upstream main`，完成合并、验证和合并后复核）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline | `a4cd5b8bf5567416a9b9e7d57ef10a40316d3771`（已验证的不可变 merge commit） |
-| upstream HEAD | `12057db476ca145a3a721d5d223e85fc871719ba` |
-| merge-base | `12057db476ca145a3a721d5d223e85fc871719ba` |
-| 分叉计数 | fork-only 125，upstream-only 0 |
-| fork 侧净改动 | 193 个路径，`+12485/-875` |
+| fork code baseline（已验证的不可变 merge commit） | `b07a5f630167d5e5c4880ac11691de408a3bace9` |
+| upstream HEAD | `0318808db98a342066c1c32640f29f4c1ee89cd8` |
+| merge-base | `0318808db98a342066c1c32640f29f4c1ee89cd8` |
+| 分叉计数 | fork-only 127，upstream-only 0 |
+| fork 侧净改动 | 192 个路径，`+12446/-858` |
 | upstream 侧净改动 | 0 个路径，`+0/-0` |
-| 双边同时改动 | 0 个路径（上游已为 merge baseline 祖先；合并前 30 个路径已复核） |
+| 双边同时改动 | 0 个路径（合并前 6 个路径已复核） |
 
 ## 当前待合入上游功能
 
-- 无。`upstream/main` 已完整合入 merge baseline `a4cd5b8bf5567416a9b9e7d57ef10a40316d3771`；Responses continuation history、failover/replay/usage diagnostics 与 admin pool batch body buffering 均已接入。
+- 无。`upstream/main` 已完整合入 merge commit `b07a5f630167d5e5c4880ac11691de408a3bace9`；`git rev-list HEAD..upstream/main` 为 0。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -278,20 +279,19 @@ Provider 级覆盖位于 `provider.config.oauth_token_refresh`：`enabled`、`lo
 
 ## 当前 0 个双边改动路径
 
-合并后 `merge-base` 已等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，因此当前没有双边改动路径。下一次 `git fetch upstream` 后必须重新计算，不能沿用本次的 0。
+合并后 `merge-base` 为 `0318808db98a342066c1c32640f29f4c1ee89cd8`，等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，双边重叠为 0 个路径。下一次 `git fetch upstream` 后必须重新计算，不能沿用本次的 0。
 
-本轮合并前共有 30 个双边路径，实际冲突为 4 个文件、6 个冲突块。用户选择及结果：
+本轮合并前共有 6 个双边路径，实际冲突为 1 个文件、1 个功能组。用户选择及结果：
 
 | 组 | 选择 | 合并后行为 |
 |---|---|---|
-| AI planning / execution exports | `1C` manual hybrid | 采用上游 Responses continuation history 的 hydrate/record/storage 导出，同时保留 transcription multipart、模型重写、类型与 plan-kind 导出 |
-| Usage diagnostics / performance | `2C` manual hybrid | Rust 同时保留 reasoning 与端到端 metadata helper；前端同时展示端到端、成功候选、生成及实际计速耗时，TPS 继续扣除 reasoning tokens 并对 Responses 使用总耗时；保留双方测试 |
+| worker registration / boot-run 记录 | `1C` manual hybrid | 采用上游按 task key 的共享 boot registration、三数据库重复记录清理迁移和 gateway instance 事件 payload；OAuth/pool 诊断事件使用 per-instance execution run，并在无法确保 execution run 时跳过事件写入 |
 
-P0 复核结果：无功能差异变化。转写、cache affinity、动态 quota/消费统计、OAuth 自动刷新、usage/billing 跨数据库契约、self-scope 请求详情、`disable_circuit_breaker`、chunk 恢复均保留；上一轮 `68f2636fe` 明确采用的 upstream pool score phase 与 Pool header 行为未改变。
+P0 复核结果：无功能差异变化。转写、cache affinity、动态 quota/消费统计、OAuth 自动刷新、usage/billing 跨数据库契约、self-scope 请求详情、`disable_circuit_breaker`、chunk 恢复、Responses continuation history 与 Usage 端到端/候选时序均保留；当前 pool scheduler score phase 与 Pool header 行为未改变。
 
 ## 当前尚未合入的上游功能
 
-无。`upstream/main` 已并入 merge commit `a4cd5b8bf5567416a9b9e7d57ef10a40316d3771`；`git rev-list HEAD..upstream/main` 为 0。下一次 fetch 后重新计算本节和 refs/counts/双边路径记录。
+- 无。`upstream/main` 已并入 merge commit `b07a5f630167d5e5c4880ac11691de408a3bace9`；`git rev-list HEAD..upstream/main` 为 0。
 
 ## 配置与 API 契约速查
 
@@ -362,14 +362,12 @@ npm run test:run -- \
   src/views/admin/__tests__/PoolManagement.codex-cycle-stats.spec.ts
 ```
 
-本次 `a4cd5b8bf` 验证结果：
+本次 `b07a5f630` 验证结果：
 
 - `cd frontend && npm run build`：通过；非阻塞警告为 `caniuse-lite` 数据已 10 个月未更新。
-- `cargo check --workspace`：通过。
-- Rust 行为测试串行通过：`aether-ai-formats transcription` 10/10、`response_history` 3/3，`aether-gateway transcription` 7/7、`users_me_usage` 6/6，`aether-admin` reasoning 与端到端时序投影各 1/1，`aether-scheduler-core disable_circuit_breaker` 1/1，`aether-gateway pool` 242/242、`oauth_token_refresh` 9/9，SQLite canonical 聚合 1/1。
-- pool 与 users-me 套件按已知大型 `AppState` 测试夹具要求使用 `RUST_MIN_STACK=8388608`；两者均通过。
-- 上述 7 个前端测试文件：77/77 通过。
-- `cargo fmt --all -- --check` 与文档 `git diff --check`：通过。
+- `cargo check --workspace`：通过；修正 execution run 可选语义后重新检查返回 `OK`。
+- `cargo fmt --all -- --check`：通过；`git diff --check` 与暂存差异检查：通过。
+- 合并前端/后端行为测试套件未在本轮重复执行；文档列出的专项测试命令保留为后续回归清单。
 - 浏览器烟测未自动执行；当前会话未授权浏览器自动化，需人工完成下列检查。
 
 还必须做五个烟测：
