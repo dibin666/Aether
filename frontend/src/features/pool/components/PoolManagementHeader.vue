@@ -91,6 +91,7 @@
             class="h-8 w-8 shrink-0"
             :class="action.key === 'toggleProvider' ? providerToggleButtonClass : ''"
             :disabled="action.key === 'toggleProvider' ? togglingProviderStatus : false"
+            :data-testid="action.key === 'refreshWorker' ? 'pool-refresh-worker-button' : undefined"
             :title="action.title"
             @pointerenter="action.key === 'viewProvider' && emit('prefetchProvider')"
             @focus="action.key === 'viewProvider' && emit('prefetchProvider')"
@@ -273,7 +274,7 @@
           class="h-8 w-8"
           :class="action.key === 'toggleProvider' ? providerToggleButtonClass : ''"
           :disabled="action.key === 'toggleProvider' ? togglingProviderStatus : false"
-          :data-testid="action.key === 'demandMetrics' ? 'pool-demand-metrics-button' : undefined"
+          :data-testid="action.key === 'demandMetrics' ? 'pool-demand-metrics-button' : action.key === 'refreshWorker' ? 'pool-refresh-worker-button' : undefined"
           :title="action.title"
           @pointerenter="action.key === 'viewProvider' && emit('prefetchProvider')"
           @focus="action.key === 'viewProvider' && emit('prefetchProvider')"
@@ -351,6 +352,7 @@ import { computed } from 'vue'
 import {
   Activity,
   ChevronDown,
+  History,
   Eye,
   ListChecks,
   Power,
@@ -386,6 +388,7 @@ type HeaderActionEvent =
   | 'import'
   | 'scheduling'
   | 'viewProvider'
+  | 'refreshWorker'
   | 'demandMetrics'
   | 'advanced'
   | 'toggleProvider'
@@ -394,6 +397,7 @@ type HeaderActionKey =
   | 'import'
   | 'scheduling'
   | 'viewProvider'
+  | 'refreshWorker'
   | 'demandMetrics'
   | 'advanced'
   | 'toggleProvider'
@@ -450,6 +454,7 @@ const emit = defineEmits<{
   prefetchProvider: []
   scheduling: []
   viewProvider: []
+  refreshWorker: []
   demandMetrics: []
   advanced: []
   toggleProvider: []
@@ -488,6 +493,7 @@ const mobileActions = computed<HeaderAction[]>(() => {
     { key: 'viewProvider', title: legacyT('查看详情'), event: 'viewProvider', icon: Eye },
     { key: 'import', title: legacyT('导入账号'), event: 'import', icon: Upload },
     { key: 'scheduling', title: legacyT('号池调度'), event: 'scheduling', icon: SlidersHorizontal },
+    { key: 'refreshWorker', title: legacyT('自动刷新配置和日志'), event: 'refreshWorker', icon: History },
   ]
   if (props.showAdaptiveHotPoolMetricsButton) {
     actions.push({ key: 'demandMetrics', title: legacyT('查看自适应热池指标'), event: 'demandMetrics', icon: Activity })
@@ -503,6 +509,7 @@ const desktopActions = computed<HeaderAction[]>(() => {
   const actions: HeaderAction[] = [
     { key: 'viewProvider', title: legacyT('查看详情'), event: 'viewProvider', icon: Eye },
     { key: 'import', title: legacyT('导入账号'), event: 'import', icon: Upload },
+    { key: 'refreshWorker', title: legacyT('自动刷新配置和日志'), event: 'refreshWorker', icon: History },
   ]
   if (props.showAdaptiveHotPoolMetricsButton) {
     actions.push({ key: 'demandMetrics', title: legacyT('查看自适应热池指标'), event: 'demandMetrics', icon: Activity })

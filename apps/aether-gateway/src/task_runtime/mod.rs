@@ -984,7 +984,7 @@ mod worker_boot_run_id_tests {
         assert_eq!(page.items[0].owner_instance, None);
 
         let events = repository
-            .list_events("boot:usage.queue.worker", 0, 10)
+            .list_events("boot:usage.queue.worker", 0, 10, false)
             .await
             .expect("worker boot events should load");
         assert_eq!(events.len(), 2);

@@ -151,7 +151,7 @@ docker compose -f docker-compose.release-local.yml down -v
 - `AETHER_RELEASE_LOCAL_PORT`：本地联调端口，默认 `18085`
 - `LOCAL_RELEASE_APP_IMAGE`：本地联调镜像名，默认 `aether-app:release-local`
 
-### 一键安装（默认 Single Node：Linux systemd / macOS launchd + SQLite）
+### 一键安装（默认 Multi Node：Postgres + Redis）
 
 ```bash
 git clone https://github.com/fawney19/Aether.git
@@ -177,12 +177,12 @@ curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | s
 请输入选项 [1]:
 
 请选择 Aether 部署模式:
-  1) Docker Compose: 应用 + Postgres + Redis
-  2) 单机服务: systemd/launchd + SQLite + 进程内运行时
-  3) 集群节点服务: systemd/launchd + 共享数据库 + Redis
-  4) Docker Compose: 应用 + SQLite
+  1) Docker Compose 多节点部署: 应用 + Postgres + Redis
+  2) Docker Compose 单节点部署: 应用 + SQLite
+  3) 系统服务多节点部署: systemd/launchd + 共享数据库 + Redis
+  4) 系统服务单节点部署: systemd/launchd + SQLite
 
-请输入选项 [2]:
+请输入选项 [1]:
 
 是否使用下载加速源?
   1) 否，使用原始 GitHub 地址
@@ -210,7 +210,7 @@ tail -f /var/log/aether/aether-gateway.out.log /var/log/aether/aether-gateway.er
 
 macOS 原生安装使用系统级 LaunchDaemon，默认以专用 `_aether` 服务账号运行；配置和密钥写入 `/etc/aether/aether-gateway.env`，数据和应用日志仍在 `/opt/aether`，launchd stdout/stderr 在 `/var/log/aether`。
 
-默认单机数据和应用日志都在安装目录内：
+显式选择单节点模式时，数据和应用日志都在安装目录内：
 
 ```text
 /opt/aether/data/aether.db
@@ -221,7 +221,7 @@ macOS 原生安装使用系统级 LaunchDaemon，默认以专用 `_aether` 服�
 
 ```env
 AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=multi-node
-AETHER_GATEWAY_NODE_ROLE=frontdoor
+AETHER_GATEWAY_NODE_ROLE=background
 DATABASE_URL=postgresql://...
 REDIS_URL=redis://...
 ```
@@ -260,12 +260,12 @@ cd frontend && npm install && npm run dev
 
 | 角色 | 本地地址 | 说明 |
 |------|----------|------|
-| Rust frontdoor | 默认 `http://localhost:8084` | `aether-gateway`，本地唯一公开入口；实际端口由 `APP_PORT` 控制 |
+| Rust gateway（默认 background） | 默认 `http://localhost:8084` | `aether-gateway`，本地唯一公开入口；实际端口由 `APP_PORT` 控制 |
 
 本地默认链路是：
 
 ```text
-client -> rust frontdoor (aether-gateway) -> execution_runtime/provider transport
+client -> rust gateway (aether-gateway) -> execution_runtime/provider transport
 ```
 
 其中：
@@ -296,6 +296,8 @@ Aether Tunnel 是配套的正向代理节点，部署在海外 VPS 上，为墙�
 ## 环境变量
 
 - `APP_PORT`：`aether-gateway` 唯一监听端口，固定绑定 `0.0.0.0:${APP_PORT}`
+- `AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY`：部署拓扑，默认 `multi-node`；单节点配置显式设为 `single-node`
+- `AETHER_GATEWAY_NODE_ROLE`：节点角色，默认 `background`；多节点可设为 `frontdoor`，单节点可设为 `all`
 - `DATABASE_URL`：数据库连接串；SQLite 例如 `sqlite:///opt/aether/data/aether.db`，Postgres 例如 `postgresql://postgres:aether@postgres:5432/aether`
 - `AETHER_GATEWAY_DATA_POSTGRES_MIN_CONNECTIONS` / `AETHER_GATEWAY_DATA_POSTGRES_MAX_CONNECTIONS`：数据库连接池手动覆盖值；未配置时会自动推导，SQLite 固定 `1/1`，Postgres/MySQL 按 CPU 核心数计算并默认封顶 `100`
 - `AETHER_GATEWAY_MAX_IN_FLIGHT_REQUESTS`：单实例请求并发上限；未配置时按 CPU 自动推导（基础范围 `512-65536`），低文件描述符预算时会进一步下调

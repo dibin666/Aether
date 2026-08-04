@@ -1272,7 +1272,7 @@ struct Args {
         long,
         env = "AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY",
         value_enum,
-        default_value = "single-node"
+        default_value = "multi-node"
     )]
     deployment_topology: DeploymentTopologyArg,
 
@@ -1280,7 +1280,7 @@ struct Args {
         long,
         env = "AETHER_GATEWAY_NODE_ROLE",
         value_enum,
-        default_value = "all"
+        default_value = "background"
     )]
     node_role: NodeRoleArg,
 

@@ -40,6 +40,7 @@ describe('PoolManagementHeader', () => {
           onImport: () => events.push('import'),
           onPrefetchProvider: () => events.push('prefetchProvider'),
           onScheduling: () => events.push('scheduling'),
+          onRefreshWorker: () => events.push('refreshWorker'),
           onDemandMetrics: () => events.push('demandMetrics'),
           onAdvanced: () => events.push('advanced'),
           onToggleSelectAll: () => events.push('toggleSelectAll'),
@@ -60,6 +61,7 @@ describe('PoolManagementHeader', () => {
     mobileViewProviderButton?.click()
     root.querySelector<HTMLButtonElement>('[title="导入账号"]')?.click()
     root.querySelector<HTMLButtonElement>('[title="点击调整号池调度"]')?.click()
+    root.querySelector<HTMLButtonElement>('[data-testid="pool-refresh-worker-button"]')?.click()
     root.querySelector<HTMLButtonElement>('[title="查看自适应热池指标"]')?.click()
     const desktopActions = root.querySelector('[data-testid="pool-header-actions"]')
     const advancedButton = desktopActions?.querySelector<HTMLButtonElement>('[title="高级设置"]')
@@ -78,6 +80,7 @@ describe('PoolManagementHeader', () => {
       'viewProvider',
       'import',
       'scheduling',
+      'refreshWorker',
       'demandMetrics',
       'advanced',
       'toggleSelectAll',

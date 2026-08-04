@@ -69,9 +69,10 @@ Usage: install.sh [options]
 Install Aether Gateway.
 
 Options:
-  --mode MODE          Deployment mode: compose, compose-single-node, or single-node
+  --mode MODE          Deployment mode: compose, compose-single-node, cluster, or single-node
                       compose: Docker Compose app + Postgres + Redis
                       compose-single-node: Docker Compose single-node app
+                      cluster: system service with shared database + Redis
                       single-node: single-node system service
                       Linux services use systemd; macOS services use launchd
   --channel CHANNEL    Release channel to resolve when --version is omitted: stable, latest, rc, or beta
@@ -100,6 +101,7 @@ Environment overrides:
   AETHER_LAUNCHD_LABEL, AETHER_LAUNCHD_LOG_DIR, AETHER_RELEASE_KEEP
   AETHER_IMAGE_REPO, AETHER_APP_IMAGE
   INSTALL_ROOT, AETHER_COMPOSE_DIR, CONFIG_DIR, SERVICE_USER, SERVICE_GROUP
+  DATABASE_URL, REDIS_URL (required for cluster mode)
   ADMIN_PASSWORD (required for non-interactive first install when generating a new env)
 EOF
 }
@@ -462,16 +464,13 @@ select_mode() {
             return
             ;;
         cluster|multi|multi-node)
-            if ui_is_zh; then
-                die "集群部署模式暂未开放；请先选择 compose、compose-single-node 或 single-node"
-            else
-                die "cluster deployment mode is temporarily disabled; choose compose, compose-single-node, or single-node"
-            fi
+            MODE="cluster"
+            return
             ;;
         auto|"")
             ;;
         *)
-            die "unsupported install mode: ${MODE}; expected compose, compose-single-node, or single-node"
+            die "unsupported install mode: ${MODE}; expected compose, compose-single-node, cluster, or single-node"
             ;;
     esac
 
@@ -480,26 +479,28 @@ select_mode() {
             cat >/dev/tty <<EOF
 
 请选择 Aether 部署模式:
-  1) Docker Compose 标准部署（Postgres + Redis）
+  1) Docker Compose 多节点部署（Postgres + Redis）
   2) Docker Compose 单节点部署（SQLite）
-  3) 系统服务单节点部署（SQLite）
+  3) 系统服务多节点部署（共享数据库 + Redis）
+  4) 系统服务单节点部署（SQLite）
 
-请输入选项 [3]:
+请输入选项 [1]:
 EOF
         else
             cat >/dev/tty <<EOF
 
 Choose Aether deployment mode:
-  1) Docker Compose standard deployment (Postgres + Redis)
+  1) Docker Compose multi-node deployment (Postgres + Redis)
   2) Docker Compose single-node deployment (SQLite)
-  3) System service single-node deployment (SQLite)
+  3) System service multi-node deployment (shared database + Redis)
+  4) System service single-node deployment (SQLite)
 
-Enter choice [3]:
+Enter choice [1]:
 EOF
         fi
         local choice
         IFS= read -r choice </dev/tty || choice=""
-        case "${choice:-3}" in
+        case "${choice:-1}" in
             1)
                 MODE="compose"
                 ;;
@@ -507,6 +508,9 @@ EOF
                 MODE="compose-single-node"
                 ;;
             3)
+                MODE="cluster"
+                ;;
+            4)
                 MODE="single-node"
                 ;;
             *)
@@ -518,7 +522,7 @@ EOF
                 ;;
         esac
     else
-        MODE="single-node"
+        MODE="compose"
     fi
 }
 
@@ -1140,6 +1144,8 @@ AETHER_LOG_MAX_FILES=30
 APP_PORT=${APP_PORT:-8084}
 AETHER_BASE_DIR=${INSTALL_ROOT}
 AETHER_UPDATE_STRATEGY=self
+AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=single-node
+AETHER_GATEWAY_NODE_ROLE=all
 AETHER_GATEWAY_STATIC_DIR=${INSTALL_ROOT}/current/frontend
 AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE=rust-authoritative
 AETHER_GATEWAY_AUTO_PREPARE_DATABASE=true
@@ -1165,7 +1171,7 @@ generate_cluster_env() {
     prompt_admin_password
     jwt_key="$(urlsafe_rand 32)"
     encryption_key="$(urlsafe_rand 32)"
-    role="${AETHER_GATEWAY_NODE_ROLE:-frontdoor}"
+    role="${AETHER_GATEWAY_NODE_ROLE:-background}"
 
     cat > "${output}" <<EOF
 ENVIRONMENT=production
@@ -1292,6 +1298,8 @@ APP_IMAGE=$(compose_image)
 APP_PORT=$(compose_app_port)
 AETHER_UPDATE_STRATEGY=docker
 AETHER_DOCKER_UPDATE_COMMAND=./update.sh
+AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=single-node
+AETHER_GATEWAY_NODE_ROLE=all
 AETHER_GATEWAY_STATIC_DIR=${COMPOSE_RELEASE_FRONTEND_DIR}
 AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE=rust-authoritative
 AETHER_GATEWAY_AUTO_PREPARE_DATABASE=true
@@ -1459,7 +1467,7 @@ ensure_env_matches_requested_mode() {
         [[ "${topology}" == "multi-node" ]] || die "existing env ${file} is ${topology}; set AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=multi-node or use --mode single-node"
         cluster_env_has_required_backends "${file}" || die "existing multi-node env ${file} must define DATABASE_URL and REDIS_URL"
     elif [[ "${mode}" == "single-node" && "${topology}" == "multi-node" ]]; then
-        die "existing env ${file} is multi-node; cluster mode is temporarily disabled, edit the env file"
+        die "existing env ${file} is multi-node; use --mode cluster or edit the env file"
     fi
 }
 
