@@ -17,34 +17,34 @@
 
 ## 最近一次合并后复核
 
-- 合并基线：merge commit `b07a5f630167d5e5c4880ac11691de408a3bace9`，上游 `0318808db98a342066c1c32640f29f4c1ee89cd8`；冲突组选择 `1C`，为 manual hybrid。
+- 合并基线：merge commit `704a16fcfa12076baf3a7fc405fecbdecad19310`，上游 `1aab31a148a2705320f7c1f6cfa0b59a87301f49`；没有文本冲突，冲突策略为“Git 自动合并 + P0 组合语义复核”，未使用 `ours`/`theirs` 或人工覆盖。
 - 功能结论：无 fork 功能差异变化。本轮上游功能已接入，fork 特有的转写、额度/消费统计、OAuth 自动刷新、永不熔断、self-scope 请求详情、chunk 恢复、Responses history 与 Usage 诊断等行为继续保留。
-- 上游接入：Provider 创建 transfer limits、worker registration cleanup 及三数据库清理迁移、Provider key auth mismatch formats reconciliation、admin external model catalog proxy selection 与 proxy-node 管理能力。
-- 冲突复核：采用上游按 task key 的共享 boot registration、去重迁移和 gateway instance 事件 payload；OAuth/pool 诊断事件改用 per-instance execution run，并仅在 execution run 成功确保后追加事件，避免写入悬空事件。
-- P0 复核：cache affinity、pool scheduler score phase 与 Pool header 行为、动态 quota/消费统计、usage/billing 跨数据库契约、`disable_circuit_breaker`、self-scope 权限边界及 Responses/Usage 诊断均未发现丢失或改变。
-- 路径级复核：合并前 6 个双边路径中 1 个文件产生 1 个功能冲突组，其余 5 个路径自动合并；合并后 `merge-base` 等于 `upstream/main`，upstream-only 为 0 个提交、0 个路径，双边重叠为 0 个路径。
-- 验证：前端生产构建、`cargo check --workspace`、`cargo fmt --all -- --check`、合并差异 `git diff --check` 均通过。非阻塞警告仅为 `caniuse-lite` 数据已 10 个月未更新；未授权执行浏览器自动化，浏览器烟测仍需人工完成。
+- 上游接入：Responses routed policy 继承全局 conversion-priority override；显式 reasoning effort 在格式转换中保留并由映射后的实际 provider model 校验；标准流支持由独立 `event:` 行提供 SSE 类型；Allowed Models 对话框补齐加载状态回归覆盖。
+- 重叠复核：5 个双边路径全部自动合并。candidate ranking 同时保留全局 conversion-priority override 和 fork cache-affinity pool group 提升；format/stream 同时保留 SSE event-only normalization 与 transcription 非标准格式/流式直通；same-format transport 同时保留实际模型 effort 校验与 multipart boundary、直连鉴权。
+- P0 复核：本轮仅 15 个上游路径进入 merge tree；逐项确认 transcription、cache affinity、动态 quota/消费统计、OAuth 自动刷新、usage/billing 跨数据库契约、`disable_circuit_breaker`、self-scope 权限边界及 Responses/Usage 诊断未丢失或改变。
+- 路径级复核：合并前 5 个双边路径均自动合并；合并后 `merge-base` 等于 `upstream/main`，upstream-only 为 0 个提交、0 个路径，双边重叠为 0 个路径。
+- 验证：前端生产构建、`cargo check --workspace`、合并差异与文档 `git diff --check` 均通过。没有实际冲突或 merge-regression 修复，因此未扩展执行专项行为测试；非阻塞警告为 `caniuse-lite` 数据已 11 个月未更新，浏览器烟测仍需人工完成。
 
 ## 基线快照
 
-快照日期：2026-07-31（已执行 `git fetch upstream main`，完成合并、验证和合并后复核）。
+快照日期：2026-08-04（已执行 `git fetch --prune upstream`，完成合并、验证和合并后复核）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline（已验证的不可变 merge commit） | `b07a5f630167d5e5c4880ac11691de408a3bace9` |
-| upstream HEAD | `0318808db98a342066c1c32640f29f4c1ee89cd8` |
-| merge-base | `0318808db98a342066c1c32640f29f4c1ee89cd8` |
-| 分叉计数 | fork-only 127，upstream-only 0 |
-| fork 侧净改动 | 192 个路径，`+12446/-858` |
+| fork code baseline（已验证的不可变 merge commit） | `704a16fcfa12076baf3a7fc405fecbdecad19310` |
+| upstream HEAD | `1aab31a148a2705320f7c1f6cfa0b59a87301f49` |
+| merge-base | `1aab31a148a2705320f7c1f6cfa0b59a87301f49` |
+| 分叉计数 | fork-only 130，upstream-only 0 |
+| fork 侧净改动 | 196 个路径，`+12497/-880` |
 | upstream 侧净改动 | 0 个路径，`+0/-0` |
-| 双边同时改动 | 0 个路径（合并前 6 个路径已复核） |
+| 双边同时改动 | 0 个路径（合并前 5 个路径已复核） |
 
 ## 当前待合入上游功能
 
-- 无。`upstream/main` 已完整合入 merge commit `b07a5f630167d5e5c4880ac11691de408a3bace9`；`git rev-list HEAD..upstream/main` 为 0。
+- 无。`upstream/main` 已完整合入 merge commit `704a16fcfa12076baf3a7fc405fecbdecad19310`；`git rev-list HEAD..upstream/main` 为 0。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -79,6 +79,7 @@ git diff --name-status HEAD..upstream/main
 
 8. `68f2636fe` 已显式采用 upstream 的 pool scheduler 与 Pool header 冲突侧；未来不得把 score gate 或已移除的页头快捷入口当成当前不变量静默恢复，恢复前需要新的产品决策。
 9. Responses continuation history 与端到端时序现已属于 upstream baseline。AI export 冲突必须同时保留 history hydrate/record/storage 与 transcription；Usage 冲突必须同时保留端到端/候选时序、reasoning token 和格式感知 TPS，并让“计速耗时”对应实际 TPS 分母。
+10. `704a16fcf` 接入的 Responses routing、SSE event-only normalization 与 reasoning effort 校验边界现已属于 upstream baseline。后续冲突应在格式转换中保留显式 effort，只在最终同格式 provider 的实际映射模型上校验；transcription 的 multipart/二进制路径不得误入 JSON effort 校验。routed policy 必须继续继承全局 `keep_priority_on_conversion`，同时保留 fork 的 cache-affinity pool group 优先级提升。
 
 ## Fork 特有功能清单
 
@@ -110,6 +111,7 @@ git diff --name-status HEAD..upstream/main
 
 - 上游若重构 AI registry/planner，采用新结构，但上述格式、二进制保真、同步/流式和 usage/计费契约必须全部重接。
 - `crates/aether-ai/formats/src/api.rs` 与 `apps/aether-gateway/src/ai_serving/pure/mod.rs` 同时承载上游 Codex 缓存身份、Responses continuation history 和 fork transcription 导出；合并导出列表时三者必须并存。
+- 上游标准流现在会将独立 `event:` 行的事件类型补入缺少 `type` 的 JSON data payload；该 normalization 仅用于标准格式转换，same-format transcription SSE 必须继续原样直通。
 - 上游正在重构 processing-tier 计费和 usage body capture。以其新结算语义为主，再补回 `audio_duration_seconds`；不要用 fork 旧版 `pricing.rs`/`service.rs` 覆盖上游文件。
 
 ### P0：号池调度不变量
@@ -117,6 +119,7 @@ git diff --name-status HEAD..upstream/main
 当前必须保留：
 
 - cache-affinity 命中 pool group 时，把 rankable 的 provider/key/global-format priority 提升到最高优先级，避免软策略打散粘性。
+- routed policy 的 ordering config 必须继承全局 `keep_priority_on_conversion`；该上游 override 与上述 cache-affinity pool group 提升同时生效，不能互相覆盖。
 - routed pool policy 的 allowed-key overlay 优先于普通候选扫描；无定向 key 时按上游分页 score phase，再进入分配模式/策略扫描。
 - `probing_enabled` 关闭时不显示虚假的热池目标、热池数量和 burst 状态；开启时才展示自适应热池指标。
 - provider 模型测试的候选顺序为 `scheduled.chain(skipped)`，可调度项必须排在跳过项前。
@@ -279,19 +282,22 @@ Provider 级覆盖位于 `provider.config.oauth_token_refresh`：`enabled`、`lo
 
 ## 当前 0 个双边改动路径
 
-合并后 `merge-base` 为 `0318808db98a342066c1c32640f29f4c1ee89cd8`，等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，双边重叠为 0 个路径。下一次 `git fetch upstream` 后必须重新计算，不能沿用本次的 0。
+合并后 `merge-base` 为 `1aab31a148a2705320f7c1f6cfa0b59a87301f49`，等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，双边重叠为 0 个路径。下一次 `git fetch upstream` 后必须重新计算，不能沿用本次的 0。
 
-本轮合并前共有 6 个双边路径，实际冲突为 1 个文件、1 个功能组。用户选择及结果：
+本轮合并前共有 5 个双边路径，没有产生文本冲突。自动合并后的组合行为复核如下：
 
 | 组 | 选择 | 合并后行为 |
 |---|---|---|
-| worker registration / boot-run 记录 | `1C` manual hybrid | 采用上游按 task key 的共享 boot registration、三数据库重复记录清理迁移和 gateway instance 事件 payload；OAuth/pool 诊断事件使用 per-instance execution run，并在无法确保 execution run 时跳过事件写入 |
+| Responses routing / candidate ranking | 自动合并 + P0 复核 | routed policy 继承全局 `keep_priority_on_conversion`；cache-affinity 命中 pool group 时仍提升 provider/key/global-format priority |
+| reasoning effort / format registry | 自动合并 + P0 复核 | conversion 保留显式 effort，最终 provider/model 负责校验；`OpenAiTranscription` 继续走非标准 JSON 解析/发射分支 |
+| SSE stream normalization | 自动合并 + P0 复核 | 独立 `event:` 行可补全 data payload 类型；transcription 同格式流仍原样直通，parser/emitter/error 仍覆盖转写格式 |
+| same-format provider transport | 自动合并 + P0 复核 | 映射后实际模型校验 reasoning effort；transcription boundary、直连鉴权和原始 multipart `Content-Type` 同时保留 |
 
 P0 复核结果：无功能差异变化。转写、cache affinity、动态 quota/消费统计、OAuth 自动刷新、usage/billing 跨数据库契约、self-scope 请求详情、`disable_circuit_breaker`、chunk 恢复、Responses continuation history 与 Usage 端到端/候选时序均保留；当前 pool scheduler score phase 与 Pool header 行为未改变。
 
 ## 当前尚未合入的上游功能
 
-- 无。`upstream/main` 已并入 merge commit `b07a5f630167d5e5c4880ac11691de408a3bace9`；`git rev-list HEAD..upstream/main` 为 0。
+- 无。`upstream/main` 已并入 merge commit `704a16fcfa12076baf3a7fc405fecbdecad19310`；`git rev-list HEAD..upstream/main` 为 0。
 
 ## 配置与 API 契约速查
 
@@ -329,6 +335,11 @@ cargo check --workspace
 再按冲突面串行执行行为验证，避免多个 Cargo 进程争用 package/artifact lock：
 
 ```sh
+# Responses routing、reasoning effort 校验边界与 event-only SSE
+cargo test -p aether-gateway routing_policy_inherits_global_conversion_priority_override
+cargo test -p aether-ai-formats runtime_reasoning_effort_is_preserved_across_concrete_model_mapping
+cargo test -p aether-ai-formats event_only_stream_types_convert_across_standard_formats
+
 # 转写 multipart、Responses continuation history、同步/流式与 failover
 cargo test -p aether-ai-formats transcription
 cargo test -p aether-ai-formats response_history
@@ -354,6 +365,7 @@ cargo test -p aether-data-sqlite sqlite_usage_stats_rebuild_uses_canonical_termi
 cd frontend
 npm run test:run -- \
   src/api/endpoints/types/__tests__/api-format.spec.ts \
+  src/features/providers/components/__tests__/KeyAllowedModelsEditDialog.loading.spec.ts \
   src/features/pool/components/__tests__/PoolManagementHeader.spec.ts \
   src/features/pool/utils/__tests__/poolManagementState.spec.ts \
   src/features/pool/utils/__tests__/poolSchedulingDialog.spec.ts \
@@ -362,20 +374,21 @@ npm run test:run -- \
   src/views/admin/__tests__/PoolManagement.codex-cycle-stats.spec.ts
 ```
 
-本次 `b07a5f630` 验证结果：
+本次 `704a16fcf` 验证结果：
 
-- `cd frontend && npm run build`：通过；非阻塞警告为 `caniuse-lite` 数据已 10 个月未更新。
-- `cargo check --workspace`：通过；修正 execution run 可选语义后重新检查返回 `OK`。
-- `cargo fmt --all -- --check`：通过；`git diff --check` 与暂存差异检查：通过。
-- 合并前端/后端行为测试套件未在本轮重复执行；文档列出的专项测试命令保留为后续回归清单。
+- `cd frontend && npm run build`：通过；非阻塞警告为 `caniuse-lite` 数据已 11 个月未更新。
+- `cargo check --workspace`：通过，耗时 4 分 58 秒。
+- merge tree、暂存差异与文档的 `git diff --check`：通过。
+- 本轮没有实际冲突，也没有 merge-regression 修复；按技能的最小验证规则未扩展执行专项行为测试，文档列出的命令保留为后续回归清单。
 - 浏览器烟测未自动执行；当前会话未授权浏览器自动化，需人工完成下列检查。
 
-还必须做五个烟测：
+还必须做六个烟测：
 
 1. 向 `/v1/audio/transcriptions` 上传含二进制和伪 boundary 的音频，确认上游收到的文件字节不变且 model 已映射；分别测 `stream=false/true`。
 2. 打开 pool 管理页，确认动态 quota windows、Provider 详情预取和“导入账号”存在；页头不再显示刷新日志、编辑 Provider/Endpoint、账号批量操作快捷入口。`score_ranking_enabled` 仍可保存，但不得据此预期跳过 score phase。
 3. 普通用户关闭/开启 `usage_request_detail` 各测一次：关闭为 403；开启只能看自己的记录，header 已脱敏且无 cURL/replay。
 4. 访问 `/admin/quota-countdown`、`/admin/pool-consumption`，确认路由可达且 consumption 历史不随 Codex quota window 重置丢失。
 5. 使用同一 API Key 连续调用 OpenAI Responses，确认 `previous_response_id` 可从持久化 history 恢复；制造一次候选失败后确认 usage 详情保留端到端与成功候选时序，前端 tooltip 同时显示生成耗时和实际计速耗时。
+6. 为 routed policy 启用全局 `keep_priority_on_conversion`，确认候选排序继承该设置；使用只有独立 `event:` 行携带类型的 Responses SSE，确认跨格式流正确转换；将请求映射到不支持目标 effort 的实际模型，确认 provider transport 在发送前拒绝候选。
 
 如果上游改变了任一契约或测试命令，更新本文件，不要保留失效说明。
