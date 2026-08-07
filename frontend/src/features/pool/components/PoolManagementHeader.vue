@@ -361,6 +361,7 @@ import {
   Settings2,
   SlidersHorizontal,
   SquareCheckBig,
+  Users,
 } from 'lucide-vue-next'
 import {
   Button,
@@ -386,6 +387,7 @@ import {
 
 type HeaderActionEvent =
   | 'import'
+  | 'accountBatch'
   | 'scheduling'
   | 'viewProvider'
   | 'refreshWorker'
@@ -395,6 +397,7 @@ type HeaderActionEvent =
 
 type HeaderActionKey =
   | 'import'
+  | 'accountBatch'
   | 'scheduling'
   | 'viewProvider'
   | 'refreshWorker'
@@ -451,6 +454,7 @@ const emit = defineEmits<{
   'update:status': [value: string]
   'update:search': [value: string]
   import: []
+  accountBatch: []
   prefetchProvider: []
   scheduling: []
   viewProvider: []
@@ -492,6 +496,7 @@ const mobileActions = computed<HeaderAction[]>(() => {
   const actions: HeaderAction[] = [
     { key: 'viewProvider', title: legacyT('查看详情'), event: 'viewProvider', icon: Eye },
     { key: 'import', title: legacyT('导入账号'), event: 'import', icon: Upload },
+    { key: 'accountBatch', title: legacyT('账号批量操作'), event: 'accountBatch', icon: Users },
     { key: 'scheduling', title: legacyT('号池调度'), event: 'scheduling', icon: SlidersHorizontal },
     { key: 'refreshWorker', title: legacyT('自动刷新配置和日志'), event: 'refreshWorker', icon: History },
   ]
@@ -509,6 +514,7 @@ const desktopActions = computed<HeaderAction[]>(() => {
   const actions: HeaderAction[] = [
     { key: 'viewProvider', title: legacyT('查看详情'), event: 'viewProvider', icon: Eye },
     { key: 'import', title: legacyT('导入账号'), event: 'import', icon: Upload },
+    { key: 'accountBatch', title: legacyT('账号批量操作'), event: 'accountBatch', icon: Users },
     { key: 'refreshWorker', title: legacyT('自动刷新配置和日志'), event: 'refreshWorker', icon: History },
   ]
   if (props.showAdaptiveHotPoolMetricsButton) {

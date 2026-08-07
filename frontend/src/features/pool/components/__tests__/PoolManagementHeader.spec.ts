@@ -38,6 +38,7 @@ describe('PoolManagementHeader', () => {
           refreshTitle: '刷新',
           onViewProvider: () => events.push('viewProvider'),
           onImport: () => events.push('import'),
+          onAccountBatch: () => events.push('accountBatch'),
           onPrefetchProvider: () => events.push('prefetchProvider'),
           onScheduling: () => events.push('scheduling'),
           onRefreshWorker: () => events.push('refreshWorker'),
@@ -60,6 +61,7 @@ describe('PoolManagementHeader', () => {
     mobileViewProviderButton?.dispatchEvent(new Event('pointerenter'))
     mobileViewProviderButton?.click()
     root.querySelector<HTMLButtonElement>('[title="导入账号"]')?.click()
+    root.querySelector<HTMLButtonElement>('[title="账号批量操作"]')?.click()
     root.querySelector<HTMLButtonElement>('[title="点击调整号池调度"]')?.click()
     root.querySelector<HTMLButtonElement>('[data-testid="pool-refresh-worker-button"]')?.click()
     root.querySelector<HTMLButtonElement>('[title="查看自适应热池指标"]')?.click()
@@ -79,6 +81,7 @@ describe('PoolManagementHeader', () => {
       'prefetchProvider',
       'viewProvider',
       'import',
+      'accountBatch',
       'scheduling',
       'refreshWorker',
       'demandMetrics',
@@ -89,13 +92,15 @@ describe('PoolManagementHeader', () => {
     ])
     const viewProviderButton = desktopActions?.querySelector<HTMLButtonElement>('[title="查看详情"]')
     const importButton = desktopActions?.querySelector<HTMLButtonElement>('[title="导入账号"]')
+    const accountBatchButton = desktopActions?.querySelector<HTMLButtonElement>('[title="账号批量操作"]')
     expect(selectAllButton?.textContent?.trim()).toBe('')
     expect(selectAllButton?.getAttribute('title')).toBe('全选')
     expect(viewProviderButton?.nextElementSibling).toBe(importButton)
+    expect(importButton?.nextElementSibling).toBe(accountBatchButton)
     expect(advancedButton?.nextElementSibling).toBe(selectAllButton)
     expect(selectAllButton?.nextElementSibling).toBe(batchActionsButton)
     expect(batchActionsButton?.getAttribute('title')).toBe('选择执行动作')
-    expect(root.querySelector('[title="账号批量操作"]')).toBeNull()
+    expect(root.querySelector('[title="账号批量操作"]')).not.toBeNull()
     expect(root.querySelector('[title="添加账号"]')).toBeNull()
     expect(root.querySelector('[title="导入账号"]')).not.toBeNull()
     expect(root.querySelector('[title="提供商代理（未设置）"]')).not.toBeNull()

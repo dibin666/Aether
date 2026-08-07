@@ -34,7 +34,7 @@
         @import="showImportDialog = true"
         @scheduling="openSchedulingDialog"
         @refresh-worker="openRefreshWorkerDialog"
-        @account-batch="showAccountBatchDialog = true"
+        @account-batch="showAccountQuickActionsDialog = true"
         @edit-provider="openProviderEditDialog"
         @edit-endpoint="openEndpointEditDialog"
         @toggle-provider="toggleSelectedProviderStatus"
@@ -996,6 +996,16 @@
       @endpoint-created="handleEndpointEditSaved"
       @endpoint-updated="handleEndpointEditSaved"
     />
+    <PoolAccountQuickActionsDialog
+      v-if="selectedProviderId"
+      v-model="showAccountQuickActionsDialog"
+      :provider-id="selectedProviderId"
+      :provider-name="selectedProviderData?.name || ''"
+      :provider-type="selectedProviderData?.provider_type || selectedProviderType"
+      :batch-concurrency="selectedProviderConfig?.batch_concurrency"
+      @changed="handleAccountBatchChanged"
+      @edit-config="openKeyBatchEditDialog"
+    />
     <PoolAccountBatchDialog
       v-if="selectedProviderId"
       v-model="showAccountBatchDialog"
@@ -1198,6 +1208,9 @@ import {
 
 const loadProviderDetailDrawer = () => import('@/features/providers/components/ProviderDetailDrawer.vue')
 const ProviderDetailDrawer = defineAsyncComponent(loadProviderDetailDrawer)
+const PoolAccountQuickActionsDialog = defineAsyncComponent(
+  () => import('@/features/pool/components/PoolAccountQuickActionsDialog.vue'),
+)
 
 function prefetchProviderDetailDrawer(): void {
   void loadProviderDetailDrawer().catch(() => {})
@@ -1392,6 +1405,7 @@ async function loadOverview(options: { cacheTtlMs?: number, silent?: boolean } =
       keysLoadedOnce.value = false
       resetPoolKeySelection(true)
       providerDrawerOpen.value = false
+      showAccountQuickActionsDialog.value = false
       showAccountBatchDialog.value = false
       keyBatchEditDialogOpen.value = false
       keyBatchEditKeyIds.value = []
@@ -1763,6 +1777,7 @@ async function selectProvider(
   resetPoolKeySelection(true)
   providerDrawerOpen.value = false
   editingKeyDetail.value = null
+  showAccountQuickActionsDialog.value = false
   showAccountBatchDialog.value = false
   keyBatchEditDialogOpen.value = false
   keyBatchEditKeyIds.value = []
@@ -2944,6 +2959,7 @@ const providerProxyDesktopPopoverOpen = ref(false)
 const savingProviderProxy = ref(false)
 let endpointEditRequestId = 0
 const showAccountBatchDialog = ref(false)
+const showAccountQuickActionsDialog = ref(false)
 const pendingAccountBatchAction = ref<PoolBatchActionValue | null>(null)
 const togglingProviderStatus = ref(false)
 
