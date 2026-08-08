@@ -461,7 +461,7 @@ const AUTO_REFRESH_INTERVAL = 1000 // 1秒刷新一次（用于活跃请求）
 const ACTIVE_DISCOVERY_HOT_INTERVAL = 1000 // 有活跃请求时 1 秒扫描一次
 const ACTIVE_DISCOVERY_IDLE_INTERVAL = 5000 // 空闲时降频，避免后台持续刷日志
 const GLOBAL_AUTO_REFRESH_INTERVAL = 3000 // 3秒刷新一次（全局自动刷新）
-const globalAutoRefresh = ref(false) // 全局自动刷新开关（默认关闭）
+const globalAutoRefresh = ref(true) // 全局自动刷新开关（默认开启）
 const isPageVisible = ref(typeof document === 'undefined' ? true : !document.hidden)
 
 // 轮询活跃请求状态（轻量级，只更新状态变化的记录）
@@ -488,10 +488,15 @@ async function pollActiveRequests() {
     const { requests } = await loadActiveRequestUpdates(activeRequestIds.value)
 
     const recordMap = new Map(currentRecords.value.map(record => [record.id, record]))
+    let shouldRefresh = false
 
     for (const update of requests) {
       const record = recordMap.get(update.id)
-      if (!record) continue
+      if (!record) {
+        // 活跃接口发现了列表之外的新请求，重新拉取完整列表。
+        shouldRefresh = true
+        continue
+      }
 
       // 状态只允许单向推进，避免异步响应回退（pending -> streaming -> completed/failed/cancelled）
       const statusPriority: Record<string, number> = {
@@ -519,6 +524,10 @@ async function pollActiveRequests() {
 
       if (shouldApply && record.status !== update.status) {
         record.status = update.status
+      }
+      if (shouldApply && ['completed', 'failed', 'cancelled'].includes(update.status)) {
+        // 终态需要用完整列表快照同步排序、分页和最终字段。
+        shouldRefresh = true
       }
       if (shouldApplyData) {
         if ('image_progress' in update) {
@@ -640,8 +649,9 @@ async function pollActiveRequests() {
       }
     }
 
-    // 不再因活跃请求完成而全表刷新，字段已在上方就地更新
-    // 未知请求（shouldRefresh 由 !record 触发）理论上不应出现在已知 ID 轮询中，忽略即可
+    if (shouldRefresh) {
+      await refreshData()
+    }
   } catch (error) {
     log.error('轮询活跃请求状态失败:', error)
   } finally {
