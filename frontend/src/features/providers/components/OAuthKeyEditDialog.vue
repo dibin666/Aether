@@ -130,6 +130,16 @@
         </div>
       </div>
 
+      <div class="flex items-center justify-between rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-2">
+        <div class="space-y-0.5">
+          <Label class="text-sm font-medium">忽略号池冷却</Label>
+          <p class="text-xs text-muted-foreground">
+            此账号不因 Aether 本地冷却被跳过；上游限流、配额和账号禁用仍有效。
+          </p>
+        </div>
+        <Switch v-model="form.ignore_pool_cooldown" />
+      </div>
+
       <!-- 自动获取模型 -->
       <div class="space-y-3 py-2 px-3 rounded-md border border-border/60 bg-muted/30">
         <div class="flex items-center justify-between">
@@ -264,6 +274,7 @@ const form = ref({
   concurrent_limit: undefined as number | null | undefined,
   cache_ttl_minutes: 5,
   max_probe_interval_minutes: 32,
+  ignore_pool_cooldown: false,
   note: '',
   auto_fetch_models: false,
   model_include_patterns_text: '',
@@ -300,6 +311,7 @@ function resetForm() {
     concurrent_limit: undefined,
     cache_ttl_minutes: 5,
     max_probe_interval_minutes: 32,
+    ignore_pool_cooldown: false,
     note: '',
     auto_fetch_models: false,
     model_include_patterns_text: '',
@@ -318,6 +330,7 @@ function loadKeyData() {
     concurrent_limit: props.editingKey.concurrent_limit ?? undefined,
     cache_ttl_minutes: props.editingKey.cache_ttl_minutes ?? 5,
     max_probe_interval_minutes: props.editingKey.max_probe_interval_minutes ?? 32,
+    ignore_pool_cooldown: props.editingKey.ignore_pool_cooldown ?? false,
     note: props.editingKey.note || '',
     auto_fetch_models: props.editingKey.auto_fetch_models ?? false,
     model_include_patterns_text: (props.editingKey.model_include_patterns || []).join(', '),
@@ -383,6 +396,7 @@ async function handleSave() {
       concurrent_limit: form.value.concurrent_limit,
       cache_ttl_minutes: form.value.cache_ttl_minutes,
       max_probe_interval_minutes: form.value.max_probe_interval_minutes,
+      ignore_pool_cooldown: form.value.ignore_pool_cooldown,
       note: form.value.note,
       allowed_models: shouldClearAllowedModels ? null : undefined,
       auto_fetch_models: form.value.auto_fetch_models,

@@ -508,6 +508,7 @@ async fn record_score_probe_result_for_key(
     key_id: &str,
     attempted_at: u64,
     outcome: &AccountSelfCheckOutcome,
+    ignore_pool_cooldown: bool,
 ) {
     if !state.data.has_pool_score_writer() {
         return;
@@ -530,7 +531,11 @@ async fn record_score_probe_result_for_key(
         ),
         AccountSelfCheckOutcome::Failed { .. } => (
             false,
-            Some(PoolMemberHardState::Cooldown),
+            Some(if ignore_pool_cooldown {
+                PoolMemberHardState::Available
+            } else {
+                PoolMemberHardState::Cooldown
+            }),
             PoolMemberProbeStatus::Failed,
         ),
         AccountSelfCheckOutcome::Skipped { .. } => (
@@ -730,7 +735,15 @@ pub(crate) async fn perform_account_self_check_once_with_config(
                     message: gateway_error_message(err),
                 },
             };
-            record_score_probe_result_for_key(state, &provider.id, &key.id, now_ts, &outcome).await;
+            record_score_probe_result_for_key(
+                state,
+                &provider.id,
+                &key.id,
+                now_ts,
+                &outcome,
+                pool_config.ignore_pool_cooldown || key.ignore_pool_cooldown,
+            )
+            .await;
             update_summary_from_outcome(&mut summary, &outcome);
         }
 

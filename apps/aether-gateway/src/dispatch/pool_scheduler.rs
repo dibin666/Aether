@@ -303,7 +303,10 @@ fn active_probe_member_is_unschedulable_for_request(
     key_id: &str,
     key_context: Option<&PoolCatalogKeyContext>,
 ) -> bool {
-    if runtime.cooldown_reason_by_key.contains_key(key_id) {
+    if !pool_config.ignore_pool_cooldown
+        && !key_context.is_some_and(|context| context.ignore_pool_cooldown)
+        && runtime.cooldown_reason_by_key.contains_key(key_id)
+    {
         return true;
     }
     if pool_config.cost_limit_per_key_tokens.is_some_and(|limit| {
@@ -853,7 +856,19 @@ impl<'a> PoolKeyCursor<'a> {
             capability: scope.capability.clone(),
             scope_kind: scope.scope_kind.clone(),
             scope_id: scope.scope_id.clone(),
-            hard_states: vec![PoolMemberHardState::Available, PoolMemberHardState::Unknown],
+            hard_states: if self
+                .effective_pool_config
+                .as_ref()
+                .is_some_and(|config| config.ignore_pool_cooldown)
+            {
+                vec![
+                    PoolMemberHardState::Available,
+                    PoolMemberHardState::Unknown,
+                    PoolMemberHardState::Cooldown,
+                ]
+            } else {
+                vec![PoolMemberHardState::Available, PoolMemberHardState::Unknown]
+            },
             probe_statuses: None,
             offset: self.score_next_offset as usize,
             limit: limit as usize,
@@ -1008,8 +1023,12 @@ impl<'a> PoolKeyCursor<'a> {
             return None;
         }
 
+        let key_ignore_pool_cooldown = key.ignore_pool_cooldown;
         let candidate = pool_candidate_from_catalog_key(&self.group, key);
-        self.build_eligible_candidate(candidate).await
+        let mut candidate = self.build_eligible_candidate(candidate).await?;
+        candidate.ignore_pool_cooldown =
+            pool_config.ignore_pool_cooldown || key_ignore_pool_cooldown;
+        Some(candidate)
     }
 
     async fn refill_queued_candidates(&mut self) -> bool {
@@ -1096,6 +1115,14 @@ impl<'a> PoolKeyCursor<'a> {
         &mut self,
         candidate: &EligibleLocalExecutionCandidate,
     ) -> bool {
+        if candidate.ignore_pool_cooldown
+            || self
+                .effective_pool_config
+                .as_ref()
+                .is_some_and(|config| config.ignore_pool_cooldown)
+        {
+            return false;
+        }
         match read_admin_provider_pool_key_cooldown_reason(
             self.state.app().runtime_state.as_ref(),
             candidate.candidate.provider_id.as_str(),
@@ -1324,6 +1351,7 @@ impl<'a> PoolKeyCursor<'a> {
             transport: std::sync::Arc::new(transport),
             orchestration: LocalExecutionCandidateMetadata::default(),
             ranking: self.group.ranking.clone(),
+            ignore_pool_cooldown: false,
         })
     }
 
@@ -1488,6 +1516,7 @@ fn build_pool_catalog_key_context(
     signals.health_score = health_score;
     signals.latency_avg_ms = latency_avg_ms;
     signals.catalog_lru_score = Some(key.last_used_at_unix_secs.unwrap_or(0) as f64);
+    signals.ignore_pool_cooldown = key.ignore_pool_cooldown;
     signals
 }
 
@@ -1699,6 +1728,12 @@ fn run_local_execution_pool_scheduler_with_runtime_map(
             .get(&candidate.candidate.provider_id)
             .cloned()
             .or_else(|| pool_config_for_candidate(&candidate));
+        let ignore_pool_cooldown = admin_pool_config
+            .as_ref()
+            .is_some_and(|config| config.ignore_pool_cooldown)
+            || key_context.ignore_pool_cooldown;
+        let mut candidate = candidate;
+        candidate.ignore_pool_cooldown = ignore_pool_cooldown;
 
         if let Some(config) = admin_pool_config.as_ref() {
             if enforce_active_probe_seal && should_enforce_active_probe_sealed_pool(config) {
@@ -1903,6 +1938,7 @@ fn pool_scheduling_config(
         lru_enabled: config.lru_enabled,
         skip_exhausted_accounts: config.skip_exhausted_accounts,
         cost_limit_per_key_tokens: config.cost_limit_per_key_tokens,
+        ignore_pool_cooldown: config.ignore_pool_cooldown,
     }
 }
 
@@ -4879,6 +4915,7 @@ mod tests {
             provider_api_format: "openai:responses".to_string(),
             orchestration: LocalExecutionCandidateMetadata::default(),
             ranking: None,
+            ignore_pool_cooldown: false,
             transport: Arc::new(crate::ai_serving::GatewayProviderTransportSnapshot {
                 provider: GatewayProviderTransportProvider {
                     id: provider_id.to_string(),
@@ -4993,6 +5030,7 @@ mod tests {
             provider_api_format: "openai:chat".to_string(),
             orchestration: LocalExecutionCandidateMetadata::default(),
             ranking: None,
+            ignore_pool_cooldown: false,
             transport: Arc::new(crate::ai_serving::GatewayProviderTransportSnapshot {
                 provider: GatewayProviderTransportProvider {
                     id: provider_id.to_string(),

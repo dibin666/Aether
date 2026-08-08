@@ -611,6 +611,13 @@ async fn resolve_pool_feedback_context(
     else {
         return None;
     };
+    let key_ignore_pool_cooldown = state
+        .read_provider_catalog_keys_by_ids(std::slice::from_ref(&plan.key_id))
+        .await
+        .ok()
+        .and_then(|mut keys| keys.drain(..).next())
+        .is_some_and(|key| key.ignore_pool_cooldown);
+    pool_config.ignore_pool_cooldown |= key_ignore_pool_cooldown;
 
     if let Some(override_policy) = context
         .report_context
@@ -1340,7 +1347,12 @@ async fn record_pool_error_effect(
         state,
         context,
         Some(false),
-        pool_score_hard_state_for_status(effect.status_code, effect.error_body),
+        pool_score_hard_state_for_status(effect.status_code, effect.error_body).filter(
+            |hard_state| {
+                !pool_context.pool_config.ignore_pool_cooldown
+                    || !matches!(hard_state, PoolMemberHardState::Cooldown)
+            },
+        ),
         Some(pool_score_delta_for_status(effect.status_code)),
         serde_json::json!({
             "last_request_feedback": {
@@ -1619,7 +1631,7 @@ async fn record_pool_stream_timeout_effect(
         state,
         context,
         Some(false),
-        Some(PoolMemberHardState::Cooldown),
+        (!pool_context.pool_config.ignore_pool_cooldown).then_some(PoolMemberHardState::Cooldown),
         Some(-250),
         serde_json::json!({
             "last_request_feedback": {

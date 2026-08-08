@@ -1133,6 +1133,7 @@ fn provider_query_ai_pool_scheduling_config(
         lru_enabled: config.lru_enabled,
         skip_exhausted_accounts: config.skip_exhausted_accounts,
         cost_limit_per_key_tokens: config.cost_limit_per_key_tokens,
+        ignore_pool_cooldown: config.ignore_pool_cooldown,
     }
 }
 
@@ -1304,6 +1305,7 @@ fn provider_query_pool_catalog_key_context(
             provider_type,
             quota_snapshot,
         ),
+        ignore_pool_cooldown: key.ignore_pool_cooldown,
         health_score,
         latency_avg_ms,
         catalog_lru_score: Some(key.last_used_at_unix_secs.unwrap_or(0) as f64),

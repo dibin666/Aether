@@ -375,6 +375,9 @@ pub struct StoredProviderCatalogKey {
     pub auth_type: String,
     pub capabilities: Option<serde_json::Value>,
     pub is_active: bool,
+    /// Skip Aether's local pool cooldown for this account.
+    #[serde(default)]
+    pub ignore_pool_cooldown: bool,
     pub api_formats: Option<serde_json::Value>,
     pub auth_type_by_format: Option<serde_json::Value>,
     pub allow_auth_channel_mismatch_formats: Option<serde_json::Value>,
@@ -459,6 +462,7 @@ impl StoredProviderCatalogKey {
             auth_type,
             capabilities,
             is_active,
+            ignore_pool_cooldown: false,
             api_formats: None,
             auth_type_by_format: None,
             allow_auth_channel_mismatch_formats: None,

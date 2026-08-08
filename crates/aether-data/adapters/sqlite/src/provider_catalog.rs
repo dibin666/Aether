@@ -109,6 +109,7 @@ SELECT
   auth_type,
   capabilities,
   is_active,
+  ignore_pool_cooldown,
   api_formats,
   auth_type_by_format,
   allow_auth_channel_mismatch_formats,
@@ -168,6 +169,7 @@ SELECT
   auth_type,
   capabilities,
   is_active,
+  ignore_pool_cooldown,
   api_formats,
   auth_type_by_format,
   allow_auth_channel_mismatch_formats,
@@ -227,6 +229,7 @@ SELECT
   COALESCE(NULLIF(auth_type, ''), 'summary') AS auth_type,
   NULL AS capabilities,
   is_active,
+  0 AS ignore_pool_cooldown,
   api_formats,
   NULL AS auth_type_by_format,
   NULL AS allow_auth_channel_mismatch_formats,
@@ -1089,6 +1092,7 @@ WHERE id = ?
             )?)
             .bind(key.created_at_unix_ms.unwrap_or(now) as i64)
             .bind(key.updated_at_unix_secs.unwrap_or(now) as i64)
+            .bind(key.ignore_pool_cooldown)
             .execute(&self.pool)
             .await
             .map_sql_err()?;
@@ -2551,12 +2555,12 @@ INSERT INTO provider_api_keys (
   last_models_fetch_error, locked_models, model_include_patterns,
   model_exclude_patterns, upstream_metadata, oauth_invalid_at,
   oauth_invalid_reason, status_snapshot, health_by_format,
-  circuit_breaker_by_format, created_at, updated_at
+  circuit_breaker_by_format, created_at, updated_at, ignore_pool_cooldown
 )
 VALUES (
   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-  ?, ?, ?, ?, ?
+  ?, ?, ?, ?, ?, ?
 )
 "#
 }
@@ -2571,6 +2575,7 @@ SET
   auth_type = ?,
   capabilities = ?,
   is_active = ?,
+  ignore_pool_cooldown = ?,
   api_formats = ?,
   auth_type_by_format = ?,
   allow_auth_channel_mismatch_formats = ?,
@@ -2610,6 +2615,7 @@ fn key_update_query(
             "provider_api_keys.capabilities",
         )?)
         .bind(key.is_active)
+        .bind(key.ignore_pool_cooldown)
         .bind(optional_json_to_string(
             &key.api_formats,
             "provider_api_keys.api_formats",
@@ -2940,6 +2946,7 @@ fn map_key_row(row: &SqliteRow) -> Result<StoredProviderCatalogKey, DataLayerErr
                 )?,
             );
         key.note = row.try_get("note").map_sql_err()?;
+        key.ignore_pool_cooldown = row.try_get("ignore_pool_cooldown").map_sql_err()?;
         key.auth_type_by_format = optional_json_from_string(
             row.try_get("auth_type_by_format").map_sql_err()?,
             "provider_api_keys.auth_type_by_format",

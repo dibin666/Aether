@@ -153,6 +153,7 @@ SELECT
   auth_type,
   capabilities,
   is_active,
+  ignore_pool_cooldown,
   api_formats,
   auth_type_by_format,
   allow_auth_channel_mismatch_formats,
@@ -212,6 +213,7 @@ SELECT
   auth_type,
   capabilities,
   is_active,
+  ignore_pool_cooldown,
   api_formats,
   auth_type_by_format,
   allow_auth_channel_mismatch_formats,
@@ -271,6 +273,7 @@ SELECT
   COALESCE(NULLIF(auth_type, ''), 'summary') AS auth_type,
   NULL::jsonb AS capabilities,
   is_active,
+  FALSE AS ignore_pool_cooldown,
   api_formats,
   NULL::jsonb AS auth_type_by_format,
   'summary' AS api_key,
@@ -373,12 +376,13 @@ SET
     ELSE TO_TIMESTAMP($24::double precision)
   END,
   is_active = $25,
+  ignore_pool_cooldown = $26,
   updated_at = CASE
-    WHEN $26::double precision IS NULL THEN NOW()
-    ELSE TO_TIMESTAMP($26::double precision)
+    WHEN $27::double precision IS NULL THEN NOW()
+    ELSE TO_TIMESTAMP($27::double precision)
   END,
-  auth_type_by_format = $27,
-  allow_auth_channel_mismatch_formats = $28
+  auth_type_by_format = $28,
+  allow_auth_channel_mismatch_formats = $29
 WHERE id = $1
 "#;
 
@@ -495,6 +499,7 @@ fn key_update_query(key: &StoredProviderCatalogKey) -> Query<'_, Postgres, PgArg
         .bind(&key.fingerprint)
         .bind(key.expires_at_unix_secs.map(|value| value as f64))
         .bind(key.is_active)
+        .bind(key.ignore_pool_cooldown)
         .bind(key.updated_at_unix_secs.map(|value| value as f64))
         .bind(&key.auth_type_by_format)
         .bind(&key.allow_auth_channel_mismatch_formats)
@@ -1498,7 +1503,8 @@ INSERT INTO provider_api_keys (
   is_active,
   created_at,
   updated_at,
-  allow_auth_channel_mismatch_formats
+  allow_auth_channel_mismatch_formats,
+  ignore_pool_cooldown
 ) VALUES (
   $1,
   $2,
@@ -1576,7 +1582,8 @@ INSERT INTO provider_api_keys (
     WHEN $52::double precision IS NULL THEN NOW()
     ELSE TO_TIMESTAMP($52::double precision)
   END,
-  $53
+  $53,
+  $54
 )
 "#,
         )
@@ -1651,6 +1658,7 @@ INSERT INTO provider_api_keys (
         .bind(key.created_at_unix_ms.map(|value| value as f64))
         .bind(key.updated_at_unix_secs.map(|value| value as f64))
         .bind(&key.allow_auth_channel_mismatch_formats)
+        .bind(key.ignore_pool_cooldown)
         .execute(&self.pool)
         .await
         .map_postgres_err()?;
@@ -3257,6 +3265,7 @@ fn map_key_row(row: &PgRow) -> Result<StoredProviderCatalogKey, DataLayerError> 
                 row.try_get("circuit_breaker_by_format").ok(),
             );
         key.note = row.try_get("note").ok();
+        key.ignore_pool_cooldown = row.try_get("ignore_pool_cooldown").unwrap_or(false);
         key.auth_type_by_format = row.try_get("auth_type_by_format").ok();
         key.allow_auth_channel_mismatch_formats =
             row.try_get("allow_auth_channel_mismatch_formats").ok();
@@ -3348,7 +3357,7 @@ mod tests {
             .expect("provider_api_keys insert query should end before key binds");
         let query = &query_suffix[..query_end];
 
-        for param in 1..=53 {
+        for param in 1..=54 {
             assert!(
                 query.contains(&format!("${}", param)),
                 "provider_api_keys insert SQL missing ${}",
@@ -3433,7 +3442,7 @@ mod tests {
             "  COALESCE($42, 0),\n  COALESCE($43, 0),\n  COALESCE($44, 0),\n  CASE\n    WHEN $45::double precision IS NULL THEN NULL"
         ));
         assert!(source.contains(
-            "  CASE\n    WHEN $52::double precision IS NULL THEN NOW()\n    ELSE TO_TIMESTAMP($52::double precision)\n  END,\n  $53"
+            "  CASE\n    WHEN $52::double precision IS NULL THEN NOW()\n    ELSE TO_TIMESTAMP($52::double precision)\n  END,\n  $53,\n  $54"
         ));
     }
 
@@ -3478,6 +3487,7 @@ mod tests {
             );
         }
         assert!(sql.contains("is_active = $25"));
+        assert!(sql.contains("ignore_pool_cooldown = $26"));
         assert!(sql.contains("rpm_limit = $12"));
     }
 }

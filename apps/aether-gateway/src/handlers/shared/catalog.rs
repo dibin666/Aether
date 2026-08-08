@@ -2756,6 +2756,10 @@ pub(crate) fn build_admin_provider_key_response(
         json!(avg_response_time_ms),
     );
     payload.insert("is_active".to_string(), json!(key.is_active));
+    payload.insert(
+        "ignore_pool_cooldown".to_string(),
+        json!(key.ignore_pool_cooldown),
+    );
     payload.insert("is_adaptive".to_string(), json!(is_adaptive));
     payload.insert(
         "learned_rpm_limit".to_string(),

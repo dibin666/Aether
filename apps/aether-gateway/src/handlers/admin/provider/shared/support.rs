@@ -72,6 +72,7 @@ pub(crate) struct AdminProviderPoolConfig {
     pub(crate) cost_limit_per_key_tokens: Option<u64>,
     pub(crate) rate_limit_cooldown_seconds: u64,
     pub(crate) overload_cooldown_seconds: u64,
+    pub(crate) ignore_pool_cooldown: bool,
     pub(crate) probing_enabled: bool,
     pub(crate) probing_target_percent: Option<f64>,
     pub(crate) probing_target_count: Option<u64>,

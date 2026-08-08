@@ -135,6 +135,19 @@
             />
           </div>
         </div>
+
+        <div class="flex flex-col gap-3 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 sm:flex-row sm:items-start sm:justify-between">
+          <div class="space-y-1">
+            <span class="text-sm font-medium">Provider 忽略号池冷却</span>
+            <p class="text-xs leading-5 text-muted-foreground">
+              Provider 下所有账号都不因 Aether 本地 429/5xx/流超时冷却而跳过；上游限流和账号禁用仍然有效。
+            </p>
+          </div>
+          <Switch
+            v-model="form.ignore_pool_cooldown"
+            class="shrink-0"
+          />
+        </div>
       </section>
 
       <section class="space-y-4 rounded-2xl border border-border/60 bg-card/70 p-4 sm:p-5">
@@ -570,6 +583,7 @@ const cooldownFieldLayout = buildPoolCooldownFieldLayout()
 const form = ref({
   rate_limit_cooldown_seconds: null as number | null | undefined,
   overload_cooldown_seconds: null as number | null | undefined,
+  ignore_pool_cooldown: false,
   batch_concurrency: null as number | null | undefined,
   probe_concurrency: null as number | null | undefined,
   score_top_n: null as number | null | undefined,
@@ -671,6 +685,7 @@ watch([() => props.modelValue, () => props.providerId], ([open]) => {
   form.value = {
     rate_limit_cooldown_seconds: cfg?.rate_limit_cooldown_seconds ?? null,
     overload_cooldown_seconds: cfg?.overload_cooldown_seconds ?? null,
+    ignore_pool_cooldown: cfg?.ignore_pool_cooldown ?? false,
     batch_concurrency: cfg?.batch_concurrency ?? null,
     probe_concurrency: cfg?.probe_concurrency ?? null,
     score_top_n: cfg?.score_top_n ?? null,
@@ -746,6 +761,7 @@ async function handleSave() {
     const poolAdvanced = mergePoolAdvancedPatch(existingPoolAdvanced, {
       rate_limit_cooldown_seconds: form.value.rate_limit_cooldown_seconds ?? undefined,
       overload_cooldown_seconds: form.value.overload_cooldown_seconds ?? undefined,
+      ignore_pool_cooldown: form.value.ignore_pool_cooldown,
       batch_concurrency: form.value.batch_concurrency ?? undefined,
       probe_concurrency: form.value.probe_concurrency ?? undefined,
       score_top_n: form.value.score_top_n ?? undefined,

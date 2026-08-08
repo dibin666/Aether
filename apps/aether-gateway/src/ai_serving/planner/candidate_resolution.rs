@@ -33,6 +33,7 @@ pub(crate) struct EligibleLocalExecutionCandidate {
     pub(crate) provider_api_format: String,
     pub(crate) orchestration: LocalExecutionCandidateMetadata,
     pub(crate) ranking: Option<SchedulerRankingOutcome>,
+    pub(crate) ignore_pool_cooldown: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -170,6 +171,7 @@ impl AiCandidateResolutionPort for GatewayLocalCandidateResolutionPort<'_> {
             provider_api_format,
             orchestration: LocalExecutionCandidateMetadata::default(),
             ranking: None,
+            ignore_pool_cooldown: false,
         }
     }
 

@@ -46,6 +46,8 @@ pub(crate) struct AdminProviderKeyCreateRequest {
     pub(crate) model_exclude_patterns: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) fingerprint: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) ignore_pool_cooldown: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,6 +86,8 @@ pub(crate) struct AdminProviderKeyUpdateRequest {
     pub(crate) max_probe_interval_minutes: Option<i32>,
     #[serde(default)]
     pub(crate) is_active: Option<bool>,
+    #[serde(default)]
+    pub(crate) ignore_pool_cooldown: Option<bool>,
     #[serde(default)]
     pub(crate) note: Option<String>,
     #[serde(default)]

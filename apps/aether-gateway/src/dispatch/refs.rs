@@ -210,6 +210,7 @@ mod tests {
                 scheduler_affinity_epoch: None,
             },
             ranking: None,
+            ignore_pool_cooldown: false,
         }
     }
 }

@@ -85,6 +85,24 @@ pub(super) async fn maybe_handle(
     let Some(mut updated) = state.update_provider_catalog_key(&updated_record).await? else {
         return Ok(None);
     };
+    if !existing_key.ignore_pool_cooldown && updated.ignore_pool_cooldown {
+        let identity =
+            aether_data_contracts::repository::pool_scores::PoolMemberIdentity::provider_api_key(
+                updated.provider_id.clone(),
+                updated.id.clone(),
+            );
+        let scope = crate::ai_serving::provider_key_pool_score_scope();
+        let _ = state
+            .as_ref()
+            .data
+            .mark_pool_member_hard_state(
+                &identity,
+                Some(&scope),
+                aether_data_contracts::repository::pool_scores::PoolMemberHardState::Available,
+                updated.updated_at_unix_secs.unwrap_or(0),
+            )
+            .await;
+    }
     if updated_record.learned_rpm_limit != existing_key.learned_rpm_limit {
         let Some(reloaded) = state
             .set_provider_catalog_key_learned_rpm_limit(

@@ -321,6 +321,9 @@ pub(crate) fn build_admin_update_provider_key_record_with_existing_keys(
     if let Some(is_active) = payload.is_active {
         updated.is_active = is_active;
     }
+    if let Some(ignore_pool_cooldown) = payload.ignore_pool_cooldown {
+        updated.ignore_pool_cooldown = ignore_pool_cooldown;
+    }
     if fields.contains("note") {
         updated.note = payload
             .note

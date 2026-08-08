@@ -977,6 +977,7 @@ pub fn build_admin_pool_key_payload(
         "key_id": key.id,
         "key_name": key.name,
         "is_active": key.is_active,
+        "ignore_pool_cooldown": key.ignore_pool_cooldown,
         "auth_type": key.auth_type,
         "status_snapshot": key.status_snapshot.clone().unwrap_or_else(|| json!({})),
         "health_score": health_score,

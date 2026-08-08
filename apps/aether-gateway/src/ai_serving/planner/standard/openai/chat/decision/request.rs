@@ -2291,6 +2291,7 @@ mod tests {
             provider_api_format: "gemini:generate_content".to_string(),
             orchestration: crate::orchestration::LocalExecutionCandidateMetadata::default(),
             ranking: None,
+            ignore_pool_cooldown: false,
         }
     }
 

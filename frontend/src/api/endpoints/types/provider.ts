@@ -277,6 +277,7 @@ export interface EndpointAPIKey {
   success_rate: number
   avg_response_time_ms: number
   is_active: boolean
+  ignore_pool_cooldown: boolean  // 忽略 Aether 本地号池冷却
   note?: string  // 备注说明（可选）
   last_used_at?: string
   created_at: string
@@ -556,6 +557,7 @@ export interface EndpointAPIKeyUpdate {
   max_probe_interval_minutes?: number
   note?: string
   is_active?: boolean
+  ignore_pool_cooldown?: boolean  // 忽略 Aether 本地号池冷却
   auto_fetch_models?: boolean  // 是否启用自动获取模型
   locked_models?: string[]  // 被锁定的模型列表
   // 模型过滤规则（仅当 auto_fetch_models=true 时生效）
@@ -811,6 +813,7 @@ export interface PoolAdvancedConfig {
   cost_soft_threshold_percent?: number | null
   rate_limit_cooldown_seconds?: number | null
   overload_cooldown_seconds?: number | null
+  ignore_pool_cooldown?: boolean
   proactive_refresh_seconds?: number | null
   unschedulable_rules?: Array<Record<string, unknown>> | null
   batch_concurrency?: number | null

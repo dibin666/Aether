@@ -117,6 +117,8 @@ export interface PoolKeyDetail {
   key_name: string
   provider_type?: string | null
   is_active: boolean
+  ignore_pool_cooldown: boolean
+  provider_ignore_pool_cooldown?: boolean
   auth_type: string
   auth_type_by_format?: Record<string, 'api_key' | 'bearer'> | null
   allow_auth_channel_mismatch_formats?: string[] | null

@@ -410,6 +410,7 @@ pub(crate) fn admin_provider_pool_config_from_config_value(
             cost_limit_per_key_tokens: None,
             rate_limit_cooldown_seconds: 300,
             overload_cooldown_seconds: 30,
+            ignore_pool_cooldown: false,
             probing_enabled: false,
             probing_target_percent: None,
             probing_target_count: None,
@@ -469,6 +470,10 @@ pub(crate) fn admin_provider_pool_config_from_config_value(
             .get("overload_cooldown_seconds")
             .and_then(json_u64)
             .unwrap_or(30),
+        ignore_pool_cooldown: pool_advanced
+            .get("ignore_pool_cooldown")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         probing_enabled: pool_advanced
             .get("probing_enabled")
             .and_then(Value::as_bool)
@@ -572,6 +577,19 @@ mod tests {
         let config = admin_provider_pool_config(&provider).expect("pool config should exist");
 
         assert!(!config.skip_exhausted_accounts);
+        assert!(!config.ignore_pool_cooldown);
+    }
+
+    #[test]
+    fn parses_ignore_pool_cooldown_from_pool_advanced() {
+        let config = admin_provider_pool_config_from_config_value(Some(&json!({
+            "pool_advanced": {
+                "ignore_pool_cooldown": true
+            }
+        })))
+        .expect("pool config should parse");
+
+        assert!(config.ignore_pool_cooldown);
     }
 
     #[test]
