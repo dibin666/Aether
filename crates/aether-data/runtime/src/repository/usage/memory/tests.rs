@@ -17,7 +17,7 @@ use aether_data_contracts::repository::usage::{
     usage_body_ref, ProviderApiKeyWindowUsageRequest, UsageAuditAggregationGroupBy,
     UsageAuditAggregationQuery, UsageBodyCaptureState, UsageBodyField, UsageDashboardSummaryQuery,
     UsageLeaderboardGroupBy, UsageLeaderboardQuery, UsageProviderPerformanceQuery,
-    UsageTimeSeriesGranularity,
+    UsageTimeSeriesGranularity, UsageTimeSeriesQuery,
 };
 use serde_json::json;
 
@@ -1865,12 +1865,14 @@ async fn summarizes_provider_api_key_window_usage_with_zero_rows() {
                 window_code: "5h".to_string(),
                 start_unix_secs: 1_711_000_000,
                 end_unix_secs: 1_711_000_300,
+                model: None,
             },
             ProviderApiKeyWindowUsageRequest {
                 provider_api_key_id: "provider-key-empty".to_string(),
                 window_code: "weekly".to_string(),
                 start_unix_secs: 1_711_000_000,
                 end_unix_secs: 1_711_000_300,
+                model: None,
             },
         ])
         .await
@@ -2432,6 +2434,7 @@ async fn summarize_usage_provider_performance_computes_tps_and_top_provider_time
         tz_offset_minutes: 0,
         limit: 1,
         provider_id: None,
+        provider_api_key_ids: None,
         model: None,
         api_format: None,
         endpoint_kind: None,
@@ -2486,4 +2489,93 @@ async fn summarize_usage_provider_performance_computes_tps_and_top_provider_time
     assert_eq!(without_timeline.summary, summary.summary);
     assert_eq!(without_timeline.providers, summary.providers);
     assert!(without_timeline.timeline.is_empty());
+}
+
+#[tokio::test]
+async fn usage_analytics_filters_by_canonical_provider_and_key_cohort() {
+    let mut renamed_before = sample_usage("req-cohort-before", 1_711_000_000);
+    renamed_before.provider_api_key_id = Some("provider-key-a".to_string());
+    renamed_before.provider_name = "OpenAI-A".to_string();
+    renamed_before.model = "gpt-x".to_string();
+
+    let mut renamed_after = sample_usage("req-cohort-after", 1_711_000_300);
+    renamed_after.provider_api_key_id = Some("provider-key-b".to_string());
+    renamed_after.provider_name = "OpenAI-Prod".to_string();
+    renamed_after.model = "gpt-x".to_string();
+
+    let mut other_provider = sample_usage("req-cohort-other", 1_711_000_600);
+    other_provider.provider_id = Some("provider-2".to_string());
+    other_provider.provider_api_key_id = Some("provider-key-c".to_string());
+
+    let repository =
+        InMemoryUsageReadRepository::seed(vec![renamed_before, renamed_after, other_provider]);
+    let time_series = repository
+        .summarize_usage_time_series(&UsageTimeSeriesQuery {
+            created_from_unix_secs: 1_711_000_000,
+            created_until_unix_secs: 1_711_001_000,
+            granularity: UsageTimeSeriesGranularity::Hour,
+            tz_offset_minutes: 0,
+            user_id: None,
+            provider_name: None,
+            provider_id: Some("provider-1".to_string()),
+            provider_api_key_ids: Some(vec!["provider-key-a".to_string()]),
+            model: Some("gpt-x".to_string()),
+        })
+        .await
+        .expect("time series should summarize");
+    assert_eq!(
+        time_series
+            .iter()
+            .map(|item| item.total_requests)
+            .sum::<u64>(),
+        1
+    );
+
+    let performance = repository
+        .summarize_usage_provider_performance(&UsageProviderPerformanceQuery {
+            created_from_unix_secs: 1_711_000_000,
+            created_until_unix_secs: 1_711_001_000,
+            granularity: UsageTimeSeriesGranularity::Hour,
+            tz_offset_minutes: 0,
+            limit: 1,
+            provider_id: Some("provider-1".to_string()),
+            provider_api_key_ids: Some(vec![
+                "provider-key-a".to_string(),
+                "provider-key-b".to_string(),
+            ]),
+            model: Some("gpt-x".to_string()),
+            api_format: None,
+            endpoint_kind: None,
+            is_stream: None,
+            has_format_conversion: None,
+            slow_threshold_ms: 10_000,
+            include_timeline: true,
+        })
+        .await
+        .expect("performance should summarize");
+    assert_eq!(performance.summary.request_count, 2);
+    assert_eq!(performance.providers[0].provider_id, "provider-1");
+}
+
+#[tokio::test]
+async fn provider_api_key_window_summary_filters_by_model() {
+    let mut other_model = sample_usage("req-window-other-model", 1_711_000_100);
+    other_model.model = "gpt-y".to_string();
+    let repository = InMemoryUsageReadRepository::seed(vec![
+        sample_usage("req-window-target", 1_711_000_000),
+        other_model,
+    ]);
+    let summaries = repository
+        .summarize_usage_by_provider_api_key_windows(&[ProviderApiKeyWindowUsageRequest {
+            provider_api_key_id: "provider-key-1".to_string(),
+            window_code: "detail".to_string(),
+            start_unix_secs: 1_711_000_000,
+            end_unix_secs: 1_711_001_000,
+            model: Some("gpt-4.1".to_string()),
+        }])
+        .await
+        .expect("window summary should summarize");
+    assert_eq!(summaries[0].request_count, 1);
+    assert_eq!(summaries[0].model_request_counts.get("gpt-4.1"), Some(&1));
+    assert!(!summaries[0].model_request_counts.contains_key("gpt-y"));
 }

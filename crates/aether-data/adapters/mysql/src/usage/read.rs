@@ -46,6 +46,7 @@ pub struct MysqlUsageReadFilter {
     api_key_id: Option<String>,
     provider_name: Option<String>,
     provider_id: Option<String>,
+    provider_api_key_ids: Option<Vec<String>>,
     model: Option<String>,
     api_format: Option<String>,
     endpoint_kind: Option<String>,
@@ -64,6 +65,7 @@ impl MysqlUsageReadFilter {
             api_key_id: None,
             provider_name: None,
             provider_id: None,
+            provider_api_key_ids: None,
             model: None,
             api_format: None,
             endpoint_kind: None,
@@ -91,6 +93,11 @@ impl MysqlUsageReadFilter {
 
     pub fn with_provider_id(mut self, value: Option<&str>) -> Self {
         self.provider_id = value.map(ToOwned::to_owned);
+        self
+    }
+
+    pub fn with_provider_api_key_ids(mut self, value: Option<&[String]>) -> Self {
+        self.provider_api_key_ids = value.map(|ids| ids.to_vec());
         self
     }
 
@@ -407,6 +414,9 @@ WHERE created_at_unix_ms >= ?
                     .push_bind(to_i64(request.start_unix_secs, "usage.created_at_unix_ms")?)
                     .push(" AND `usage`.created_at_unix_ms < ")
                     .push_bind(to_i64(request.end_unix_secs, "usage.created_at_unix_ms")?)
+                    .push(" AND (? IS NULL OR `usage`.model = ?)")
+                    .push_bind(request.model.as_deref())
+                    .push_bind(request.model.as_deref())
                     .push(")");
             }
         }
@@ -472,6 +482,18 @@ fn build_range_query(
             .push(EFFECTIVE_PROVIDER_ID_EXPR)
             .push(") = ")
             .push_bind(provider_id.to_string());
+    }
+    if let Some(provider_api_key_ids) = filter.provider_api_key_ids.as_ref() {
+        builder
+            .push(" AND (")
+            .push(EFFECTIVE_PROVIDER_API_KEY_ID_EXPR)
+            .push(") IN (");
+        if provider_api_key_ids.is_empty() {
+            builder.push("NULL");
+        } else {
+            push_string_list(&mut builder, provider_api_key_ids);
+        }
+        builder.push(")");
     }
     push_optional_text_filter(&mut builder, "`usage`.model", filter.model.as_deref());
     push_optional_text_filter(

@@ -1224,6 +1224,32 @@ fn push_sqlite_usage_optional_text_filter(
     }
 }
 
+fn push_sqlite_usage_api_key_ids_filter(
+    builder: &mut QueryBuilder<'_, Sqlite>,
+    has_where: &mut bool,
+    ids: Option<&Vec<String>>,
+) {
+    let Some(ids) = ids else {
+        return;
+    };
+    push_sqlite_usage_where(builder, has_where);
+    let ids = ids
+        .iter()
+        .map(|id| id.trim())
+        .filter(|id| !id.is_empty())
+        .collect::<Vec<_>>();
+    if ids.is_empty() {
+        builder.push("1 = 0");
+        return;
+    }
+    builder.push("provider_api_key_id IN (");
+    let mut separated = builder.separated(", ");
+    for id in ids {
+        separated.push_bind(id.to_string());
+    }
+    builder.push(")");
+}
+
 fn push_sqlite_usage_bool_filter(
     builder: &mut QueryBuilder<'_, Sqlite>,
     has_where: &mut bool,
@@ -1258,6 +1284,7 @@ fn push_sqlite_usage_provider_performance_filters(
         "provider_id",
         query.provider_id.as_deref(),
     );
+    push_sqlite_usage_api_key_ids_filter(builder, has_where, query.provider_api_key_ids.as_ref());
     push_sqlite_usage_optional_text_filter(builder, has_where, "model", query.model.as_deref());
     push_sqlite_usage_optional_text_filter(
         builder,
@@ -3806,6 +3833,17 @@ FROM "usage"
         push_sqlite_usage_optional_text_filter(
             &mut builder,
             &mut has_where,
+            "provider_id",
+            query.provider_id.as_deref(),
+        );
+        push_sqlite_usage_api_key_ids_filter(
+            &mut builder,
+            &mut has_where,
+            query.provider_api_key_ids.as_ref(),
+        );
+        push_sqlite_usage_optional_text_filter(
+            &mut builder,
+            &mut has_where,
             "model",
             query.model.as_deref(),
         );
@@ -4116,6 +4154,7 @@ LEFT JOIN usage_settlement_snapshots AS settlement
 WHERE "usage".provider_api_key_id = ?
   AND "usage".created_at_unix_ms >= ?
   AND "usage".created_at_unix_ms < ?
+  AND (? IS NULL OR "usage".model = ?)
   AND LOWER(COALESCE("usage".status, '')) NOT IN ('pending', 'streaming', 'processing')
 "#,
                 total_tokens_expr = SQLITE_USAGE_CANONICAL_TOTAL_TOKENS_EXPR
@@ -4123,6 +4162,8 @@ WHERE "usage".provider_api_key_id = ?
             .bind(provider_api_key_id)
             .bind(request.start_unix_secs as i64)
             .bind(request.end_unix_secs as i64)
+            .bind(request.model.as_deref())
+            .bind(request.model.as_deref())
             .fetch_one(&self.pool)
             .await
             .map_sql_err()?;
@@ -4133,12 +4174,15 @@ FROM "usage"
 WHERE provider_api_key_id = ?
   AND created_at_unix_ms >= ?
   AND created_at_unix_ms < ?
+  AND (? IS NULL OR model = ?)
   AND LOWER(COALESCE(status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
   AND (status_code IS NULL OR status_code < 400)"#,
             )
             .bind(provider_api_key_id)
             .bind(request.start_unix_secs as i64)
             .bind(request.end_unix_secs as i64)
+            .bind(request.model.as_deref())
+            .bind(request.model.as_deref())
             .fetch_all(&self.pool)
             .await
             .map_sql_err()?;
@@ -4162,13 +4206,16 @@ WHERE provider_api_key_id = ?
                 .collect::<Vec<_>>();
             let model_rows = sqlx::query(
                 r#"SELECT COALESCE(NULLIF(TRIM(model), ''), 'unknown') AS dimension, COUNT(*) AS count
-FROM "usage" WHERE provider_api_key_id = ? AND created_at_unix_ms >= ? AND created_at_unix_ms < ?
-  AND LOWER(COALESCE(status, '')) NOT IN ('pending', 'streaming', 'processing')
-GROUP BY dimension"#,
+	FROM "usage" WHERE provider_api_key_id = ? AND created_at_unix_ms >= ? AND created_at_unix_ms < ?
+	  AND (? IS NULL OR model = ?)
+	  AND LOWER(COALESCE(status, '')) NOT IN ('pending', 'streaming', 'processing')
+	GROUP BY dimension"#,
             )
             .bind(provider_api_key_id)
             .bind(request.start_unix_secs as i64)
             .bind(request.end_unix_secs as i64)
+            .bind(request.model.as_deref())
+            .bind(request.model.as_deref())
             .fetch_all(&self.pool)
             .await
             .map_sql_err()?;
@@ -4186,6 +4233,7 @@ GROUP BY dimension"#,
   CASE WHEN status_code IS NOT NULL THEN 'HTTP ' || status_code ELSE 'unknown' END) AS dimension,
 COUNT(*) AS count FROM "usage"
 WHERE provider_api_key_id = ? AND created_at_unix_ms >= ? AND created_at_unix_ms < ?
+  AND (? IS NULL OR model = ?)
   AND LOWER(COALESCE(status, '')) NOT IN ('pending', 'streaming', 'processing')
   AND NOT (LOWER(COALESCE(status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
     AND (status_code IS NULL OR status_code < 400))
@@ -4194,6 +4242,8 @@ GROUP BY dimension"#,
             .bind(provider_api_key_id)
             .bind(request.start_unix_secs as i64)
             .bind(request.end_unix_secs as i64)
+            .bind(request.model.as_deref())
+            .bind(request.model.as_deref())
             .fetch_all(&self.pool)
             .await
             .map_sql_err()?;

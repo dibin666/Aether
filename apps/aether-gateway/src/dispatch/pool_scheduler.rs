@@ -856,19 +856,12 @@ impl<'a> PoolKeyCursor<'a> {
             capability: scope.capability.clone(),
             scope_kind: scope.scope_kind.clone(),
             scope_id: scope.scope_id.clone(),
-            hard_states: if self
-                .effective_pool_config
-                .as_ref()
-                .is_some_and(|config| config.ignore_pool_cooldown)
-            {
-                vec![
-                    PoolMemberHardState::Available,
-                    PoolMemberHardState::Unknown,
-                    PoolMemberHardState::Cooldown,
-                ]
-            } else {
-                vec![PoolMemberHardState::Available, PoolMemberHardState::Unknown]
-            },
+            // Cooldown rows must reach key materialization so a per-key override can be applied.
+            hard_states: vec![
+                PoolMemberHardState::Available,
+                PoolMemberHardState::Unknown,
+                PoolMemberHardState::Cooldown,
+            ],
             probe_statuses: None,
             offset: self.score_next_offset as usize,
             limit: limit as usize,
@@ -908,8 +901,6 @@ impl<'a> PoolKeyCursor<'a> {
         if score_count < limit || self.score_next_offset >= self.score_top_n {
             self.score_phase_exhausted = true;
         }
-
-        self.spawn_score_schedule_interest_recording(&scores);
 
         let key_ids = scores
             .iter()
@@ -963,13 +954,31 @@ impl<'a> PoolKeyCursor<'a> {
                 .entry("pool_score_member_missing")
                 .or_insert(0) += u32::try_from(missing_score_count).unwrap_or(u32::MAX);
         }
+        let hard_state_by_key_id = scores
+            .iter()
+            .map(|score| (score.member_id.as_str(), score.hard_state))
+            .collect::<BTreeMap<_, _>>();
         let seen_count_before = self.seen_key_ids.len();
-        let candidates = self.build_page_eligible_candidates(rows).await;
+        let (candidates, mut skipped) = self
+            .build_score_page_eligible_candidates(rows, &hard_state_by_key_id)
+            .await;
         let distinct_row_count = self.seen_key_ids.len().saturating_sub(seen_count_before);
         self.scanned_keys = self.scanned_keys.saturating_add(materialized_row_count);
         self.budget_scanned_keys = self
             .budget_scanned_keys
             .saturating_add(u32::try_from(distinct_row_count).unwrap_or(u32::MAX));
+        self.record_skipped_candidates(&skipped);
+        self.skipped_candidates.append(&mut skipped);
+        let scheduled_key_ids = candidates
+            .iter()
+            .map(|candidate| candidate.candidate.key_id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let scheduled_scores = scores
+            .iter()
+            .filter(|score| scheduled_key_ids.contains(score.member_id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.spawn_score_schedule_interest_recording(&scheduled_scores);
         Some(candidates)
     }
 
@@ -1290,14 +1299,112 @@ impl<'a> PoolKeyCursor<'a> {
         &mut self,
         rows: Vec<StoredMinimalCandidateSelectionRow>,
     ) -> Vec<EligibleLocalExecutionCandidate> {
+        let Some(ignore_pool_cooldown_by_key_id) =
+            self.load_key_cooldown_overrides_for_rows(&rows).await
+        else {
+            return Vec::new();
+        };
         let mut candidates = Vec::with_capacity(rows.len());
         for row in rows {
+            let ignore_pool_cooldown = self
+                .effective_pool_config
+                .as_ref()
+                .is_some_and(|config| config.ignore_pool_cooldown)
+                || ignore_pool_cooldown_by_key_id
+                    .get(row.key_id.as_str())
+                    .copied()
+                    .unwrap_or(false);
             let candidate = pool_candidate_from_row(&self.group, row);
-            if let Some(candidate) = self.build_eligible_candidate(candidate).await {
+            if let Some(mut candidate) = self.build_eligible_candidate(candidate).await {
+                candidate.ignore_pool_cooldown = ignore_pool_cooldown;
                 candidates.push(candidate);
             }
         }
         candidates
+    }
+
+    async fn build_score_page_eligible_candidates(
+        &mut self,
+        rows: Vec<StoredMinimalCandidateSelectionRow>,
+        hard_state_by_key_id: &BTreeMap<&str, PoolMemberHardState>,
+    ) -> (
+        Vec<EligibleLocalExecutionCandidate>,
+        Vec<SkippedLocalExecutionCandidate>,
+    ) {
+        let Some(ignore_pool_cooldown_by_key_id) =
+            self.load_key_cooldown_overrides_for_rows(&rows).await
+        else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut candidates = Vec::with_capacity(rows.len());
+        let mut skipped = Vec::new();
+        for row in rows {
+            let ignore_pool_cooldown = self
+                .effective_pool_config
+                .as_ref()
+                .is_some_and(|config| config.ignore_pool_cooldown)
+                || ignore_pool_cooldown_by_key_id
+                    .get(row.key_id.as_str())
+                    .copied()
+                    .unwrap_or(false);
+            let candidate = pool_candidate_from_row(&self.group, row);
+            let Some(mut candidate) = self.build_eligible_candidate(candidate).await else {
+                continue;
+            };
+            candidate.ignore_pool_cooldown = ignore_pool_cooldown;
+            if hard_state_by_key_id
+                .get(candidate.candidate.key_id.as_str())
+                .is_some_and(|state| matches!(state, PoolMemberHardState::Cooldown))
+                && !ignore_pool_cooldown
+            {
+                skipped.push(SkippedLocalExecutionCandidate {
+                    candidate: candidate.candidate,
+                    skip_reason: "pool_cooldown",
+                    transport: Some(candidate.transport),
+                    ranking: candidate.ranking,
+                    extra_data: None,
+                });
+                continue;
+            }
+            candidates.push(candidate);
+        }
+        (candidates, skipped)
+    }
+
+    async fn load_key_cooldown_overrides_for_rows(
+        &mut self,
+        rows: &[StoredMinimalCandidateSelectionRow],
+    ) -> Option<BTreeMap<String, bool>> {
+        let key_ids = rows
+            .iter()
+            .map(|row| row.key_id.clone())
+            .collect::<Vec<_>>();
+        match self
+            .state
+            .app()
+            .read_provider_catalog_keys_by_ids(&key_ids)
+            .await
+        {
+            Ok(keys) => Some(
+                keys.into_iter()
+                    .map(|key| (key.id, key.ignore_pool_cooldown))
+                    .collect(),
+            ),
+            Err(err) => {
+                self.record_skip_reason("pool_key_policy_load_failed");
+                warn!(
+                    event_name = "pool_group_key_policy_load_failed",
+                    log_type = "event",
+                    provider_id = %self.group.candidate.provider_id,
+                    endpoint_id = %self.group.candidate.endpoint_id,
+                    model_id = %self.group.candidate.model_id,
+                    key_count = key_ids.len(),
+                    error = ?err,
+                    "gateway pool scheduler failed to read pool key cooldown policies"
+                );
+                None
+            }
+        }
     }
 
     async fn build_eligible_candidate(
@@ -3924,6 +4031,54 @@ mod tests {
             cursor.skip_reason_counts.get("pool_score_member_missing"),
             Some(&128)
         );
+    }
+
+    #[tokio::test]
+    async fn score_cooldown_key_with_account_override_is_materialized_without_state_reset() {
+        let provider_config = Some(json!({
+            "pool_advanced": {
+                "ignore_pool_cooldown": false,
+                "score_top_n": 1,
+                "score_fallback_scan_limit": 1
+            }
+        }));
+        let (provider, endpoint, mut keys, rows) = large_pool_fixture(1, provider_config.clone());
+        keys[0].ignore_pool_cooldown = true;
+        let mut score = sample_provider_key_pool_score("provider-pool", "key-00000", 1_000.0);
+        score.hard_state = PoolMemberHardState::Cooldown;
+        let data_state =
+            GatewayDataState::with_provider_catalog_and_minimal_candidate_selection_for_tests(
+                Arc::new(InMemoryProviderCatalogReadRepository::seed(
+                    vec![provider],
+                    vec![endpoint],
+                    keys,
+                )),
+                Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(rows)),
+            )
+            .with_pool_score_repository_for_tests(Arc::new(
+                InMemoryPoolMemberScoreRepository::seed(vec![score]),
+            ))
+            .with_encryption_key_for_tests(aether_crypto::DEVELOPMENT_ENCRYPTION_KEY);
+        let app = AppState::new()
+            .expect("state should build")
+            .with_data_state_for_tests(data_state);
+        let group = sample_eligible_candidate(
+            "provider-pool",
+            "endpoint-1",
+            "pool-group",
+            10,
+            provider_config,
+        );
+        let mut cursor = PoolKeyCursor::new(PlannerAppState::new(&app), group, None, None, None);
+
+        let candidate = cursor
+            .next_key()
+            .await
+            .expect("account override should make the persisted cooldown key schedulable");
+
+        assert_eq!(candidate.candidate.key_id, "key-00000");
+        assert!(candidate.ignore_pool_cooldown);
+        assert_eq!(cursor.score_next_offset, 1);
     }
 
     #[tokio::test]

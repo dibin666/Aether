@@ -517,6 +517,19 @@ fn usage_matches_time_series_query(
             return false;
         }
     }
+    if let Some(provider_id) = query.provider_id.as_deref() {
+        if item.provider_id.as_deref() != Some(provider_id) {
+            return false;
+        }
+    }
+    if let Some(provider_api_key_ids) = query.provider_api_key_ids.as_deref() {
+        if !provider_api_key_ids
+            .iter()
+            .any(|id| item.provider_api_key_id.as_deref() == Some(id.as_str()))
+        {
+            return false;
+        }
+    }
     if let Some(model) = query.model.as_deref() {
         if item.model != model {
             return false;
@@ -721,6 +734,14 @@ fn usage_matches_provider_performance_query(
     }
     if let Some(provider_id) = query.provider_id.as_deref() {
         if item.provider_id.as_deref() != Some(provider_id) {
+            return None;
+        }
+    }
+    if let Some(provider_api_key_ids) = query.provider_api_key_ids.as_deref() {
+        if !provider_api_key_ids
+            .iter()
+            .any(|id| item.provider_api_key_id.as_deref() == Some(id.as_str()))
+        {
             return None;
         }
     }
@@ -2525,6 +2546,13 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                     continue;
                 }
                 if matches!(item.status.as_str(), "pending" | "streaming" | "processing") {
+                    continue;
+                }
+                if request
+                    .model
+                    .as_deref()
+                    .is_some_and(|model| item.model != model)
+                {
                     continue;
                 }
 

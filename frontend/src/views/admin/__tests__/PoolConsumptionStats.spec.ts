@@ -156,4 +156,77 @@ describe('pool consumption dashboard', () => {
     )
     expect(poolApiMocks.getPoolConsumptionAccountDetail).not.toHaveBeenCalled()
   })
+
+  it('renders account-owned reset windows instead of aggregate charts', async () => {
+    const response = dashboard() as any
+    response.accounts = [{
+      key_id: 'account-1',
+      key_name: 'operator@example.com',
+      auth_type: 'oauth',
+      is_active: true,
+      status: 'available',
+      request_count: 12,
+      successful_request_count: 12,
+      failed_request_count: 0,
+      success_rate: 100,
+      input_tokens: 800,
+      output_tokens: 400,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      total_tokens: 1200,
+      cache_hit_request_count: 0,
+      cache_hit_rate: 0,
+      total_cost_usd: '0.0420',
+      actual_total_cost_usd: '0.0420',
+      avg_first_byte_time_ms: 300,
+      p95_first_byte_time_ms: 500,
+      avg_response_time_ms: 900,
+      p95_response_time_ms: 1200,
+      last_used_at_unix_secs: 1_723_123_456,
+      quota: {
+        supported: true,
+        observed_at_unix_secs: 1_723_123_400,
+        freshness: 'fresh',
+        risk: 'healthy',
+        windows: [{
+          window_identity: '5h-account-1',
+          code: '5h',
+          label: '5 小时',
+          scope: 'account',
+          model: null,
+          unit: 'percent',
+          used_percent: 22,
+          remaining_percent: 78,
+          used_value: null,
+          remaining_value: null,
+          limit_value: null,
+          reset_at_unix_secs: 1_723_130_000,
+          window_minutes: 300,
+          exhausted: false,
+          local_request_count: 12,
+          local_total_tokens: 1200,
+          local_cost_usd: '0.0420',
+          forecast: { confidence: 'medium', sample_count: 3, sample_span_seconds: 1800, actual_used_percent: 22, ideal_used_percent: 18, pace_delta_percent: 4, burn_rate_percent_per_hour: 3, estimated_exhaustion_unix_secs: null, exhausts_before_reset: false, risk: 'healthy', message: null },
+        }],
+      },
+      quota_risk: 'healthy',
+      quota_freshness: 'fresh',
+      minimum_remaining_percent: 78,
+      maximum_burn_rate_percent_per_hour: 3,
+      earliest_exhaustion_unix_secs: null,
+    }]
+    response.pagination.total = 1
+    poolApiMocks.getPoolConsumptionDashboard.mockResolvedValue(response)
+
+    const root = mountPage()
+    await settle()
+
+    expect(root.textContent).toContain('operator@example.com')
+    expect(root.textContent).toContain('额度与重置周期')
+    expect(root.textContent).toContain('5 小时')
+    expect(root.textContent).toContain('重置于')
+    expect(root.textContent).not.toContain('流量趋势')
+    expect(root.textContent).not.toContain('模型分布')
+    expect(root.textContent).not.toContain('额度燃烧带')
+  })
 })

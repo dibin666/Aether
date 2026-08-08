@@ -193,11 +193,23 @@ fn oauth_token_refresh_provider_scan_stamp_key(provider_id: &str) -> String {
     format!("{OAUTH_TOKEN_REFRESH_PROVIDER_STAMP_PREFIX}:{provider_id}")
 }
 
+fn oauth_token_refresh_scan_is_due(
+    last_scan: u64,
+    interval: Duration,
+    now_ts: u64,
+    invocation: OAuthTokenRefreshInvocation,
+) -> bool {
+    matches!(invocation, OAuthTokenRefreshInvocation::Manual)
+        || last_scan == 0
+        || now_ts >= last_scan.saturating_add(interval.as_secs())
+}
+
 async fn oauth_token_refresh_provider_scan_due(
     state: &AppState,
     provider_id: &str,
     provider_config: &OAuthTokenRefreshProviderConfig,
     now_ts: u64,
+    invocation: OAuthTokenRefreshInvocation,
 ) -> bool {
     let Some(interval) = provider_config.scan_interval else {
         return true;
@@ -211,7 +223,7 @@ async fn oauth_token_refresh_provider_scan_due(
         .flatten()
         .and_then(|raw| raw.parse::<u64>().ok())
         .unwrap_or_default();
-    if last_scan > 0 && now_ts < last_scan.saturating_add(interval.as_secs()) {
+    if !oauth_token_refresh_scan_is_due(last_scan, interval, now_ts, invocation) {
         return false;
     }
     let ttl = interval
@@ -288,8 +300,29 @@ enum OAuthTokenRefreshCandidateOutcome {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OAuthTokenRefreshInvocation {
+    Scheduled,
+    Manual,
+}
+
 pub(crate) async fn perform_oauth_token_refresh_once(
     state: &AppState,
+) -> Result<OAuthTokenRefreshRunSummary, GatewayError> {
+    perform_oauth_token_refresh_once_with_invocation(state, OAuthTokenRefreshInvocation::Scheduled)
+        .await
+}
+
+pub(crate) async fn perform_oauth_token_refresh_once_manual(
+    state: &AppState,
+) -> Result<OAuthTokenRefreshRunSummary, GatewayError> {
+    perform_oauth_token_refresh_once_with_invocation(state, OAuthTokenRefreshInvocation::Manual)
+        .await
+}
+
+async fn perform_oauth_token_refresh_once_with_invocation(
+    state: &AppState,
+    invocation: OAuthTokenRefreshInvocation,
 ) -> Result<OAuthTokenRefreshRunSummary, GatewayError> {
     if !state.has_provider_catalog_data_reader() || !state.has_provider_catalog_data_writer() {
         return Ok(OAuthTokenRefreshRunSummary::default());
@@ -334,8 +367,14 @@ pub(crate) async fn perform_oauth_token_refresh_once(
             provider.config.as_ref(),
         );
         if !provider_config.enabled
-            || !oauth_token_refresh_provider_scan_due(state, &provider.id, &provider_config, now_ts)
-                .await
+            || !oauth_token_refresh_provider_scan_due(
+                state,
+                &provider.id,
+                &provider_config,
+                now_ts,
+                invocation,
+            )
+            .await
         {
             continue;
         }
@@ -855,8 +894,9 @@ mod tests {
 
     use super::{
         agent_identity_needs_task_recovery, now_unix_secs, oauth_refresh_candidate,
-        oauth_refresh_due_for_cutoff, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
-        StoredProviderCatalogProvider, TASK_KEY_OAUTH_TOKEN_REFRESH,
+        oauth_refresh_due_for_cutoff, oauth_token_refresh_scan_is_due, OAuthTokenRefreshInvocation,
+        StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
+        TASK_KEY_OAUTH_TOKEN_REFRESH,
     };
 
     fn sample_provider() -> StoredProviderCatalogProvider {
@@ -981,6 +1021,23 @@ mod tests {
         assert!(agent_identity_needs_task_recovery(
             Some("{}"),
             Some("[REFRESH_FAILED] temporary"),
+        ));
+    }
+
+    #[test]
+    fn manual_refresh_bypasses_provider_scan_cadence() {
+        let interval = Duration::from_secs(60 * 60);
+        assert!(!oauth_token_refresh_scan_is_due(
+            10_000,
+            interval,
+            10_001,
+            OAuthTokenRefreshInvocation::Scheduled,
+        ));
+        assert!(oauth_token_refresh_scan_is_due(
+            10_000,
+            interval,
+            10_001,
+            OAuthTokenRefreshInvocation::Manual,
         ));
     }
 

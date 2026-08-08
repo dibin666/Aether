@@ -332,18 +332,35 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
             }
             if let Some(spawned_task_key) = manual_refresh_task_key(task_key) {
                 let app = state.cloned_app();
-                let Some(run_id) = task_runtime::ensure_worker_execution_run(&app, task_key).await
-                else {
-                    return Ok(Some(
-                        (
-                            http::StatusCode::SERVICE_UNAVAILABLE,
-                            Json(json!({
-                                "detail": "后台任务存储不可用，无法运行刷新任务",
-                            })),
-                        )
-                            .into_response(),
-                    ));
-                };
+                let execution =
+                    match task_runtime::try_start_manual_worker_execution(&app, task_key).await {
+                        Ok(Some(execution)) => execution,
+                        Ok(None) => {
+                            return Ok(Some(
+                                (
+                                    http::StatusCode::CONFLICT,
+                                    Json(json!({
+                                        "detail": "已有同类手动刷新任务正在运行",
+                                        "status": "already_running",
+                                        "task_key": task_key,
+                                    })),
+                                )
+                                    .into_response(),
+                            ));
+                        }
+                        Err(error) => {
+                            return Ok(Some(
+                                (
+                                    http::StatusCode::SERVICE_UNAVAILABLE,
+                                    Json(json!({
+                                        "detail": format!("{error:?}"),
+                                    })),
+                                )
+                                    .into_response(),
+                            ));
+                        }
+                    };
+                let run_id = execution.run_id.clone();
 
                 task_runtime::append_event_with_logging(
                     &app,
@@ -359,10 +376,10 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
                 )
                 .await;
 
-                let spawned_run_id = run_id.clone();
+                let response_run_id = run_id.clone();
                 task_runtime::spawn_fire_and_forget(spawned_task_key, async move {
                     let result_payload = if spawned_task_key == TASK_KEY_OAUTH_TOKEN_REFRESH {
-                        crate::maintenance::perform_oauth_token_refresh_once(&app)
+                        crate::maintenance::perform_oauth_token_refresh_once_manual(&app)
                             .await
                             .map(|summary| {
                                 json!({
@@ -399,21 +416,21 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
                             })
                     };
 
-                    match result_payload {
+                    match &result_payload {
                         Ok(payload) => {
                             task_runtime::append_event_with_logging(
                                 &app,
-                                &spawned_run_id,
+                                &run_id,
                                 "manual_refresh_completed",
                                 "manual refresh completed",
-                                Some(payload),
+                                Some(payload.clone()),
                             )
                             .await;
                         }
                         Err(error) => {
                             task_runtime::append_event_with_logging(
                                 &app,
-                                &spawned_run_id,
+                                &run_id,
                                 "manual_refresh_failed",
                                 "manual refresh failed",
                                 Some(json!({
@@ -427,12 +444,15 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
                             .await;
                         }
                     }
+                    let result_payload = result_payload.map_err(|error| format!("{error:?}"));
+                    task_runtime::finish_manual_worker_execution(&app, execution, result_payload)
+                        .await;
                 });
 
                 return Ok(Some(attach_admin_audit_response(
                     Json(json!({
                         "task_key": task_key,
-                        "run_id": run_id,
+                        "run_id": response_run_id,
                         "status": "running",
                     }))
                     .into_response(),

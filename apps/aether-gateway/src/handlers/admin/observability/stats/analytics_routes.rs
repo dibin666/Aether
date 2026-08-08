@@ -249,6 +249,7 @@ pub(super) async fn maybe_build_local_admin_stats_analytics_response(
                 tz_offset_minutes: time_range.tz_offset_minutes,
                 limit,
                 provider_id: query_param_value(request_context.query_string(), "provider_id"),
+                provider_api_key_ids: None,
                 model: query_param_value(request_context.query_string(), "model"),
                 api_format: query_param_value(request_context.query_string(), "api_format"),
                 endpoint_kind: query_param_value(request_context.query_string(), "endpoint_kind"),
@@ -312,6 +313,8 @@ pub(super) async fn maybe_build_local_admin_stats_analytics_response(
                 tz_offset_minutes: time_range.tz_offset_minutes,
                 user_id: filters.user_id,
                 provider_name: filters.provider_name,
+                provider_id: None,
+                provider_api_key_ids: None,
                 model: filters.model,
             })
             .await?;

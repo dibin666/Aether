@@ -308,6 +308,7 @@ impl UsageReadRepository for MysqlUsageReadRepository {
     ) -> Result<StoredUsageProviderPerformance, DataLayerError> {
         let filter = Self::range(query.created_from_unix_secs, query.created_until_unix_secs)
             .with_provider_id(query.provider_id.as_deref())
+            .with_provider_api_key_ids(query.provider_api_key_ids.as_deref())
             .with_model(query.model.as_deref())
             .with_api_format(query.api_format.as_deref())
             .with_endpoint_kind(query.endpoint_kind.as_deref())
@@ -337,6 +338,8 @@ impl UsageReadRepository for MysqlUsageReadRepository {
         let filter = Self::range(query.created_from_unix_secs, query.created_until_unix_secs)
             .with_user_id(query.user_id.as_deref())
             .with_provider_name(query.provider_name.as_deref())
+            .with_provider_id(query.provider_id.as_deref())
+            .with_provider_api_key_ids(query.provider_api_key_ids.as_deref())
             .with_model(query.model.as_deref());
         let repository = self.materialize_read_model(filter).await?;
         repository.summarize_usage_time_series(query).await

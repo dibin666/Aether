@@ -45,7 +45,7 @@ use crate::handlers::shared::provider_pool::{
     AdminProviderPoolSchedulingPreset,
 };
 use crate::orchestration::{
-    local_execution_candidate_metadata_from_report_context,
+    local_execution_candidate_metadata_from_report_context, IGNORE_POOL_COOLDOWN_REPORT_FIELD,
     ROUTING_POOL_POLICY_OVERRIDE_REPORT_FIELD,
 };
 use crate::scheduler::affinity::{
@@ -611,13 +611,11 @@ async fn resolve_pool_feedback_context(
     else {
         return None;
     };
-    let key_ignore_pool_cooldown = state
-        .read_provider_catalog_keys_by_ids(std::slice::from_ref(&plan.key_id))
-        .await
-        .ok()
-        .and_then(|mut keys| keys.drain(..).next())
-        .is_some_and(|key| key.ignore_pool_cooldown);
-    pool_config.ignore_pool_cooldown |= key_ignore_pool_cooldown;
+    pool_config.ignore_pool_cooldown |= context
+        .report_context
+        .and_then(|value| value.get(IGNORE_POOL_COOLDOWN_REPORT_FIELD))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     if let Some(override_policy) = context
         .report_context

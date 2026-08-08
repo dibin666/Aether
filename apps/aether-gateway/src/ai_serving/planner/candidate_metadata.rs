@@ -9,6 +9,7 @@ use crate::ai_serving::planner::candidate_resolution::EligibleLocalExecutionCand
 use crate::ai_serving::transport::append_transport_diagnostics_to_value;
 use crate::ai_serving::GatewayProviderTransportSnapshot;
 use crate::ai_serving::{ConversionMode, ExecutionStrategy};
+use crate::orchestration::IGNORE_POOL_COOLDOWN_REPORT_FIELD;
 
 pub(crate) struct LocalExecutionCandidateMetadataParts<'a> {
     pub(crate) eligible: &'a EligibleLocalExecutionCandidate,
@@ -25,8 +26,12 @@ pub(crate) fn append_ranking_metadata_to_object(
 }
 
 pub(crate) fn build_local_execution_candidate_metadata(
-    parts: LocalExecutionCandidateMetadataParts<'_>,
+    mut parts: LocalExecutionCandidateMetadataParts<'_>,
 ) -> Value {
+    parts.extra_fields.insert(
+        IGNORE_POOL_COOLDOWN_REPORT_FIELD.to_string(),
+        Value::Bool(parts.eligible.ignore_pool_cooldown),
+    );
     build_local_execution_candidate_metadata_for_candidate(
         &parts.eligible.candidate,
         Some(parts.eligible.transport.as_ref()),
@@ -57,11 +62,15 @@ pub(crate) fn build_local_execution_candidate_metadata_for_candidate(
 }
 
 pub(crate) fn build_local_execution_candidate_contract_metadata(
-    parts: LocalExecutionCandidateMetadataParts<'_>,
+    mut parts: LocalExecutionCandidateMetadataParts<'_>,
     execution_strategy: ExecutionStrategy,
     conversion_mode: ConversionMode,
     provider_contract: &str,
 ) -> Value {
+    parts.extra_fields.insert(
+        IGNORE_POOL_COOLDOWN_REPORT_FIELD.to_string(),
+        Value::Bool(parts.eligible.ignore_pool_cooldown),
+    );
     append_ai_execution_contract_fields_to_value(
         build_local_execution_candidate_metadata_for_candidate(
             &parts.eligible.candidate,
@@ -106,15 +115,24 @@ pub(crate) fn build_local_execution_candidate_contract_metadata_for_candidate(
 mod tests {
     use super::{
         build_local_execution_candidate_contract_metadata_for_candidate,
+        build_local_execution_candidate_metadata,
         build_local_execution_candidate_metadata_for_candidate,
+        LocalExecutionCandidateMetadataParts,
+    };
+    use crate::ai_serving::planner::candidate_resolution::{
+        EligibleLocalExecutionCandidate, LocalExecutionCandidateKind,
     };
     use crate::ai_serving::transport::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
         GatewayProviderTransportProvider,
     };
     use crate::ai_serving::{ConversionMode, ExecutionStrategy, GatewayProviderTransportSnapshot};
+    use crate::orchestration::{
+        LocalExecutionCandidateMetadata, IGNORE_POOL_COOLDOWN_REPORT_FIELD,
+    };
     use aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate;
     use serde_json::{json, Value};
+    use std::sync::Arc;
 
     fn sample_candidate() -> SchedulerMinimalCandidateSelectionCandidate {
         SchedulerMinimalCandidateSelectionCandidate {
@@ -324,6 +342,32 @@ mod tests {
         assert_eq!(
             metadata["transport_diagnostics"]["request_pair"]["transport_unsupported_reason"],
             Value::String("transport_auth_unavailable".to_string())
+        );
+    }
+
+    #[test]
+    fn candidate_metadata_carries_cooldown_policy_snapshot() {
+        let eligible = EligibleLocalExecutionCandidate {
+            kind: LocalExecutionCandidateKind::SingleKey,
+            candidate: sample_candidate(),
+            transport: Arc::new(sample_transport()),
+            provider_api_format: "openai:responses".to_string(),
+            orchestration: LocalExecutionCandidateMetadata::default(),
+            ranking: None,
+            ignore_pool_cooldown: true,
+        };
+
+        let metadata =
+            build_local_execution_candidate_metadata(LocalExecutionCandidateMetadataParts {
+                eligible: &eligible,
+                provider_api_format: "openai:responses",
+                client_api_format: "openai:responses",
+                extra_fields: serde_json::Map::new(),
+            });
+
+        assert_eq!(
+            metadata[IGNORE_POOL_COOLDOWN_REPORT_FIELD],
+            Value::Bool(true)
         );
     }
 }

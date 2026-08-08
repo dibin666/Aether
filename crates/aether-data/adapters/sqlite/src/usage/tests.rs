@@ -82,6 +82,7 @@ async fn sqlite_provider_performance_can_skip_timeline() {
         tz_offset_minutes: 0,
         limit: 1,
         provider_id: None,
+        provider_api_key_ids: None,
         model: None,
         api_format: None,
         endpoint_kind: None,
@@ -107,6 +108,61 @@ async fn sqlite_provider_performance_can_skip_timeline() {
     assert_eq!(without_timeline.summary, with_timeline.summary);
     assert_eq!(without_timeline.providers, with_timeline.providers);
     assert!(without_timeline.timeline.is_empty());
+}
+
+#[tokio::test]
+async fn sqlite_provider_key_window_summary_filters_by_model() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("sqlite pool should connect");
+    run_migrations(&pool)
+        .await
+        .expect("sqlite migrations should run");
+    seed_stats_targets(&pool).await;
+    sqlx::query("INSERT INTO global_models (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)")
+        .bind("global-model-2")
+        .bind("model-2")
+        .bind(1_i64)
+        .bind(1_i64)
+        .execute(&pool)
+        .await
+        .expect("second model should seed");
+
+    let writer = SqliteUsageWriteRepository::new(pool.clone());
+    writer
+        .upsert(sample_usage(
+            "sqlite-window-model-1",
+            "completed",
+            "pending",
+            1_000,
+        ))
+        .await
+        .expect("first model usage should upsert");
+    let mut second_model = sample_usage("sqlite-window-model-2", "completed", "pending", 1_001);
+    second_model.model = "model-2".to_string();
+    writer
+        .upsert(second_model)
+        .await
+        .expect("second model usage should upsert");
+
+    let reader = SqliteUsageReadRepository::new(pool);
+    let summaries = reader
+        .summarize_usage_by_provider_api_key_windows(&[ProviderApiKeyWindowUsageRequest {
+            provider_api_key_id: "provider-key-1".to_string(),
+            window_code: "detail".to_string(),
+            start_unix_secs: 0,
+            end_unix_secs: 2_000,
+            model: Some("model-1".to_string()),
+        }])
+        .await
+        .expect("model-scoped provider key window should load");
+
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].request_count, 1);
+    assert_eq!(summaries[0].model_request_counts.get("model-1"), Some(&1));
+    assert!(!summaries[0].model_request_counts.contains_key("model-2"));
 }
 
 #[tokio::test]
@@ -312,6 +368,7 @@ WHERE request_id = 'rebuild-completed';
             window_code: "test".to_string(),
             start_unix_secs: 0,
             end_unix_secs: 3_000,
+            model: None,
         }])
         .await
         .expect("provider key window should load");

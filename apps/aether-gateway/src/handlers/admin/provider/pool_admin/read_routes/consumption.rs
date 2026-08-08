@@ -168,6 +168,7 @@ async fn build_pool_consumption_periods(
                 window_code: period.key.to_string(),
                 start_unix_secs,
                 end_unix_secs,
+                model: None,
             })
             .collect::<Vec<_>>();
         let aggregates = state

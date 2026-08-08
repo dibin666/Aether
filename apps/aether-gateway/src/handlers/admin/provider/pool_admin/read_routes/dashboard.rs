@@ -260,10 +260,11 @@ async fn build_dashboard_overview(
         "current",
         range.start_unix_secs,
         range.end_unix_secs,
+        query.model.as_deref(),
     )
     .await?;
     let previous = if let Some((start, end)) = range.previous {
-        summarize_key_range(state, &keys, "previous", start, end).await?
+        summarize_key_range(state, &keys, "previous", start, end, query.model.as_deref()).await?
     } else {
         BTreeMap::new()
     };
@@ -331,6 +332,10 @@ async fn build_dashboard_overview(
         .map(DashboardAccount::to_json)
         .collect::<Vec<_>>();
     let burning_band = build_burning_band(&accounts);
+    let selected_provider_api_key_ids = accounts
+        .iter()
+        .map(|account| account.key_id.clone())
+        .collect::<Vec<_>>();
 
     let timeline = state
         .summarize_usage_time_series(&UsageTimeSeriesQuery {
@@ -339,7 +344,9 @@ async fn build_dashboard_overview(
             granularity: range.granularity.usage(),
             tz_offset_minutes: query.tz_offset_minutes,
             user_id: None,
-            provider_name: Some(provider.name.clone()),
+            provider_name: None,
+            provider_id: Some(provider.id.clone()),
+            provider_api_key_ids: Some(selected_provider_api_key_ids.clone()),
             model: query.model.clone(),
         })
         .await?
@@ -381,6 +388,7 @@ async fn build_dashboard_overview(
             tz_offset_minutes: query.tz_offset_minutes,
             limit: 1,
             provider_id: Some(provider.id.clone()),
+            provider_api_key_ids: Some(selected_provider_api_key_ids),
             model: query.model.clone(),
             api_format: None,
             endpoint_kind: None,
@@ -440,7 +448,7 @@ async fn build_dashboard_account_detail(
     state: &AdminAppState<'_>,
     provider_id: &str,
     key_id: &str,
-    _query: &DashboardQuery,
+    query: &DashboardQuery,
     range: &DashboardRange,
 ) -> Result<Response<Body>, GatewayError> {
     let Some(provider) = state
@@ -471,9 +479,10 @@ async fn build_dashboard_account_detail(
         "detail",
         range.start_unix_secs,
         range.end_unix_secs,
+        query.model.as_deref(),
     )
     .await?;
-    let observations = state
+    let mut observations = state
         .app()
         .data
         .list_provider_key_quota_observations(&ProviderKeyQuotaObservationQuery {
@@ -486,6 +495,24 @@ async fn build_dashboard_account_detail(
         .await
         .map_err(|error| GatewayError::Internal(format!("quota history read failed: {error}")))?;
     let now = chrono::Utc::now().timestamp().max(0) as u64;
+    // The current status snapshot is the freshest quota data available for an account,
+    // but it may not have been persisted inside the selected reporting range yet. Keep it
+    // in the detail history so a newly opened account never renders an empty data panel.
+    if let Some(current) = ProviderKeyQuotaObservation::from_status_snapshot(
+        key.provider_id.clone(),
+        key.id.clone(),
+        key.name.clone(),
+        provider.provider_type.clone(),
+        &provider_key_status_snapshot_payload(&key, &provider.provider_type),
+        key.updated_at_unix_secs.unwrap_or(now),
+    ) {
+        if !observations.iter().any(|item| {
+            item.observed_at_unix_secs == current.observed_at_unix_secs
+                && item.bucket_start_unix_secs == current.bucket_start_unix_secs
+        }) {
+            observations.push(current);
+        }
+    }
     let account = build_dashboard_account(
         &key,
         &provider.provider_type,
@@ -530,6 +557,7 @@ async fn summarize_key_range(
     code: &str,
     start_unix_secs: u64,
     end_unix_secs: u64,
+    model: Option<&str>,
 ) -> Result<BTreeMap<String, StoredProviderApiKeyWindowUsageSummary>, GatewayError> {
     if keys.is_empty() {
         return Ok(BTreeMap::new());
@@ -541,6 +569,7 @@ async fn summarize_key_range(
             window_code: code.to_string(),
             start_unix_secs,
             end_unix_secs,
+            model: model.map(ToOwned::to_owned),
         })
         .collect::<Vec<_>>();
     Ok(state

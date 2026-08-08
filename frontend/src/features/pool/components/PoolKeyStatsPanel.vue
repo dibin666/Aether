@@ -1,30 +1,32 @@
 <template>
   <div
-    v-if="cycle && cycleMetricRows.length > 0"
+    v-if="cycle && cycleGroupsWithRows.length > 0"
     :class="cycleContainerClass"
     :data-testid="variant === 'desktop' ? 'pool-stats-cycle-text' : 'pool-mobile-stats-cycle-text'"
   >
     <div
-      v-for="row in cycleMetricRows"
-      :key="`${row.key}-${variant}-cycle-row`"
-      class="flex items-baseline justify-between gap-3"
-      :title="`${row.label} ${row.valueText}`"
+      v-for="group in cycleGroupsWithRows"
+      :key="`${group.code}-${variant}-cycle-group`"
+      class="space-y-1 border-b border-border/40 pb-1 last:border-b-0 last:pb-0"
     >
-      <span class="shrink-0 text-muted-foreground">
-        {{ row.label }}
-      </span>
-      <span
-        class="grid w-[112px] shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-baseline gap-x-1 font-medium text-foreground"
-        :data-testid="variant === 'desktop' ? `pool-stats-cycle-${row.key}` : undefined"
+      <div class="flex items-center justify-between gap-2 text-[10px] font-semibold text-foreground">
+        <span>{{ group.label }}重置周期</span>
+        <span class="text-[9px] font-normal text-muted-foreground">本账号</span>
+      </div>
+      <div
+        v-for="row in group.metrics"
+        :key="`${group.code}-${row.key}-${variant}-cycle-row`"
+        class="grid grid-cols-[64px_minmax(0,1fr)] items-baseline gap-2"
+        :title="`${group.label}重置周期 · ${row.label} ${row.value}`"
       >
-        <span class="min-w-0 truncate text-right">{{ row.hasComparison ? row.smallValue : '-' }}</span>
+        <span class="truncate text-muted-foreground">{{ row.label }}</span>
         <span
-          class="w-1.5 text-center text-muted-foreground/60"
-          data-cycle-stat-part="divider"
-          aria-hidden="true"
-        >/</span>
-        <span class="min-w-0 truncate text-left">{{ row.largeValue }}</span>
-      </span>
+          class="min-w-0 truncate text-right font-medium tabular-nums text-foreground"
+          :data-testid="variant === 'desktop' ? `pool-stats-cycle-${group.code}-${row.key}` : undefined"
+        >
+          {{ row.value }}
+        </span>
+      </div>
     </div>
   </div>
 
@@ -106,28 +108,13 @@ function metricForGroup(
   return group?.metrics.find(metric => metric.key === key) ?? missingMetric(key)
 }
 
-const cycleMetricRows = computed(() => {
-  const smallGroup = props.cycleGroups.length > 1 ? props.cycleGroups[0] : undefined
-  const largeGroup = props.cycleGroups.at(-1)
-  if (!largeGroup) return []
-
-  return CYCLE_METRIC_KEYS.map((key) => {
-    const smallMetric = metricForGroup(smallGroup, key)
-    const largeMetric = metricForGroup(largeGroup, key)
-    const hasComparison = Boolean(smallGroup)
-    return {
-      key,
-      label: CYCLE_METRIC_LABELS[key],
-      hasComparison,
-      smallValue: smallMetric.value,
-      largeValue: largeMetric.value,
-      valueText: hasComparison ? `${smallMetric.value}/${largeMetric.value}` : largeMetric.value,
-    }
-  })
-})
+const cycleGroupsWithRows = computed(() => props.cycleGroups.map(group => ({
+  ...group,
+  metrics: CYCLE_METRIC_KEYS.map(key => metricForGroup(group, key)),
+})))
 
 const cycleContainerClass = computed(() => [
-  'w-full space-y-1 text-[11px] leading-4 tabular-nums',
+  'w-full space-y-2 text-[11px] leading-4 tabular-nums',
   props.variant === 'desktop' ? 'mx-auto max-w-[168px]' : 'py-0.5',
 ].filter(Boolean).join(' '))
 

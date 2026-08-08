@@ -860,31 +860,30 @@ function waitForPoll(delayMs: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, delayMs))
 }
 
-async function waitForManualRun(runId: string, startedAt: number): Promise<AsyncTaskEvent | null> {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    await waitForPoll(attempt === 0 ? 350 : 800)
+async function waitForManualRun(runId: string): Promise<AsyncTaskEvent | null> {
+  let firstPoll = true
+  while (true) {
+    await waitForPoll(firstPoll ? 350 : 800)
+    firstPoll = false
     if (!isOpen.value) return null
     const events = await asyncTasksApi.getEvents(runId, { page_size: 30, order: 'desc' })
     const terminal = events.items.find(event => {
       if (!['manual_refresh_completed', 'manual_refresh_failed'].includes(event.event_type)) {
         return false
       }
-      const createdAt = new Date(event.created_at).getTime()
-      return Number.isNaN(createdAt) || createdAt >= startedAt - 5000
+      return true
     })
     if (terminal) return terminal
   }
-  return null
 }
 
 async function handleRunTask(taskKey: RefreshTaskKey) {
   if (runningTaskKey.value) return
   runningTaskKey.value = taskKey
-  const startedAt = Date.now()
   try {
     const response = await asyncTasksApi.trigger(taskKey)
     success(taskKey === OAUTH_TASK_KEY ? 'OAuth 扫描已开始' : '额度扫描已开始')
-    const terminal = await waitForManualRun(response.run_id, startedAt)
+    const terminal = await waitForManualRun(response.run_id)
     if (terminal?.event_type === 'manual_refresh_failed') {
       const payload = payloadRecord(terminal.payload)
       showError(payloadString(payload, 'error') || '刷新任务运行失败')

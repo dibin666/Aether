@@ -137,6 +137,7 @@ fn admin_pool_codex_cycle_usage_request(
         window_code,
         start_unix_secs,
         end_unix_secs: now_unix_secs,
+        model: None,
     })
 }
 

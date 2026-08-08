@@ -922,6 +922,8 @@ pub struct ProviderApiKeyWindowUsageRequest {
     pub window_code: String,
     pub start_unix_secs: u64,
     pub end_unix_secs: u64,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -1307,6 +1309,8 @@ pub struct UsageProviderPerformanceQuery {
     pub tz_offset_minutes: i32,
     pub limit: usize,
     pub provider_id: Option<String>,
+    #[serde(default)]
+    pub provider_api_key_ids: Option<Vec<String>>,
     pub model: Option<String>,
     pub api_format: Option<String>,
     pub endpoint_kind: Option<String>,
@@ -1411,6 +1415,10 @@ pub struct UsageTimeSeriesQuery {
     pub tz_offset_minutes: i32,
     pub user_id: Option<String>,
     pub provider_name: Option<String>,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub provider_api_key_ids: Option<Vec<String>>,
     pub model: Option<String>,
 }
 

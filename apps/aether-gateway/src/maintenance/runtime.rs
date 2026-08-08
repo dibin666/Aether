@@ -77,7 +77,8 @@ pub(crate) use fixed_provider_reconciliation::{
     perform_fixed_provider_reconciliation_once, spawn_fixed_provider_reconciliation_task,
 };
 pub(crate) use oauth_token_refresh::{
-    oauth_token_refresh_interval, perform_oauth_token_refresh_once, OAuthTokenRefreshRunSummary,
+    oauth_token_refresh_interval, perform_oauth_token_refresh_once,
+    perform_oauth_token_refresh_once_manual, OAuthTokenRefreshRunSummary,
 };
 use pending_cleanup::*;
 pub(crate) use pool_quota_probe::{

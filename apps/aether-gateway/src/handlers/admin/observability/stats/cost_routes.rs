@@ -78,6 +78,8 @@ pub(super) async fn maybe_build_local_admin_stats_cost_response(
                 tz_offset_minutes: time_range.tz_offset_minutes,
                 user_id: None,
                 provider_name: None,
+                provider_id: None,
+                provider_api_key_ids: None,
                 model: None,
             })
             .await?;

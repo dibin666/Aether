@@ -1208,6 +1208,12 @@ fn push_usage_provider_performance_filters(
         r#""usage".provider_id"#,
         &query.provider_id,
     );
+    if let Some(provider_api_key_ids) = query.provider_api_key_ids.as_ref() {
+        builder
+            .push(r#" AND "usage".provider_api_key_id = ANY("#)
+            .push_bind(provider_api_key_ids.clone())
+            .push(")");
+    }
     push_usage_provider_performance_text_filter(builder, r#""usage".model"#, &query.model);
     push_usage_provider_performance_text_filter(
         builder,
@@ -6761,6 +6767,21 @@ FROM usage_billing_facts AS "usage"
                 .push("\"usage\".provider_name = ")
                 .push_bind(provider_name.to_string());
         }
+        if let Some(provider_id) = query.provider_id.as_deref() {
+            builder.push(if has_where { " AND " } else { " WHERE " });
+            has_where = true;
+            builder
+                .push("\"usage\".provider_id = ")
+                .push_bind(provider_id.to_string());
+        }
+        if let Some(provider_api_key_ids) = query.provider_api_key_ids.as_ref() {
+            builder.push(if has_where { " AND " } else { " WHERE " });
+            has_where = true;
+            builder
+                .push(r#""usage".provider_api_key_id = ANY("#)
+                .push_bind(provider_api_key_ids.clone())
+                .push(")");
+        }
         if let Some(model) = query.model.as_deref() {
             builder.push(if has_where { " AND " } else { " WHERE " });
             builder
@@ -6913,7 +6934,11 @@ WHERE is_complete IS TRUE
         &self,
         query: &UsageTimeSeriesQuery,
     ) -> Result<Vec<StoredUsageTimeSeriesBucket>, DataLayerError> {
-        if query.provider_name.is_some() || query.model.is_some() {
+        if query.provider_name.is_some()
+            || query.provider_id.is_some()
+            || query.provider_api_key_ids.is_some()
+            || query.model.is_some()
+        {
             return self.summarize_usage_time_series_raw(query, false).await;
         }
 
@@ -6935,6 +6960,8 @@ WHERE is_complete IS TRUE
                                     tz_offset_minutes: 0,
                                     user_id: query.user_id.clone(),
                                     provider_name: None,
+                                    provider_id: None,
+                                    provider_api_key_ids: None,
                                     model: None,
                                 },
                                 false,
@@ -6961,6 +6988,8 @@ WHERE is_complete IS TRUE
                                 tz_offset_minutes: 0,
                                 user_id: query.user_id.clone(),
                                 provider_name: None,
+                                provider_id: None,
+                                provider_api_key_ids: None,
                                 model: None,
                             },
                             true,
@@ -6978,6 +7007,8 @@ WHERE is_complete IS TRUE
                                     tz_offset_minutes: 0,
                                     user_id: query.user_id.clone(),
                                     provider_name: None,
+                                    provider_id: None,
+                                    provider_api_key_ids: None,
                                     model: None,
                                 },
                                 false,
@@ -7008,6 +7039,8 @@ WHERE is_complete IS TRUE
                                     tz_offset_minutes: query.tz_offset_minutes,
                                     user_id: None,
                                     provider_name: None,
+                                    provider_id: None,
+                                    provider_api_key_ids: None,
                                     model: None,
                                 },
                                 false,
@@ -7035,6 +7068,8 @@ WHERE is_complete IS TRUE
                                 tz_offset_minutes: query.tz_offset_minutes,
                                 user_id: None,
                                 provider_name: None,
+                                provider_id: None,
+                                provider_api_key_ids: None,
                                 model: None,
                             },
                             true,
@@ -7052,6 +7087,8 @@ WHERE is_complete IS TRUE
                                     tz_offset_minutes: query.tz_offset_minutes,
                                     user_id: None,
                                     provider_name: None,
+                                    provider_id: None,
+                                    provider_api_key_ids: None,
                                     model: None,
                                 },
                                 false,
@@ -8297,6 +8334,7 @@ ORDER BY "usage".user_id ASC
         let mut window_codes = Vec::with_capacity(requests.len());
         let mut start_unix_secs = Vec::with_capacity(requests.len());
         let mut end_unix_secs = Vec::with_capacity(requests.len());
+        let mut models = Vec::with_capacity(requests.len());
 
         for request in requests {
             let provider_api_key_id = request.provider_api_key_id.trim();
@@ -8329,6 +8367,15 @@ ORDER BY "usage".user_id ASC
                     "provider api key window usage end_unix_secs is out of range".to_string(),
                 )
             })?);
+            models.push(
+                request
+                    .model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_default()
+                    .to_string(),
+            );
         }
 
         let mut rows = sqlx::query(SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL)
@@ -8336,6 +8383,7 @@ ORDER BY "usage".user_id ASC
             .bind(&window_codes)
             .bind(&start_unix_secs)
             .bind(&end_unix_secs)
+            .bind(&models)
             .fetch(&self.pool);
 
         let mut summaries = Vec::new();
@@ -8449,6 +8497,7 @@ ORDER BY "usage".user_id ASC
             .bind(&window_codes)
             .bind(&start_unix_secs)
             .bind(&end_unix_secs)
+            .bind(&models)
             .fetch(&self.pool);
         while let Some(row) = dimension_rows.try_next().await.map_postgres_err()? {
             let ordinality = postgres_window_aggregate_u64(&row, "ordinality")?;

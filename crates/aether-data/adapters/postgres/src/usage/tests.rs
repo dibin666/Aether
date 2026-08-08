@@ -1761,6 +1761,7 @@ async fn live_provider_performance_grouping_sets_matches_separate_queries() {
         tz_offset_minutes: 480,
         limit: 8,
         provider_id: None,
+        provider_api_key_ids: None,
         model: None,
         api_format: None,
         endpoint_kind: None,

@@ -6,6 +6,7 @@ use aether_data_contracts::repository::background_tasks::{
     UpsertBackgroundTaskRun,
 };
 use aether_runtime::task::spawn_named;
+use aether_runtime_state::RuntimeLockLease;
 use aether_task_runtime::{RetryPolicy, TaskDefinition, TaskKind};
 pub(crate) use aether_task_runtime::{TaskSupervisor, TaskSupervisorMetrics};
 use serde_json::{json, Value};
@@ -56,6 +57,13 @@ const RETRY_ONCE: RetryPolicy = RetryPolicy { max_attempts: 1 };
 const RETRY_THREE: RetryPolicy = RetryPolicy { max_attempts: 3 };
 const BACKGROUND_TASK_RUN_ID_MAX_BYTES: usize = 64;
 const WORKER_BOOT_RUN_ID_HASH_HEX_BYTES: usize = 20;
+const MANUAL_WORKER_LOCK_TTL_SECS: u64 = 6 * 60 * 60;
+
+#[derive(Debug)]
+pub(crate) struct ManualWorkerExecution {
+    pub(crate) run_id: String,
+    lock: RuntimeLockLease,
+}
 
 fn compact_background_task_run_id(full_run_id: String) -> String {
     if full_run_id.len() <= BACKGROUND_TASK_RUN_ID_MAX_BYTES {
@@ -117,6 +125,105 @@ pub(crate) async fn ensure_worker_execution_run(app: &AppState, task_key: &str) 
         upsert_run_with_logging(app, run).await?;
     }
     Some(run_id)
+}
+
+pub(crate) async fn try_start_manual_worker_execution(
+    app: &AppState,
+    task_key: &str,
+) -> Result<Option<ManualWorkerExecution>, GatewayError> {
+    if !app.has_background_task_data_writer() {
+        return Err(GatewayError::Internal(
+            "后台任务存储不可用，无法运行刷新任务".to_string(),
+        ));
+    }
+    let definition = task_definition(task_key).ok_or_else(|| {
+        GatewayError::Internal(format!("unsupported background task key: {task_key}"))
+    })?;
+    let run_id = compact_background_task_run_id(format!("manual:{task_key}:{}", Uuid::new_v4()));
+    let lock_key = compact_background_task_run_id(format!("manual-lock:{task_key}"));
+    let lock = match app
+        .runtime_state
+        .lock_try_acquire(
+            &lock_key,
+            run_id.as_str(),
+            std::time::Duration::from_secs(MANUAL_WORKER_LOCK_TTL_SECS),
+        )
+        .await
+    {
+        Ok(Some(lock)) => lock,
+        Ok(None) => return Ok(None),
+        Err(error) => {
+            return Err(GatewayError::Internal(format!(
+                "无法获取手动刷新任务锁：{error}"
+            )))
+        }
+    };
+
+    let now = now_unix_secs();
+    let run = UpsertBackgroundTaskRun {
+        id: run_id.clone(),
+        task_key: task_key.to_string(),
+        kind: background_task_kind(definition.kind),
+        trigger: "manual".to_string(),
+        status: BackgroundTaskStatus::Running,
+        attempt: 1,
+        max_attempts: definition.retry_policy.max_attempts,
+        owner_instance: Some(app.tunnel.local_instance_id().to_string()),
+        progress_percent: 0,
+        progress_message: Some("manual refresh running".to_string()),
+        payload_json: Some(json!({"action": "manual_refresh", "task_key": task_key})),
+        result_json: None,
+        error_message: None,
+        cancel_requested: false,
+        created_by: Some("admin".to_string()),
+        created_at_unix_secs: now,
+        started_at_unix_secs: Some(now),
+        finished_at_unix_secs: None,
+        updated_at_unix_secs: now,
+    };
+    if upsert_run_with_logging(app, run).await.is_none() {
+        let _ = app.runtime_state.lock_release(&lock).await;
+        return Err(GatewayError::Internal(
+            "后台任务存储不可用，无法创建手动刷新运行记录".to_string(),
+        ));
+    }
+    Ok(Some(ManualWorkerExecution { run_id, lock }))
+}
+
+pub(crate) async fn finish_manual_worker_execution(
+    app: &AppState,
+    execution: ManualWorkerExecution,
+    result: Result<Value, String>,
+) {
+    let (status, message, result_json, error_message) = match result {
+        Ok(payload) => (
+            BackgroundTaskStatus::Succeeded,
+            Some("manual refresh completed".to_string()),
+            Some(payload),
+            None,
+        ),
+        Err(error) => (
+            BackgroundTaskStatus::Failed,
+            Some("manual refresh failed".to_string()),
+            None,
+            Some(error),
+        ),
+    };
+    let _ = update_run_status(
+        app,
+        &execution.run_id,
+        status,
+        Some(100),
+        message,
+        result_json,
+        error_message,
+        None,
+        Some(now_unix_secs()),
+    )
+    .await;
+    if let Err(error) = app.runtime_state.lock_release(&execution.lock).await {
+        warn!(error = ?error, run_id = %execution.run_id, "failed to release manual refresh lock");
+    }
 }
 
 fn build_worker_boot_run(
