@@ -16,8 +16,9 @@ use super::{
     DisableAdminRedeemCodeBatchInput, DisableAdminRedeemCodeInput, FailAdminWalletRefundInput,
     GatewayDataState, GatewayProviderTransportSnapshot, LocalVideoTaskReadResponse,
     PaymentGatewayConfigRecord, PaymentGatewayConfigWriteInput, ProcessAdminWalletRefundInput,
-    ProcessPaymentCallbackInput, ProcessPaymentCallbackOutcome, RedeemWalletCodeInput,
-    RedeemWalletCodeOutcome, RequestAuditBundle, RequestCandidateTrace, StoredAdminAuditLogPage,
+    ProcessPaymentCallbackInput, ProcessPaymentCallbackOutcome, ProviderKeyQuotaObservation,
+    ProviderKeyQuotaObservationQuery, RedeemWalletCodeInput, RedeemWalletCodeOutcome,
+    RequestAuditBundle, RequestCandidateTrace, StoredAdminAuditLogPage,
     StoredAdminPaymentCallbackPage, StoredAdminPaymentOrder, StoredAdminPaymentOrderPage,
     StoredAdminRedeemCodeBatch, StoredAdminRedeemCodeBatchPage, StoredAdminRedeemCodePage,
     StoredAdminWalletLedgerPage, StoredAdminWalletListPage, StoredAdminWalletRefund,
@@ -1178,6 +1179,26 @@ impl GatewayDataState {
         match &self.provider_quota_reader {
             Some(repository) => repository.find_by_provider_ids(provider_ids).await,
             None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn list_provider_key_quota_observations(
+        &self,
+        query: &ProviderKeyQuotaObservationQuery,
+    ) -> Result<Vec<ProviderKeyQuotaObservation>, DataLayerError> {
+        match &self.provider_quota_reader {
+            Some(repository) => repository.list_key_quota_observations(query).await,
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn upsert_provider_key_quota_observation(
+        &self,
+        observation: &ProviderKeyQuotaObservation,
+    ) -> Result<bool, DataLayerError> {
+        match &self.provider_quota_writer {
+            Some(repository) => repository.upsert_key_quota_observation(observation).await,
+            None => Ok(false),
         }
     }
 

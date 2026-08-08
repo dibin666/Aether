@@ -4,7 +4,8 @@ use std::sync::RwLock;
 use async_trait::async_trait;
 
 use super::{
-    ProviderQuotaReadRepository, ProviderQuotaWriteRepository, StoredProviderQuotaSnapshot,
+    ProviderKeyQuotaObservation, ProviderKeyQuotaObservationQuery, ProviderQuotaReadRepository,
+    ProviderQuotaWriteRepository, StoredProviderQuotaSnapshot,
 };
 use crate::DataLayerError;
 use aether_wallet::{ProviderBillingType, ProviderQuotaSnapshot};
@@ -12,6 +13,7 @@ use aether_wallet::{ProviderBillingType, ProviderQuotaSnapshot};
 #[derive(Debug, Default)]
 pub struct InMemoryProviderQuotaRepository {
     by_provider_id: RwLock<BTreeMap<String, StoredProviderQuotaSnapshot>>,
+    key_observations: RwLock<BTreeMap<(String, u64), ProviderKeyQuotaObservation>>,
 }
 
 impl InMemoryProviderQuotaRepository {
@@ -25,6 +27,7 @@ impl InMemoryProviderQuotaRepository {
         }
         Self {
             by_provider_id: RwLock::new(by_provider_id),
+            key_observations: RwLock::new(BTreeMap::new()),
         }
     }
 }
@@ -53,6 +56,44 @@ impl ProviderQuotaReadRepository for InMemoryProviderQuotaRepository {
             .filter_map(|provider_id| quotas.get(provider_id).cloned())
             .collect())
     }
+
+    async fn list_key_quota_observations(
+        &self,
+        query: &ProviderKeyQuotaObservationQuery,
+    ) -> Result<Vec<ProviderKeyQuotaObservation>, DataLayerError> {
+        let mut observations = self
+            .key_observations
+            .read()
+            .expect("quota repository lock")
+            .values()
+            .filter(|item| item.provider_id == query.provider_id)
+            .filter(|item| {
+                query
+                    .provider_api_key_id
+                    .as_ref()
+                    .is_none_or(|key_id| item.provider_api_key_id == *key_id)
+            })
+            .filter(|item| {
+                query
+                    .observed_from_unix_secs
+                    .is_none_or(|from| item.observed_at_unix_secs >= from)
+            })
+            .filter(|item| {
+                query
+                    .observed_until_unix_secs
+                    .is_none_or(|until| item.observed_at_unix_secs < until)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        observations.sort_by(|left, right| {
+            right
+                .observed_at_unix_secs
+                .cmp(&left.observed_at_unix_secs)
+                .then_with(|| left.provider_api_key_id.cmp(&right.provider_api_key_id))
+        });
+        observations.truncate(query.limit.unwrap_or(usize::MAX));
+        Ok(observations)
+    }
 }
 
 #[async_trait]
@@ -79,13 +120,42 @@ impl ProviderQuotaWriteRepository for InMemoryProviderQuotaRepository {
         }
         Ok(count)
     }
+
+    async fn upsert_key_quota_observation(
+        &self,
+        observation: &ProviderKeyQuotaObservation,
+    ) -> Result<bool, DataLayerError> {
+        if observation.provider_id.trim().is_empty()
+            || observation.provider_api_key_id.trim().is_empty()
+        {
+            return Err(DataLayerError::InvalidInput(
+                "provider key quota observation identity is empty".to_string(),
+            ));
+        }
+        let identity = (
+            observation.provider_api_key_id.clone(),
+            observation.bucket_start_unix_secs,
+        );
+        let mut observations = self
+            .key_observations
+            .write()
+            .expect("quota repository lock");
+        if observations.get(&identity).is_some_and(|current| {
+            current.observed_at_unix_secs >= observation.observed_at_unix_secs
+        }) {
+            return Ok(false);
+        }
+        observations.insert(identity, observation.clone());
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::InMemoryProviderQuotaRepository;
     use crate::repository::quota::{
-        ProviderQuotaReadRepository, ProviderQuotaWriteRepository, StoredProviderQuotaSnapshot,
+        ProviderKeyQuotaObservation, ProviderKeyQuotaObservationQuery, ProviderQuotaReadRepository,
+        ProviderQuotaWriteRepository, StoredProviderQuotaSnapshot,
     };
 
     fn sample_quota() -> StoredProviderQuotaSnapshot {
@@ -147,5 +217,48 @@ mod tests {
         assert_eq!(stored.len(), 2);
         assert_eq!(stored[0].provider_id, "provider-2");
         assert_eq!(stored[1].provider_id, "provider-1");
+    }
+
+    fn key_observation(observed_at: u64) -> ProviderKeyQuotaObservation {
+        ProviderKeyQuotaObservation {
+            provider_id: "provider-1".into(),
+            provider_api_key_id: "key-1".into(),
+            provider_api_key_name: "Key One".into(),
+            provider_type: "codex".into(),
+            bucket_start_unix_secs: 1_500,
+            observed_at_unix_secs: observed_at,
+            source: "test".into(),
+            plan_type: None,
+            status_code: None,
+            status_label: None,
+            freshness: None,
+            credits_balance: None,
+            credits_unlimited: None,
+            reset_credits_count: 0,
+            windows: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn key_observation_upsert_rejects_out_of_order_writes() {
+        let repository = InMemoryProviderQuotaRepository::default();
+        assert!(repository
+            .upsert_key_quota_observation(&key_observation(1_700))
+            .await
+            .expect("first write should succeed"));
+        assert!(!repository
+            .upsert_key_quota_observation(&key_observation(1_650))
+            .await
+            .expect("old write should be ignored"));
+
+        let stored = repository
+            .list_key_quota_observations(&ProviderKeyQuotaObservationQuery {
+                provider_id: "provider-1".into(),
+                ..ProviderKeyQuotaObservationQuery::default()
+            })
+            .await
+            .expect("history should load");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].observed_at_unix_secs, 1_700);
     }
 }

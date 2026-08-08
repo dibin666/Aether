@@ -62,6 +62,30 @@ fn classifies_admin_pool_provider_key_routes_as_admin_proxy_route() {
     assert_eq!(consumption.route_family.as_deref(), Some("pool_manage"));
     assert_eq!(consumption.route_kind.as_deref(), Some("consumption_stats"));
 
+    let dashboard_uri: Uri =
+        "/api/admin/pool/provider-1/consumption-dashboard?range=last7days&page=1"
+            .parse()
+            .expect("uri should parse");
+    let dashboard = classify_control_route(&http::Method::GET, &dashboard_uri, &headers)
+        .expect("route should classify");
+    assert_eq!(dashboard.route_family.as_deref(), Some("pool_manage"));
+    assert_eq!(
+        dashboard.route_kind.as_deref(),
+        Some("consumption_dashboard")
+    );
+
+    let account_uri: Uri =
+        "/api/admin/pool/provider-1/consumption-dashboard/accounts/key-1?range=last30days"
+            .parse()
+            .expect("uri should parse");
+    let account = classify_control_route(&http::Method::GET, &account_uri, &headers)
+        .expect("route should classify");
+    assert_eq!(account.route_family.as_deref(), Some("pool_manage"));
+    assert_eq!(
+        account.route_kind.as_deref(),
+        Some("consumption_dashboard_account")
+    );
+
     let scores_uri: Uri = "/api/admin/pool/provider-1/scores?api_format=openai:responses"
         .parse()
         .expect("uri should parse");

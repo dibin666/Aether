@@ -1690,6 +1690,7 @@ impl AppState {
         samples.extend(self.fallback_metrics.metric_samples());
         samples.extend(self.process_resource_monitor.metric_samples());
         samples.extend(crate::allocator_metrics::gateway_allocator_metric_samples());
+        samples.extend(crate::data::state::provider_quota_dashboard_metric_samples());
         samples
     }
 

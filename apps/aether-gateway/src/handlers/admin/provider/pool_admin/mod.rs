@@ -20,6 +20,8 @@ mod batch_update;
 pub(crate) mod payloads;
 #[path = "read_routes/consumption.rs"]
 mod read_consumption;
+#[path = "read_routes/dashboard.rs"]
+mod read_dashboard;
 #[path = "read_routes/keys.rs"]
 mod read_keys;
 #[path = "read_routes/overview.rs"]
@@ -40,10 +42,11 @@ pub(crate) use self::batch_shared::{
     AdminPoolBatchImportRequest,
 };
 pub(crate) use self::support::{
-    admin_pool_provider_id_from_consumption_path, admin_pool_provider_id_from_path,
-    admin_pool_provider_id_from_scores_path, parse_admin_pool_key_sort, parse_admin_pool_page,
-    parse_admin_pool_page_size, parse_admin_pool_quick_selectors, parse_admin_pool_search,
-    parse_admin_pool_status_filter, parse_admin_pool_status_value, AdminPoolKeySort,
+    admin_pool_dashboard_path, admin_pool_provider_id_from_consumption_path,
+    admin_pool_provider_id_from_path, admin_pool_provider_id_from_scores_path,
+    parse_admin_pool_key_sort, parse_admin_pool_page, parse_admin_pool_page_size,
+    parse_admin_pool_quick_selectors, parse_admin_pool_search, parse_admin_pool_status_filter,
+    parse_admin_pool_status_value, AdminPoolDashboardPath, AdminPoolKeySort,
     AdminPoolKeySortDirection, AdminPoolKeySortField, AdminPoolResolveSelectionRequest,
     ADMIN_POOL_BANNED_KEY_CLEANUP_EMPTY_MESSAGE,
     ADMIN_POOL_PROVIDER_CATALOG_READER_UNAVAILABLE_DETAIL,
@@ -109,6 +112,15 @@ pub(crate) async fn maybe_build_local_admin_pool_response(
         Some("consumption_stats") => {
             return Ok(Some(
                 read_consumption::build_admin_pool_consumption_stats_response(
+                    state,
+                    request_context,
+                )
+                .await?,
+            ));
+        }
+        Some("consumption_dashboard") | Some("consumption_dashboard_account") => {
+            return Ok(Some(
+                read_dashboard::build_admin_pool_consumption_dashboard_response(
                     state,
                     request_context,
                 )

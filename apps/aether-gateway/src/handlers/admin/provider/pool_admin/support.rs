@@ -202,6 +202,35 @@ pub(crate) fn admin_pool_provider_id_from_consumption_path(request_path: &str) -
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AdminPoolDashboardPath {
+    Overview { provider_id: String },
+    Account { provider_id: String, key_id: String },
+}
+
+pub(crate) fn admin_pool_dashboard_path(request_path: &str) -> Option<AdminPoolDashboardPath> {
+    let raw = request_path
+        .trim_end_matches('/')
+        .strip_prefix("/api/admin/pool/")?;
+    let segments = raw.split('/').collect::<Vec<_>>();
+    match segments.as_slice() {
+        [provider_id, "consumption-dashboard"] if !provider_id.trim().is_empty() => {
+            Some(AdminPoolDashboardPath::Overview {
+                provider_id: provider_id.trim().to_string(),
+            })
+        }
+        [provider_id, "consumption-dashboard", "accounts", key_id]
+            if !provider_id.trim().is_empty() && !key_id.trim().is_empty() =>
+        {
+            Some(AdminPoolDashboardPath::Account {
+                provider_id: provider_id.trim().to_string(),
+                key_id: key_id.trim().to_string(),
+            })
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn is_admin_pool_route(request_context: &AdminRequestContext<'_>) -> bool {
     let normalized_path = request_context.path().trim_end_matches('/');
     let path = if normalized_path.is_empty() {
@@ -225,6 +254,14 @@ pub(crate) fn is_admin_pool_route(request_context: &AdminRequestContext<'_>) -> 
             && path.starts_with("/api/admin/pool/")
             && path.ends_with("/consumption-stats")
             && path.matches('/').count() == 5)
+        || (request_context.method() == http::Method::GET
+            && path.starts_with("/api/admin/pool/")
+            && path.ends_with("/consumption-dashboard")
+            && path.matches('/').count() == 5)
+        || (request_context.method() == http::Method::GET
+            && path.starts_with("/api/admin/pool/")
+            && path.contains("/consumption-dashboard/accounts/")
+            && path.matches('/').count() == 7)
         || (request_context.method() == http::Method::POST
             && path.starts_with("/api/admin/pool/")
             && path.ends_with("/keys/batch-import")

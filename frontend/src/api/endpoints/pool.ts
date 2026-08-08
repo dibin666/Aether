@@ -273,6 +273,209 @@ export interface PoolConsumptionStatsResponse {
   periods: PoolConsumptionPeriod[]
 }
 
+export type PoolConsumptionDashboardRange =
+  | 'today'
+  | 'last3days'
+  | 'last7days'
+  | 'last30days'
+  | 'last90days'
+  | 'all'
+  | 'custom'
+
+export type PoolQuotaRisk = 'healthy' | 'warning' | 'critical' | 'exhausted' | 'unknown'
+export type PoolQuotaFreshness = 'fresh' | 'stale' | 'unknown'
+
+export interface QuotaForecast {
+  confidence: 'high' | 'medium' | 'low'
+  sample_count: number
+  sample_span_seconds: number
+  actual_used_percent: number | null
+  ideal_used_percent: number | null
+  pace_delta_percent: number | null
+  burn_rate_percent_per_hour: number | null
+  estimated_exhaustion_unix_secs: number | null
+  exhausts_before_reset: boolean
+  risk: PoolQuotaRisk
+  message: string | null
+}
+
+export interface QuotaWindowObservation {
+  window_identity: string
+  code: string
+  label: string
+  scope: string | null
+  model: string | null
+  unit: string | null
+  used_percent: number | null
+  remaining_percent: number | null
+  used_value: number | null
+  remaining_value: number | null
+  limit_value: number | null
+  reset_at_unix_secs: number | null
+  window_minutes: number | null
+  exhausted: boolean
+  local_request_count: number
+  local_total_tokens: number
+  local_cost_usd: string
+  forecast?: QuotaForecast
+}
+
+export interface QuotaObservation {
+  supported: boolean
+  observed_at_unix_secs?: number
+  source?: string
+  plan_type?: string | null
+  status_code?: string | null
+  status_label?: string | null
+  freshness: PoolQuotaFreshness
+  risk: PoolQuotaRisk
+  credits_balance?: string | null
+  credits_unlimited?: boolean | null
+  reset_credits_count?: number
+  minimum_remaining_percent?: number | null
+  maximum_burn_rate_percent_per_hour?: number | null
+  earliest_exhaustion_unix_secs?: number | null
+  windows: QuotaWindowObservation[]
+  message?: string
+  legacy_text?: string | null
+}
+
+export interface PoolConsumptionDashboardAccount {
+  key_id: string
+  key_name: string
+  auth_type: string
+  is_active: boolean
+  status: string
+  request_count: number
+  successful_request_count: number
+  failed_request_count: number
+  success_rate: number | null
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens: number
+  cache_read_input_tokens: number
+  total_tokens: number
+  cache_hit_request_count: number
+  cache_hit_rate: number | null
+  total_cost_usd: string
+  actual_total_cost_usd: string
+  avg_first_byte_time_ms: number | null
+  p95_first_byte_time_ms: number | null
+  avg_response_time_ms: number | null
+  p95_response_time_ms: number | null
+  last_used_at_unix_secs: number | null
+  quota: QuotaObservation
+  quota_risk: PoolQuotaRisk
+  quota_freshness: PoolQuotaFreshness
+  minimum_remaining_percent: number | null
+  maximum_burn_rate_percent_per_hour: number | null
+  earliest_exhaustion_unix_secs: number | null
+}
+
+export interface PoolConsumptionDashboardSummary {
+  account_count: number
+  used_account_count: number
+  idle_account_count: number
+  request_count: number
+  successful_request_count: number
+  failed_request_count: number
+  success_rate: number | null
+  input_tokens: number
+  output_tokens: number
+  cache_creation_input_tokens: number
+  cache_read_input_tokens: number
+  total_tokens: number
+  cache_hit_request_count: number
+  cache_hit_rate: number | null
+  total_cost_usd: string
+  actual_total_cost_usd: string
+  p95_first_byte_time_ms: number | null
+  p95_response_time_ms: number | null
+}
+
+export interface PoolConsumptionDashboardResponse {
+  provider_id: string
+  provider_name: string
+  provider_type: string
+  range: {
+    key: string
+    label: string
+    start_date: string | null
+    end_date: string | null
+    start_unix_secs: number
+    end_unix_secs: number
+    granularity: 'hour' | 'day'
+    tz_offset_minutes: number
+  }
+  summary: PoolConsumptionDashboardSummary
+  previous_summary: PoolConsumptionDashboardSummary | null
+  burning_band: {
+    counts: Record<PoolQuotaRisk | 'stale', number>
+    accounts: PoolConsumptionDashboardAccount[]
+  }
+  charts: {
+    timeline: Array<{
+      bucket: string
+      request_count: number
+      input_tokens: number
+      output_tokens: number
+      cache_creation_tokens: number
+      cache_read_tokens: number
+      total_cost_usd: string
+      avg_response_time_ms: number | null
+    }>
+    models: Array<{
+      model: string
+      request_count: number
+      total_tokens: number
+      total_cost_usd: string
+      actual_total_cost_usd: string
+    }>
+    errors: Array<{ error_category: string; count: number }>
+    performance: Record<string, unknown>
+  }
+  accounts: PoolConsumptionDashboardAccount[]
+  pagination: { page: number; page_size: number; total: number; total_pages: number }
+  filters: Record<string, unknown>
+}
+
+export interface PoolConsumptionAccountDetailResponse {
+  provider_id: string
+  provider_name: string
+  provider_type: string
+  range: { key: string; start_unix_secs: number; end_unix_secs: number; granularity: 'hour' | 'day' }
+  account: PoolConsumptionDashboardAccount
+  quota_history: QuotaObservation[]
+  model_distribution: Array<Record<string, unknown>>
+  error_distribution: Array<Record<string, unknown>>
+  performance: {
+    avg_first_byte_time_ms: number | null
+    p95_first_byte_time_ms: number | null
+    avg_response_time_ms: number | null
+    p95_response_time_ms: number | null
+  }
+}
+
+export interface PoolConsumptionDashboardQuery {
+  range?: PoolConsumptionDashboardRange
+  start_date?: string
+  end_date?: string
+  granularity?: 'auto' | 'hour' | 'day'
+  timezone?: string | null
+  tz_offset_minutes?: number
+  page?: number
+  page_size?: number
+  search?: string
+  usage?: 'all' | 'used' | 'idle'
+  active?: 'all' | 'active' | 'inactive' | 'blocked'
+  risk?: PoolQuotaRisk | 'all'
+  freshness?: PoolQuotaFreshness | 'all'
+  result?: 'all' | 'success' | 'failed'
+  model?: string
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
+}
+
 export interface PoolKeyScoreDetail {
   id: string
   capability: string
@@ -602,6 +805,57 @@ export async function getPoolConsumptionStats(
     async () => {
       const response = await client.get<PoolConsumptionStatsResponse>(
         `/api/admin/pool/${providerId}/consumption-stats`,
+        { params: normalizedParams },
+      )
+      return response.data
+    },
+    options.cacheTtlMs ?? 0,
+  )
+}
+
+export async function getPoolConsumptionDashboard(
+  providerId: string,
+  params: PoolConsumptionDashboardQuery = {},
+  options: PoolReadOptions = {},
+): Promise<PoolConsumptionDashboardResponse> {
+  const normalizedParams = Object.fromEntries(
+    Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),
+  )
+  const cacheKey = buildCacheKey(
+    `pool:consumption-dashboard:${providerId}`,
+    normalizedParams,
+  )
+  return cachedRequest(
+    cacheKey,
+    async () => {
+      const response = await client.get<PoolConsumptionDashboardResponse>(
+        `/api/admin/pool/${providerId}/consumption-dashboard`,
+        { params: normalizedParams },
+      )
+      return response.data
+    },
+    options.cacheTtlMs ?? 0,
+  )
+}
+
+export async function getPoolConsumptionAccountDetail(
+  providerId: string,
+  keyId: string,
+  params: PoolConsumptionDashboardQuery = {},
+  options: PoolReadOptions = {},
+): Promise<PoolConsumptionAccountDetailResponse> {
+  const normalizedParams = Object.fromEntries(
+    Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),
+  )
+  const cacheKey = buildCacheKey(
+    `pool:consumption-dashboard:${providerId}:account:${keyId}`,
+    normalizedParams,
+  )
+  return cachedRequest(
+    cacheKey,
+    async () => {
+      const response = await client.get<PoolConsumptionAccountDetailResponse>(
+        `/api/admin/pool/${providerId}/consumption-dashboard/accounts/${keyId}`,
         { params: normalizedParams },
       )
       return response.data

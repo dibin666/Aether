@@ -10,6 +10,7 @@ use super::{
     StoredProviderCatalogKeyStats, StoredProviderCatalogProvider, StoredRequestCandidate,
     UpsertGeminiFileMappingRecord, UpsertRequestCandidateRecord,
 };
+use aether_data_contracts::repository::quota::ProviderKeyQuotaObservation;
 
 impl GatewayDataState {
     pub(crate) async fn list_request_candidates_by_request_id(
@@ -801,8 +802,71 @@ impl GatewayDataState {
         let updated = repository.update_key_status_snapshot(update).await?;
         if updated {
             self.clear_provider_catalog_cache();
+            if update.status_snapshot_patch.get("quota").is_some() {
+                match self
+                    .record_provider_key_quota_observation(
+                        &update.key_id,
+                        update.updated_at_unix_secs,
+                    )
+                    .await
+                {
+                    Ok(true) => super::observe_provider_key_quota_history_write(true),
+                    Ok(false) => {}
+                    Err(error) => {
+                        super::observe_provider_key_quota_history_write(false);
+                        tracing::warn!(
+                            provider_api_key_id = %update.key_id,
+                            error = %error,
+                            "provider key quota history write failed after snapshot update"
+                        );
+                    }
+                }
+            }
         }
         Ok(updated)
+    }
+
+    async fn record_provider_key_quota_observation(
+        &self,
+        key_id: &str,
+        fallback_observed_at_unix_secs: Option<u64>,
+    ) -> Result<bool, DataLayerError> {
+        if self.provider_quota_writer.is_none() {
+            return Ok(false);
+        }
+        let Some(key) = self
+            .list_provider_catalog_keys_by_ids(&[key_id.to_string()])
+            .await?
+            .into_iter()
+            .next()
+        else {
+            return Ok(false);
+        };
+        let Some(status_snapshot) = key.status_snapshot.as_ref() else {
+            return Ok(false);
+        };
+        let Some(provider) = self
+            .list_provider_catalog_providers_by_ids(std::slice::from_ref(&key.provider_id))
+            .await?
+            .into_iter()
+            .next()
+        else {
+            return Ok(false);
+        };
+        let observed_at = fallback_observed_at_unix_secs
+            .unwrap_or_else(|| chrono::Utc::now().timestamp().max(0) as u64);
+        let Some(observation) = ProviderKeyQuotaObservation::from_status_snapshot(
+            provider.id,
+            key.id,
+            key.name,
+            provider.provider_type,
+            status_snapshot,
+            observed_at,
+        ) else {
+            return Ok(false);
+        };
+        self.upsert_provider_key_quota_observation(&observation)
+            .await
     }
 
     pub(crate) async fn compare_and_update_provider_catalog_key_health_state(

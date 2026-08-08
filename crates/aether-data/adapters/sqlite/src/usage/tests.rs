@@ -315,13 +315,17 @@ WHERE request_id = 'rebuild-completed';
         }])
         .await
         .expect("provider key window should load");
-    assert_eq!(provider_window[0].request_count, 2);
-    assert_eq!(provider_window[0].input_tokens, 4);
-    assert_eq!(provider_window[0].output_tokens, 16);
+    assert_eq!(provider_window[0].request_count, 1);
+    assert_eq!(provider_window[0].successful_request_count, 1);
+    assert_eq!(provider_window[0].failed_request_count, 0);
+    assert_eq!(provider_window[0].input_tokens, 2);
+    assert_eq!(provider_window[0].output_tokens, 13);
     assert_eq!(provider_window[0].cache_creation_tokens, 2);
-    assert_eq!(provider_window[0].cache_read_tokens, 5);
-    assert_eq!(provider_window[0].total_cost_usd, 1.0);
-    assert_eq!(provider_window[0].total_tokens, 34);
+    assert_eq!(provider_window[0].cache_read_tokens, 3);
+    assert_eq!(provider_window[0].total_cost_usd, 0.5);
+    assert_eq!(provider_window[0].actual_total_cost_usd, 0.4);
+    assert_eq!(provider_window[0].total_tokens, 29);
+    assert_eq!(provider_window[0].model_request_counts["model-1"], 1);
 
     let audit_summary = reader
         .summarize_usage_audits(&UsageAuditSummaryQuery {

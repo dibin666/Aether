@@ -2512,6 +2512,8 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                 window_code: window_code.to_string(),
                 ..StoredProviderApiKeyWindowUsageSummary::default()
             };
+            let mut first_byte_times = Vec::new();
+            let mut response_times = Vec::new();
 
             for item in usage.values() {
                 if item.provider_api_key_id.as_deref() != Some(provider_api_key_id) {
@@ -2522,8 +2524,33 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                 {
                     continue;
                 }
+                if matches!(item.status.as_str(), "pending" | "streaming" | "processing") {
+                    continue;
+                }
 
                 summary.request_count = summary.request_count.saturating_add(1);
+                if usage_is_success(item) {
+                    summary.successful_request_count =
+                        summary.successful_request_count.saturating_add(1);
+                } else {
+                    summary.failed_request_count = summary.failed_request_count.saturating_add(1);
+                    let category = item
+                        .error_category
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned)
+                        .or_else(|| item.status_code.map(|code| format!("HTTP {code}")))
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let count = summary.error_request_counts.entry(category).or_default();
+                    *count = count.saturating_add(1);
+                }
+                let model = item.model.trim();
+                let count = summary
+                    .model_request_counts
+                    .entry(if model.is_empty() { "unknown" } else { model }.to_string())
+                    .or_default();
+                *count = count.saturating_add(1);
                 summary.input_tokens = summary.input_tokens.saturating_add(item.input_tokens);
                 summary.output_tokens = summary.output_tokens.saturating_add(item.output_tokens);
                 summary.cache_creation_tokens = summary
@@ -2532,9 +2559,37 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                 summary.cache_read_tokens = summary
                     .cache_read_tokens
                     .saturating_add(item.cache_read_input_tokens);
+                if item.cache_read_input_tokens > 0 {
+                    summary.cache_hit_request_count =
+                        summary.cache_hit_request_count.saturating_add(1);
+                }
                 summary.total_tokens = summary.total_tokens.saturating_add(item.total_tokens);
                 summary.total_cost_usd += item.total_cost_usd;
+                summary.actual_total_cost_usd += item.actual_total_cost_usd;
+                if let Some(value) = item.first_byte_time_ms {
+                    first_byte_times.push(value);
+                }
+                if let Some(value) = item.response_time_ms {
+                    response_times.push(value);
+                }
+                summary.last_used_at_unix_secs = Some(
+                    summary
+                        .last_used_at_unix_secs
+                        .unwrap_or_default()
+                        .max(item.created_at_unix_ms),
+                );
             }
+
+            summary.avg_first_byte_time_ms = (!first_byte_times.is_empty()).then(|| {
+                first_byte_times.iter().copied().sum::<u64>() as f64 / first_byte_times.len() as f64
+            });
+            summary.avg_response_time_ms = (!response_times.is_empty()).then(|| {
+                response_times.iter().copied().sum::<u64>() as f64 / response_times.len() as f64
+            });
+            summary.p50_first_byte_time_ms = usage_percentile_cont(&mut first_byte_times, 0.5);
+            summary.p95_first_byte_time_ms = usage_percentile_cont(&mut first_byte_times, 0.95);
+            summary.p50_response_time_ms = usage_percentile_cont(&mut response_times, 0.5);
+            summary.p95_response_time_ms = usage_percentile_cont(&mut response_times, 0.95);
 
             summaries.push(summary);
         }

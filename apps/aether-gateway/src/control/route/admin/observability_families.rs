@@ -242,6 +242,30 @@ pub(super) fn classify_admin_observability_family_route(
         ))
     } else if method == http::Method::GET
         && normalized_path_no_trailing.starts_with("/api/admin/pool/")
+        && normalized_path_no_trailing.contains("/consumption-dashboard/accounts/")
+        && normalized_path_no_trailing.matches('/').count() == 7
+    {
+        Some(classified(
+            "admin_proxy",
+            "pool_manage",
+            "consumption_dashboard_account",
+            "admin:pool",
+            false,
+        ))
+    } else if method == http::Method::GET
+        && normalized_path_no_trailing.starts_with("/api/admin/pool/")
+        && normalized_path_no_trailing.ends_with("/consumption-dashboard")
+        && normalized_path_no_trailing.matches('/').count() == 5
+    {
+        Some(classified(
+            "admin_proxy",
+            "pool_manage",
+            "consumption_dashboard",
+            "admin:pool",
+            false,
+        ))
+    } else if method == http::Method::GET
+        && normalized_path_no_trailing.starts_with("/api/admin/pool/")
         && normalized_path_no_trailing.ends_with("/consumption-stats")
         && normalized_path_no_trailing.matches('/').count() == 5
     {

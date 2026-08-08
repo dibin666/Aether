@@ -1396,6 +1396,40 @@ const SUMMARIZE_USAGE_BY_PROVIDER_API_KEY_IDS_SQL: &str =
 
 const SUMMARIZE_PROVIDER_API_KEY_WINDOW_USAGE_SQL: &str =
     include_str!("queries/summarize_provider_api_key_window_usage_sql.sql");
+const SUMMARIZE_PROVIDER_API_KEY_WINDOW_DIMENSIONS_SQL: &str =
+    include_str!("queries/summarize_provider_api_key_window_dimensions_sql.sql");
+
+fn postgres_window_aggregate_u64(row: &PgRow, field: &str) -> Result<u64, DataLayerError> {
+    row.try_get::<i64, _>(field)
+        .map_postgres_err()?
+        .try_into()
+        .map_err(|_| {
+            DataLayerError::UnexpectedValue(format!("usage.{field} window aggregate is negative"))
+        })
+}
+
+fn postgres_window_optional_u64(row: &PgRow, field: &str) -> Result<Option<u64>, DataLayerError> {
+    row.try_get::<Option<i64>, _>(field)
+        .map_postgres_err()?
+        .map(|value| {
+            value.try_into().map_err(|_| {
+                DataLayerError::UnexpectedValue(format!(
+                    "usage.{field} window aggregate is negative"
+                ))
+            })
+        })
+        .transpose()
+}
+
+fn postgres_window_optional_f64(row: &PgRow, field: &str) -> Result<Option<f64>, DataLayerError> {
+    let value = row.try_get::<Option<f64>, _>(field).map_postgres_err()?;
+    if value.is_some_and(|value| !value.is_finite()) {
+        return Err(DataLayerError::UnexpectedValue(format!(
+            "usage.{field} window aggregate is not finite"
+        )));
+    }
+    Ok(value)
+}
 
 const APPLY_API_KEY_USAGE_DELTA_SQL: &str =
     include_str!("queries/apply_api_key_usage_delta_sql.sql");
@@ -8307,9 +8341,12 @@ ORDER BY "usage".user_id ASC
         let mut summaries = Vec::new();
         while let Some(row) = rows.try_next().await.map_postgres_err()? {
             let total_cost_usd = row.try_get::<f64, _>("total_cost_usd").map_postgres_err()?;
-            if !total_cost_usd.is_finite() {
+            let actual_total_cost_usd = row
+                .try_get::<f64, _>("actual_total_cost_usd")
+                .map_postgres_err()?;
+            if !total_cost_usd.is_finite() || !actual_total_cost_usd.is_finite() {
                 return Err(DataLayerError::UnexpectedValue(
-                    "usage.total_cost_usd window aggregate is not finite".to_string(),
+                    "usage cost window aggregate is not finite".to_string(),
                 ));
             }
 
@@ -8327,6 +8364,11 @@ ORDER BY "usage".user_id ASC
                             "usage.request_count window aggregate is negative".to_string(),
                         )
                     })?,
+                successful_request_count: postgres_window_aggregate_u64(
+                    &row,
+                    "successful_request_count",
+                )?,
+                failed_request_count: postgres_window_aggregate_u64(&row, "failed_request_count")?,
                 input_tokens: row
                     .try_get::<i64, _>("input_tokens")
                     .map_postgres_err()?
@@ -8363,6 +8405,10 @@ ORDER BY "usage".user_id ASC
                             "usage.cache_read_tokens window aggregate is negative".to_string(),
                         )
                     })?,
+                cache_hit_request_count: postgres_window_aggregate_u64(
+                    &row,
+                    "cache_hit_request_count",
+                )?,
                 total_tokens: row
                     .try_get::<i64, _>("total_tokens")
                     .map_postgres_err()?
@@ -8373,7 +8419,70 @@ ORDER BY "usage".user_id ASC
                         )
                     })?,
                 total_cost_usd,
+                actual_total_cost_usd,
+                avg_first_byte_time_ms: postgres_window_optional_f64(
+                    &row,
+                    "avg_first_byte_time_ms",
+                )?,
+                p50_first_byte_time_ms: postgres_window_optional_u64(
+                    &row,
+                    "p50_first_byte_time_ms",
+                )?,
+                p95_first_byte_time_ms: postgres_window_optional_u64(
+                    &row,
+                    "p95_first_byte_time_ms",
+                )?,
+                avg_response_time_ms: postgres_window_optional_f64(&row, "avg_response_time_ms")?,
+                p50_response_time_ms: postgres_window_optional_u64(&row, "p50_response_time_ms")?,
+                p95_response_time_ms: postgres_window_optional_u64(&row, "p95_response_time_ms")?,
+                last_used_at_unix_secs: postgres_window_optional_u64(
+                    &row,
+                    "last_used_at_unix_secs",
+                )?,
+                model_request_counts: BTreeMap::new(),
+                error_request_counts: BTreeMap::new(),
             });
+        }
+
+        let mut dimension_rows = sqlx::query(SUMMARIZE_PROVIDER_API_KEY_WINDOW_DIMENSIONS_SQL)
+            .bind(&provider_api_key_ids)
+            .bind(&window_codes)
+            .bind(&start_unix_secs)
+            .bind(&end_unix_secs)
+            .fetch(&self.pool);
+        while let Some(row) = dimension_rows.try_next().await.map_postgres_err()? {
+            let ordinality = postgres_window_aggregate_u64(&row, "ordinality")?;
+            let Some(summary) = ordinality
+                .checked_sub(1)
+                .and_then(|index| summaries.get_mut(index as usize))
+            else {
+                return Err(DataLayerError::UnexpectedValue(
+                    "provider api key window dimension ordinality is out of range".to_string(),
+                ));
+            };
+            let dimension = row.try_get::<String, _>("dimension").map_postgres_err()?;
+            let request_count = postgres_window_aggregate_u64(&row, "request_count")?;
+            match row
+                .try_get::<String, _>("dimension_kind")
+                .map_postgres_err()?
+                .as_str()
+            {
+                "model" => {
+                    summary
+                        .model_request_counts
+                        .insert(dimension, request_count);
+                }
+                "error" => {
+                    summary
+                        .error_request_counts
+                        .insert(dimension, request_count);
+                }
+                value => {
+                    return Err(DataLayerError::UnexpectedValue(format!(
+                        "unknown provider api key window dimension kind {value}"
+                    )));
+                }
+            }
         }
 
         Ok(summaries)

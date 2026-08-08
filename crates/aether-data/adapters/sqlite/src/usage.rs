@@ -1444,6 +1444,24 @@ struct SqliteProviderPerformancePercentiles {
     p99_first_byte_time_ms: Option<u64>,
 }
 
+fn sqlite_usage_percentile_cont(values: &mut [u64], percentile: f64) -> Option<u64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_unstable();
+    let position = percentile.clamp(0.0, 1.0) * (values.len().saturating_sub(1) as f64);
+    let lower = position.floor() as usize;
+    let upper = position.ceil() as usize;
+    if lower == upper {
+        return values.get(lower).copied();
+    }
+    let weight = position - lower as f64;
+    Some(
+        (values[lower] as f64 + (values[upper] as f64 - values[lower] as f64) * weight).round()
+            as u64,
+    )
+}
+
 impl SqliteUsageReadRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -3305,6 +3323,14 @@ ORDER BY dates.date ASC
 SELECT
   COUNT(*) AS request_count,
   COALESCE(SUM(CASE
+    WHEN LOWER(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
+      AND ("usage".status_code IS NULL OR "usage".status_code < 400)
+    THEN 1 ELSE 0 END), 0) AS successful_request_count,
+  COALESCE(SUM(CASE
+    WHEN LOWER(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
+      AND ("usage".status_code IS NULL OR "usage".status_code < 400)
+    THEN 0 ELSE 1 END), 0) AS failed_request_count,
+  COALESCE(SUM(CASE
     WHEN LOWER(COALESCE(status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
          AND (status_code IS NULL OR status_code < 400)
     THEN 1 ELSE 0 END), 0) AS success_count,
@@ -4008,6 +4034,14 @@ WHERE "usage".provider_api_key_id IN (
                 r#"
 SELECT
   COUNT(*) AS request_count,
+  COALESCE(SUM(CASE
+    WHEN LOWER(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
+      AND ("usage".status_code IS NULL OR "usage".status_code < 400)
+    THEN 1 ELSE 0 END), 0) AS successful_request_count,
+  COALESCE(SUM(CASE
+    WHEN LOWER(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
+      AND ("usage".status_code IS NULL OR "usage".status_code < 400)
+    THEN 0 ELSE 1 END), 0) AS failed_request_count,
   COALESCE(
     SUM(MAX(COALESCE(settlement.billing_input_tokens, "usage".input_tokens, 0), 0)),
     0
@@ -4047,6 +4081,9 @@ SELECT
     ), 0)),
     0
   ) AS cache_read_tokens,
+  COALESCE(SUM(CASE
+    WHEN COALESCE(settlement.billing_cache_read_tokens, "usage".cache_read_input_tokens, 0) > 0
+    THEN 1 ELSE 0 END), 0) AS cache_hit_request_count,
   COALESCE(SUM({total_tokens_expr}), 0) AS total_tokens,
   COALESCE(
     SUM(COALESCE(
@@ -4055,13 +4092,31 @@ SELECT
       0
     )),
     0
-  ) AS total_cost_usd
+  ) AS total_cost_usd,
+  COALESCE(
+    SUM(COALESCE(
+      CAST(settlement.billing_actual_total_cost_usd AS REAL),
+      CAST("usage".actual_total_cost_usd AS REAL),
+      0
+    )),
+    0
+  ) AS actual_total_cost_usd,
+  AVG(CASE
+    WHEN LOWER(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
+      AND ("usage".status_code IS NULL OR "usage".status_code < 400)
+    THEN "usage".first_byte_time_ms END) AS avg_first_byte_time_ms,
+  AVG(CASE
+    WHEN LOWER(COALESCE("usage".status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
+      AND ("usage".status_code IS NULL OR "usage".status_code < 400)
+    THEN "usage".response_time_ms END) AS avg_response_time_ms,
+  MAX("usage".created_at_unix_ms) AS last_used_at_unix_secs
 FROM "usage"
 LEFT JOIN usage_settlement_snapshots AS settlement
   ON settlement.request_id = "usage".request_id
 WHERE "usage".provider_api_key_id = ?
   AND "usage".created_at_unix_ms >= ?
   AND "usage".created_at_unix_ms < ?
+  AND LOWER(COALESCE("usage".status, '')) NOT IN ('pending', 'streaming', 'processing')
 "#,
                 total_tokens_expr = SQLITE_USAGE_CANONICAL_TOTAL_TOKENS_EXPR
             ))
@@ -4072,16 +4127,112 @@ WHERE "usage".provider_api_key_id = ?
             .await
             .map_sql_err()?;
 
+            let timing_rows = sqlx::query(
+                r#"SELECT response_time_ms, first_byte_time_ms
+FROM "usage"
+WHERE provider_api_key_id = ?
+  AND created_at_unix_ms >= ?
+  AND created_at_unix_ms < ?
+  AND LOWER(COALESCE(status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
+  AND (status_code IS NULL OR status_code < 400)"#,
+            )
+            .bind(provider_api_key_id)
+            .bind(request.start_unix_secs as i64)
+            .bind(request.end_unix_secs as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_sql_err()?;
+            let mut response_times = timing_rows
+                .iter()
+                .filter_map(|row| {
+                    row.try_get::<Option<i64>, _>("response_time_ms")
+                        .ok()
+                        .flatten()
+                })
+                .filter_map(|value| u64::try_from(value).ok())
+                .collect::<Vec<_>>();
+            let mut first_byte_times = timing_rows
+                .iter()
+                .filter_map(|row| {
+                    row.try_get::<Option<i64>, _>("first_byte_time_ms")
+                        .ok()
+                        .flatten()
+                })
+                .filter_map(|value| u64::try_from(value).ok())
+                .collect::<Vec<_>>();
+            let model_rows = sqlx::query(
+                r#"SELECT COALESCE(NULLIF(TRIM(model), ''), 'unknown') AS dimension, COUNT(*) AS count
+FROM "usage" WHERE provider_api_key_id = ? AND created_at_unix_ms >= ? AND created_at_unix_ms < ?
+  AND LOWER(COALESCE(status, '')) NOT IN ('pending', 'streaming', 'processing')
+GROUP BY dimension"#,
+            )
+            .bind(provider_api_key_id)
+            .bind(request.start_unix_secs as i64)
+            .bind(request.end_unix_secs as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_sql_err()?;
+            let model_request_counts = model_rows
+                .iter()
+                .map(|row| {
+                    Ok((
+                        row.try_get::<String, _>("dimension").map_sql_err()?,
+                        sqlite_aggregate_u64(row, "count")?,
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>, DataLayerError>>()?;
+            let error_rows = sqlx::query(
+                r#"SELECT COALESCE(NULLIF(TRIM(error_category), ''),
+  CASE WHEN status_code IS NOT NULL THEN 'HTTP ' || status_code ELSE 'unknown' END) AS dimension,
+COUNT(*) AS count FROM "usage"
+WHERE provider_api_key_id = ? AND created_at_unix_ms >= ? AND created_at_unix_ms < ?
+  AND LOWER(COALESCE(status, '')) NOT IN ('pending', 'streaming', 'processing')
+  AND NOT (LOWER(COALESCE(status, '')) IN ('completed', 'success', 'ok', 'billed', 'settled')
+    AND (status_code IS NULL OR status_code < 400))
+GROUP BY dimension"#,
+            )
+            .bind(provider_api_key_id)
+            .bind(request.start_unix_secs as i64)
+            .bind(request.end_unix_secs as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_sql_err()?;
+            let error_request_counts = error_rows
+                .iter()
+                .map(|row| {
+                    Ok((
+                        row.try_get::<String, _>("dimension").map_sql_err()?,
+                        sqlite_aggregate_u64(row, "count")?,
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>, DataLayerError>>()?;
+
             summaries.push(StoredProviderApiKeyWindowUsageSummary {
                 provider_api_key_id: provider_api_key_id.to_string(),
                 window_code: window_code.to_string(),
                 request_count: sqlite_aggregate_u64(&row, "request_count")?,
+                successful_request_count: sqlite_aggregate_u64(&row, "successful_request_count")?,
+                failed_request_count: sqlite_aggregate_u64(&row, "failed_request_count")?,
                 input_tokens: sqlite_aggregate_u64(&row, "input_tokens")?,
                 output_tokens: sqlite_aggregate_u64(&row, "output_tokens")?,
                 cache_creation_tokens: sqlite_aggregate_u64(&row, "cache_creation_tokens")?,
                 cache_read_tokens: sqlite_aggregate_u64(&row, "cache_read_tokens")?,
+                cache_hit_request_count: sqlite_aggregate_u64(&row, "cache_hit_request_count")?,
                 total_tokens: sqlite_aggregate_u64(&row, "total_tokens")?,
                 total_cost_usd: sqlite_real(&row, "total_cost_usd")?,
+                actual_total_cost_usd: sqlite_real(&row, "actual_total_cost_usd")?,
+                avg_first_byte_time_ms: sqlite_optional_real(&row, "avg_first_byte_time_ms")?,
+                p50_first_byte_time_ms: sqlite_usage_percentile_cont(&mut first_byte_times, 0.5),
+                p95_first_byte_time_ms: sqlite_usage_percentile_cont(&mut first_byte_times, 0.95),
+                avg_response_time_ms: sqlite_optional_real(&row, "avg_response_time_ms")?,
+                p50_response_time_ms: sqlite_usage_percentile_cont(&mut response_times, 0.5),
+                p95_response_time_ms: sqlite_usage_percentile_cont(&mut response_times, 0.95),
+                last_used_at_unix_secs: row
+                    .try_get::<Option<i64>, _>("last_used_at_unix_secs")
+                    .map_sql_err()?
+                    .and_then(|value| u64::try_from(value).ok()),
+                model_request_counts,
+                error_request_counts,
             });
         }
         Ok(summaries)

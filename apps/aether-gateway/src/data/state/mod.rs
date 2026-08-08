@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::RwLock;
@@ -89,6 +90,57 @@ use aether_data_contracts::repository::background_tasks::{
     BackgroundTaskWriteRepository, StoredBackgroundTaskEvent, StoredBackgroundTaskRun,
     StoredBackgroundTaskRunPage, UpsertBackgroundTaskEvent, UpsertBackgroundTaskRun,
 };
+use aether_runtime::{MetricKind, MetricSample};
+
+static PROVIDER_KEY_QUOTA_HISTORY_WRITES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static PROVIDER_KEY_QUOTA_HISTORY_WRITE_FAILURES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static POOL_CONSUMPTION_DASHBOARD_QUERIES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static POOL_CONSUMPTION_DASHBOARD_QUERY_MILLIS_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn observe_provider_key_quota_history_write(success: bool) {
+    if success {
+        PROVIDER_KEY_QUOTA_HISTORY_WRITES_TOTAL.fetch_add(1, Ordering::Relaxed);
+    } else {
+        PROVIDER_KEY_QUOTA_HISTORY_WRITE_FAILURES_TOTAL.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub(crate) fn observe_pool_consumption_dashboard_query(elapsed: std::time::Duration) {
+    POOL_CONSUMPTION_DASHBOARD_QUERIES_TOTAL.fetch_add(1, Ordering::Relaxed);
+    POOL_CONSUMPTION_DASHBOARD_QUERY_MILLIS_TOTAL.fetch_add(
+        elapsed.as_millis().min(u64::MAX as u128) as u64,
+        Ordering::Relaxed,
+    );
+}
+
+pub(crate) fn provider_quota_dashboard_metric_samples() -> Vec<MetricSample> {
+    vec![
+        MetricSample::new(
+            "provider_key_quota_history_writes_total",
+            "Provider key quota history observations persisted",
+            MetricKind::Counter,
+            PROVIDER_KEY_QUOTA_HISTORY_WRITES_TOTAL.load(Ordering::Relaxed),
+        ),
+        MetricSample::new(
+            "provider_key_quota_history_write_failures_total",
+            "Provider key quota history writes that failed after snapshot persistence",
+            MetricKind::Counter,
+            PROVIDER_KEY_QUOTA_HISTORY_WRITE_FAILURES_TOTAL.load(Ordering::Relaxed),
+        ),
+        MetricSample::new(
+            "pool_consumption_dashboard_queries_total",
+            "Pool consumption dashboard overview and detail queries",
+            MetricKind::Counter,
+            POOL_CONSUMPTION_DASHBOARD_QUERIES_TOTAL.load(Ordering::Relaxed),
+        ),
+        MetricSample::new(
+            "pool_consumption_dashboard_query_millis_total",
+            "Cumulative pool consumption dashboard query time in milliseconds",
+            MetricKind::Counter,
+            POOL_CONSUMPTION_DASHBOARD_QUERY_MILLIS_TOTAL.load(Ordering::Relaxed),
+        ),
+    ]
+}
 use aether_data_contracts::repository::billing::{
     AdminBillingCollectorRecord, AdminBillingCollectorWriteInput, AdminBillingMutationOutcome,
     AdminBillingPresetApplyResult, AdminBillingRuleRecord, AdminBillingRuleWriteInput,
@@ -130,7 +182,8 @@ use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogKeyStats, StoredProviderCatalogProvider,
 };
 use aether_data_contracts::repository::quota::{
-    ProviderQuotaReadRepository, ProviderQuotaWriteRepository, StoredProviderQuotaSnapshot,
+    ProviderKeyQuotaObservation, ProviderKeyQuotaObservationQuery, ProviderQuotaReadRepository,
+    ProviderQuotaWriteRepository, StoredProviderQuotaSnapshot,
 };
 use aether_data_contracts::repository::routing_profiles::{
     RoutingGroupReadRepository, RoutingGroupWriteRepository,
