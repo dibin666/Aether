@@ -838,9 +838,25 @@ fn now_unix_secs() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use aether_crypto::{
+        decrypt_python_fernet_ciphertext, encrypt_python_fernet_plaintext,
+        DEVELOPMENT_ENCRYPTION_KEY,
+    };
+    use aether_data::repository::background_tasks::InMemoryBackgroundTaskRepository;
+    use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
+    use aether_data_contracts::repository::background_tasks::BackgroundTaskListQuery;
+    use axum::routing::post;
+    use axum::{Json, Router};
+    use serde_json::json;
+
     use super::{
-        agent_identity_needs_task_recovery, oauth_refresh_candidate, oauth_refresh_due_for_cutoff,
-        StoredProviderCatalogKey, StoredProviderCatalogProvider,
+        agent_identity_needs_task_recovery, now_unix_secs, oauth_refresh_candidate,
+        oauth_refresh_due_for_cutoff, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
+        StoredProviderCatalogProvider, TASK_KEY_OAUTH_TOKEN_REFRESH,
     };
 
     fn sample_provider() -> StoredProviderCatalogProvider {
@@ -966,5 +982,232 @@ mod tests {
             Some("{}"),
             Some("[REFRESH_FAILED] temporary"),
         ));
+    }
+
+    #[tokio::test]
+    async fn scheduled_worker_refreshes_and_persists_oauth_credentials_on_timer() {
+        let refresh_hits = Arc::new(AtomicUsize::new(0));
+        let refresh_hits_for_server = Arc::clone(&refresh_hits);
+        let token_server = Router::new().route(
+            "/oauth/token",
+            post(move || {
+                let hits = Arc::clone(&refresh_hits_for_server);
+                async move {
+                    let refresh_number = hits.fetch_add(1, Ordering::SeqCst) + 1;
+                    Json(json!({
+                        "access_token": format!("scheduled-access-token-{refresh_number}"),
+                        "refresh_token": format!("scheduled-refresh-token-{refresh_number}"),
+                        "expires_in": 1,
+                        "token_type": "Bearer",
+                    }))
+                }
+            }),
+        );
+        let listener = crate::test_support::bind_loopback_listener()
+            .await
+            .expect("token test server should bind");
+        let token_addr = listener
+            .local_addr()
+            .expect("token test server address should resolve");
+        let token_server_handle = tokio::spawn(async move {
+            axum::serve(listener, token_server)
+                .await
+                .expect("token test server should run");
+        });
+
+        let provider = StoredProviderCatalogProvider::new(
+            "provider-scheduled-oauth".to_string(),
+            "Scheduled OAuth".to_string(),
+            Some("https://chatgpt.com/backend-api/codex".to_string()),
+            "codex".to_string(),
+        )
+        .expect("provider should build");
+        let endpoint = StoredProviderCatalogEndpoint::new(
+            "endpoint-scheduled-oauth".to_string(),
+            provider.id.clone(),
+            "openai:responses".to_string(),
+            None,
+            None,
+            true,
+        )
+        .expect("endpoint should build")
+        .with_transport_fields(
+            "https://chatgpt.com/backend-api/codex".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("endpoint transport should build");
+
+        let initial_expiry = now_unix_secs().saturating_add(1);
+        let encrypted_api_key = encrypt_python_fernet_plaintext(
+            DEVELOPMENT_ENCRYPTION_KEY,
+            "scheduled-stale-access-token",
+        )
+        .expect("api key ciphertext should build");
+        let encrypted_auth_config = encrypt_python_fernet_plaintext(
+            DEVELOPMENT_ENCRYPTION_KEY,
+            &json!({
+                "provider_type": "codex",
+                "access_token": "scheduled-stale-access-token",
+                "refresh_token": "scheduled-stale-refresh-token",
+                "expires_at": initial_expiry,
+            })
+            .to_string(),
+        )
+        .expect("auth config ciphertext should build");
+        let mut key = StoredProviderCatalogKey::new(
+            "key-scheduled-oauth".to_string(),
+            provider.id.clone(),
+            "Scheduled OAuth Account".to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build")
+        .with_transport_fields(
+            Some(json!(["openai:responses"])),
+            encrypted_api_key,
+            Some(encrypted_auth_config),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("key transport should build");
+        key.expires_at_unix_secs = Some(initial_expiry);
+
+        let provider_catalog_repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+            vec![provider],
+            vec![endpoint],
+            vec![key],
+        ));
+        let background_task_repository = Arc::new(InMemoryBackgroundTaskRepository::default());
+        let data = crate::data::GatewayDataState::with_provider_catalog_repository_for_tests(
+            provider_catalog_repository,
+        )
+        .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY)
+        .with_background_task_repository_for_tests(background_task_repository)
+        .with_system_config_values_for_tests([
+            ("enable_oauth_token_refresh".to_string(), json!(true)),
+            (
+                "oauth_token_refresh_interval_seconds".to_string(),
+                json!(15),
+            ),
+            (
+                "oauth_token_refresh_lookahead_seconds".to_string(),
+                json!(120),
+            ),
+        ]);
+        let oauth_refresh =
+            crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(vec![
+                Arc::new(
+                    crate::provider_transport::oauth_refresh::GenericOAuthRefreshAdapter::default()
+                        .with_token_url_for_tests(
+                            "codex",
+                            format!("http://{token_addr}/oauth/token"),
+                        ),
+                ),
+            ]);
+        let state = crate::AppState::new()
+            .expect("gateway state should build")
+            .with_data_state_for_tests(data)
+            .with_oauth_refresh_coordinator_for_tests(oauth_refresh);
+        let observer = state.clone();
+
+        let worker = crate::maintenance::spawn_oauth_token_refresh_worker(state)
+            .expect("scheduled OAuth worker should start");
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while refresh_hits.load(Ordering::SeqCst) < 1 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("worker should perform its startup scan automatically");
+
+        let first_key = observer
+            .list_provider_catalog_keys_by_ids(&["key-scheduled-oauth".to_string()])
+            .await
+            .expect("refreshed key should read")
+            .into_iter()
+            .next()
+            .expect("refreshed key should exist");
+        let first_access_token = decrypt_python_fernet_ciphertext(
+            DEVELOPMENT_ENCRYPTION_KEY,
+            first_key
+                .encrypted_api_key
+                .as_deref()
+                .expect("refreshed api key ciphertext should exist"),
+        )
+        .expect("refreshed api key should decrypt");
+        assert_eq!(first_access_token, "scheduled-access-token-1");
+
+        tokio::time::timeout(Duration::from_secs(18), async {
+            while refresh_hits.load(Ordering::SeqCst) < 2 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("worker should perform another scan after its configured interval");
+
+        let second_key = observer
+            .list_provider_catalog_keys_by_ids(&["key-scheduled-oauth".to_string()])
+            .await
+            .expect("second refreshed key should read")
+            .into_iter()
+            .next()
+            .expect("second refreshed key should exist");
+        let second_access_token = decrypt_python_fernet_ciphertext(
+            DEVELOPMENT_ENCRYPTION_KEY,
+            second_key
+                .encrypted_api_key
+                .as_deref()
+                .expect("second refreshed api key ciphertext should exist"),
+        )
+        .expect("second refreshed api key should decrypt");
+        assert_eq!(second_access_token, "scheduled-access-token-2");
+
+        let runs = observer
+            .list_background_task_runs(&BackgroundTaskListQuery {
+                task_key_substring: Some(TASK_KEY_OAUTH_TOKEN_REFRESH.to_string()),
+                offset: 0,
+                limit: 10,
+                ..BackgroundTaskListQuery::default()
+            })
+            .await
+            .expect("scheduled task runs should read");
+        let execution_run = runs
+            .items
+            .iter()
+            .find(|run| run.id.starts_with("run:"))
+            .expect("worker execution run should exist");
+        let events = observer
+            .list_background_task_events(&execution_run.id, 0, 100, false)
+            .await
+            .expect("scheduled task events should read");
+        let account_refresh_events = events
+            .iter()
+            .filter(|event| event.event_type == "oauth_refresh_account_refreshed")
+            .count();
+        assert!(
+            account_refresh_events >= 2,
+            "both automatic scans should record account refresh events"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| !event.event_type.starts_with("manual_")),
+            "scheduled test must not rely on the manual trigger path"
+        );
+
+        worker.abort();
+        token_server_handle.abort();
     }
 }

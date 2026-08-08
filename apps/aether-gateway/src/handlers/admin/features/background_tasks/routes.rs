@@ -3,7 +3,8 @@ use crate::handlers::admin::shared::{
     attach_admin_audit_response, query_param_value, unix_secs_to_rfc3339,
 };
 use crate::task_runtime::{
-    self, set_cancel_signal, TASK_KEY_PROVIDER_DELETE, TASK_KEY_PROVIDER_OAUTH_BATCH_IMPORT,
+    self, set_cancel_signal, TASK_KEY_OAUTH_TOKEN_REFRESH, TASK_KEY_POOL_QUOTA_PROBE,
+    TASK_KEY_PROVIDER_DELETE, TASK_KEY_PROVIDER_OAUTH_BATCH_IMPORT,
 };
 use crate::GatewayError;
 use aether_data_contracts::repository::background_tasks::{
@@ -329,6 +330,118 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
                         .into_response(),
                 ));
             }
+            if let Some(spawned_task_key) = manual_refresh_task_key(task_key) {
+                let app = state.cloned_app();
+                let Some(run_id) = task_runtime::ensure_worker_execution_run(&app, task_key).await
+                else {
+                    return Ok(Some(
+                        (
+                            http::StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({
+                                "detail": "后台任务存储不可用，无法运行刷新任务",
+                            })),
+                        )
+                            .into_response(),
+                    ));
+                };
+
+                task_runtime::append_event_with_logging(
+                    &app,
+                    &run_id,
+                    "manual_refresh_started",
+                    "manual refresh requested by admin",
+                    Some(json!({
+                        "action": "manual_refresh",
+                        "status": "running",
+                        "task_key": task_key,
+                        "message": "管理员已手动触发刷新扫描",
+                    })),
+                )
+                .await;
+
+                let spawned_run_id = run_id.clone();
+                task_runtime::spawn_fire_and_forget(spawned_task_key, async move {
+                    let result_payload = if spawned_task_key == TASK_KEY_OAUTH_TOKEN_REFRESH {
+                        crate::maintenance::perform_oauth_token_refresh_once(&app)
+                            .await
+                            .map(|summary| {
+                                json!({
+                                    "action": "manual_refresh",
+                                    "status": "success",
+                                    "task_key": spawned_task_key,
+                                    "message": "OAuth Token 刷新扫描已完成",
+                                    "scanned": summary.scanned,
+                                    "eligible": summary.eligible,
+                                    "resolved": summary.resolved,
+                                    "refreshed": summary.refreshed,
+                                    "skipped": summary.skipped,
+                                    "failed": summary.failed,
+                                })
+                            })
+                    } else {
+                        crate::maintenance::perform_pool_quota_probe_once(&app)
+                            .await
+                            .map(|summary| {
+                                json!({
+                                    "action": "manual_refresh",
+                                    "status": "success",
+                                    "task_key": spawned_task_key,
+                                    "message": "额度刷新扫描已完成",
+                                    "providers_checked": summary.providers_checked,
+                                    "providers_probed": summary.providers_probed,
+                                    "providers_skipped": summary.providers_skipped,
+                                    "providers_busy": summary.providers_busy,
+                                    "selected_keys": summary.selected_keys,
+                                    "succeeded": summary.succeeded,
+                                    "failed": summary.failed,
+                                    "auto_removed": summary.auto_removed,
+                                })
+                            })
+                    };
+
+                    match result_payload {
+                        Ok(payload) => {
+                            task_runtime::append_event_with_logging(
+                                &app,
+                                &spawned_run_id,
+                                "manual_refresh_completed",
+                                "manual refresh completed",
+                                Some(payload),
+                            )
+                            .await;
+                        }
+                        Err(error) => {
+                            task_runtime::append_event_with_logging(
+                                &app,
+                                &spawned_run_id,
+                                "manual_refresh_failed",
+                                "manual refresh failed",
+                                Some(json!({
+                                    "action": "manual_refresh",
+                                    "status": "failed",
+                                    "task_key": spawned_task_key,
+                                    "message": "手动刷新扫描失败",
+                                    "error": format!("{error:?}"),
+                                })),
+                            )
+                            .await;
+                        }
+                    }
+                });
+
+                return Ok(Some(attach_admin_audit_response(
+                    Json(json!({
+                        "task_key": task_key,
+                        "run_id": run_id,
+                        "status": "running",
+                    }))
+                    .into_response(),
+                    "admin_task_triggered",
+                    "trigger_task",
+                    "background_task",
+                    task_key,
+                )));
+            }
             return Ok(Some(
                 (
                     http::StatusCode::BAD_REQUEST,
@@ -343,6 +456,14 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
     }
 
     Ok(None)
+}
+
+fn manual_refresh_task_key(task_key: &str) -> Option<&'static str> {
+    match task_key {
+        TASK_KEY_OAUTH_TOKEN_REFRESH => Some(TASK_KEY_OAUTH_TOKEN_REFRESH),
+        TASK_KEY_POOL_QUOTA_PROBE => Some(TASK_KEY_POOL_QUOTA_PROBE),
+        _ => None,
+    }
 }
 
 fn task_id_from_path(request_path: &str) -> Option<&str> {
@@ -372,4 +493,23 @@ fn parse_json_payload(request_body: Option<&Bytes>) -> Result<serde_json::Value,
     }
     serde_json::from_slice::<serde_json::Value>(body)
         .map_err(|err| GatewayError::Internal(format!("invalid json body: {err}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::manual_refresh_task_key;
+    use crate::task_runtime::{TASK_KEY_OAUTH_TOKEN_REFRESH, TASK_KEY_POOL_QUOTA_PROBE};
+
+    #[test]
+    fn manual_refresh_trigger_supports_oauth_and_quota_workers_only() {
+        assert_eq!(
+            manual_refresh_task_key(TASK_KEY_OAUTH_TOKEN_REFRESH),
+            Some(TASK_KEY_OAUTH_TOKEN_REFRESH)
+        );
+        assert_eq!(
+            manual_refresh_task_key(TASK_KEY_POOL_QUOTA_PROBE),
+            Some(TASK_KEY_POOL_QUOTA_PROBE)
+        );
+        assert_eq!(manual_refresh_task_key("maintenance.database"), None);
+    }
 }
