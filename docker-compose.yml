@@ -88,6 +88,7 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       TZ: Asia/Shanghai
       AETHER_BASE_DIR: /opt/aether
+      AETHER_GATEWAY_STATIC_DIR: /srv/frontend
       AETHER_UPDATE_STRATEGY: docker
       AETHER_DOCKER_UPDATE_COMMAND: ${AETHER_DOCKER_UPDATE_COMMAND:-./update.sh}
       AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY: ${AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY:-multi-node}

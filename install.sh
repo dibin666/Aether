@@ -35,8 +35,6 @@ SERVICE_USER="${SERVICE_USER:-aether}"
 SERVICE_GROUP="${SERVICE_GROUP:-aether}"
 SERVICE_NAME="aether-gateway"
 COMPOSE_RELEASE_BASE_DIR="/opt/aether"
-COMPOSE_RELEASE_CURRENT_DIR="${COMPOSE_RELEASE_BASE_DIR}/current"
-COMPOSE_RELEASE_FRONTEND_DIR="${COMPOSE_RELEASE_CURRENT_DIR}/frontend"
 COMPOSE_RELEASE_LOG_DIR="${COMPOSE_RELEASE_BASE_DIR}/logs"
 COMPOSE_RELEASE_SQLITE_DATABASE_URL="sqlite://${COMPOSE_RELEASE_BASE_DIR}/data/aether.db"
 COMPOSE_LOG_DESTINATION_DEFAULT="stdout"
@@ -1300,7 +1298,7 @@ AETHER_UPDATE_STRATEGY=docker
 AETHER_DOCKER_UPDATE_COMMAND=./update.sh
 AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=single-node
 AETHER_GATEWAY_NODE_ROLE=all
-AETHER_GATEWAY_STATIC_DIR=${COMPOSE_RELEASE_FRONTEND_DIR}
+AETHER_GATEWAY_STATIC_DIR=/srv/frontend
 AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE=rust-authoritative
 AETHER_GATEWAY_AUTO_PREPARE_DATABASE=true
 AETHER_RUNTIME_BACKEND=memory
@@ -1494,6 +1492,7 @@ validate_env_file() {
     local node_role="all"
     local database_driver=""
     local runtime_backend=""
+    local update_strategy=""
     local db_password=""
     local redis_password=""
     local database_url=""
@@ -1536,6 +1535,9 @@ validate_env_file() {
                 ;;
             AETHER_RUNTIME_BACKEND)
                 runtime_backend="$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]')"
+                ;;
+            AETHER_UPDATE_STRATEGY)
+                update_strategy="$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]')"
                 ;;
             AETHER_DATABASE_URL|DATABASE_URL|AETHER_GATEWAY_DATA_POSTGRES_URL)
                 [[ -n "${value}" ]] && database_url="${value}"
@@ -1625,8 +1627,14 @@ validate_env_file() {
         warn "REDIS_PASSWORD still uses the example placeholder"
     fi
 
-    if [[ -n "${static_dir}" && "${static_dir}" != "${INSTALL_ROOT}/current/frontend" ]]; then
-        warn "AETHER_GATEWAY_STATIC_DIR points to ${static_dir}; install script still publishes frontend to ${INSTALL_ROOT}/current/frontend"
+    if [[ -n "${static_dir}" ]]; then
+        local expected_static_dir="${INSTALL_ROOT}/current/frontend"
+        if [[ "${update_strategy}" == "docker" ]]; then
+            expected_static_dir="/srv/frontend"
+        fi
+        if [[ "${static_dir}" != "${expected_static_dir}" ]]; then
+            warn "AETHER_GATEWAY_STATIC_DIR points to ${static_dir}; this deployment expects ${expected_static_dir}"
+        fi
     fi
 }
 

@@ -8,6 +8,7 @@ services:
     environment:
       TZ: Asia/Shanghai
       AETHER_BASE_DIR: /opt/aether
+      AETHER_GATEWAY_STATIC_DIR: /srv/frontend
       AETHER_UPDATE_STRATEGY: docker
       AETHER_DOCKER_UPDATE_COMMAND: ${AETHER_DOCKER_UPDATE_COMMAND:-./update.sh}
       AETHER_DATABASE_DRIVER: sqlite

@@ -79,6 +79,9 @@ jobs:
 
       - name: Install & build
         working-directory: frontend
+        env:
+          AETHER_BUILD_VERSION: ${{ needs.preflight.outputs.version_tag }}
+          AETHER_VERSION: ${{ needs.preflight.outputs.version_tag }}
         run: |
           npm ci
           npm run build
@@ -144,14 +147,15 @@ jobs:
       - name: Build
         env:
           AETHER_VERSION: ${{ needs.preflight.outputs.version_tag }}
+          AETHER_BUILD_VERSION: ${{ needs.preflight.outputs.version_tag }}
           AETHER_BUILD_TYPE: release
           CARGO_TERM_COLOR: always
         shell: bash
         run: |
           if [[ "${{ matrix.use_cross }}" == "true" ]]; then
-            cross build --release --locked -p aether-gateway --target ${{ matrix.target }}
+            cross build --release --locked -p aether-gateway --features jemalloc --target ${{ matrix.target }}
           else
-            cargo build --release --locked -p aether-gateway --target ${{ matrix.target }}
+            cargo build --release --locked -p aether-gateway --features jemalloc --target ${{ matrix.target }}
           fi
 
       - name: Upload binary artifact
@@ -203,13 +207,17 @@ jobs:
       - name: Resolve fork image name
         id: image
         shell: bash
-        run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "${GITHUB_OUTPUT}"
+        run: |
+          echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "${GITHUB_OUTPUT}"
+          echo "compat_name=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/aether-app" >> "${GITHUB_OUTPUT}"
 
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ steps.image.outputs.name }}
+          images: |
+            ${{ steps.image.outputs.name }}
+            ${{ steps.image.outputs.compat_name }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}},enable=${{ needs.preflight.outputs.make_latest == 'true' }}

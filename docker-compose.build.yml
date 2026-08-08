@@ -80,6 +80,7 @@ services:
       DATABASE_URL: postgresql://postgres:${DB_PASSWORD}@postgres:5432/aether
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       TZ: Asia/Shanghai
+      AETHER_GATEWAY_STATIC_DIR: /srv/frontend
       APP_PORT: ${APP_PORT:-8084}
       AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY: ${AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY:-multi-node}
       AETHER_GATEWAY_NODE_ROLE: ${AETHER_GATEWAY_NODE_ROLE:-background}
