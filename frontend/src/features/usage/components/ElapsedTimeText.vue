@@ -25,8 +25,9 @@ const isActive = computed(() => props.status === 'pending' || props.status === '
 // Usage timestamps have second precision while durations have millisecond precision.
 // Switching anchors can therefore introduce a sub-second phase shift at first byte.
 const ACTIVE_CLOCK_TIMESTAMP_PRECISION_MS = 1000
+const LIVE_CLOCK_INTERVAL_MS = 250
 
-let rafId: number | null = null
+let clockTimer: ReturnType<typeof setInterval> | null = null
 
 function parseCreatedAtMs(value: string | null | undefined): number {
   if (!value) return Number.NaN
@@ -39,33 +40,32 @@ function finiteNonNegativeMs(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 
-function stopRaf() {
-  if (rafId == null) return
-  cancelAnimationFrame(rafId)
-  rafId = null
+function stopClock() {
+  if (clockTimer == null) return
+  clearInterval(clockTimer)
+  clockTimer = null
 }
 
 function tick() {
   now.value = Date.now()
-  rafId = requestAnimationFrame(tick)
 }
 
-function startRaf() {
-  stopRaf()
+function startClock() {
+  stopClock()
   now.value = Date.now()
-  rafId = requestAnimationFrame(tick)
+  clockTimer = setInterval(tick, LIVE_CLOCK_INTERVAL_MS)
 }
 
 watch(isActive, (active) => {
   if (active) {
-    startRaf()
+    startClock()
   } else {
-    stopRaf()
+    stopClock()
   }
 }, { immediate: true })
 
 onUnmounted(() => {
-  stopRaf()
+  stopClock()
 })
 
 const displayText = computed(() => {

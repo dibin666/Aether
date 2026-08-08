@@ -447,6 +447,18 @@ export interface PoolConsumptionAccountDetailResponse {
   provider_type: string
   range: { key: string; start_unix_secs: number; end_unix_secs: number; granularity: 'hour' | 'day' }
   account: PoolConsumptionDashboardAccount
+  charts?: {
+    timeline: Array<{
+      bucket: string
+      request_count: number
+      input_tokens: number
+      output_tokens: number
+      cache_creation_tokens: number
+      cache_read_tokens: number
+      total_tokens?: number
+      total_cost_usd: string
+    }>
+  }
   quota_history: QuotaObservation[]
   model_distribution: Array<Record<string, unknown>>
   error_distribution: Array<Record<string, unknown>>

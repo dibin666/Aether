@@ -58,84 +58,113 @@
           </div>
         </div>
 
-        <div v-if="filters.range === 'custom'" class="mt-4 flex flex-wrap items-center gap-2">
-          <label class="filter-date">
-            <span>开始</span>
-            <input v-model="filters.start_date" type="date" aria-label="开始日期">
-          </label>
-          <span class="text-xs text-muted-foreground">至</span>
-          <label class="filter-date">
-            <span>结束</span>
-            <input v-model="filters.end_date" type="date" aria-label="结束日期">
-          </label>
-          <Button size="sm" variant="outline" class="h-9" @click="applyFilters">应用日期</Button>
-        </div>
-
-        <div class="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
-          <label class="relative xl:col-span-2">
-            <Search class="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <input
-              v-model="searchInput"
-              type="search"
-              class="filter-control w-full pl-8"
-              placeholder="搜索账号或认证方式"
-              aria-label="搜索账号"
-              @input="scheduleSearch"
+        <div class="filter-panel">
+          <div class="filter-panel-heading">
+            <div class="flex min-w-0 items-center gap-2">
+              <Activity class="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span class="filter-panel-title">筛选与排序</span>
+              <span class="filter-panel-note">结果按当前账号池独立统计</span>
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              class="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              @click="resetListFilters"
             >
-          </label>
+              清除筛选
+            </Button>
+          </div>
 
-          <label class="filter-field">
-            <span>使用情况</span>
-            <select v-model="filters.usage" class="filter-control" aria-label="用量筛选" @change="applyFilters">
-              <option value="all">全部账号</option>
-              <option value="used">有请求</option>
-              <option value="idle">暂无请求</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span>额度状态</span>
-            <select v-model="filters.risk" class="filter-control" aria-label="额度状态" @change="applyFilters">
-              <option value="all">全部状态</option>
-              <option value="exhausted">已用完</option>
-              <option value="critical">可能提前用完</option>
-              <option value="warning">额度偏低</option>
-              <option value="healthy">额度正常</option>
-              <option value="unknown">暂无法判断</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span>额度更新</span>
-            <select v-model="filters.freshness" class="filter-control" aria-label="额度更新状态" @change="applyFilters">
-              <option value="all">全部更新状态</option>
-              <option value="fresh">最近已同步</option>
-              <option value="stale">需要更新</option>
-              <option value="unknown">暂无同步记录</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span>账号状态</span>
-            <select v-model="filters.active" class="filter-control" aria-label="账号状态" @change="applyFilters">
-              <option value="all">全部状态</option>
-              <option value="active">已启用</option>
-              <option value="inactive">已停用</option>
-              <option value="blocked">不可用</option>
-            </select>
-          </label>
-          <label class="filter-field">
-            <span>排序方式</span>
-            <select
-              :value="`${filters.sort_by}:${filters.sort_order}`"
-              class="filter-control"
-              aria-label="排序方式"
-              @change="setSortPreset(($event.target as HTMLSelectElement).value)"
-            >
-              <option value="cost:desc">费用最高</option>
-              <option value="requests:desc">请求最多</option>
-              <option value="tokens:desc">Token 最多</option>
-              <option value="quota:asc">剩余额度最低</option>
-              <option value="last_used:desc">最近使用</option>
-            </select>
-          </label>
+          <div v-if="filters.range === 'custom'" class="custom-range-row">
+            <label class="filter-date">
+              <span>开始</span>
+              <input v-model="filters.start_date" type="date" aria-label="开始日期">
+            </label>
+            <span class="text-xs text-muted-foreground">至</span>
+            <label class="filter-date">
+              <span>结束</span>
+              <input v-model="filters.end_date" type="date" aria-label="结束日期">
+            </label>
+            <Button size="sm" variant="outline" class="h-9" @click="applyFilters">应用日期</Button>
+          </div>
+
+          <div class="filter-grid">
+            <label class="filter-field filter-search-field">
+              <span>搜索账号 / 认证方式</span>
+              <div class="relative">
+                <Search class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  v-model="searchInput"
+                  type="search"
+                  class="filter-control w-full pl-8"
+                  placeholder="例如 feature.like_4e@icloud.com"
+                  aria-label="搜索账号"
+                  @input="scheduleSearch"
+                >
+              </div>
+            </label>
+
+            <label class="filter-field">
+              <span>使用情况</span>
+              <select v-model="filters.usage" class="filter-control" aria-label="用量筛选" @change="applyFilters">
+                <option value="all">全部账号</option>
+                <option value="used">有请求</option>
+                <option value="idle">暂无请求</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>额度状态</span>
+              <select v-model="filters.risk" class="filter-control" aria-label="额度状态" @change="applyFilters">
+                <option value="all">全部状态</option>
+                <option value="exhausted">已用完</option>
+                <option value="critical">可能提前用完</option>
+                <option value="warning">额度偏低</option>
+                <option value="healthy">额度正常</option>
+                <option value="unknown">暂无法判断</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>额度更新</span>
+              <select v-model="filters.freshness" class="filter-control" aria-label="额度更新状态" @change="applyFilters">
+                <option value="all">全部更新状态</option>
+                <option value="fresh">最近已同步</option>
+                <option value="stale">需要更新</option>
+                <option value="unknown">暂无同步记录</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>账号状态</span>
+              <select v-model="filters.active" class="filter-control" aria-label="账号状态" @change="applyFilters">
+                <option value="all">全部状态</option>
+                <option value="active">已启用</option>
+                <option value="inactive">已停用</option>
+                <option value="blocked">不可用</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>请求结果</span>
+              <select v-model="filters.result" class="filter-control" aria-label="请求结果" @change="applyFilters">
+                <option value="all">全部请求</option>
+                <option value="success">有成功请求</option>
+                <option value="failed">有失败请求</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>排序方式</span>
+              <select
+                :value="`${filters.sort_by}:${filters.sort_order}`"
+                class="filter-control"
+                aria-label="排序方式"
+                @change="setSortPreset(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="cost:desc">费用最高</option>
+                <option value="requests:desc">请求最多</option>
+                <option value="tokens:desc">Token 最多</option>
+                <option value="quota:asc">剩余额度最低</option>
+                <option value="last_used:desc">最近使用</option>
+              </select>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -165,6 +194,34 @@
       </Card>
 
       <template v-else-if="dashboard">
+        <section class="summary-strip" aria-label="账号池汇总">
+          <div class="summary-item summary-item-accent">
+            <span>账号</span>
+            <strong>{{ formatInteger(dashboard.summary.account_count) }}</strong>
+            <small>{{ formatInteger(dashboard.summary.used_account_count) }} 个有请求</small>
+          </div>
+          <div class="summary-item">
+            <span>请求</span>
+            <strong>{{ formatInteger(dashboard.summary.request_count) }}</strong>
+            <small>{{ formatPercent(dashboard.summary.success_rate) }} 成功</small>
+          </div>
+          <div class="summary-item">
+            <span>Token</span>
+            <strong>{{ formatToken(dashboard.summary.total_tokens) }}</strong>
+            <small>输入 {{ formatToken(dashboard.summary.input_tokens) }} · 输出 {{ formatToken(dashboard.summary.output_tokens) }}</small>
+          </div>
+          <div class="summary-item">
+            <span>费用</span>
+            <strong>{{ formatUsd(dashboard.summary.total_cost_usd) }}</strong>
+            <small>实际 {{ formatUsd(dashboard.summary.actual_total_cost_usd) }}</small>
+          </div>
+          <div class="summary-item">
+            <span>缓存命中</span>
+            <strong>{{ formatPercent(dashboard.summary.cache_hit_rate) }}</strong>
+            <small>P95 {{ formatLatency(dashboard.summary.p95_response_time_ms) }}</small>
+          </div>
+        </section>
+
         <section class="account-list-header" aria-labelledby="account-list-title">
           <div>
             <p class="section-kicker">账号明细</p>
@@ -299,7 +356,7 @@
 
     <Teleport to="body">
       <Transition name="drawer-fade">
-        <div v-if="drawerOpen" class="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="account-drawer-title">
+        <div v-if="drawerOpen" class="account-drawer-layer fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby="account-drawer-title">
           <button type="button" class="absolute inset-0 bg-black/45 backdrop-blur-[1px]" aria-label="关闭账号详情" @click="closeDrawer" />
           <aside class="account-drawer">
             <div class="drawer-header">
@@ -313,7 +370,7 @@
               <Button variant="ghost" size="icon" class="h-8 w-8" aria-label="关闭" @click="closeDrawer"><X class="h-4 w-4" /></Button>
             </div>
 
-            <div class="min-h-0 flex-1 overflow-y-auto p-5">
+            <div class="drawer-scroll">
               <div v-if="detailLoading" class="empty-state min-h-[18rem]">
                 <div class="loading-orbit" aria-hidden="true" />
                 <p>正在读取账号详情…</p>
@@ -325,7 +382,7 @@
                   size="sm"
                   variant="outline"
                   class="mt-3"
-                  @click="openAccount(selectedAccount)"
+                  @click="retryAccountDetail"
                 >
                   重试
                 </Button>
@@ -343,6 +400,56 @@
                   <div class="detail-stat"><span>P95 响应</span><strong>{{ formatLatency(accountDetail.performance.p95_response_time_ms) }}</strong></div>
                   <div class="detail-stat"><span>费用</span><strong>{{ formatUsd(accountDetail.account.total_cost_usd) }}</strong></div>
                 </div>
+
+                <section class="detail-section detail-chart-section">
+                  <div class="detail-section-heading chart-heading">
+                    <div>
+                      <div class="flex items-center gap-2">
+                        <h3>Token 与费用趋势</h3>
+                        <span class="chart-live-mark"><span />按日</span>
+                      </div>
+                      <p>只统计当前账号；切换周期后重新读取对应数据</p>
+                    </div>
+                    <div class="range-tabs" role="tablist" aria-label="详情时间范围">
+                      <button
+                        v-for="option in detailRangeOptions"
+                        :key="option.value"
+                        type="button"
+                        role="tab"
+                        :aria-selected="detailRange === option.value"
+                        :class="detailRange === option.value ? 'range-tab-active' : ''"
+                        @click="loadAccountDetailForRange(option.value)"
+                      >
+                        {{ option.label.replace('近 ', '') }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div v-if="detailLoading" class="chart-loading">
+                    <div class="loading-orbit" aria-hidden="true" />
+                    <span>正在更新图表…</span>
+                  </div>
+                  <div v-else-if="detailTimeline.length" class="detail-chart-grid">
+                    <div class="detail-chart-card">
+                      <div class="chart-card-heading">
+                        <div class="chart-card-label"><span class="chart-swatch chart-swatch-token" />Token 使用量</div>
+                        <strong>{{ formatToken(detailTotalTokens) }}</strong>
+                      </div>
+                      <div class="detail-chart-canvas"><BarChart :data="detailTokenChartData" :options="detailChartOptions" :stacked="false" /></div>
+                    </div>
+                    <div class="detail-chart-card">
+                      <div class="chart-card-heading">
+                        <div class="chart-card-label"><span class="chart-swatch chart-swatch-cost" />费用</div>
+                        <strong>{{ formatUsd(detailTotalCost) }}</strong>
+                      </div>
+                      <div class="detail-chart-canvas"><BarChart :data="detailCostChartData" :options="detailCostChartOptions" :stacked="false" /></div>
+                    </div>
+                  </div>
+                  <div v-else class="chart-empty">
+                    <Coins class="h-5 w-5 opacity-45" />
+                    <span>该时间段暂无 Token 或费用记录</span>
+                  </div>
+                </section>
 
                 <section class="detail-section">
                   <div class="detail-section-heading">
@@ -449,10 +556,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
+  Activity,
+  Coins,
   Gauge,
   Search,
   X,
 } from 'lucide-vue-next'
+import type { ChartData, ChartOptions } from 'chart.js'
 import {
   Badge,
   Button,
@@ -464,6 +574,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui'
+import BarChart from '@/components/charts/BarChart.vue'
 import RefreshButton from '@/components/ui/refresh-button.vue'
 import {
   getPoolConsumptionAccountDetail,
@@ -527,6 +638,7 @@ const selectedAccount = ref<PoolConsumptionDashboardAccount | null>(null)
 const accountDetail = ref<PoolConsumptionAccountDetailResponse | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
+const detailRange = ref<PoolConsumptionDashboardRange>('last7days')
 let overviewRequestId = 0
 let dashboardRequestId = 0
 let detailRequestId = 0
@@ -536,6 +648,81 @@ const refreshing = computed(() => overviewLoading.value || statsLoading.value)
 const quotaHistoryRows = computed<QuotaObservation[]>(() => [...(accountDetail.value?.quota_history ?? [])]
   .sort((left, right) => right.observed_at_unix_secs - left.observed_at_unix_secs)
   .slice(0, 12))
+
+const detailRangeOptions: Array<{ value: PoolConsumptionDashboardRange; label: string }> = [
+  { value: 'last3days', label: '近 3 天' },
+  { value: 'last7days', label: '近 7 天' },
+  { value: 'last30days', label: '近 30 天' },
+  { value: 'last90days', label: '近 90 天' },
+]
+
+const detailTimeline = computed(() => accountDetail.value?.charts?.timeline ?? [])
+const detailTotalTokens = computed(() => detailTimeline.value.reduce(
+  (total, item) => total + timelineTokens(item),
+  0,
+))
+const detailTotalCost = computed(() => detailTimeline.value.reduce(
+  (total, item) => total + Number(item.total_cost_usd || 0),
+  0,
+))
+
+const detailTokenChartData = computed<ChartData<'bar'>>(() => ({
+  labels: detailTimeline.value.map(item => formatTimelineLabel(item.bucket)),
+  datasets: [{
+    label: 'Token',
+    data: detailTimeline.value.map(item => timelineTokens(item)),
+    backgroundColor: 'rgb(194, 111, 74)',
+    borderRadius: 4,
+    borderSkipped: false,
+    maxBarThickness: 28,
+  }],
+}))
+
+const detailCostChartData = computed<ChartData<'bar'>>(() => ({
+  labels: detailTimeline.value.map(item => formatTimelineLabel(item.bucket)),
+  datasets: [{
+    label: '费用',
+    data: detailTimeline.value.map(item => Number(item.total_cost_usd || 0)),
+    backgroundColor: 'rgb(71, 112, 116)',
+    borderRadius: 4,
+    borderSkipped: false,
+    maxBarThickness: 28,
+  }],
+}))
+
+const detailChartOptions: ChartOptions<'bar'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: false,
+  scales: {
+    x: {
+      stacked: false,
+      grid: { display: false },
+      ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+    },
+    y: {
+      stacked: false,
+      beginAtZero: true,
+      grid: { color: 'rgba(120, 108, 96, 0.14)' },
+      ticks: { maxTicksLimit: 5 },
+    },
+  },
+  plugins: {
+    legend: { display: false },
+  },
+}
+
+const detailCostChartOptions: ChartOptions<'bar'> = {
+  ...detailChartOptions,
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      callbacks: {
+        label: context => ` $${Number(context.parsed.y ?? 0).toFixed(4)}`,
+      },
+    },
+  },
+}
 
 const timezoneParams = () => ({
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -625,6 +812,19 @@ function applyFilters(): void {
   void loadDashboard(true)
 }
 
+function resetListFilters(): void {
+  searchInput.value = ''
+  filters.value.search = ''
+  filters.value.usage = 'all'
+  filters.value.active = 'all'
+  filters.value.risk = 'all'
+  filters.value.freshness = 'all'
+  filters.value.result = 'all'
+  filters.value.sort_by = 'cost'
+  filters.value.sort_order = 'desc'
+  applyFilters()
+}
+
 function scheduleSearch(): void {
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = setTimeout(() => {
@@ -656,15 +856,31 @@ function refreshAll(): void {
   void loadProviders({ cacheTtlMs: 0 })
 }
 
+function buildDetailQuery(range: PoolConsumptionDashboardRange): PoolConsumptionDashboardQuery {
+  return {
+    ...timezoneParams(),
+    range,
+    granularity: 'day',
+    page: 1,
+    page_size: 1,
+  }
+}
+
 async function openAccount(account: PoolConsumptionDashboardAccount): Promise<void> {
   drawerOpen.value = true
   selectedAccount.value = account
+  detailRange.value = 'last7days'
   accountDetail.value = null
   detailError.value = ''
   detailLoading.value = true
   const requestId = ++detailRequestId
   try {
-    const response = await getPoolConsumptionAccountDetail(selectedProviderId.value, account.key_id, buildQuery(), { cacheTtlMs: 0 })
+    const response = await getPoolConsumptionAccountDetail(
+      selectedProviderId.value,
+      account.key_id,
+      buildDetailQuery(detailRange.value),
+      { cacheTtlMs: 0 },
+    )
     if (requestId !== detailRequestId || !drawerOpen.value) return
     accountDetail.value = response
   } catch (error) {
@@ -673,6 +889,36 @@ async function openAccount(account: PoolConsumptionDashboardAccount): Promise<vo
   } finally {
     if (requestId === detailRequestId) detailLoading.value = false
   }
+}
+
+async function loadAccountDetailForRange(value: unknown): Promise<void> {
+  const nextRange = String(value || 'last7days') as PoolConsumptionDashboardRange
+  if (!detailRangeOptions.some(option => option.value === nextRange) || !selectedAccount.value) return
+  detailRange.value = nextRange
+  const account = selectedAccount.value
+  const requestId = ++detailRequestId
+  detailLoading.value = true
+  detailError.value = ''
+  try {
+    const response = await getPoolConsumptionAccountDetail(
+      selectedProviderId.value,
+      account.key_id,
+      buildDetailQuery(nextRange),
+      { cacheTtlMs: 0 },
+    )
+    if (requestId !== detailRequestId || !drawerOpen.value) return
+    accountDetail.value = response
+  } catch (error) {
+    if (requestId !== detailRequestId) return
+    detailError.value = parseApiError(error, '加载账号详情失败')
+  } finally {
+    if (requestId === detailRequestId) detailLoading.value = false
+  }
+}
+
+function retryAccountDetail(): void {
+  if (!selectedAccount.value) return
+  void loadAccountDetailForRange(detailRange.value)
 }
 
 function closeDrawer(): void {
@@ -751,6 +997,30 @@ function windowDurationLabel(minutes: number): string {
   if (minutes >= 24 * 60 && minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} 天周期`
   if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60} 小时周期`
   return `${minutes} 分钟周期`
+}
+
+function timelineTokens(item: {
+  input_tokens: number
+  output_tokens: number
+  cache_creation_tokens: number
+  cache_read_tokens: number
+  total_tokens?: number
+}): number {
+  if (typeof item.total_tokens === 'number' && Number.isFinite(item.total_tokens)) {
+    return item.total_tokens
+  }
+  return [
+    item.input_tokens,
+    item.output_tokens,
+    item.cache_creation_tokens,
+    item.cache_read_tokens,
+  ].reduce((total, value) => total + (Number.isFinite(value) ? value : 0), 0)
+}
+
+function formatTimelineLabel(bucket: string): string {
+  const day = bucket.slice(5, 10).replace('-', '/')
+  if (!bucket.includes('T')) return day
+  return bucket.slice(11, 16) || day
 }
 
 function formatInteger(value: number | null | undefined): string {
@@ -842,67 +1112,99 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.filter-control {
-  height: 2.25rem;
-  min-width: 0;
-  border-radius: .5rem;
-  border: 1px solid hsl(var(--border) / .72);
-  background: hsl(var(--background));
-  padding: 0 .65rem;
-  font-size: .75rem;
-  color: hsl(var(--foreground));
-  outline: none;
+.pool-consumption-page {
+  --pc-border: color-mix(in srgb, var(--border) 78%, transparent);
+  --pc-border-strong: color-mix(in srgb, var(--border) 92%, transparent);
+  --pc-muted-surface: color-mix(in srgb, var(--muted) 54%, var(--background));
+  --pc-primary-soft: color-mix(in srgb, var(--primary) 10%, var(--background));
+  color: var(--foreground);
 }
-.filter-control:focus { border-color: hsl(var(--primary) / .65); box-shadow: 0 0 0 2px hsl(var(--primary) / .16); }
-.filter-field { display: grid; min-width: 0; gap: .28rem; }
-.filter-field > span, .filter-date > span { font-size: .65rem; color: hsl(var(--muted-foreground)); }
+
+.pool-shell { border-color: var(--pc-border); background-color: var(--card); }
+.pool-header { padding: 1.15rem 1.25rem 1.25rem; }
+.pool-toolbar { display: grid; grid-template-columns: minmax(210px, 1fr) 9rem auto; align-items: end; gap: .65rem; min-width: min(100%, 32rem); }
+.toolbar-field { display: grid; min-width: 0; gap: .3rem; }
+.toolbar-field > span { color: var(--muted-foreground); font-size: .64rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.filter-panel { margin-top: 1.1rem; border: 1px solid var(--pc-border-strong); border-radius: .85rem; background-color: var(--pc-muted-surface); padding: .8rem; }
+.filter-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; border-bottom: 1px solid var(--pc-border); padding: 0 .1rem .65rem; }
+.filter-panel-title { font-size: .72rem; font-weight: 700; }
+.filter-panel-note { color: var(--muted-foreground); font-size: .65rem; }
+.filter-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .65rem; padding-top: .75rem; }
+.filter-search-field { grid-column: span 2; }
+.filter-field { display: grid; min-width: 0; gap: .3rem; }
+.filter-field > span, .filter-date > span { color: var(--muted-foreground); font-size: .64rem; }
+.filter-control { height: 2.25rem; min-width: 0; border: 1px solid var(--pc-border-strong); border-radius: .5rem; background-color: var(--background); padding: 0 .65rem; color: var(--foreground); font-size: .72rem; outline: none; }
+.filter-control::placeholder { color: var(--muted-foreground); }
+.filter-control:focus { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 18%, transparent); }
 .filter-date { display: inline-flex; align-items: center; gap: .4rem; }
-.filter-date input { height: 2.25rem; border: 1px solid hsl(var(--border) / .72); border-radius: .5rem; background: hsl(var(--background)); padding: 0 .55rem; font-size: .75rem; color: hsl(var(--foreground)); }
-.empty-state { display: flex; min-height: 12rem; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; text-align: center; font-size: .875rem; color: hsl(var(--muted-foreground)); }
-.loading-orbit { width: 1.6rem; height: 1.6rem; border-radius: 999px; border: 2px solid hsl(var(--border)); border-top-color: hsl(var(--primary)); animation: orbit .8s linear infinite; margin-bottom: .75rem; }
-.section-kicker { font-size: .65rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: hsl(var(--muted-foreground)); }
-.account-list-header { display: flex; align-items: end; justify-content: space-between; gap: 1rem; border-left: 3px solid hsl(var(--primary)); padding: .25rem 0 .25rem 1rem; }
-.account-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 1rem; }
-.account-card { min-width: 0; overflow: hidden; border-color: hsl(var(--border) / .76); transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
-.account-card:hover { border-color: hsl(var(--primary) / .48); box-shadow: 0 12px 30px rgb(30 25 20 / .07); transform: translateY(-1px); }
-.account-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; border-bottom: 1px solid hsl(var(--border) / .62); padding: 1rem 1rem .85rem; }
-.account-identity { min-width: 0; flex: 1; text-align: left; outline: none; }
-.account-identity:focus-visible, .detail-link:focus-visible { border-radius: .35rem; box-shadow: 0 0 0 2px hsl(var(--primary) / .3); }
-.account-name { display: block; overflow-wrap: anywhere; font-size: .83rem; font-weight: 650; line-height: 1.35; color: hsl(var(--foreground)); }
-.account-subline { display: flex; align-items: center; gap: .35rem; margin-top: .35rem; font-size: .68rem; color: hsl(var(--muted-foreground)); }
+.filter-date input { height: 2.25rem; border: 1px solid var(--pc-border-strong); border-radius: .5rem; background-color: var(--background); padding: 0 .55rem; color: var(--foreground); font-size: .72rem; }
+.custom-range-row { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; padding: .75rem .1rem 0; }
+
+.summary-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--pc-border-strong); border-radius: .85rem; background-color: var(--card); }
+.summary-item { position: relative; min-width: 0; padding: .8rem .95rem; }
+.summary-item + .summary-item { border-left: 1px solid var(--pc-border); }
+.summary-item-accent { background-color: var(--pc-primary-soft); }
+.summary-item-accent::before { position: absolute; inset: 0 auto 0 0; width: 3px; background-color: var(--primary); content: ''; }
+.summary-item span, .summary-item small { display: block; color: var(--muted-foreground); font-size: .63rem; }
+.summary-item strong { display: block; margin: .22rem 0 .15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; font-variant-numeric: tabular-nums; }
+.summary-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .6rem; }
+
+.empty-state { display: flex; min-height: 12rem; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; color: var(--muted-foreground); font-size: .875rem; text-align: center; }
+.loading-orbit { width: 1.6rem; height: 1.6rem; margin-bottom: .75rem; border: 2px solid var(--pc-border-strong); border-top-color: var(--primary); border-radius: 999px; animation: orbit .8s linear infinite; }
+.section-kicker { color: var(--muted-foreground); font-size: .62rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+.account-list-header { display: flex; align-items: end; justify-content: space-between; gap: 1rem; border-left: 3px solid var(--primary); padding: .2rem 0 .2rem 1rem; }
+.account-grid { display: grid; gap: .65rem; }
+.account-card { display: grid; grid-template-columns: minmax(170px, 1.15fr) minmax(230px, 1.65fr) minmax(330px, 2.8fr) minmax(125px, .8fr); min-width: 0; overflow: hidden; border-color: var(--pc-border-strong); background-color: var(--card); transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.account-card:hover { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); box-shadow: 0 12px 28px color-mix(in srgb, var(--foreground) 9%, transparent); transform: translateY(-1px); }
+.account-card-top { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: .8rem; border-right: 1px solid var(--pc-border); padding: .85rem .9rem; }
+.account-identity { min-width: 0; width: 100%; text-align: left; outline: none; }
+.account-identity:focus-visible, .detail-link:focus-visible { border-radius: .35rem; box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 35%, transparent); }
+.account-name { display: block; overflow-wrap: anywhere; color: var(--foreground); font-size: .78rem; font-weight: 700; line-height: 1.35; }
+.account-subline { display: flex; align-items: center; gap: .35rem; margin-top: .35rem; color: var(--muted-foreground); font-size: .64rem; }
 .status-dot { width: .4rem; height: .4rem; flex: 0 0 auto; border-radius: 999px; }
-.status-dot-active { background: rgb(16 185 129); }.status-dot-inactive { background: hsl(var(--muted-foreground) / .55); }
-.sync-pill { display: inline-flex; max-width: 10.5rem; flex: 0 0 auto; align-items: center; border-radius: 999px; border: 1px solid currentColor; padding: .26rem .5rem; font-size: .62rem; line-height: 1.15; text-align: right; }
-.sync-good { color: rgb(5 150 105); background: rgb(16 185 129 / .06); }.sync-warning { color: rgb(180 83 9); background: rgb(245 158 11 / .08); }.sync-unknown { color: hsl(var(--muted-foreground)); background: hsl(var(--muted) / .42); }
-.account-card-body { padding: 1rem; }
-.quota-heading, .detail-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
-.quota-heading h4, .detail-section-heading h3 { font-size: .78rem; font-weight: 650; }
-.quota-heading p, .detail-section-heading p { margin-top: .25rem; font-size: .66rem; line-height: 1.4; color: hsl(var(--muted-foreground)); }
-.window-count { flex: 0 0 auto; color: hsl(var(--muted-foreground)); font-size: .66rem; white-space: nowrap; }
-.quota-window-list, .detail-window-list { display: grid; gap: .65rem; margin-top: .8rem; }
-.quota-window, .detail-window { min-width: 0; border: 1px solid hsl(var(--border) / .65); border-radius: .65rem; background: hsl(var(--muted) / .16); padding: .7rem; }
-.detail-window { padding: .85rem; }
-.window-topline, .window-bottomline, .detail-window-meta { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; min-width: 0; }
-.window-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .7rem; font-weight: 600; color: hsl(var(--foreground)); }
-.window-remaining { flex: 0 0 auto; font-size: .72rem; font-variant-numeric: tabular-nums; }
-.quota-meter { height: .38rem; margin-top: .55rem; overflow: hidden; border-radius: 999px; background: hsl(var(--border) / .72); }
+.status-dot-active { background-color: rgb(16 185 129); }.status-dot-inactive { background-color: var(--muted-foreground); }
+.sync-pill { display: inline-flex; max-width: 100%; flex: 0 0 auto; align-items: center; border: 1px solid currentColor; border-radius: 999px; padding: .24rem .45rem; font-size: .59rem; line-height: 1.2; }
+.sync-good { color: rgb(5 150 105); background-color: rgb(16 185 129 / 8%); }.sync-warning { color: rgb(180 83 9); background-color: rgb(245 158 11 / 10%); }.sync-unknown { color: var(--muted-foreground); background-color: var(--pc-muted-surface); }
+.account-card-body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(220px, 1.35fr); min-width: 0; gap: .8rem; align-items: center; padding: .8rem .9rem; }
+.account-card-body > .quota-heading, .account-card-body > .quota-window-list, .account-card-body > .quota-empty { grid-column: 1; }
+.account-card-body > .account-metrics { grid-column: 2; grid-row: 1 / span 2; }
+.quota-heading, .detail-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .7rem; }
+.quota-heading h4, .detail-section-heading h3 { color: var(--foreground); font-size: .74rem; font-weight: 700; }
+.quota-heading p, .detail-section-heading p { margin-top: .2rem; color: var(--muted-foreground); font-size: .61rem; line-height: 1.4; }
+.window-count { flex: 0 0 auto; color: var(--muted-foreground); font-size: .61rem; white-space: nowrap; }
+.quota-window-list, .detail-window-list { display: grid; gap: .5rem; margin-top: .65rem; }
+.quota-window, .detail-window { min-width: 0; border: 1px solid var(--pc-border); border-radius: .6rem; background-color: var(--pc-muted-surface); padding: .58rem; }
+.detail-window { padding: .8rem; }
+.window-topline, .window-bottomline, .detail-window-meta { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: .65rem; }
+.window-label { min-width: 0; overflow: hidden; color: var(--foreground); font-size: .65rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.window-remaining { flex: 0 0 auto; font-size: .67rem; font-variant-numeric: tabular-nums; }
+.quota-meter { height: .34rem; margin-top: .45rem; overflow: hidden; border-radius: 999px; background-color: var(--pc-border-strong); }
 .quota-meter-fill { height: 100%; min-width: 2px; border-radius: inherit; transition: width .25s ease; }
-.window-bottomline, .detail-window-meta { margin-top: .48rem; font-size: .64rem; color: hsl(var(--muted-foreground)); }
-.window-bottomline span:last-child, .detail-window-meta span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
-.window-duration { display: inline-block; margin-left: .5rem; color: hsl(var(--muted-foreground)); font-size: .65rem; }
-.quota-empty { display: grid; gap: .25rem; margin-top: .8rem; border: 1px dashed hsl(var(--border) / .85); border-radius: .65rem; padding: .8rem; color: hsl(var(--muted-foreground)); font-size: .68rem; }
-.quota-empty strong { color: hsl(var(--foreground) / .78); font-size: .72rem; font-weight: 600; }
-.account-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .65rem .45rem; margin-top: 1rem; border-top: 1px solid hsl(var(--border) / .58); padding-top: .9rem; }
-.account-metric { min-width: 0; }.account-metric span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .63rem; color: hsl(var(--muted-foreground)); }.account-metric strong { display: block; margin-top: .22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; font-variant-numeric: tabular-nums; }
-.account-card-footer { display: flex; align-items: center; justify-content: space-between; gap: .75rem; border-top: 1px solid hsl(var(--border) / .62); padding: .75rem 1rem; }
-.last-used { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: hsl(var(--muted-foreground)); font-size: .65rem; }.detail-link { flex: 0 0 auto; color: hsl(var(--primary)); font-size: .7rem; font-weight: 650; outline: none; }
-.account-drawer { position: absolute; inset-block: 0; right: 0; display: flex; width: 100%; max-width: 44rem; flex-direction: column; border-left: 1px solid hsl(var(--border)); background: hsl(var(--background)); box-shadow: -14px 0 40px rgb(0 0 0 / .15); }
-.drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; border-bottom: 1px solid hsl(var(--border) / .7); padding: 1.1rem 1.25rem; }
-.drawer-callout { display: flex; gap: .6rem; border: 1px solid hsl(var(--primary) / .22); border-radius: .65rem; background: hsl(var(--primary) / .06); padding: .75rem .8rem; color: hsl(var(--foreground) / .78); font-size: .7rem; line-height: 1.55; }.callout-mark { color: hsl(var(--primary)); font-size: .55rem; padding-top: .25rem; }
-.detail-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .55rem; margin-top: 1rem; }.detail-stat { min-width: 0; border: 1px solid hsl(var(--border) / .62); border-radius: .55rem; background: hsl(var(--muted) / .2); padding: .65rem; }.detail-stat span { display: block; font-size: .62rem; color: hsl(var(--muted-foreground)); }.detail-stat strong { display: block; margin-top: .3rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .82rem; font-variant-numeric: tabular-nums; }
-.detail-section { margin-top: 1rem; border: 1px solid hsl(var(--border) / .68); border-radius: .75rem; padding: .9rem; }.detail-section-heading h3 { font-size: .78rem; font-weight: 650; }.detail-window-facts { display: flex; flex-wrap: wrap; gap: .4rem .75rem; margin-top: .7rem; color: hsl(var(--muted-foreground)); font-size: .64rem; }.detail-window-forecast { margin-top: .65rem; color: hsl(var(--primary)); font-size: .66rem; line-height: 1.4; }.history-list, .distribution-list { display: grid; gap: .55rem; margin-top: .75rem; }.history-row, .distribution-row { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; min-width: 0; border-bottom: 1px solid hsl(var(--border) / .5); padding-bottom: .55rem; font-size: .67rem; }.history-row:last-child, .distribution-row:last-child { border-bottom: 0; padding-bottom: 0; }.history-time { display: grid; flex: 0 0 auto; gap: .2rem; }.history-time strong { font-size: .68rem; font-variant-numeric: tabular-nums; }.history-time span { color: hsl(var(--muted-foreground)); font-size: .62rem; }.history-values { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .3rem; color: hsl(var(--muted-foreground)); text-align: right; }.history-values span { border-radius: .35rem; background: hsl(var(--muted) / .55); padding: .2rem .35rem; font-size: .62rem; }.distribution-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: hsl(var(--muted-foreground)); }.distribution-row strong { flex: 0 0 auto; font-variant-numeric: tabular-nums; }.empty-inline { margin-top: .75rem; color: hsl(var(--muted-foreground)); font-size: .68rem; }
+.window-bottomline, .detail-window-meta { margin-top: .38rem; color: var(--muted-foreground); font-size: .59rem; }
+.window-bottomline span:last-child, .detail-window-meta span:last-child { overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.window-duration { display: inline-block; margin-left: .4rem; color: var(--muted-foreground); font-size: .59rem; }
+.quota-empty { display: grid; gap: .2rem; margin-top: .65rem; border: 1px dashed var(--pc-border-strong); border-radius: .6rem; padding: .65rem; color: var(--muted-foreground); font-size: .62rem; }
+.quota-empty strong { color: var(--foreground); font-size: .67rem; font-weight: 600; }
+.account-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem .4rem; min-width: 0; margin: 0; border-left: 1px solid var(--pc-border); padding-left: .9rem; }
+.account-metric { min-width: 0; }.account-metric span { display: block; overflow: hidden; color: var(--muted-foreground); font-size: .59rem; text-overflow: ellipsis; white-space: nowrap; }.account-metric strong { display: block; margin-top: .18rem; overflow: hidden; font-size: .72rem; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.account-card-footer { display: flex; min-width: 0; flex-direction: column; align-items: flex-end; justify-content: space-between; gap: .6rem; border-left: 1px solid var(--pc-border); padding: .85rem .9rem; }
+.last-used { min-width: 0; color: var(--muted-foreground); font-size: .59rem; text-align: right; }
+.detail-link { flex: 0 0 auto; color: var(--primary); font-size: .68rem; font-weight: 700; outline: none; }
+
+.account-drawer-layer { --pc-border: color-mix(in srgb, var(--border) 78%, transparent); --pc-border-strong: color-mix(in srgb, var(--border) 92%, transparent); --pc-muted-surface: color-mix(in srgb, var(--muted) 54%, var(--background)); --pc-primary-soft: color-mix(in srgb, var(--primary) 10%, var(--background)); background-color: rgb(23 20 17 / 48%); }
+.account-drawer { position: absolute; inset-block: 0; right: 0; z-index: 1; display: flex; width: min(48rem, 94vw); max-width: 100%; flex-direction: column; border-left: 1px solid var(--pc-border-strong); background-color: var(--background) !important; color: var(--foreground); box-shadow: -18px 0 45px rgb(23 20 17 / 22%); isolation: isolate; opacity: 1; }
+.drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--pc-border-strong); background-color: var(--background); padding: 1rem 1.1rem; }
+.drawer-scroll { min-height: 0; flex: 1; overflow-y: auto; background-color: var(--background); padding: 1rem 1.1rem 1.5rem; }
+.drawer-callout { display: flex; gap: .55rem; border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border)); border-radius: .65rem; background-color: var(--pc-primary-soft); padding: .65rem .75rem; color: var(--foreground); font-size: .66rem; line-height: 1.5; }.callout-mark { padding-top: .2rem; color: var(--primary); font-size: .5rem; }
+.detail-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .45rem; margin-top: .8rem; }.detail-stat { min-width: 0; border: 1px solid var(--pc-border); border-radius: .55rem; background-color: var(--pc-muted-surface); padding: .58rem; }.detail-stat span { display: block; color: var(--muted-foreground); font-size: .59rem; }.detail-stat strong { display: block; margin-top: .25rem; overflow: hidden; color: var(--foreground); font-size: .77rem; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.detail-section { margin-top: .8rem; border: 1px solid var(--pc-border-strong); border-radius: .72rem; background-color: var(--card); padding: .8rem; }.detail-section-heading h3 { font-size: .75rem; font-weight: 700; }.detail-window-facts { display: flex; flex-wrap: wrap; gap: .35rem .7rem; margin-top: .6rem; color: var(--muted-foreground); font-size: .61rem; }.detail-window-forecast { margin-top: .55rem; color: var(--primary); font-size: .62rem; line-height: 1.4; }
+.detail-chart-section { background-color: var(--pc-muted-surface); }.chart-heading { align-items: center; }.chart-live-mark { display: inline-flex; align-items: center; gap: .28rem; color: var(--muted-foreground); font-size: .59rem; }.chart-live-mark span { width: .35rem; height: .35rem; border-radius: 999px; background-color: rgb(16 185 129); box-shadow: 0 0 0 3px rgb(16 185 129 / 12%); }
+.range-tabs { display: inline-flex; flex: 0 0 auto; gap: .15rem; border: 1px solid var(--pc-border-strong); border-radius: .5rem; background-color: var(--background); padding: .15rem; }.range-tabs button { border-radius: .35rem; padding: .28rem .42rem; color: var(--muted-foreground); font-size: .59rem; outline: none; }.range-tabs button:hover, .range-tabs button:focus-visible { color: var(--foreground); }.range-tab-active { background-color: var(--primary); color: var(--primary-foreground) !important; box-shadow: 0 1px 4px color-mix(in srgb, var(--primary) 26%, transparent); }
+.detail-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; margin-top: .75rem; }.detail-chart-card { min-width: 0; border: 1px solid var(--pc-border); border-radius: .6rem; background-color: var(--background); padding: .65rem; }.chart-card-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }.chart-card-heading strong { font-size: .75rem; font-variant-numeric: tabular-nums; }.chart-card-label { display: flex; align-items: center; gap: .35rem; color: var(--muted-foreground); font-size: .62rem; }.chart-swatch { width: .42rem; height: .42rem; border-radius: .12rem; }.chart-swatch-token { background-color: rgb(194 111 74); }.chart-swatch-cost { background-color: rgb(71 112 116); }.detail-chart-canvas { height: 10rem; margin-top: .45rem; }.chart-loading, .chart-empty { display: flex; min-height: 10rem; align-items: center; justify-content: center; gap: .55rem; color: var(--muted-foreground); font-size: .67rem; }.chart-loading .loading-orbit { width: 1.15rem; height: 1.15rem; margin: 0; }.history-list, .distribution-list { display: grid; gap: .5rem; margin-top: .65rem; }.history-row, .distribution-row { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: .7rem; border-bottom: 1px solid var(--pc-border); padding-bottom: .5rem; font-size: .63rem; }.history-row:last-child, .distribution-row:last-child { border-bottom: 0; padding-bottom: 0; }.history-time { display: grid; flex: 0 0 auto; gap: .15rem; }.history-time strong { font-size: .65rem; font-variant-numeric: tabular-nums; }.history-time span { color: var(--muted-foreground); font-size: .59rem; }.history-values { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .25rem; color: var(--muted-foreground); text-align: right; }.history-values span { border-radius: .35rem; background-color: var(--pc-muted-surface); padding: .18rem .32rem; font-size: .59rem; }.distribution-row span { min-width: 0; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }.distribution-row strong { flex: 0 0 auto; font-variant-numeric: tabular-nums; }.empty-inline { margin-top: .65rem; color: var(--muted-foreground); font-size: .63rem; }
 .drawer-fade-enter-active, .drawer-fade-leave-active { transition: opacity .18s ease; }.drawer-fade-enter-from, .drawer-fade-leave-to { opacity: 0; }
 @keyframes orbit { to { transform: rotate(360deg); } }
-@media (max-width: 640px) { .account-list-header { align-items: flex-start; flex-direction: column; }.account-card-top { flex-direction: column; }.sync-pill { max-width: none; }.account-metrics { gap: .6rem .35rem; }.detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.detail-metrics .detail-stat:last-child { grid-column: span 2; }.drawer-header { padding-inline: 1rem; } }
+@media (max-width: 1100px) { .filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.filter-search-field { grid-column: span 2; }.account-card { grid-template-columns: minmax(170px, 1.1fr) minmax(240px, 1.6fr) minmax(270px, 1.8fr); }.account-card-footer { grid-column: 1 / -1; flex-direction: row; align-items: center; border-top: 1px solid var(--pc-border); border-left: 0; }.last-used { text-align: left; } }
+@media (max-width: 820px) { .pool-header { padding-inline: 1rem; }.pool-toolbar { grid-template-columns: minmax(0, 1fr) 8rem auto; }.summary-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }.summary-item:nth-child(4) { border-left: 0; border-top: 1px solid var(--pc-border); }.summary-item:nth-child(5) { border-top: 1px solid var(--pc-border); }.account-card { display: block; }.account-card-top { flex-direction: row; align-items: flex-start; border-right: 0; border-bottom: 1px solid var(--pc-border); }.account-card-body { display: block; }.account-metrics { margin-top: .8rem; border-top: 1px solid var(--pc-border); border-left: 0; padding-top: .75rem; padding-left: 0; }.account-card-footer { border-top: 1px solid var(--pc-border); }.detail-chart-grid { grid-template-columns: 1fr; }.detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }.detail-metrics .detail-stat:nth-child(4), .detail-metrics .detail-stat:nth-child(5) { grid-column: span 1; } }
+@media (max-width: 640px) { .pool-header { padding: .95rem .8rem 1rem; }.pool-toolbar { grid-template-columns: 1fr 1fr; min-width: 0; }.pool-toolbar > :last-child { grid-column: span 2; }.filter-panel { padding: .65rem; }.filter-panel-note { display: none; }.filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.filter-search-field { grid-column: span 2; }.summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }.summary-item:nth-child(3) { border-left: 0; border-top: 1px solid var(--pc-border); }.summary-item:nth-child(4) { border-left: 1px solid var(--pc-border); }.summary-item:nth-child(5) { grid-column: span 2; border-left: 0; }.account-list-header { align-items: flex-start; flex-direction: column; }.account-card-top { flex-direction: column; }.sync-pill { max-width: none; }.detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.detail-metrics .detail-stat:nth-child(5) { grid-column: span 2; }.chart-heading { align-items: flex-start; flex-direction: column; }.range-tabs { width: 100%; }.range-tabs button { flex: 1; }.drawer-header, .drawer-scroll { padding-inline: .85rem; } }
 @media (prefers-reduced-motion: reduce) { .loading-orbit, .account-card, .quota-meter-fill, .drawer-fade-enter-active, .drawer-fade-leave-active { animation: none; transition: none; } }
 </style>

@@ -520,6 +520,36 @@ async fn build_dashboard_account_detail(
         &observations,
         now,
     );
+    let timeline = state
+        .summarize_usage_time_series(&UsageTimeSeriesQuery {
+            created_from_unix_secs: range.start_unix_secs,
+            created_until_unix_secs: range.end_unix_secs,
+            granularity: range.granularity.usage(),
+            tz_offset_minutes: query.tz_offset_minutes,
+            user_id: None,
+            provider_name: None,
+            provider_id: Some(provider.id.clone()),
+            provider_api_key_ids: Some(vec![key.id.clone()]),
+            model: query.model.clone(),
+        })
+        .await?
+        .into_iter()
+        .map(|item| {
+            json!({
+                "bucket": item.bucket_key,
+                "request_count": item.total_requests,
+                "input_tokens": item.input_tokens,
+                "output_tokens": item.output_tokens,
+                "cache_creation_tokens": item.cache_creation_tokens,
+                "cache_read_tokens": item.cache_read_tokens,
+                "total_tokens": item.input_tokens
+                    .saturating_add(item.output_tokens)
+                    .saturating_add(item.cache_creation_tokens)
+                    .saturating_add(item.cache_read_tokens),
+                "total_cost_usd": format_cost(item.total_cost_usd),
+            })
+        })
+        .collect::<Vec<_>>();
     let quota_history_bucket_seconds = quota_history_bucket_seconds(range);
     let history = aggregate_quota_history(observations, quota_history_bucket_seconds)
         .into_iter()
@@ -538,6 +568,9 @@ async fn build_dashboard_account_detail(
             "quota_history_granularity": quota_history_granularity_label(quota_history_bucket_seconds),
         },
         "account": account.to_json(),
+        "charts": {
+            "timeline": timeline,
+        },
         "quota_history": history,
         "model_distribution": account.model_request_counts.iter().map(|(model, count)| json!({ "model": model, "request_count": count })).collect::<Vec<_>>(),
         "error_distribution": account.error_request_counts.iter().map(|(category, count)| json!({ "error_category": category, "count": count })).collect::<Vec<_>>(),
