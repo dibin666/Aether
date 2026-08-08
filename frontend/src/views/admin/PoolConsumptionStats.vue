@@ -2,8 +2,8 @@
   <div class="pool-consumption-page space-y-5 pb-8">
     <Card class="pool-shell overflow-hidden border-book-cloth/30 dark:border-book-cloth/25 shadow-sm">
       <div class="pool-header border-b border-border/60 px-4 py-4 sm:px-6">
-        <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div class="min-w-0">
+        <div class="pool-header-main">
+          <div class="pool-title-block min-w-0">
             <div class="flex items-center gap-2">
               <Gauge class="h-5 w-5 shrink-0 text-primary" />
               <div class="min-w-0">
@@ -427,27 +427,81 @@
                 </div>
 
                 <section class="detail-section detail-chart-section">
-                  <div class="detail-section-heading chart-heading">
-                    <div>
-                      <div class="flex items-center gap-2">
-                        <h3>Token 与费用趋势</h3>
-                        <span class="chart-live-mark"><span />按日</span>
+                    <div class="detail-section-heading chart-heading">
+                      <div>
+                        <div class="flex items-center gap-2">
+                          <h3>Token 与费用趋势</h3>
+                          <span class="chart-live-mark"><span />按日</span>
+                        </div>
+                      </div>
+                      <div class="detail-date-picker">
+                        <button
+                          type="button"
+                          class="calendar-trigger"
+                          :aria-expanded="detailCalendarOpen"
+                          aria-controls="account-detail-calendar"
+                          @click="detailCalendarOpen = !detailCalendarOpen"
+                        >
+                          <CalendarDays class="h-3.5 w-3.5" />
+                          <span>{{ detailDateLabel }}</span>
+                          <ChevronDown class="h-3.5 w-3.5 opacity-60" />
+                        </button>
+                        <div
+                          v-if="detailCalendarOpen"
+                          id="account-detail-calendar"
+                          class="calendar-popover"
+                          role="dialog"
+                          aria-label="选择详情日期"
+                        >
+                          <div class="calendar-popover-heading">
+                            <div>
+                              <span>日历筛选</span>
+                              <strong>{{ detailCalendarMonthLabel }}</strong>
+                            </div>
+                            <div class="calendar-nav">
+                              <button type="button" aria-label="上个月" @click="shiftDetailCalendarMonth(-1)">
+                                <ChevronLeft class="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" aria-label="下个月" :disabled="isCurrentCalendarMonth" @click="shiftDetailCalendarMonth(1)">
+                                <ChevronRight class="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          <div class="calendar-weekdays" aria-hidden="true">
+                            <span v-for="weekday in calendarWeekdays" :key="weekday">{{ weekday }}</span>
+                          </div>
+                          <div class="calendar-grid" role="grid">
+                            <button
+                              v-for="(day, index) in detailCalendarDays"
+                              :key="day ? day.date : `empty-${index}`"
+                              type="button"
+                              class="calendar-day"
+                              :class="calendarDayClass(day)"
+                              :disabled="!day || isFutureCalendarDate(day.date)"
+                              :aria-label="day ? formatCalendarAriaLabel(day.date) : undefined"
+                              @click="day && !isFutureCalendarDate(day.date) && selectDetailDate(day.date)"
+                            >
+                              {{ day?.day ?? '' }}
+                            </button>
+                          </div>
+                          <div class="calendar-popover-footer">
+                            <span>{{ detailDateHint }}</span>
+                            <button type="button" @click="selectDetailDate(formatDateInput(new Date()))">今天</button>
+                          </div>
+                          <div class="calendar-quick-ranges" aria-label="快捷时间范围">
+                            <button
+                              v-for="option in detailQuickRangeOptions"
+                              :key="option.value"
+                              type="button"
+                              :class="{ 'calendar-quick-range-active': detailRange === option.value }"
+                              @click="selectDetailQuickRange(option.value)"
+                            >
+                              {{ option.label.replace('近 ', '') }}
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <div class="range-tabs" role="tablist" aria-label="详情时间范围">
-                      <button
-                        v-for="option in detailRangeOptions"
-                        :key="option.value"
-                        type="button"
-                        role="tab"
-                        :aria-selected="detailRange === option.value"
-                        :class="detailRange === option.value ? 'range-tab-active' : ''"
-                        @click="loadAccountDetailForRange(option.value)"
-                      >
-                        {{ option.label.replace('近 ', '') }}
-                      </button>
-                    </div>
-                  </div>
 
                   <div v-if="detailLoading" class="chart-loading">
                     <div class="loading-orbit" aria-hidden="true" />
@@ -475,7 +529,7 @@
                   </div>
                 </section>
 
-                <section class="detail-section">
+                <section class="detail-section detail-quota-section">
                   <div class="detail-section-heading">
                     <div>
                       <h3>额度与重置周期</h3>
@@ -485,8 +539,29 @@
                     </span>
                   </div>
 
-                  <div v-if="accountDetail.account.quota.windows.length" class="detail-window-list">
-                    <div v-for="window in accountDetail.account.quota.windows" :key="window.window_identity" class="detail-window">
+                  <div v-if="detailQuotaWindows.length > 1" class="quota-period-switcher">
+                    <div class="quota-period-switcher-heading">
+                      <span>可用额度周期</span>
+                      <small>{{ detailQuotaWindows.length }} 个周期</small>
+                    </div>
+                    <div class="quota-period-tabs" role="tablist" aria-label="额度周期">
+                      <button
+                        v-for="window in detailQuotaWindows"
+                        :key="window.window_identity"
+                        type="button"
+                        role="tab"
+                        :aria-selected="activeDetailQuotaWindow?.window_identity === window.window_identity"
+                        :class="{ 'quota-period-active': activeDetailQuotaWindow?.window_identity === window.window_identity }"
+                        @click="selectDetailQuotaWindow(window.window_identity)"
+                      >
+                        <span>{{ windowPeriodLabel(window) }}</span>
+                        <small>{{ window.window_minutes ? windowDurationLabel(window.window_minutes) : '当前周期' }}</small>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div v-if="detailQuotaWindows.length" class="detail-window-list">
+                    <div v-for="window in visibleDetailQuotaWindows" :key="window.window_identity" class="detail-window">
                       <div class="window-topline">
                         <div>
                           <span class="window-label" :title="windowDisplayLabel(window)">{{ windowDisplayLabel(window) }}</span>
@@ -521,7 +596,7 @@
                   </div>
                 </section>
 
-                <section class="detail-section">
+                <section class="detail-section detail-history-section">
                   <div class="detail-section-heading">
                     <div>
                       <h3>额度同步记录</h3>
@@ -531,7 +606,7 @@
                   <div v-if="quotaHistoryRows.length" class="history-list">
                     <div v-for="(observation, index) in quotaHistoryRows" :key="`${observation.observed_at_unix_secs}-${index}`" class="history-row">
                       <div class="history-time">
-                        <strong>{{ formatShortDate(observation.observed_at_unix_secs) }}</strong>
+                        <strong>{{ formatShortDate(observation.observed_at_unix_secs ?? 0) }}</strong>
                         <span>{{ observation.windows.length }} 个额度窗口</span>
                       </div>
                       <div class="history-values">
@@ -545,7 +620,7 @@
                 </section>
 
                 <div class="grid gap-4 md:grid-cols-2">
-                  <section class="detail-section">
+                  <section class="detail-section detail-distribution-section">
                     <div class="detail-section-heading"><h3>模型使用</h3></div>
                     <div v-if="accountDetail.model_distribution.length" class="distribution-list">
                       <div v-for="item in accountDetail.model_distribution.slice(0, 8)" :key="modelDistributionLabel(item)" class="distribution-row">
@@ -555,7 +630,7 @@
                     </div>
                     <p v-else class="empty-inline">暂无模型数据</p>
                   </section>
-                  <section class="detail-section">
+                  <section class="detail-section detail-distribution-section">
                     <div class="detail-section-heading"><h3>失败请求</h3></div>
                     <div v-if="accountDetail.error_distribution.length" class="distribution-list">
                       <div v-for="item in accountDetail.error_distribution.slice(0, 8)" :key="errorDistributionLabel(item)" class="distribution-row">
@@ -579,6 +654,10 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   Activity,
+  CalendarDays,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Coins,
   Gauge,
   Search,
@@ -690,6 +769,10 @@ const accountDetail = ref<PoolConsumptionAccountDetailResponse | null>(null)
 const detailLoading = ref(false)
 const detailError = ref('')
 const detailRange = ref<PoolConsumptionDashboardRange>('last7days')
+const detailSelectedDate = ref('')
+const detailCalendarOpen = ref(false)
+const detailCalendarMonth = ref(startOfCalendarMonth(new Date()))
+const selectedQuotaWindowIdentity = ref('')
 let overviewRequestId = 0
 let dashboardRequestId = 0
 let detailRequestId = 0
@@ -697,17 +780,56 @@ let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 const refreshing = computed(() => overviewLoading.value || statsLoading.value)
 const quotaHistoryRows = computed<QuotaObservation[]>(() => [...(accountDetail.value?.quota_history ?? [])]
-  .sort((left, right) => right.observed_at_unix_secs - left.observed_at_unix_secs)
+  .sort((left, right) => (right.observed_at_unix_secs ?? 0) - (left.observed_at_unix_secs ?? 0))
   .slice(0, 12))
 
-const detailRangeOptions: Array<{ value: PoolConsumptionDashboardRange; label: string }> = [
+const detailTimeline = computed(() => accountDetail.value?.charts?.timeline ?? [])
+const detailQuotaWindows = computed<QuotaWindowObservation[]>(() => accountDetail.value?.account.quota.windows ?? [])
+const activeDetailQuotaWindow = computed<QuotaWindowObservation | undefined>(() => {
+  const windows = detailQuotaWindows.value
+  return windows.find(window => window.window_identity === selectedQuotaWindowIdentity.value) || windows[0]
+})
+const visibleDetailQuotaWindows = computed<QuotaWindowObservation[]>(() => {
+  if (detailQuotaWindows.value.length <= 1) return detailQuotaWindows.value
+  return activeDetailQuotaWindow.value ? [activeDetailQuotaWindow.value] : []
+})
+const detailQuickRangeOptions: Array<{ value: PoolConsumptionDashboardRange; label: string }> = [
   { value: 'last3days', label: '近 3 天' },
   { value: 'last7days', label: '近 7 天' },
   { value: 'last30days', label: '近 30 天' },
   { value: 'last90days', label: '近 90 天' },
 ]
+const calendarWeekdays = ['一', '二', '三', '四', '五', '六', '日']
+const detailCalendarMonthLabel = computed(() => new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: 'long',
+}).format(detailCalendarMonth.value))
+const detailDateLabel = computed(() => detailRange.value === 'custom' && detailSelectedDate.value
+  ? formatCalendarDateLabel(detailSelectedDate.value)
+  : detailQuickRangeOptions.find(option => option.value === detailRange.value)?.label || '近 7 天')
+const detailDateHint = computed(() => detailRange.value === 'custom' && detailSelectedDate.value
+  ? `当前查看 ${formatCalendarDateLabel(detailSelectedDate.value)}`
+  : '选择某日查看当天数据，也可切换统计范围')
+const isCurrentCalendarMonth = computed(() => {
+  const now = new Date()
+  return detailCalendarMonth.value.getFullYear() === now.getFullYear()
+    && detailCalendarMonth.value.getMonth() === now.getMonth()
+})
+const detailCalendarDays = computed<Array<CalendarDay | null>>(() => {
+  const year = detailCalendarMonth.value.getFullYear()
+  const month = detailCalendarMonth.value.getMonth()
+  const firstDayOffset = (new Date(year, month, 1).getDay() + 6) % 7
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const cellCount = Math.ceil((firstDayOffset + daysInMonth) / 7) * 7
+  const today = formatDateInput(new Date())
 
-const detailTimeline = computed(() => accountDetail.value?.charts?.timeline ?? [])
+  return Array.from({ length: cellCount }, (_, index) => {
+    if (index < firstDayOffset || index >= firstDayOffset + daysInMonth) return null
+    const day = index - firstDayOffset + 1
+    const date = formatDateInput(new Date(year, month, day))
+    return { date, day, isToday: date === today }
+  })
+})
 const detailTotalTokens = computed(() => detailTimeline.value.reduce(
   (total, item) => total + timelineTokens(item),
   0,
@@ -773,6 +895,57 @@ const detailCostChartOptions: ChartOptions<'bar'> = {
       },
     },
   },
+}
+
+interface CalendarDay {
+  date: string
+  day: number
+  isToday: boolean
+}
+
+function startOfCalendarMonth(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1)
+}
+
+function formatDateInput(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function parseDateInput(value: string): Date {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(year, (month || 1) - 1, day || 1)
+}
+
+function formatCalendarDateLabel(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(parseDateInput(value))
+}
+
+function formatCalendarAriaLabel(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }).format(parseDateInput(value))
+}
+
+function isFutureCalendarDate(value: string): boolean {
+  return value > formatDateInput(new Date())
+}
+
+function calendarDayClass(day: CalendarDay | null): string {
+  if (!day) return 'calendar-day-empty'
+  return [
+    day.isToday ? 'calendar-day-today' : '',
+    detailSelectedDate.value === day.date ? 'calendar-day-selected' : '',
+    isFutureCalendarDate(day.date) ? 'calendar-day-disabled' : '',
+  ].filter(Boolean).join(' ')
+}
+
+function shiftDetailCalendarMonth(offset: number): void {
+  const current = detailCalendarMonth.value
+  const next = new Date(current.getFullYear(), current.getMonth() + offset, 1)
+  const now = startOfCalendarMonth(new Date())
+  if (next > now) return
+  detailCalendarMonth.value = next
 }
 
 const timezoneParams = () => ({
@@ -909,10 +1082,15 @@ function refreshAll(): void {
   void loadProviders({ cacheTtlMs: 0 })
 }
 
-function buildDetailQuery(range: PoolConsumptionDashboardRange): PoolConsumptionDashboardQuery {
+function buildDetailQuery(
+  range: PoolConsumptionDashboardRange,
+  selectedDate = detailSelectedDate.value,
+): PoolConsumptionDashboardQuery {
   return {
     ...timezoneParams(),
     range,
+    start_date: range === 'custom' ? selectedDate : undefined,
+    end_date: range === 'custom' ? selectedDate : undefined,
     granularity: 'day',
     page: 1,
     page_size: 1,
@@ -923,6 +1101,10 @@ async function openAccount(account: PoolConsumptionDashboardAccount): Promise<vo
   drawerOpen.value = true
   selectedAccount.value = account
   detailRange.value = 'last7days'
+  detailSelectedDate.value = formatDateInput(new Date())
+  detailCalendarMonth.value = startOfCalendarMonth(new Date())
+  detailCalendarOpen.value = false
+  selectedQuotaWindowIdentity.value = ''
   accountDetail.value = null
   detailError.value = ''
   detailLoading.value = true
@@ -944,10 +1126,12 @@ async function openAccount(account: PoolConsumptionDashboardAccount): Promise<vo
   }
 }
 
-async function loadAccountDetailForRange(value: unknown): Promise<void> {
+async function loadAccountDetailForRange(value: unknown, selectedDate = detailSelectedDate.value): Promise<void> {
   const nextRange = String(value || 'last7days') as PoolConsumptionDashboardRange
-  if (!detailRangeOptions.some(option => option.value === nextRange) || !selectedAccount.value) return
+  if (!['last3days', 'last7days', 'last30days', 'last90days', 'custom'].includes(nextRange) || !selectedAccount.value) return
+  if (nextRange === 'custom' && !selectedDate) return
   detailRange.value = nextRange
+  if (nextRange === 'custom') detailSelectedDate.value = selectedDate
   const account = selectedAccount.value
   const requestId = ++detailRequestId
   detailLoading.value = true
@@ -976,11 +1160,17 @@ function retryAccountDetail(): void {
 
 function closeDrawer(): void {
   drawerOpen.value = false
+  detailCalendarOpen.value = false
   detailRequestId++
 }
 
 function handleKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && drawerOpen.value) closeDrawer()
+  if (event.key !== 'Escape' || !drawerOpen.value) return
+  if (detailCalendarOpen.value) {
+    detailCalendarOpen.value = false
+    return
+  }
+  closeDrawer()
 }
 
 function accountStatusLabel(account: PoolConsumptionDashboardAccount): string {
@@ -1062,6 +1252,30 @@ function windowDurationLabel(minutes: number): string {
   if (minutes >= 24 * 60 && minutes % (24 * 60) === 0) return `${minutes / (24 * 60)} 天周期`
   if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60} 小时周期`
   return `${minutes} 分钟周期`
+}
+
+function windowPeriodLabel(window: QuotaWindowObservation): string {
+  if (window.window_minutes) return windowDurationLabel(window.window_minutes)
+  return window.label || '额度窗口'
+}
+
+function selectDetailQuotaWindow(windowIdentity: string): void {
+  if (detailQuotaWindows.value.some(window => window.window_identity === windowIdentity)) {
+    selectedQuotaWindowIdentity.value = windowIdentity
+  }
+}
+
+function selectDetailDate(value: string): void {
+  if (isFutureCalendarDate(value)) return
+  detailSelectedDate.value = value
+  detailCalendarMonth.value = startOfCalendarMonth(parseDateInput(value))
+  detailCalendarOpen.value = false
+  void loadAccountDetailForRange('custom', value)
+}
+
+function selectDetailQuickRange(value: PoolConsumptionDashboardRange): void {
+  detailCalendarOpen.value = false
+  void loadAccountDetailForRange(value)
 }
 
 function timelineTokens(item: {
@@ -1188,7 +1402,9 @@ onBeforeUnmount(() => {
 
 .pool-shell { border-color: color-mix(in srgb, var(--book-cloth, #a34828) 30%, var(--border)); background-color: var(--card); }
 .pool-header { padding: 1.15rem 1.25rem 1.25rem; }
-.pool-toolbar { display: grid; grid-template-columns: minmax(210px, 1fr) 9rem auto; align-items: end; gap: .65rem; min-width: min(100%, 32rem); }
+.pool-header-main { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(30rem, .92fr); align-items: start; gap: 1rem 2rem; }
+.pool-title-block { min-width: 0; }
+.pool-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 9rem auto; align-items: center; gap: .65rem; min-width: 0; padding-top: .1rem; }
 .toolbar-field { display: grid; min-width: 0; gap: .3rem; }
 .toolbar-field > span { color: var(--muted-foreground); font-size: .6875rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .filter-panel { margin-top: 1.1rem; border: 1px solid var(--pc-border-strong); border-radius: .85rem; background-color: var(--pc-muted-surface); padding: .85rem; }
@@ -1220,9 +1436,9 @@ onBeforeUnmount(() => {
 .section-kicker { color: var(--muted-foreground); font-size: .6875rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
 .account-list-header { display: flex; align-items: end; justify-content: space-between; gap: 1rem; border-left: 3.5px solid var(--primary); padding: .2rem 0 .2rem 1rem; }
 .account-grid { display: grid; gap: .75rem; }
-.account-card { display: grid; grid-template-columns: minmax(190px, 1.15fr) minmax(0, 4fr) minmax(120px, .65fr); min-width: 0; overflow: hidden; border: 1px solid var(--pc-border-strong); background-color: var(--card); transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; border-radius: .75rem; }
+.account-card { display: grid; grid-template-columns: minmax(190px, 1.15fr) minmax(0, 4fr) minmax(112px, .62fr); min-width: 0; overflow: hidden; border: 1px solid var(--pc-border-strong); background-color: var(--card); transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; border-radius: .75rem; }
 .account-card:hover { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); box-shadow: 0 10px 24px color-mix(in srgb, var(--foreground) 8%, transparent); transform: translateY(-1px); }
-.account-card-top { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: .6rem; border-right: 1px solid var(--pc-border); padding: .7rem .85rem; background-color: color-mix(in srgb, var(--muted) 20%, var(--card)); }
+.account-card-top { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: .42rem; border-right: 1px solid var(--pc-border); padding: .55rem .75rem; background-color: color-mix(in srgb, var(--muted) 20%, var(--card)); }
 .account-identity { min-width: 0; width: 100%; text-align: left; outline: none; }
 .account-identity:focus-visible, .detail-link:focus-visible { border-radius: .35rem; box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 35%, transparent); }
 .account-name { display: block; overflow-wrap: anywhere; color: var(--foreground); font-size: .8125rem; font-weight: 700; line-height: 1.35; }
@@ -1231,14 +1447,14 @@ onBeforeUnmount(() => {
 .status-dot-active { background-color: rgb(16 185 129); }.status-dot-inactive { background-color: var(--muted-foreground); }
 .sync-pill { display: inline-flex; max-width: 100%; flex: 0 0 auto; align-items: center; border: 1px solid currentColor; border-radius: 999px; padding: .2rem .5rem; font-size: .6875rem; font-weight: 500; line-height: 1.2; }
 .sync-good { color: rgb(5 150 105); background-color: rgb(16 185 129 / 8%); }.sync-warning { color: rgb(180 83 9); background-color: rgb(245 158 11 / 10%); }.sync-unknown { color: var(--muted-foreground); background-color: var(--pc-muted-surface); }
-.account-card-body { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(400px, 1.8fr); min-width: 0; gap: .75rem; align-items: center; padding: .7rem .85rem; }
+.account-card-body { display: grid; grid-template-columns: minmax(210px, 1fr) minmax(400px, 1.8fr); min-width: 0; gap: .55rem; align-items: center; padding: .55rem .75rem; }
 .account-card-body > .quota-heading, .account-card-body > .quota-window-list, .account-card-body > .quota-empty { grid-column: 1; }
 .account-card-body > .account-metrics { grid-column: 2; grid-row: 1 / span 2; }
 .quota-heading, .detail-section-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .quota-heading h4, .detail-section-heading h3 { color: var(--foreground); font-size: .8125rem; font-weight: 700; }
 .window-count { flex: 0 0 auto; color: var(--muted-foreground); font-size: .6875rem; font-weight: 500; white-space: nowrap; }
-.quota-window-list, .detail-window-list { display: grid; gap: .4rem; margin-top: .4rem; }
-.quota-window, .detail-window { min-width: 0; border: 1px solid var(--pc-border); border-radius: .5rem; background-color: var(--pc-muted-surface); padding: .5rem .65rem; }
+.quota-window-list, .detail-window-list { display: grid; gap: .32rem; margin-top: .32rem; }
+.quota-window, .detail-window { min-width: 0; border: 1px solid var(--pc-border); border-radius: .5rem; background-color: var(--pc-muted-surface); padding: .4rem .55rem; }
 .detail-window { padding: .85rem 1rem; }
 .window-topline, .window-bottomline, .detail-window-meta { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: .65rem; }
 .window-label { min-width: 0; overflow: hidden; color: var(--foreground); font-size: .72rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
@@ -1250,11 +1466,11 @@ onBeforeUnmount(() => {
 .window-duration { display: inline-block; margin-left: .4rem; color: var(--muted-foreground); font-size: .6875rem; }
 .quota-empty { display: grid; gap: .25rem; margin-top: .4rem; border: 1px dashed var(--pc-border-strong); border-radius: .5rem; padding: .6rem; color: var(--muted-foreground); font-size: .72rem; }
 .quota-empty strong { color: var(--foreground); font-size: .78rem; font-weight: 600; }
-.account-metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .45rem; min-width: 0; margin: 0; border-left: 1px solid var(--pc-border); padding-left: .85rem; }
+.account-metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .35rem; min-width: 0; margin: 0; border-left: 1px solid var(--pc-border); padding-left: .7rem; }
 .account-metric { min-width: 0; }
 .account-metric span { display: block; overflow: hidden; color: var(--muted-foreground); font-size: .6875rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .account-metric strong { display: block; margin-top: .15rem; overflow: hidden; font-size: .8125rem; font-weight: 700; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); }
-.account-card-footer { display: flex; min-width: 0; flex-direction: column; align-items: flex-end; justify-content: space-between; gap: .5rem; border-left: 1px solid var(--pc-border); padding: .7rem .85rem; background-color: color-mix(in srgb, var(--muted) 15%, var(--card)); }
+.account-card-footer { display: flex; min-width: 0; flex-direction: column; align-items: flex-end; justify-content: space-between; gap: .35rem; border-left: 1px solid var(--pc-border); padding: .55rem .7rem; background-color: color-mix(in srgb, var(--muted) 15%, var(--card)); }
 .last-used { min-width: 0; color: var(--muted-foreground); font-size: .6875rem; text-align: right; }
 .detail-link { flex: 0 0 auto; color: var(--primary); font-size: .75rem; font-weight: 700; outline: none; }
 
@@ -1287,18 +1503,47 @@ onBeforeUnmount(() => {
 .detail-stat { min-width: 0; border: 1px solid var(--pc-border); border-radius: .6rem; background-color: var(--pc-muted-surface); padding: .7rem .75rem; }
 .detail-stat span { display: block; color: var(--muted-foreground); font-size: .6875rem; font-weight: 500; }
 .detail-stat strong { display: block; margin-top: .25rem; overflow: hidden; color: var(--foreground); font-size: .875rem; font-weight: 700; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.detail-section { margin-top: .9rem; border: 1px solid var(--pc-border-strong); border-radius: .75rem; background-color: var(--card); padding: .9rem 1rem; }
+.detail-section { position: relative; margin-top: .9rem; border: 1px solid color-mix(in srgb, var(--border) 92%, var(--foreground)); border-radius: .75rem; background-color: color-mix(in srgb, var(--card) 94%, var(--muted)); padding: .9rem 1rem; box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 5%, transparent); }
+.detail-section::before { position: absolute; inset: .75rem auto .75rem 0; width: 2px; border-radius: 999px; background-color: color-mix(in srgb, var(--primary) 70%, var(--border)); content: ''; }
+.detail-section-heading { border-bottom: 1px solid var(--pc-border); padding-bottom: .65rem; }
 .detail-section-heading h3 { font-size: .8125rem; font-weight: 700; }
+.detail-quota-section::before { background-color: rgb(16 185 129); }
+.detail-history-section::before { background-color: rgb(71 112 116); }
+.detail-distribution-section::before { background-color: rgb(194 111 74); }
 .detail-window-facts { display: flex; flex-wrap: wrap; gap: .4rem .8rem; margin-top: .65rem; color: var(--muted-foreground); font-size: .6875rem; }
 .detail-window-forecast { margin-top: .6rem; color: var(--primary); font-size: .6875rem; line-height: 1.4; }
-.detail-chart-section { background-color: var(--pc-muted-surface); }
+.detail-chart-section { border-color: color-mix(in srgb, var(--primary) 28%, var(--border)); background-color: var(--pc-muted-surface); }
 .chart-heading { align-items: center; }
 .chart-live-mark { display: inline-flex; align-items: center; gap: .3rem; color: var(--muted-foreground); font-size: .6875rem; }
 .chart-live-mark span { width: .4rem; height: .4rem; border-radius: 999px; background-color: rgb(16 185 129); box-shadow: 0 0 0 3px rgb(16 185 129 / 12%); }
-.range-tabs { display: inline-flex; flex: 0 0 auto; gap: .2rem; border: 1px solid var(--pc-border-strong); border-radius: .5rem; background-color: var(--background); padding: .2rem; }
-.range-tabs button { border-radius: .35rem; padding: .32rem .5rem; color: var(--muted-foreground); font-size: .6875rem; font-weight: 500; outline: none; }
-.range-tabs button:hover, .range-tabs button:focus-visible { color: var(--foreground); }
-.range-tab-active { background-color: var(--primary); color: var(--primary-foreground) !important; box-shadow: 0 1px 4px color-mix(in srgb, var(--primary) 26%, transparent); }
+.detail-date-picker { position: relative; flex: 0 0 auto; }
+.calendar-trigger { display: inline-flex; align-items: center; gap: .38rem; border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border)); border-radius: .55rem; background-color: var(--background); padding: .38rem .55rem; color: var(--foreground); font-size: .6875rem; font-weight: 600; outline: none; box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 5%, transparent); }
+.calendar-trigger:hover, .calendar-trigger:focus-visible { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 16%, transparent); }
+.calendar-popover { position: absolute; z-index: 30; top: calc(100% + .55rem); right: 0; width: 17.5rem; border: 1px solid color-mix(in srgb, var(--border) 92%, var(--foreground)); border-radius: .75rem; background-color: var(--background); padding: .75rem; box-shadow: 0 16px 40px color-mix(in srgb, var(--foreground) 18%, transparent); }
+.calendar-popover-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; border-bottom: 1px solid var(--pc-border); padding-bottom: .65rem; }
+.calendar-popover-heading > div:first-child { display: grid; gap: .12rem; }
+.calendar-popover-heading span { color: var(--muted-foreground); font-size: .625rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.calendar-popover-heading strong { color: var(--foreground); font-size: .8rem; font-weight: 700; }
+.calendar-nav { display: inline-flex; gap: .25rem; }
+.calendar-nav button { display: inline-flex; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; border: 1px solid var(--pc-border); border-radius: .4rem; color: var(--muted-foreground); outline: none; }
+.calendar-nav button:hover:not(:disabled), .calendar-nav button:focus-visible { border-color: var(--primary); color: var(--foreground); }
+.calendar-nav button:disabled { cursor: not-allowed; opacity: .35; }
+.calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .18rem; }
+.calendar-weekdays { margin-top: .7rem; color: var(--muted-foreground); font-size: .625rem; font-weight: 700; text-align: center; }
+.calendar-grid { margin-top: .3rem; }
+.calendar-day { display: inline-flex; align-items: center; justify-content: center; aspect-ratio: 1; min-width: 0; border-radius: .42rem; color: var(--foreground); font-size: .7rem; font-variant-numeric: tabular-nums; outline: none; }
+.calendar-day:hover:not(:disabled), .calendar-day:focus-visible { background-color: var(--pc-primary-soft); color: var(--primary); }
+.calendar-day-today { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 55%, transparent); color: var(--primary); font-weight: 700; }
+.calendar-day-selected { background-color: var(--primary); color: var(--primary-foreground) !important; box-shadow: 0 2px 5px color-mix(in srgb, var(--primary) 24%, transparent); }
+.calendar-day-disabled { cursor: not-allowed; color: var(--muted-foreground); opacity: .35; }
+.calendar-day-empty { pointer-events: none; }
+.calendar-popover-footer { display: flex; align-items: center; justify-content: space-between; gap: .5rem; border-top: 1px solid var(--pc-border); margin-top: .7rem; padding-top: .6rem; color: var(--muted-foreground); font-size: .625rem; }
+.calendar-popover-footer button { color: var(--primary); font-size: .6875rem; font-weight: 700; outline: none; }
+.calendar-popover-footer button:hover, .calendar-popover-footer button:focus-visible { text-decoration: underline; }
+.calendar-quick-ranges { display: flex; gap: .25rem; margin-top: .55rem; border-top: 1px solid var(--pc-border); padding-top: .55rem; }
+.calendar-quick-ranges button { flex: 1; border-radius: .35rem; padding: .28rem .2rem; color: var(--muted-foreground); font-size: .625rem; font-weight: 600; outline: none; }
+.calendar-quick-ranges button:hover, .calendar-quick-ranges button:focus-visible { background-color: var(--pc-primary-soft); color: var(--foreground); }
+.calendar-quick-ranges .calendar-quick-range-active { background-color: var(--pc-primary-soft); color: var(--primary); }
 .detail-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin-top: .85rem; }
 .detail-chart-card { min-width: 0; border: 1px solid var(--pc-border); border-radius: .65rem; background-color: var(--background); padding: .75rem; }
 .chart-card-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
@@ -1321,11 +1566,20 @@ onBeforeUnmount(() => {
 .distribution-row span { min-width: 0; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
 .distribution-row strong { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .empty-inline { margin-top: .7rem; color: var(--muted-foreground); font-size: .72rem; }
+.quota-period-switcher { margin-top: .75rem; border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border)); border-radius: .6rem; background-color: color-mix(in srgb, var(--primary) 5%, var(--background)); padding: .55rem; }
+.quota-period-switcher-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; color: var(--foreground); font-size: .6875rem; font-weight: 700; }
+.quota-period-switcher-heading small { color: var(--muted-foreground); font-size: .625rem; font-weight: 500; }
+.quota-period-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: .35rem; margin-top: .45rem; }
+.quota-period-tabs button { display: grid; min-width: 0; gap: .18rem; border: 1px solid var(--pc-border); border-radius: .45rem; background-color: var(--background); padding: .45rem .5rem; text-align: left; outline: none; }
+.quota-period-tabs button:hover, .quota-period-tabs button:focus-visible { border-color: var(--primary); }
+.quota-period-tabs button span { overflow: hidden; color: var(--foreground); font-size: .6875rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.quota-period-tabs button small { overflow: hidden; color: var(--muted-foreground); font-size: .625rem; text-overflow: ellipsis; white-space: nowrap; }
+.quota-period-tabs .quota-period-active { border-color: var(--primary); background-color: var(--pc-primary-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent); }
 
 @keyframes orbit { to { transform: rotate(360deg); } }
-@media (max-width: 1100px) { .filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.filter-search-field { grid-column: span 2; }.account-card { grid-template-columns: minmax(170px, 1.1fr) minmax(240px, 1.6fr) minmax(270px, 1.8fr); }.account-card-footer { grid-column: 1 / -1; flex-direction: row; align-items: center; border-top: 1px solid var(--pc-border); border-left: 0; }.last-used { text-align: left; } }
-@media (max-width: 820px) { .pool-header { padding-inline: 1rem; }.pool-toolbar { grid-template-columns: minmax(0, 1fr) 8rem auto; }.summary-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }.summary-item:nth-child(4) { border-left: 0; border-top: 1px solid var(--pc-border); }.summary-item:nth-child(5) { border-top: 1px solid var(--pc-border); }.account-card { display: block; }.account-card-top { flex-direction: row; align-items: flex-start; border-right: 0; border-bottom: 1px solid var(--pc-border); }.account-card-body { display: block; }.account-metrics { margin-top: .8rem; border-top: 1px solid var(--pc-border); border-left: 0; padding-top: .75rem; padding-left: 0; }.account-card-footer { border-top: 1px solid var(--pc-border); }.detail-chart-grid { grid-template-columns: 1fr; }.detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }.detail-metrics .detail-stat:nth-child(4), .detail-metrics .detail-stat:nth-child(5) { grid-column: span 1; } }
-@media (max-width: 640px) { .pool-header { padding: .95rem .8rem 1rem; }.pool-toolbar { grid-template-columns: 1fr 1fr; min-width: 0; }.pool-toolbar > :last-child { grid-column: span 2; }.filter-panel { padding: .65rem; }.filter-panel-note { display: none; }.filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.filter-search-field { grid-column: span 2; }.summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }.summary-item:nth-child(3) { border-left: 0; border-top: 1px solid var(--pc-border); }.summary-item:nth-child(4) { border-left: 1px solid var(--pc-border); }.summary-item:nth-child(5) { grid-column: span 2; border-left: 0; }.account-list-header { align-items: flex-start; flex-direction: column; }.account-card-top { flex-direction: column; }.sync-pill { max-width: none; }.detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.detail-metrics .detail-stat:nth-child(5) { grid-column: span 2; }.chart-heading { align-items: flex-start; flex-direction: column; }.range-tabs { width: 100%; }.range-tabs button { flex: 1; }.drawer-header, .drawer-scroll { padding-inline: .85rem; } }
+@media (max-width: 1100px) { .pool-header-main { grid-template-columns: 1fr; gap: .9rem; }.pool-toolbar { max-width: none; }.filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.filter-search-field { grid-column: span 2; }.account-card { grid-template-columns: minmax(170px, 1.1fr) minmax(0, 3fr); }.account-card-body { grid-template-columns: minmax(0, 1fr); }.account-card-body > .account-metrics { grid-column: 1; grid-row: auto; border-top: 1px solid var(--pc-border); border-left: 0; padding-top: .55rem; padding-left: 0; }.account-card-footer { grid-column: 1 / -1; flex-direction: row; align-items: center; border-top: 1px solid var(--pc-border); border-left: 0; }.last-used { text-align: left; } }
+@media (max-width: 820px) { .pool-header { padding-inline: 1rem; }.pool-toolbar { grid-template-columns: minmax(0, 1fr) 8rem auto; }.summary-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }.summary-item:nth-child(4) { border-left: 0; border-top: 1px solid var(--pc-border); }.summary-item:nth-child(5) { border-top: 1px solid var(--pc-border); }.account-card { display: block; }.account-card-top { flex-direction: row; align-items: flex-start; border-right: 0; border-bottom: 1px solid var(--pc-border); }.account-card-body { display: block; }.account-metrics { margin-top: .8rem; border-top: 1px solid var(--pc-border); border-left: 0; padding-top: .75rem; padding-left: 0; }.account-card-footer { border-top: 1px solid var(--pc-border); }.detail-chart-grid { grid-template-columns: 1fr; }.detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }.detail-metrics .detail-stat:nth-child(4), .detail-metrics .detail-stat:nth-child(5) { grid-column: span 1; }.chart-heading { align-items: flex-start; flex-direction: column; }.detail-date-picker { width: 100%; }.calendar-trigger { width: 100%; justify-content: space-between; }.calendar-popover { left: 0; right: auto; } }
+@media (max-width: 640px) { .pool-header { padding: .95rem .8rem 1rem; }.pool-toolbar { grid-template-columns: 1fr 1fr; min-width: 0; }.pool-toolbar > :last-child { grid-column: span 2; }.filter-panel { padding: .65rem; }.filter-panel-note { display: none; }.filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.filter-search-field { grid-column: span 2; }.summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }.summary-item:nth-child(3) { border-left: 0; border-top: 1px solid var(--pc-border); }.summary-item:nth-child(4) { border-left: 1px solid var(--pc-border); }.summary-item:nth-child(5) { grid-column: span 2; border-left: 0; }.account-list-header { align-items: flex-start; flex-direction: column; }.account-card-top { flex-direction: column; }.sync-pill { max-width: none; }.detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.detail-metrics .detail-stat:nth-child(5) { grid-column: span 2; }.quota-period-tabs { grid-template-columns: 1fr; }.calendar-popover { width: min(17.5rem, calc(100vw - 3rem)); }.drawer-header, .drawer-scroll { padding-inline: .85rem; } }
 @media (prefers-reduced-motion: reduce) { .loading-orbit, .account-card, .quota-meter-fill, .drawer-enter-active, .drawer-leave-active { animation: none; transition: none; } }
 @media (min-width: 1101px) { .account-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 </style>
