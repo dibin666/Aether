@@ -40,6 +40,7 @@ vi.mock('@/components/ui', async () => {
     Badge: passthrough('BadgeStub', 'span'),
     Button: passthrough('ButtonStub', 'button'),
     Card: passthrough('CardStub', 'section'),
+    Input: passthrough('InputStub', 'input'),
     Pagination: passthrough('PaginationStub'),
     Select: passthrough('SelectStub'),
     SelectContent: passthrough('SelectContentStub'),
@@ -59,14 +60,15 @@ vi.mock('lucide-vue-next', () => {
   const Icon = defineComponent({ name: 'IconStub', setup: () => () => h('span') })
   return {
     Activity: Icon,
-    ArrowDownUp: Icon,
-    BadgeDollarSign: Icon,
-    Clock3: Icon,
+    CalendarDays: Icon,
+    ChevronDown: Icon,
+    ChevronLeft: Icon,
+    ChevronRight: Icon,
     Coins: Icon,
-    Flame: Icon,
+    DollarSign: Icon,
     Gauge: Icon,
     Search: Icon,
-    Send: Icon,
+    Users: Icon,
     X: Icon,
     Zap: Icon,
   }
@@ -100,6 +102,97 @@ function dashboard() {
     accounts: [],
     pagination: { page: 1, page_size: 25, total: 0, total_pages: 0 },
     filters: {},
+  }
+}
+
+function quotaWindow(resetAt: number, usedPercent: number) {
+  return {
+    window_identity: `monthly-account-1-${resetAt}`,
+    code: 'monthly',
+    label: '月',
+    scope: 'account',
+    model: null,
+    unit: 'percent',
+    used_percent: usedPercent,
+    remaining_percent: 100 - usedPercent,
+    used_value: null,
+    remaining_value: null,
+    limit_value: null,
+    reset_at_unix_secs: resetAt,
+    window_minutes: 60,
+    exhausted: false,
+    local_request_count: 0,
+    local_total_tokens: 0,
+    local_cost_usd: '0.00000000',
+  }
+}
+
+function dashboardAccount(window: ReturnType<typeof quotaWindow>) {
+  return {
+    key_id: 'account-1',
+    key_name: 'operator@example.com',
+    auth_type: 'oauth',
+    is_active: true,
+    status: 'available',
+    request_count: 0,
+    successful_request_count: 0,
+    failed_request_count: 0,
+    success_rate: null,
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    total_tokens: 0,
+    cache_hit_request_count: 0,
+    cache_hit_rate: null,
+    total_cost_usd: '0.00000000',
+    actual_total_cost_usd: '0.00000000',
+    avg_first_byte_time_ms: null,
+    p95_first_byte_time_ms: null,
+    avg_response_time_ms: null,
+    p95_response_time_ms: null,
+    last_used_at_unix_secs: null,
+    quota: {
+      supported: true,
+      observed_at_unix_secs: window.reset_at_unix_secs - 10,
+      freshness: 'fresh',
+      risk: 'healthy',
+      windows: [window],
+    },
+    quota_risk: 'healthy',
+    quota_freshness: 'fresh',
+    minimum_remaining_percent: window.remaining_percent,
+    maximum_burn_rate_percent_per_hour: null,
+    earliest_exhaustion_unix_secs: null,
+  }
+}
+
+function accountDetail(
+  account: ReturnType<typeof dashboardAccount>,
+  historicalWindow: ReturnType<typeof quotaWindow>,
+) {
+  return {
+    provider_id: 'provider-codex',
+    provider_name: 'Codex Pool',
+    provider_type: 'codex',
+    range: { key: 'quota_window', start_unix_secs: 0, end_unix_secs: 0, granularity: 'hour' },
+    account,
+    charts: { timeline: [] },
+    quota_history: [{
+      supported: true,
+      observed_at_unix_secs: historicalWindow.reset_at_unix_secs - 10,
+      freshness: 'fresh',
+      risk: 'healthy',
+      windows: [historicalWindow],
+    }],
+    model_distribution: [],
+    error_distribution: [],
+    performance: {
+      avg_first_byte_time_ms: null,
+      p95_first_byte_time_ms: null,
+      avg_response_time_ms: null,
+      p95_response_time_ms: null,
+    },
   }
 }
 
@@ -165,19 +258,19 @@ describe('pool consumption dashboard', () => {
       auth_type: 'oauth',
       is_active: true,
       status: 'available',
-      request_count: 12,
-      successful_request_count: 12,
+      request_count: 99,
+      successful_request_count: 99,
       failed_request_count: 0,
       success_rate: 100,
-      input_tokens: 800,
-      output_tokens: 400,
+      input_tokens: 6000,
+      output_tokens: 3999,
       cache_creation_input_tokens: 0,
       cache_read_input_tokens: 0,
-      total_tokens: 1200,
+      total_tokens: 9999,
       cache_hit_request_count: 0,
       cache_hit_rate: 0,
-      total_cost_usd: '0.0420',
-      actual_total_cost_usd: '0.0420',
+      total_cost_usd: '9.9900',
+      actual_total_cost_usd: '9.9900',
       avg_first_byte_time_ms: 300,
       p95_first_byte_time_ms: 500,
       avg_response_time_ms: 900,
@@ -225,8 +318,65 @@ describe('pool consumption dashboard', () => {
     expect(root.textContent).toContain('额度与重置周期')
     expect(root.textContent).toContain('5 小时')
     expect(root.textContent).toContain('重置于')
+    expect(root.querySelector('[data-testid="account-window-requests-account-1"]')?.textContent).toBe('12')
+    expect(root.querySelector('[data-testid="account-window-tokens-account-1"]')?.textContent).toBe('1.2K')
+    expect(root.querySelector('[data-testid="account-window-cost-account-1"]')?.textContent).toBe('$0.0420')
     expect(root.textContent).not.toContain('流量趋势')
     expect(root.textContent).not.toContain('模型分布')
     expect(root.textContent).not.toContain('额度燃烧带')
+  })
+
+  it('resets detail usage to the active quota cycle and switches historical cycles with arrows', async () => {
+    const currentWindow = quotaWindow(2_000_000, 3)
+    const historicalWindow = quotaWindow(1_900_000, 100)
+    const account = dashboardAccount(currentWindow)
+    const response = dashboard() as any
+    response.accounts = [account]
+    response.pagination.total = 1
+    poolApiMocks.getPoolConsumptionDashboard.mockResolvedValue(response)
+    poolApiMocks.getPoolConsumptionAccountDetail.mockResolvedValue(
+      accountDetail(account, historicalWindow),
+    )
+
+    const root = mountPage()
+    await settle()
+    const accountButton = root.querySelector<HTMLButtonElement>('[aria-label="查看 operator@example.com 的详情"]')
+    expect(accountButton).not.toBeNull()
+    accountButton?.click()
+    await settle()
+
+    expect(poolApiMocks.getPoolConsumptionAccountDetail).toHaveBeenNthCalledWith(
+      1,
+      'provider-codex',
+      'account-1',
+      expect.objectContaining({
+        start_unix_secs: 2_000_000 - 60 * 60,
+        end_unix_secs: 2_000_000,
+        granularity: 'hour',
+      }),
+      expect.any(Object),
+    )
+    expect(document.body.textContent).toContain('1 / 2')
+    expect(document.body.textContent).not.toContain('日历筛选')
+    expect(document.body.textContent).not.toContain('数据不足，暂不预测')
+    expect(document.body.textContent).not.toContain('额度同步记录')
+
+    const olderButton = document.body.querySelector<HTMLButtonElement>('[aria-label="查看更早的额度窗口"]')
+    expect(olderButton).not.toBeNull()
+    olderButton?.click()
+    await settle()
+
+    expect(poolApiMocks.getPoolConsumptionAccountDetail).toHaveBeenNthCalledWith(
+      2,
+      'provider-codex',
+      'account-1',
+      expect.objectContaining({
+        start_unix_secs: 1_900_000 - 60 * 60,
+        end_unix_secs: 1_900_000,
+        granularity: 'hour',
+      }),
+      expect.any(Object),
+    )
+    expect(document.body.textContent).toContain('2 / 2')
   })
 })

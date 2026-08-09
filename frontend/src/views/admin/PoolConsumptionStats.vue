@@ -343,17 +343,16 @@
           </Card>
         </section>
 
-        <section class="account-list-header" aria-labelledby="account-list-title">
-          <div>
-            <p class="section-kicker">账号明细</p>
-            <h3 id="account-list-title" class="mt-1 text-lg font-semibold">
+        <section class="flex items-center justify-between gap-4 pt-1" aria-labelledby="account-list-title">
+          <div class="flex min-w-0 items-baseline gap-2">
+            <h3 id="account-list-title" class="shrink-0 text-base font-semibold">账号明细</h3>
+            <span class="truncate text-xs text-muted-foreground">
               {{ dashboard.range.label }} · {{ dashboard.pagination.total }} 个账号
-            </h3>
-
+            </span>
           </div>
           <RouterLink
             to="/admin/pool"
-            class="text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+            class="ml-auto shrink-0 rounded-md border border-border/60 px-2.5 py-1.5 text-xs font-medium text-primary hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           >
             前往账号管理
           </RouterLink>
@@ -363,14 +362,14 @@
           {{ statsError }}
         </div>
 
-        <div v-if="dashboard.accounts.length" class="grid grid-cols-1 gap-4">
+        <div v-if="dashboard.accounts.length" class="grid grid-cols-1 gap-2">
           <Card 
             v-for="account in dashboard.accounts" 
             :key="account.key_id" 
-            class="flex flex-col lg:flex-row border border-border/60 hover:border-primary/50 bg-card hover:shadow-md transition-all rounded-xl overflow-hidden"
+            class="flex flex-col overflow-hidden rounded-lg border border-border/60 bg-card transition-all hover:border-primary/50 hover:shadow-sm lg:flex-row"
           >
             <!-- 左侧：身份标识 (原 account-card-top) -->
-            <div class="flex flex-col justify-between gap-3 p-4 bg-muted/20 border-b lg:border-b-0 lg:border-r border-border/60 lg:w-[240px] shrink-0">
+            <div class="flex shrink-0 flex-col justify-between gap-2 border-b border-border/60 bg-muted/20 px-3 py-2.5 lg:w-[220px] lg:border-b-0 lg:border-r">
               <div class="min-w-0">
                 <button
                   type="button"
@@ -386,7 +385,7 @@
                       {{ planTypeLabel(account.quota.plan_type) }}
                     </Badge>
                   </div>
-                  <div class="flex items-center gap-1.5 mt-2 text-xs text-muted-foreground">
+                  <div class="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <span class="w-2 h-2 rounded-full shrink-0" :class="account.is_active ? 'bg-emerald-500' : 'bg-muted-foreground'" />
                     <span>{{ accountStatusLabel(account) }} · {{ account.auth_type }}</span>
                   </div>
@@ -401,7 +400,7 @@
             </div>
 
             <!-- 中间：配额/进度条/指标 (原 account-card-body) -->
-            <div class="flex-1 grid grid-cols-1 md:grid-cols-12 gap-4 items-center p-4">
+            <div class="grid flex-1 grid-cols-1 items-center gap-3 px-3 py-2.5 md:grid-cols-12">
               <!-- 配额进度条 (占 5/12 列) -->
               <div class="md:col-span-5 flex flex-col justify-center min-w-0">
                 <div class="flex items-center justify-between gap-2">
@@ -411,8 +410,8 @@
                   </span>
                 </div>
 
-                <div v-if="account.quota.windows.length" class="space-y-2 mt-2">
-                  <div v-for="window in account.quota.windows" :key="window.window_identity" class="border border-border/40 rounded-lg bg-muted/10 p-2 text-xs">
+                <div v-if="account.quota.windows.length" class="mt-1.5">
+                  <div v-for="window in account.quota.windows.slice(0, 1)" :key="window.window_identity" class="rounded-md border border-border/40 bg-muted/10 px-2 py-1.5 text-xs">
                     <div class="flex items-baseline justify-between gap-2">
                       <span class="font-semibold text-foreground truncate max-w-[140px]" :title="windowDisplayLabel(window)">
                         {{ windowDisplayLabel(window) }}
@@ -420,14 +419,14 @@
                       <strong class="text-foreground font-bold">{{ quotaWindowRemainingText(window) }} 可用</strong>
                     </div>
                     <!-- 美化后的进度条，高度h-1.5，有过渡和圆角 -->
-                    <div class="h-1.5 w-full bg-muted/60 rounded-full overflow-hidden mt-1.5" aria-hidden="true">
+                    <div class="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted/60" aria-hidden="true">
                       <div
                         class="h-full rounded-full transition-all duration-500 ease-out"
                         :class="riskBar(window.forecast?.risk || account.quota_risk)"
                         :style="{ width: `${quotaWindowRemainingPercent(window)}%` }"
                       />
                     </div>
-                    <div class="flex justify-between items-center text-[10px] text-muted-foreground mt-1.5">
+                    <div class="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
                       <span>{{ quotaWindowUsedText(window) }}</span>
                       <span>{{ resetLabel(window.reset_at_unix_secs) }}</span>
                     </div>
@@ -439,15 +438,15 @@
               </div>
 
               <!-- 6个指标列表 (占 7/12 列) -->
-              <div class="md:col-span-7 border-t md:border-t-0 md:border-l border-border/60 pt-4 md:pt-0 md:pl-4">
+              <div class="border-t border-border/60 pt-2.5 md:col-span-7 md:border-l md:border-t-0 md:pl-3 md:pt-0">
                 <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center md:text-left">
                   <div class="min-w-0">
                     <span class="text-[10px] font-medium text-muted-foreground block truncate">请求</span>
-                    <strong class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">{{ formatInteger(account.request_count) }}</strong>
+                    <strong :data-testid="`account-window-requests-${account.key_id}`" class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">{{ formatInteger(account.quota.windows[0]?.local_request_count ?? account.request_count) }}</strong>
                   </div>
                   <div class="min-w-0">
                     <span class="text-[10px] font-medium text-muted-foreground block truncate">Token</span>
-                    <strong class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">{{ formatToken(account.total_tokens) }}</strong>
+                    <strong :data-testid="`account-window-tokens-${account.key_id}`" class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">{{ formatToken(account.quota.windows[0]?.local_total_tokens ?? account.total_tokens) }}</strong>
                   </div>
                   <div class="min-w-0">
                     <span class="text-[10px] font-medium text-muted-foreground block truncate">成功率</span>
@@ -465,14 +464,14 @@
                   </div>
                   <div class="min-w-0">
                     <span class="text-[10px] font-medium text-muted-foreground block truncate">费用</span>
-                    <strong class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">{{ formatUsd(account.total_cost_usd) }}</strong>
+                    <strong :data-testid="`account-window-cost-${account.key_id}`" class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">{{ formatUsd(account.quota.windows[0]?.local_cost_usd ?? account.total_cost_usd) }}</strong>
                   </div>
                 </div>
               </div>
             </div>
 
             <!-- 右侧：最后使用与详情链接 (原 account-card-footer) -->
-            <div class="flex flex-row lg:flex-col justify-between items-center lg:items-end border-t lg:border-t-0 lg:border-l border-border/60 p-4 bg-muted/10 lg:w-[140px] shrink-0 gap-2">
+            <div class="flex shrink-0 flex-row items-center justify-between gap-2 border-t border-border/60 bg-muted/10 px-3 py-2.5 lg:w-[125px] lg:flex-col lg:items-end lg:border-l lg:border-t-0">
               <span class="text-[10px] text-muted-foreground lg:text-right">{{ lastUsedLabel(account.last_used_at_unix_secs) }}</span>
               <button 
                 type="button" 
@@ -559,82 +558,13 @@
 
                 <section class="detail-section detail-chart-section">
                     <div class="detail-section-heading chart-heading">
-                      <div>
-                        <div class="flex items-center gap-2">
-                          <h3>Token 与费用趋势</h3>
-                          <span class="chart-live-mark"><span />按日</span>
-                        </div>
-                      </div>
-                      <div class="detail-date-picker">
-                        <button
-                          type="button"
-                          class="calendar-trigger"
-                          :aria-expanded="detailCalendarOpen"
-                          aria-controls="account-detail-calendar"
-                          @click="detailCalendarOpen = !detailCalendarOpen"
-                        >
-                          <CalendarDays class="h-3.5 w-3.5" />
-                          <span>{{ detailDateLabel }}</span>
-                          <ChevronDown class="h-3.5 w-3.5 opacity-60" />
-                        </button>
-                        <div
-                          v-if="detailCalendarOpen"
-                          id="account-detail-calendar"
-                          class="calendar-popover"
-                          role="dialog"
-                          aria-label="选择详情日期"
-                        >
-                          <div class="calendar-popover-heading">
-                            <div>
-                              <span>日历筛选</span>
-                              <strong>{{ detailCalendarMonthLabel }}</strong>
-                            </div>
-                            <div class="calendar-nav">
-                              <button type="button" aria-label="上个月" @click="shiftDetailCalendarMonth(-1)">
-                                <ChevronLeft class="h-3.5 w-3.5" />
-                              </button>
-                              <button type="button" aria-label="下个月" :disabled="isCurrentCalendarMonth" @click="shiftDetailCalendarMonth(1)">
-                                <ChevronRight class="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </div>
-                          <div class="calendar-weekdays" aria-hidden="true">
-                            <span v-for="weekday in calendarWeekdays" :key="weekday">{{ weekday }}</span>
-                          </div>
-                          <div class="calendar-grid" role="grid">
-                            <button
-                              v-for="(day, index) in detailCalendarDays"
-                              :key="day ? day.date : `empty-${index}`"
-                              type="button"
-                              class="calendar-day"
-                              :class="calendarDayClass(day)"
-                              :disabled="!day || isFutureCalendarDate(day.date)"
-                              :aria-label="day ? formatCalendarAriaLabel(day.date) : undefined"
-                              @click="day && !isFutureCalendarDate(day.date) && selectDetailDate(day.date)"
-                            >
-                              {{ day?.day ?? '' }}
-                            </button>
-                          </div>
-                          <div class="calendar-popover-footer">
-                            <span>{{ detailDateHint }}</span>
-                            <button type="button" @click="selectDetailDate(formatDateInput(new Date()))">今天</button>
-                          </div>
-                          <div class="calendar-quick-ranges" aria-label="快捷时间范围">
-                            <button
-                              v-for="option in detailQuickRangeOptions"
-                              :key="option.value"
-                              type="button"
-                              :class="{ 'calendar-quick-range-active': detailRange === option.value }"
-                              @click="selectDetailQuickRange(option.value)"
-                            >
-                              {{ option.label.replace('近 ', '') }}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
+                      <h3>Token 与费用趋势</h3>
+                      <span v-if="activeDetailQuotaCycle" class="chart-live-mark">
+                        <span />{{ formatQuotaCycleRange(activeDetailQuotaCycle) }}
+                      </span>
                     </div>
 
-                  <div v-if="detailLoading" class="chart-loading">
+                  <div v-if="detailRefreshing" class="chart-loading">
                     <div class="loading-orbit" aria-hidden="true" />
                     <span>正在更新图表…</span>
                   </div>
@@ -670,84 +600,67 @@
                     </span>
                   </div>
 
-                  <div v-if="detailQuotaWindows.length > 1" class="quota-period-switcher">
-                    <div class="quota-period-switcher-heading">
-                      <span>可用额度周期</span>
-                      <small>{{ detailQuotaWindows.length }} 个周期</small>
-                    </div>
-                    <div class="quota-period-tabs" role="tablist" aria-label="额度周期">
+                  <template v-if="activeDetailQuotaCycle">
+                    <div class="quota-window-navigation" aria-label="额度窗口导航">
                       <button
-                        v-for="window in detailQuotaWindows"
-                        :key="window.window_identity"
                         type="button"
-                        role="tab"
-                        :aria-selected="activeDetailQuotaWindow?.window_identity === window.window_identity"
-                        :class="{ 'quota-period-active': activeDetailQuotaWindow?.window_identity === window.window_identity }"
-                        @click="selectDetailQuotaWindow(window.window_identity)"
+                        class="quota-window-arrow"
+                        :disabled="!hasOlderDetailQuotaCycle || detailRefreshing"
+                        aria-label="查看更早的额度窗口"
+                        @click="shiftDetailQuotaCycle(1)"
                       >
-                        <span>{{ windowPeriodLabel(window) }}</span>
-                        <small>{{ window.window_minutes ? windowDurationLabel(window.window_minutes) : '当前周期' }}</small>
+                        <ChevronLeft class="h-4 w-4" />
+                      </button>
+                      <div class="quota-window-navigation-copy">
+                        <span>{{ activeDetailQuotaCycleIndex + 1 }} / {{ detailQuotaCycles.length }}</span>
+                        <strong :title="windowDisplayLabel(activeDetailQuotaCycle.window)">
+                          {{ windowDisplayLabel(activeDetailQuotaCycle.window) }}
+                        </strong>
+                        <small>{{ formatQuotaCycleRange(activeDetailQuotaCycle) }}</small>
+                      </div>
+                      <button
+                        type="button"
+                        class="quota-window-arrow"
+                        :disabled="!hasNewerDetailQuotaCycle || detailRefreshing"
+                        aria-label="查看更新的额度窗口"
+                        @click="shiftDetailQuotaCycle(-1)"
+                      >
+                        <ChevronRight class="h-4 w-4" />
                       </button>
                     </div>
-                  </div>
 
-                  <div v-if="detailQuotaWindows.length" class="detail-window-list">
-                    <div v-for="window in visibleDetailQuotaWindows" :key="window.window_identity" class="detail-window">
+                    <div class="detail-window-list">
+                      <div class="detail-window">
                       <div class="window-topline">
                         <div>
-                          <span class="window-label" :title="windowDisplayLabel(window)">{{ windowDisplayLabel(window) }}</span>
-                          <span v-if="window.window_minutes" class="window-duration">{{ windowDurationLabel(window.window_minutes) }}</span>
+                          <span class="window-label" :title="windowDisplayLabel(activeDetailQuotaCycle.window)">{{ windowDisplayLabel(activeDetailQuotaCycle.window) }}</span>
+                          <span v-if="activeDetailQuotaCycle.window.window_minutes" class="window-duration">{{ windowDurationLabel(activeDetailQuotaCycle.window.window_minutes) }}</span>
                         </div>
-                        <strong class="window-remaining">{{ quotaWindowRemainingText(window) }} 可用</strong>
+                        <strong class="window-remaining">{{ quotaWindowRemainingText(activeDetailQuotaCycle.window) }} 可用</strong>
                       </div>
                       <div class="quota-meter" aria-hidden="true">
                         <div
                           class="quota-meter-fill"
-                          :class="riskBar(window.forecast?.risk || accountDetail.account.quota_risk)"
-                          :style="{ width: `${quotaWindowRemainingPercent(window)}%` }"
+                          :class="riskBar(activeDetailQuotaCycle.observation.risk)"
+                          :style="{ width: `${quotaWindowRemainingPercent(activeDetailQuotaCycle.window)}%` }"
                         />
                       </div>
                       <div class="detail-window-meta">
-                        <span>{{ quotaWindowUsedText(window) }}</span>
-                        <span>{{ resetLabel(window.reset_at_unix_secs) }}</span>
+                        <span>{{ quotaWindowUsedText(activeDetailQuotaCycle.window) }}</span>
+                        <span>{{ resetLabel(activeDetailQuotaCycle.window.reset_at_unix_secs) }}</span>
                       </div>
                       <div class="detail-window-facts">
-                        <span>本窗口请求 {{ formatInteger(window.local_request_count) }}</span>
-                        <span>Token {{ formatToken(window.local_total_tokens) }}</span>
-                        <span>费用 {{ formatUsd(window.local_cost_usd) }}</span>
+                        <span>本窗口请求 {{ formatInteger(activeDetailQuotaCycle.startUnixSecs == null ? activeDetailQuotaCycle.window.local_request_count : accountDetail.account.request_count) }}</span>
+                        <span>Token {{ formatToken(activeDetailQuotaCycle.startUnixSecs == null ? activeDetailQuotaCycle.window.local_total_tokens : accountDetail.account.total_tokens) }}</span>
+                        <span>费用 {{ formatUsd(activeDetailQuotaCycle.startUnixSecs == null ? activeDetailQuotaCycle.window.local_cost_usd : accountDetail.account.total_cost_usd) }}</span>
                       </div>
-                      <p class="detail-window-forecast">
-                        {{ forecastLabel(window.forecast) }}<span v-if="window.forecast?.sample_count"> · 参考 {{ window.forecast.sample_count }} 次同步</span>
-                      </p>
+                      </div>
                     </div>
-                  </div>
+                  </template>
                   <div v-else class="quota-empty">
                     <strong>{{ quotaMessage(accountDetail.account.quota) }}</strong>
                     <span>当前没有可展示的额度窗口。</span>
                   </div>
-                </section>
-
-                <section class="detail-section detail-history-section">
-                  <div class="detail-section-heading">
-                    <div>
-                      <h3>额度同步记录</h3>
-                    </div>
-                    <span class="window-count">{{ accountDetail.quota_history.length }} 条记录</span>
-                  </div>
-                  <div v-if="quotaHistoryRows.length" class="history-list">
-                    <div v-for="(observation, index) in quotaHistoryRows" :key="`${observation.observed_at_unix_secs}-${index}`" class="history-row">
-                      <div class="history-time">
-                        <strong>{{ formatShortDate(observation.observed_at_unix_secs ?? 0) }}</strong>
-                        <span>{{ observation.windows.length }} 个额度窗口</span>
-                      </div>
-                      <div class="history-values">
-                        <span v-for="window in observation.windows.slice(0, 3)" :key="`${observation.observed_at_unix_secs}-${window.window_identity}`">
-                          {{ windowDisplayLabel(window) }} {{ quotaWindowRemainingText(window) }} 可用
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <p v-else class="empty-inline">暂时没有历史同步记录；上方仍会显示当前账号返回的额度数据。</p>
                 </section>
 
                 <div class="grid gap-4 md:grid-cols-2">
@@ -785,8 +698,6 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   Activity,
-  CalendarDays,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Coins,
@@ -822,7 +733,6 @@ import {
   type PoolConsumptionDashboardRange,
   type PoolConsumptionDashboardResponse,
   type PoolOverviewItem,
-  type QuotaForecast,
   type QuotaObservation,
   type QuotaWindowObservation,
 } from '@/api/endpoints/pool'
@@ -833,6 +743,14 @@ type FilterState = Required<Pick<PoolConsumptionDashboardQuery,
   start_date: string
   end_date: string
   search: string
+}
+
+interface DetailQuotaCycle {
+  identity: string
+  observation: QuotaObservation
+  window: QuotaWindowObservation
+  startUnixSecs: number | null
+  endUnixSecs: number | null
 }
 
 const SORT_STORAGE_KEY = 'pool_consumption_sort_pref'
@@ -902,69 +820,55 @@ const drawerOpen = ref(false)
 const selectedAccount = ref<PoolConsumptionDashboardAccount | null>(null)
 const accountDetail = ref<PoolConsumptionAccountDetailResponse | null>(null)
 const detailLoading = ref(false)
+const detailRefreshing = ref(false)
 const detailError = ref('')
-const detailRange = ref<PoolConsumptionDashboardRange>('last7days')
-const detailSelectedDate = ref('')
-const detailCalendarOpen = ref(false)
-const detailCalendarMonth = ref(startOfCalendarMonth(new Date()))
-const selectedQuotaWindowIdentity = ref('')
+const selectedQuotaCycleIdentity = ref('')
 let overviewRequestId = 0
 let dashboardRequestId = 0
 let detailRequestId = 0
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
 const refreshing = computed(() => overviewLoading.value || statsLoading.value)
-const quotaHistoryRows = computed<QuotaObservation[]>(() => [...(accountDetail.value?.quota_history ?? [])]
-  .sort((left, right) => (right.observed_at_unix_secs ?? 0) - (left.observed_at_unix_secs ?? 0))
-  .slice(0, 12))
-
 const detailTimeline = computed(() => accountDetail.value?.charts?.timeline ?? [])
-const detailQuotaWindows = computed<QuotaWindowObservation[]>(() => accountDetail.value?.account.quota.windows ?? [])
-const activeDetailQuotaWindow = computed<QuotaWindowObservation | undefined>(() => {
-  const windows = detailQuotaWindows.value
-  return windows.find(window => window.window_identity === selectedQuotaWindowIdentity.value) || windows[0]
-})
-const visibleDetailQuotaWindows = computed<QuotaWindowObservation[]>(() => {
-  if (detailQuotaWindows.value.length <= 1) return detailQuotaWindows.value
-  return activeDetailQuotaWindow.value ? [activeDetailQuotaWindow.value] : []
-})
-const detailQuickRangeOptions: Array<{ value: PoolConsumptionDashboardRange; label: string }> = [
-  { value: 'last3days', label: '近 3 天' },
-  { value: 'last7days', label: '近 7 天' },
-  { value: 'last30days', label: '近 30 天' },
-  { value: 'last90days', label: '近 90 天' },
-]
-const calendarWeekdays = ['一', '二', '三', '四', '五', '六', '日']
-const detailCalendarMonthLabel = computed(() => new Intl.DateTimeFormat('zh-CN', {
-  year: 'numeric',
-  month: 'long',
-}).format(detailCalendarMonth.value))
-const detailDateLabel = computed(() => detailRange.value === 'custom' && detailSelectedDate.value
-  ? formatCalendarDateLabel(detailSelectedDate.value)
-  : detailQuickRangeOptions.find(option => option.value === detailRange.value)?.label || '近 7 天')
-const detailDateHint = computed(() => detailRange.value === 'custom' && detailSelectedDate.value
-  ? `当前查看 ${formatCalendarDateLabel(detailSelectedDate.value)}`
-  : '选择某日查看当天数据，也可切换统计范围')
-const isCurrentCalendarMonth = computed(() => {
-  const now = new Date()
-  return detailCalendarMonth.value.getFullYear() === now.getFullYear()
-    && detailCalendarMonth.value.getMonth() === now.getMonth()
-})
-const detailCalendarDays = computed<Array<CalendarDay | null>>(() => {
-  const year = detailCalendarMonth.value.getFullYear()
-  const month = detailCalendarMonth.value.getMonth()
-  const firstDayOffset = (new Date(year, month, 1).getDay() + 6) % 7
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const cellCount = Math.ceil((firstDayOffset + daysInMonth) / 7) * 7
-  const today = formatDateInput(new Date())
+const detailQuotaCycles = computed<DetailQuotaCycle[]>(() => {
+  const detail = accountDetail.value
+  if (!detail) return []
 
-  return Array.from({ length: cellCount }, (_, index) => {
-    if (index < firstDayOffset || index >= firstDayOffset + daysInMonth) return null
-    const day = index - firstDayOffset + 1
-    const date = formatDateInput(new Date(year, month, day))
-    return { date, day, isToday: date === today }
+  const cycles = new Map<string, DetailQuotaCycle>()
+  const observations = [detail.account.quota, ...detail.quota_history]
+  for (const observation of observations) {
+    for (const window of observation.windows) {
+      const identity = quotaCycleIdentity(window)
+      const existing = cycles.get(identity)
+      if (existing && (existing.observation.observed_at_unix_secs ?? 0) >= (observation.observed_at_unix_secs ?? 0)) {
+        continue
+      }
+      const bounds = quotaWindowBounds(window)
+      cycles.set(identity, {
+        identity,
+        observation,
+        window,
+        startUnixSecs: bounds?.startUnixSecs ?? null,
+        endUnixSecs: bounds?.endUnixSecs ?? null,
+      })
+    }
+  }
+
+  return [...cycles.values()].sort((left, right) => {
+    const leftOrder = left.endUnixSecs ?? left.observation.observed_at_unix_secs ?? 0
+    const rightOrder = right.endUnixSecs ?? right.observation.observed_at_unix_secs ?? 0
+    return rightOrder - leftOrder
   })
 })
+const activeDetailQuotaCycleIndex = computed(() => {
+  const index = detailQuotaCycles.value.findIndex(cycle => cycle.identity === selectedQuotaCycleIdentity.value)
+  return index >= 0 ? index : 0
+})
+const activeDetailQuotaCycle = computed<DetailQuotaCycle | undefined>(() => (
+  detailQuotaCycles.value[activeDetailQuotaCycleIndex.value]
+))
+const hasOlderDetailQuotaCycle = computed(() => activeDetailQuotaCycleIndex.value < detailQuotaCycles.value.length - 1)
+const hasNewerDetailQuotaCycle = computed(() => activeDetailQuotaCycleIndex.value > 0)
 const detailTotalTokens = computed(() => detailTimeline.value.reduce(
   (total, item) => total + timelineTokens(item),
   0,
@@ -1030,57 +934,6 @@ const detailCostChartOptions: ChartOptions<'bar'> = {
       },
     },
   },
-}
-
-interface CalendarDay {
-  date: string
-  day: number
-  isToday: boolean
-}
-
-function startOfCalendarMonth(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), 1)
-}
-
-function formatDateInput(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function parseDateInput(value: string): Date {
-  const [year, month, day] = value.split('-').map(Number)
-  return new Date(year, (month || 1) - 1, day || 1)
-}
-
-function formatCalendarDateLabel(value: string): string {
-  return new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric' }).format(parseDateInput(value))
-}
-
-function formatCalendarAriaLabel(value: string): string {
-  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }).format(parseDateInput(value))
-}
-
-function isFutureCalendarDate(value: string): boolean {
-  return value > formatDateInput(new Date())
-}
-
-function calendarDayClass(day: CalendarDay | null): string {
-  if (!day) return 'calendar-day-empty'
-  return [
-    day.isToday ? 'calendar-day-today' : '',
-    detailSelectedDate.value === day.date ? 'calendar-day-selected' : '',
-    isFutureCalendarDate(day.date) ? 'calendar-day-disabled' : '',
-  ].filter(Boolean).join(' ')
-}
-
-function shiftDetailCalendarMonth(offset: number): void {
-  const current = detailCalendarMonth.value
-  const next = new Date(current.getFullYear(), current.getMonth() + offset, 1)
-  const now = startOfCalendarMonth(new Date())
-  if (next > now) return
-  detailCalendarMonth.value = next
 }
 
 const timezoneParams = () => ({
@@ -1217,38 +1070,34 @@ function refreshAll(): void {
   void loadProviders({ cacheTtlMs: 0 })
 }
 
-function buildDetailQuery(
-  range: PoolConsumptionDashboardRange,
-  selectedDate = detailSelectedDate.value,
-): PoolConsumptionDashboardQuery {
+function buildDetailQuery(window?: QuotaWindowObservation): PoolConsumptionDashboardQuery {
+  const bounds = quotaWindowBounds(window)
   return {
     ...timezoneParams(),
-    range,
-    start_date: range === 'custom' ? selectedDate : undefined,
-    end_date: range === 'custom' ? selectedDate : undefined,
-    granularity: 'day',
+    range: 'last7days',
+    start_unix_secs: bounds?.startUnixSecs,
+    end_unix_secs: bounds?.endUnixSecs,
+    granularity: bounds && bounds.endUnixSecs - bounds.startUnixSecs <= 7 * 24 * 60 * 60 ? 'hour' : 'day',
     page: 1,
     page_size: 1,
   }
 }
 
 async function openAccount(account: PoolConsumptionDashboardAccount): Promise<void> {
+  const initialWindow = account.quota.windows[0]
   drawerOpen.value = true
   selectedAccount.value = account
-  detailRange.value = 'last7days'
-  detailSelectedDate.value = formatDateInput(new Date())
-  detailCalendarMonth.value = startOfCalendarMonth(new Date())
-  detailCalendarOpen.value = false
-  selectedQuotaWindowIdentity.value = ''
+  selectedQuotaCycleIdentity.value = initialWindow ? quotaCycleIdentity(initialWindow) : ''
   accountDetail.value = null
   detailError.value = ''
   detailLoading.value = true
+  detailRefreshing.value = false
   const requestId = ++detailRequestId
   try {
     const response = await getPoolConsumptionAccountDetail(
       selectedProviderId.value,
       account.key_id,
-      buildDetailQuery(detailRange.value),
+      buildDetailQuery(initialWindow),
       { cacheTtlMs: 0 },
     )
     if (requestId !== detailRequestId || !drawerOpen.value) return
@@ -1261,21 +1110,17 @@ async function openAccount(account: PoolConsumptionDashboardAccount): Promise<vo
   }
 }
 
-async function loadAccountDetailForRange(value: unknown, selectedDate = detailSelectedDate.value): Promise<void> {
-  const nextRange = String(value || 'last7days') as PoolConsumptionDashboardRange
-  if (!['last3days', 'last7days', 'last30days', 'last90days', 'custom'].includes(nextRange) || !selectedAccount.value) return
-  if (nextRange === 'custom' && !selectedDate) return
-  detailRange.value = nextRange
-  if (nextRange === 'custom') detailSelectedDate.value = selectedDate
+async function loadAccountDetailForQuotaCycle(cycle: DetailQuotaCycle): Promise<void> {
+  if (!selectedAccount.value) return
   const account = selectedAccount.value
   const requestId = ++detailRequestId
-  detailLoading.value = true
+  detailRefreshing.value = true
   detailError.value = ''
   try {
     const response = await getPoolConsumptionAccountDetail(
       selectedProviderId.value,
       account.key_id,
-      buildDetailQuery(nextRange),
+      buildDetailQuery(cycle.window),
       { cacheTtlMs: 0 },
     )
     if (requestId !== detailRequestId || !drawerOpen.value) return
@@ -1284,27 +1129,27 @@ async function loadAccountDetailForRange(value: unknown, selectedDate = detailSe
     if (requestId !== detailRequestId) return
     detailError.value = parseApiError(error, '加载账号详情失败')
   } finally {
-    if (requestId === detailRequestId) detailLoading.value = false
+    if (requestId === detailRequestId) detailRefreshing.value = false
   }
 }
 
 function retryAccountDetail(): void {
   if (!selectedAccount.value) return
-  void loadAccountDetailForRange(detailRange.value)
+  if (accountDetail.value && activeDetailQuotaCycle.value) {
+    void loadAccountDetailForQuotaCycle(activeDetailQuotaCycle.value)
+    return
+  }
+  void openAccount(selectedAccount.value)
 }
 
 function closeDrawer(): void {
   drawerOpen.value = false
-  detailCalendarOpen.value = false
+  detailRefreshing.value = false
   detailRequestId++
 }
 
 function handleKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Escape' || !drawerOpen.value) return
-  if (detailCalendarOpen.value) {
-    detailCalendarOpen.value = false
-    return
-  }
   closeDrawer()
 }
 
@@ -1389,28 +1234,43 @@ function windowDurationLabel(minutes: number): string {
   return `${minutes} 分钟周期`
 }
 
-function windowPeriodLabel(window: QuotaWindowObservation): string {
-  if (window.window_minutes) return windowDurationLabel(window.window_minutes)
-  return window.label || '额度窗口'
+function quotaCycleIdentity(window: QuotaWindowObservation): string {
+  return [
+    window.code,
+    window.scope || '',
+    window.model || '',
+    window.reset_at_unix_secs ?? 'unknown-reset',
+    window.window_minutes ?? 'unknown-duration',
+  ].join('|')
 }
 
-function selectDetailQuotaWindow(windowIdentity: string): void {
-  if (detailQuotaWindows.value.some(window => window.window_identity === windowIdentity)) {
-    selectedQuotaWindowIdentity.value = windowIdentity
+function quotaWindowBounds(window: QuotaWindowObservation | undefined): { startUnixSecs: number; endUnixSecs: number } | null {
+  const endUnixSecs = Number(window?.reset_at_unix_secs)
+  const windowMinutes = Number(window?.window_minutes)
+  if (!Number.isFinite(endUnixSecs) || endUnixSecs <= 0 || !Number.isFinite(windowMinutes) || windowMinutes <= 0) {
+    return null
+  }
+  return {
+    startUnixSecs: Math.max(0, Math.floor(endUnixSecs - windowMinutes * 60)),
+    endUnixSecs: Math.floor(endUnixSecs),
   }
 }
 
-function selectDetailDate(value: string): void {
-  if (isFutureCalendarDate(value)) return
-  detailSelectedDate.value = value
-  detailCalendarMonth.value = startOfCalendarMonth(parseDateInput(value))
-  detailCalendarOpen.value = false
-  void loadAccountDetailForRange('custom', value)
+function formatQuotaCycleRange(cycle: DetailQuotaCycle): string {
+  if (cycle.startUnixSecs != null && cycle.endUnixSecs != null) {
+    return `${formatShortDate(cycle.startUnixSecs)} - ${formatShortDate(cycle.endUnixSecs)}`
+  }
+  const observedAt = cycle.observation.observed_at_unix_secs
+  return observedAt ? `同步于 ${formatShortDate(observedAt)}` : '周期时间未知'
 }
 
-function selectDetailQuickRange(value: PoolConsumptionDashboardRange): void {
-  detailCalendarOpen.value = false
-  void loadAccountDetailForRange(value)
+function shiftDetailQuotaCycle(offset: number): void {
+  const next = detailQuotaCycles.value[activeDetailQuotaCycleIndex.value + offset]
+  if (!next) return
+  selectedQuotaCycleIdentity.value = next.identity
+  if (next.startUnixSecs != null && next.endUnixSecs != null) {
+    void loadAccountDetailForQuotaCycle(next)
+  }
 }
 
 function timelineTokens(item: {
@@ -1496,12 +1356,6 @@ function rateClass(value: number | null): string {
   return value == null ? 'text-muted-foreground' : value >= 98 ? 'text-emerald-600 dark:text-emerald-400' : value < 90 ? 'text-rose-600 dark:text-rose-400' : ''
 }
 
-function forecastLabel(value: QuotaForecast | undefined): string {
-  if (!value || value.confidence === 'low') return '数据不足，暂不预测'
-  if (value.exhausts_before_reset) return value.estimated_exhaustion_unix_secs ? `${formatShortDate(value.estimated_exhaustion_unix_secs)} 前可能用完` : '重置前可能用完'
-  return '按当前速度可维持到重置'
-}
-
 function distributionCount(item: Record<string, unknown>): number {
   return Number(item.request_count ?? item.count ?? 0)
 }
@@ -1556,54 +1410,43 @@ onBeforeUnmount(() => {
 .callout-mark { padding-top: .2rem; color: var(--primary); font-size: .55rem; }
 
 /* 账号诊断与详情指标样式 */
-.detail-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .55rem; margin-top: .85rem; }
-.detail-stat { min-width: 0; border: 1px solid var(--border); border-radius: .6rem; background-color: color-mix(in srgb, var(--muted) 20%, var(--background)); padding: .7rem .75rem; }
+.detail-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .5rem; }
+.detail-stat { min-width: 0; border: 1px solid var(--border); border-radius: .55rem; background-color: color-mix(in srgb, var(--muted) 20%, var(--background)); padding: .55rem .65rem; }
 .detail-stat span { display: block; color: var(--muted-foreground); font-size: .6875rem; font-weight: 500; }
-.detail-stat strong { display: block; margin-top: .25rem; overflow: hidden; color: var(--foreground); font-size: .875rem; font-weight: 700; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.detail-stat strong { display: block; margin-top: .18rem; overflow: hidden; color: var(--foreground); font-size: .875rem; font-weight: 700; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 
-.detail-section { position: relative; margin-top: .9rem; border: 1px solid var(--border); border-radius: .75rem; background-color: color-mix(in srgb, var(--card) 94%, var(--muted)); padding: .9rem 1rem; box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 5%, transparent); }
-.detail-section::before { position: absolute; inset: .75rem auto .75rem 0; width: 2px; border-radius: 999px; background-color: color-mix(in srgb, var(--primary) 70%, var(--border)); content: ''; }
-.detail-section-heading { border-bottom: 1px solid var(--border); padding-bottom: .65rem; }
+.detail-section { position: relative; border: 1px solid var(--border); border-radius: .7rem; background-color: color-mix(in srgb, var(--card) 94%, var(--muted)); padding: .75rem .85rem; box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 5%, transparent); }
+.detail-section::before { position: absolute; inset: .65rem auto .65rem 0; width: 2px; border-radius: 999px; background-color: color-mix(in srgb, var(--primary) 70%, var(--border)); content: ''; }
+.detail-section-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; border-bottom: 1px solid var(--border); padding-bottom: .55rem; }
 .detail-section-heading h3 { font-size: .8125rem; font-weight: 700; }
 .detail-quota-section::before { background-color: rgb(16 185 129); }
-.detail-history-section::before { background-color: rgb(71 112 116); }
 .detail-distribution-section::before { background-color: rgb(194 111 74); }
-.detail-window-facts { display: flex; flex-wrap: wrap; gap: .4rem .8rem; margin-top: .65rem; color: var(--muted-foreground); font-size: .6875rem; }
-.detail-window-forecast { margin-top: .6rem; color: var(--primary); font-size: .6875rem; line-height: 1.4; }
 .detail-chart-section { border-color: color-mix(in srgb, var(--primary) 28%, var(--border)); background-color: color-mix(in srgb, var(--muted) 54%, var(--background)); }
 .chart-heading { align-items: center; }
-.chart-live-mark { display: inline-flex; align-items: center; gap: .3rem; color: var(--muted-foreground); font-size: .6875rem; }
+.chart-live-mark { display: inline-flex; min-width: 0; max-width: 72%; align-items: center; gap: .3rem; overflow: hidden; color: var(--muted-foreground); font-size: .6875rem; text-overflow: ellipsis; white-space: nowrap; }
 .chart-live-mark span { width: .4rem; height: .4rem; border-radius: 999px; background-color: rgb(16 185 129); box-shadow: 0 0 0 3px rgb(16 185 129 / 12%); }
 
-/* 日历选择弹出层系列样式 (纯手工高级日历样式，完全复用页面既有样式结构) */
-.detail-date-picker { position: relative; flex: 0 0 auto; }
-.calendar-trigger { display: inline-flex; align-items: center; gap: .38rem; border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border)); border-radius: .55rem; background-color: var(--background); padding: .38rem .55rem; color: var(--foreground); font-size: .6875rem; font-weight: 600; outline: none; box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 5%, transparent); }
-.calendar-trigger:hover, .calendar-trigger:focus-visible { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 16%, transparent); }
-.calendar-popover { position: absolute; z-index: 30; top: calc(100% + .55rem); right: 0; width: 17.5rem; border: 1px solid var(--border); border-radius: .75rem; background-color: var(--background); padding: .75rem; box-shadow: 0 16px 40px color-mix(in srgb, var(--foreground) 18%, transparent); }
-.calendar-popover-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; border-bottom: 1px solid var(--border); padding-bottom: .65rem; }
-.calendar-popover-heading > div:first-child { display: grid; gap: .12rem; }
-.calendar-popover-heading span { color: var(--muted-foreground); font-size: .625rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
-.calendar-popover-heading strong { color: var(--foreground); font-size: .8rem; font-weight: 700; }
-.calendar-nav { display: inline-flex; gap: .25rem; }
-.calendar-nav button { display: inline-flex; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; border: 1px solid var(--border); border-radius: .4rem; color: var(--muted-foreground); outline: none; }
-.calendar-nav button:hover:not(:disabled), .calendar-nav button:focus-visible { border-color: var(--primary); color: var(--foreground); }
-.calendar-nav button:disabled { cursor: not-allowed; opacity: .35; }
-.calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .18rem; }
-.calendar-weekdays { margin-top: .7rem; color: var(--muted-foreground); font-size: .625rem; font-weight: 700; text-align: center; }
-.calendar-grid { margin-top: .3rem; }
-.calendar-day { display: inline-flex; align-items: center; justify-content: center; aspect-ratio: 1; min-width: 0; border-radius: .42rem; color: var(--foreground); font-size: .7rem; font-variant-numeric: tabular-nums; outline: none; }
-.calendar-day:hover:not(:disabled), .calendar-day:focus-visible { background-color: color-mix(in srgb, var(--primary) 10%, var(--background)); color: var(--primary); }
-.calendar-day-today { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 55%, transparent); color: var(--primary); font-weight: 700; }
-.calendar-day-selected { background-color: var(--primary); color: var(--primary-foreground) !important; box-shadow: 0 2px 5px color-mix(in srgb, var(--primary) 24%, transparent); }
-.calendar-day-disabled { cursor: not-allowed; color: var(--muted-foreground); opacity: .35; }
-.calendar-day-empty { pointer-events: none; }
-.calendar-popover-footer { display: flex; align-items: center; justify-content: space-between; gap: .5rem; border-top: 1px solid var(--border); margin-top: .7rem; padding-top: .6rem; color: var(--muted-foreground); font-size: .625rem; }
-.calendar-popover-footer button { color: var(--primary); font-size: .6875rem; font-weight: 700; outline: none; }
-.calendar-popover-footer button:hover, .calendar-popover-footer button:focus-visible { text-decoration: underline; }
-.calendar-quick-ranges { display: flex; gap: .25rem; margin-top: .55rem; border-top: 1px solid var(--border); padding-top: .55rem; }
-.calendar-quick-ranges button { flex: 1; border-radius: .35rem; padding: .28rem .2rem; color: var(--muted-foreground); font-size: .625rem; font-weight: 600; outline: none; }
-.calendar-quick-ranges button:hover, .calendar-quick-ranges button:focus-visible { background-color: color-mix(in srgb, var(--primary) 10%, var(--background)); color: var(--foreground); }
-.calendar-quick-ranges .calendar-quick-range-active { background-color: color-mix(in srgb, var(--primary) 10%, var(--background)); color: var(--primary); }
+.quota-window-navigation { display: grid; grid-template-columns: 2rem minmax(0, 1fr) 2rem; align-items: center; gap: .6rem; margin-top: .65rem; border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border)); border-radius: .6rem; background-color: color-mix(in srgb, var(--primary) 5%, var(--background)); padding: .5rem; }
+.quota-window-arrow { display: inline-flex; width: 2rem; height: 2rem; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: .45rem; background-color: var(--background); color: var(--foreground); outline: none; }
+.quota-window-arrow:hover:not(:disabled), .quota-window-arrow:focus-visible { border-color: var(--primary); color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 14%, transparent); }
+.quota-window-arrow:disabled { cursor: not-allowed; opacity: .3; }
+.quota-window-navigation-copy { display: grid; min-width: 0; justify-items: center; gap: .08rem; text-align: center; }
+.quota-window-navigation-copy span { color: var(--muted-foreground); font-size: .625rem; font-variant-numeric: tabular-nums; }
+.quota-window-navigation-copy strong { max-width: 100%; overflow: hidden; color: var(--foreground); font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
+.quota-window-navigation-copy small { max-width: 100%; overflow: hidden; color: var(--muted-foreground); font-size: .625rem; text-overflow: ellipsis; white-space: nowrap; }
+.detail-window-list { margin-top: .6rem; }
+.detail-window { border: 1px solid var(--border); border-radius: .6rem; background-color: var(--background); padding: .65rem .75rem; }
+.window-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
+.window-topline > div { display: flex; min-width: 0; align-items: center; gap: .4rem; }
+.window-label { overflow: hidden; color: var(--foreground); font-size: .8rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.window-duration { flex: 0 0 auto; border-radius: .35rem; background-color: var(--muted); padding: .15rem .35rem; color: var(--muted-foreground); font-size: .625rem; }
+.window-remaining { flex: 0 0 auto; color: var(--foreground); font-size: .8125rem; font-variant-numeric: tabular-nums; }
+.quota-meter { height: .35rem; margin-top: .55rem; overflow: hidden; border-radius: 999px; background-color: var(--muted); }
+.quota-meter-fill { height: 100%; border-radius: inherit; transition: width .2s ease; }
+.detail-window-meta { display: flex; justify-content: space-between; gap: .75rem; margin-top: .4rem; color: var(--muted-foreground); font-size: .625rem; }
+.detail-window-facts { display: flex; flex-wrap: wrap; gap: .35rem .8rem; margin-top: .55rem; border-top: 1px solid var(--border); padding-top: .5rem; color: var(--muted-foreground); font-size: .6875rem; }
+.quota-empty { display: grid; gap: .2rem; margin-top: .65rem; color: var(--muted-foreground); font-size: .72rem; }
+.quota-empty strong { color: var(--foreground); }
 
 /* 图表与指标明细 */
 .detail-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin-top: .85rem; }
@@ -1617,27 +1460,12 @@ onBeforeUnmount(() => {
 .detail-chart-canvas { height: 10.5rem; margin-top: .5rem; }
 .chart-loading, .chart-empty { display: flex; min-height: 10.5rem; align-items: center; justify-content: center; gap: .6rem; color: var(--muted-foreground); font-size: .75rem; }
 .chart-loading .loading-orbit { width: 1.25rem; height: 1.25rem; margin: 0; }
-.history-list, .distribution-list { display: grid; gap: .55rem; margin-top: .7rem; }
-.history-row, .distribution-row { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: .75rem; border-bottom: 1px solid var(--border); padding-bottom: .55rem; font-size: .72rem; }
-.history-row:last-child, .distribution-row:last-child { border-bottom: 0; padding-bottom: 0; }
-.history-time { display: grid; flex: 0 0 auto; gap: .15rem; }
-.history-time strong { font-size: .75rem; font-weight: 600; font-variant-numeric: tabular-nums; }
-.history-time span { color: var(--muted-foreground); font-size: .6875rem; }
-.history-values { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .3rem; color: var(--muted-foreground); text-align: right; }
-.history-values span { border-radius: .35rem; background-color: color-mix(in srgb, var(--muted) 54%, var(--background)); padding: .2rem .4rem; font-size: .6875rem; }
+.distribution-list { display: grid; gap: .55rem; margin-top: .7rem; }
+.distribution-row { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: .75rem; border-bottom: 1px solid var(--border); padding-bottom: .55rem; font-size: .72rem; }
+.distribution-row:last-child { border-bottom: 0; padding-bottom: 0; }
 .distribution-row span { min-width: 0; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
 .distribution-row strong { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .empty-inline { margin-top: .7rem; color: var(--muted-foreground); font-size: .72rem; }
-.quota-period-switcher { margin-top: .75rem; border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border)); border-radius: .6rem; background-color: color-mix(in srgb, var(--primary) 5%, var(--background)); padding: .55rem; }
-.quota-period-switcher-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; color: var(--foreground); font-size: .6875rem; font-weight: 700; }
-.quota-period-switcher-heading small { color: var(--muted-foreground); font-size: .625rem; font-weight: 500; }
-.quota-period-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: .35rem; margin-top: .45rem; }
-.quota-period-tabs button { display: grid; min-width: 0; gap: .18rem; border: 1px solid var(--border); border-radius: .45rem; background-color: var(--background); padding: .45rem .5rem; text-align: left; outline: none; }
-.quota-period-tabs button:hover, .quota-period-tabs button:focus-visible { border-color: var(--primary); }
-.quota-period-tabs button span { overflow: hidden; color: var(--foreground); font-size: .6875rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.quota-period-tabs button small { overflow: hidden; color: var(--muted-foreground); font-size: .625rem; text-overflow: ellipsis; white-space: nowrap; }
-.quota-period-tabs .quota-period-active { border-color: var(--primary); background-color: color-mix(in srgb, var(--primary) 10%, var(--background)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent); }
-
 /* 配额同步药丸、进度条等微调 */
 .sync-pill { display: inline-flex; max-width: 100%; flex: 0 0 auto; align-items: center; border: 1px solid currentColor; border-radius: 999px; padding: .2rem .5rem; font-size: .6875rem; font-weight: 500; line-height: 1.2; }
 .sync-good { color: rgb(5 150 105); background-color: rgb(16 185 129 / 8%); }
@@ -1650,15 +1478,12 @@ onBeforeUnmount(() => {
   .detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .detail-metrics .detail-stat:nth-child(4), .detail-metrics .detail-stat:nth-child(5) { grid-column: span 1; }
   .chart-heading { align-items: flex-start; flex-direction: column; }
-  .detail-date-picker { width: 100%; }
-  .calendar-trigger { width: 100%; justify-content: space-between; }
-  .calendar-popover { left: 0; right: auto; }
+  .chart-live-mark { max-width: 100%; }
 }
 @media (max-width: 640px) {
   .detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detail-metrics .detail-stat:nth-child(5) { grid-column: span 2; }
-  .quota-period-tabs { grid-template-columns: 1fr; }
-  .calendar-popover { width: min(17.5rem, calc(100vw - 3rem)); }
+  .quota-window-navigation { gap: .4rem; }
 }
 @media (prefers-reduced-motion: reduce) { .drawer-enter-active, .drawer-leave-active { animation: none; transition: none; } }
 </style>

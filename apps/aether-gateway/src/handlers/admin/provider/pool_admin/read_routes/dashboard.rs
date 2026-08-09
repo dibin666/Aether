@@ -33,6 +33,7 @@ use std::{cmp::Ordering, collections::BTreeMap};
 const DEFAULT_PAGE_SIZE: usize = 25;
 const MAX_PAGE_SIZE: usize = 100;
 const FORECAST_LOOKBACK_SECS: u64 = 6 * 60 * 60;
+const QUOTA_HISTORY_LOOKBACK_SECS: u64 = 400 * 24 * 60 * 60;
 const QUOTA_STALE_AFTER_SECS: u64 = 15 * 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,6 +75,8 @@ struct DashboardQuery {
     range: String,
     start_date: Option<String>,
     end_date: Option<String>,
+    start_unix_secs: Option<u64>,
+    end_unix_secs: Option<u64>,
     tz_offset_minutes: i32,
     granularity: String,
     page: usize,
@@ -325,11 +328,15 @@ async fn build_dashboard_overview(
         .map(|_| build_accounts_summary(&previous_accounts));
 
     let offset = query.page.saturating_sub(1).saturating_mul(query.page_size);
-    let account_page = accounts
+    let account_page_items = accounts
         .iter()
         .skip(offset)
         .take(query.page_size)
-        .map(DashboardAccount::to_json)
+        .collect::<Vec<_>>();
+    let quota_window_usage = summarize_account_quota_windows(state, &account_page_items).await?;
+    let account_page = account_page_items
+        .into_iter()
+        .map(|account| account_to_json_with_quota_usage(account, &quota_window_usage))
         .collect::<Vec<_>>();
     let burning_band = build_burning_band(&accounts);
     let selected_provider_api_key_ids = accounts
@@ -482,19 +489,19 @@ async fn build_dashboard_account_detail(
         query.model.as_deref(),
     )
     .await?;
+    let now = chrono::Utc::now().timestamp().max(0) as u64;
     let mut observations = state
         .app()
         .data
         .list_provider_key_quota_observations(&ProviderKeyQuotaObservationQuery {
             provider_id: provider_id.to_string(),
             provider_api_key_id: Some(key_id.to_string()),
-            observed_from_unix_secs: Some(range.start_unix_secs),
-            observed_until_unix_secs: Some(range.end_unix_secs),
+            observed_from_unix_secs: Some(now.saturating_sub(QUOTA_HISTORY_LOOKBACK_SECS)),
+            observed_until_unix_secs: Some(now.saturating_add(1)),
             limit: Some(50_000),
         })
         .await
         .map_err(|error| GatewayError::Internal(format!("quota history read failed: {error}")))?;
-    let now = chrono::Utc::now().timestamp().max(0) as u64;
     // The current status snapshot is the freshest quota data available for an account,
     // but it may not have been persisted inside the selected reporting range yet. Keep it
     // in the detail history so a newly opened account never renders an empty data panel.
@@ -550,8 +557,7 @@ async fn build_dashboard_account_detail(
             })
         })
         .collect::<Vec<_>>();
-    let quota_history_bucket_seconds = quota_history_bucket_seconds(range);
-    let history = aggregate_quota_history(observations, quota_history_bucket_seconds)
+    let history = aggregate_quota_cycle_history(observations)
         .into_iter()
         .map(|observation| observation_to_json(&observation, None, now))
         .collect::<Vec<_>>();
@@ -565,7 +571,7 @@ async fn build_dashboard_account_detail(
             "start_unix_secs": range.start_unix_secs,
             "end_unix_secs": range.end_unix_secs,
             "granularity": range.granularity.as_str(),
-            "quota_history_granularity": quota_history_granularity_label(quota_history_bucket_seconds),
+            "quota_history_granularity": "cycle",
         },
         "account": account.to_json(),
         "charts": {
@@ -612,6 +618,108 @@ async fn summarize_key_range(
         .into_iter()
         .map(|item| (item.provider_api_key_id.clone(), item))
         .collect())
+}
+
+async fn summarize_account_quota_windows(
+    state: &AdminAppState<'_>,
+    accounts: &[&DashboardAccount],
+) -> Result<BTreeMap<(String, String), StoredProviderApiKeyWindowUsageSummary>, GatewayError> {
+    let mut requests = Vec::new();
+    for account in accounts {
+        let Some(windows) = account.quota.get("windows").and_then(Value::as_array) else {
+            continue;
+        };
+        for window in windows {
+            let Some(window_identity) = window.get("window_identity").and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let Some(end_unix_secs) = window.get("reset_at_unix_secs").and_then(Value::as_u64)
+            else {
+                continue;
+            };
+            let Some(window_minutes) = window.get("window_minutes").and_then(Value::as_u64) else {
+                continue;
+            };
+            if window_minutes == 0 {
+                continue;
+            }
+            let start_unix_secs = end_unix_secs.saturating_sub(window_minutes.saturating_mul(60));
+            if start_unix_secs >= end_unix_secs {
+                continue;
+            }
+            requests.push(ProviderApiKeyWindowUsageRequest {
+                provider_api_key_id: account.key_id.clone(),
+                window_code: window_identity.to_string(),
+                start_unix_secs,
+                end_unix_secs,
+                model: window
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+            });
+        }
+    }
+    if requests.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    Ok(state
+        .app()
+        .summarize_usage_by_provider_api_key_windows(&requests)
+        .await?
+        .into_iter()
+        .map(|summary| {
+            (
+                (
+                    summary.provider_api_key_id.clone(),
+                    summary.window_code.clone(),
+                ),
+                summary,
+            )
+        })
+        .collect())
+}
+
+fn account_to_json_with_quota_usage(
+    account: &DashboardAccount,
+    usage: &BTreeMap<(String, String), StoredProviderApiKeyWindowUsageSummary>,
+) -> Value {
+    let mut payload = account.to_json();
+    let Some(windows) = payload
+        .get_mut("quota")
+        .and_then(|quota| quota.get_mut("windows"))
+        .and_then(Value::as_array_mut)
+    else {
+        return payload;
+    };
+    for window in windows {
+        let Some(window_identity) = window
+            .get("window_identity")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+        else {
+            continue;
+        };
+        let Some(summary) = usage.get(&(account.key_id.clone(), window_identity)) else {
+            continue;
+        };
+        let Some(window) = window.as_object_mut() else {
+            continue;
+        };
+        window.insert(
+            "local_request_count".to_string(),
+            json!(summary.request_count),
+        );
+        window.insert(
+            "local_total_tokens".to_string(),
+            json!(summary.total_tokens),
+        );
+        window.insert(
+            "local_cost_usd".to_string(),
+            json!(format_cost(summary.total_cost_usd)),
+        );
+    }
+    payload
 }
 
 fn build_dashboard_account(
@@ -973,42 +1081,34 @@ fn group_observations_by_key(
     grouped
 }
 
-fn aggregate_quota_history(
+fn aggregate_quota_cycle_history(
     observations: Vec<ProviderKeyQuotaObservation>,
-    bucket_seconds: u64,
 ) -> Vec<ProviderKeyQuotaObservation> {
-    let mut by_bucket = BTreeMap::new();
+    let mut by_cycle = BTreeMap::new();
     for observation in observations {
-        let bucket = observation.observed_at_unix_secs / bucket_seconds * bucket_seconds;
-        if by_bucket
-            .get(&bucket)
-            .is_none_or(|current: &ProviderKeyQuotaObservation| {
-                current.observed_at_unix_secs < observation.observed_at_unix_secs
-            })
-        {
-            by_bucket.insert(bucket, observation);
+        for window in &observation.windows {
+            let cycle_key = (
+                window.code.clone(),
+                window.scope.clone(),
+                window.model.clone(),
+                window.reset_at_unix_secs,
+                window.window_minutes,
+            );
+            if by_cycle
+                .get(&cycle_key)
+                .is_none_or(|current: &ProviderKeyQuotaObservation| {
+                    current.observed_at_unix_secs < observation.observed_at_unix_secs
+                })
+            {
+                let mut cycle_observation = observation.clone();
+                cycle_observation.windows = vec![window.clone()];
+                by_cycle.insert(cycle_key, cycle_observation);
+            }
         }
     }
-    by_bucket.into_values().collect()
-}
-
-fn quota_history_bucket_seconds(range: &DashboardRange) -> u64 {
-    let duration = range.end_unix_secs.saturating_sub(range.start_unix_secs);
-    if duration <= 2 * 24 * 60 * 60 {
-        5 * 60
-    } else if duration <= 30 * 24 * 60 * 60 {
-        60 * 60
-    } else {
-        24 * 60 * 60
-    }
-}
-
-fn quota_history_granularity_label(bucket_seconds: u64) -> &'static str {
-    match bucket_seconds {
-        300 => "5m",
-        3_600 => "hour",
-        _ => "day",
-    }
+    let mut cycles = by_cycle.into_values().collect::<Vec<_>>();
+    cycles.sort_by_key(|observation| std::cmp::Reverse(observation.observed_at_unix_secs));
+    cycles
 }
 
 fn account_matches_query(account: &DashboardAccount, query: &DashboardQuery) -> bool {
@@ -1226,6 +1326,17 @@ fn parse_dashboard_query(query: Option<&str>) -> Result<DashboardQuery, String> 
     let tz_offset_minutes = parse_tz_offset_minutes(query)?;
     let page = parse_usize_param(&params, "page", 1, 1, usize::MAX)?;
     let page_size = parse_usize_param(&params, "page_size", DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE)?;
+    let start_unix_secs = parse_optional_u64_param(&params, "start_unix_secs")?;
+    let end_unix_secs = parse_optional_u64_param(&params, "end_unix_secs")?;
+    match (start_unix_secs, end_unix_secs) {
+        (Some(start), Some(end)) if start >= end => {
+            return Err("start_unix_secs 必须早于 end_unix_secs".to_string());
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err("start_unix_secs 和 end_unix_secs 必须同时提供".to_string());
+        }
+        _ => {}
+    }
     let range = params
         .get("range")
         .cloned()
@@ -1275,6 +1386,8 @@ fn parse_dashboard_query(query: Option<&str>) -> Result<DashboardQuery, String> 
         range,
         start_date: params.get("start_date").cloned(),
         end_date: params.get("end_date").cloned(),
+        start_unix_secs,
+        end_unix_secs,
         tz_offset_minutes,
         granularity,
         page,
@@ -1295,6 +1408,28 @@ fn parse_dashboard_query(query: Option<&str>) -> Result<DashboardQuery, String> 
 }
 
 fn resolve_dashboard_range(query: &DashboardQuery) -> Result<DashboardRange, String> {
+    if let (Some(start_unix_secs), Some(end_unix_secs)) =
+        (query.start_unix_secs, query.end_unix_secs)
+    {
+        let duration = end_unix_secs.saturating_sub(start_unix_secs);
+        let granularity = match query.granularity.as_str() {
+            "hour" => DashboardGranularity::Hour,
+            "day" => DashboardGranularity::Day,
+            _ if duration <= 7 * 24 * 60 * 60 => DashboardGranularity::Hour,
+            _ => DashboardGranularity::Day,
+        };
+        return Ok(DashboardRange {
+            key: "quota_window".to_string(),
+            label: "额度窗口".to_string(),
+            start_date: None,
+            end_date: None,
+            start_unix_secs,
+            end_unix_secs,
+            previous: None,
+            granularity,
+        });
+    }
+
     let today = user_today(query.tz_offset_minutes);
     let (label, start_date, end_date) = match query.range.as_str() {
         "today" => ("今天", Some(today), Some(today)),
@@ -1385,6 +1520,20 @@ fn parse_usize_param(
     Ok(value)
 }
 
+fn parse_optional_u64_param(
+    params: &BTreeMap<String, String>,
+    key: &str,
+) -> Result<Option<u64>, String> {
+    params
+        .get(key)
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| format!("{key} 必须是非负整数"))
+        })
+        .transpose()
+}
+
 fn enum_param(
     params: &BTreeMap<String, String>,
     key: &str,
@@ -1431,6 +1580,79 @@ fn format_decimal(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn quota_observation(
+        observed_at_unix_secs: u64,
+        reset_at_unix_secs: u64,
+        used_percent: f64,
+    ) -> ProviderKeyQuotaObservation {
+        ProviderKeyQuotaObservation {
+            provider_id: "provider".into(),
+            provider_api_key_id: "key".into(),
+            provider_api_key_name: "Key".into(),
+            provider_type: "codex".into(),
+            bucket_start_unix_secs: observed_at_unix_secs,
+            observed_at_unix_secs,
+            source: "test".into(),
+            plan_type: None,
+            status_code: None,
+            status_label: None,
+            freshness: None,
+            credits_balance: None,
+            credits_unlimited: None,
+            reset_credits_count: 0,
+            windows: vec![ProviderKeyQuotaWindowObservation {
+                window_identity: "monthly|account||0".into(),
+                code: "monthly".into(),
+                label: "月".into(),
+                scope: Some("account".into()),
+                model: None,
+                unit: Some("percent".into()),
+                used_percent: Some(used_percent),
+                remaining_percent: Some(100.0 - used_percent),
+                used_value: None,
+                remaining_value: None,
+                limit_value: None,
+                reset_at_unix_secs: Some(reset_at_unix_secs),
+                window_minutes: Some(60),
+                exhausted: false,
+                local_request_count: 0,
+                local_total_tokens: 0,
+                local_cost_usd: 0.0,
+            }],
+        }
+    }
+
+    #[test]
+    fn quota_cycle_history_keeps_latest_snapshot_for_each_reset() {
+        let cycles = aggregate_quota_cycle_history(vec![
+            quota_observation(1_100, 2_000, 10.0),
+            quota_observation(1_200, 2_000, 20.0),
+            quota_observation(900, 1_000, 100.0),
+        ]);
+
+        assert_eq!(cycles.len(), 2);
+        assert_eq!(cycles[0].observed_at_unix_secs, 1_200);
+        assert_eq!(cycles[0].windows[0].reset_at_unix_secs, Some(2_000));
+        assert_eq!(cycles[0].windows[0].used_percent, Some(20.0));
+        assert_eq!(cycles[1].windows[0].reset_at_unix_secs, Some(1_000));
+    }
+
+    #[test]
+    fn dashboard_range_prefers_explicit_unix_bounds() {
+        let query = parse_dashboard_query(Some(
+            "range=last7days&start_unix_secs=1000&end_unix_secs=4600",
+        ))
+        .expect("query should parse");
+
+        let range = resolve_dashboard_range(&query).expect("range should resolve");
+
+        assert_eq!(range.key, "quota_window");
+        assert_eq!(range.start_unix_secs, 1_000);
+        assert_eq!(range.end_unix_secs, 4_600);
+        assert_eq!(range.granularity, DashboardGranularity::Hour);
+        assert!(range.previous.is_none());
+    }
 
     #[test]
     fn forecast_requires_enough_span_for_risk_prediction() {

@@ -474,6 +474,8 @@ export interface PoolConsumptionDashboardQuery {
   range?: PoolConsumptionDashboardRange
   start_date?: string
   end_date?: string
+  start_unix_secs?: number
+  end_unix_secs?: number
   granularity?: 'auto' | 'hour' | 'day'
   timezone?: string | null
   tz_offset_minutes?: number
