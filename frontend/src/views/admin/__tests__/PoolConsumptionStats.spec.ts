@@ -170,6 +170,7 @@ function dashboardAccount(window: ReturnType<typeof quotaWindow>) {
 function accountDetail(
   account: ReturnType<typeof dashboardAccount>,
   historicalWindow: ReturnType<typeof quotaWindow>,
+  historicalSource?: string,
 ) {
   return {
     provider_id: 'provider-codex',
@@ -181,6 +182,7 @@ function accountDetail(
     quota_history: [{
       supported: true,
       observed_at_unix_secs: historicalWindow.reset_at_unix_secs - 10,
+      source: historicalSource,
       freshness: 'fresh',
       risk: 'healthy',
       windows: [historicalWindow],
@@ -335,7 +337,7 @@ describe('pool consumption dashboard', () => {
     response.pagination.total = 1
     poolApiMocks.getPoolConsumptionDashboard.mockResolvedValue(response)
     poolApiMocks.getPoolConsumptionAccountDetail.mockResolvedValue(
-      accountDetail(account, historicalWindow),
+      accountDetail(account, historicalWindow, 'derived_usage_window'),
     )
 
     const root = mountPage()
@@ -378,5 +380,8 @@ describe('pool consumption dashboard', () => {
       expect.any(Object),
     )
     expect(document.body.textContent).toContain('2 / 2')
+    expect(document.body.textContent).toContain('由历史用量还原')
+    expect(document.body.textContent).toContain('上游额度快照未留存')
+    expect(document.body.textContent).toContain('仅展示 Aether 本地用量')
   })
 })

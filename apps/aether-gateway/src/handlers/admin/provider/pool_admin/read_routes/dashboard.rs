@@ -28,12 +28,16 @@ use axum::{
 };
 use chrono::{Duration, NaiveDate};
 use serde_json::{json, Value};
-use std::{cmp::Ordering, collections::BTreeMap};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+};
 
 const DEFAULT_PAGE_SIZE: usize = 25;
 const MAX_PAGE_SIZE: usize = 100;
 const FORECAST_LOOKBACK_SECS: u64 = 6 * 60 * 60;
 const QUOTA_HISTORY_LOOKBACK_SECS: u64 = 400 * 24 * 60 * 60;
+const MAX_INFERRED_QUOTA_CYCLES_PER_WINDOW: usize = 120;
 const QUOTA_STALE_AFTER_SECS: u64 = 15 * 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -557,6 +561,7 @@ async fn build_dashboard_account_detail(
             })
         })
         .collect::<Vec<_>>();
+    append_inferred_quota_cycles(&mut observations, now);
     let history = aggregate_quota_cycle_history(observations)
         .into_iter()
         .map(|observation| observation_to_json(&observation, None, now))
@@ -1079,6 +1084,88 @@ fn group_observations_by_key(
             .push(observation);
     }
     grouped
+}
+
+fn append_inferred_quota_cycles(observations: &mut Vec<ProviderKeyQuotaObservation>, now: u64) {
+    let earliest_end = now.saturating_sub(QUOTA_HISTORY_LOOKBACK_SECS);
+    let mut known_cycles = BTreeSet::new();
+    let mut latest_windows = BTreeMap::new();
+
+    for observation in observations.iter() {
+        for window in &observation.windows {
+            let (Some(reset_at), Some(window_minutes)) =
+                (window.reset_at_unix_secs, window.window_minutes)
+            else {
+                continue;
+            };
+            if window_minutes == 0 {
+                continue;
+            }
+            let schedule_key = (
+                window.code.clone(),
+                window.scope.clone(),
+                window.model.clone(),
+                window_minutes,
+            );
+            known_cycles.insert((schedule_key.clone(), reset_at));
+            let replace = latest_windows
+                .get(&schedule_key)
+                .is_none_or(|(_, current_reset)| reset_at > *current_reset);
+            if replace {
+                latest_windows.insert(schedule_key, (observation.clone(), reset_at));
+            }
+        }
+    }
+
+    for (schedule_key, (seed, reset_at)) in latest_windows {
+        let Some(window_secs) = schedule_key.3.checked_mul(60) else {
+            continue;
+        };
+        let Some(seed_window) = seed.windows.iter().find(|window| {
+            window.code == schedule_key.0
+                && window.scope == schedule_key.1
+                && window.model == schedule_key.2
+                && window.window_minutes == Some(schedule_key.3)
+                && window.reset_at_unix_secs == Some(reset_at)
+        }) else {
+            continue;
+        };
+        let mut inferred_reset_at = reset_at.saturating_sub(window_secs);
+        for _ in 0..MAX_INFERRED_QUOTA_CYCLES_PER_WINDOW {
+            if inferred_reset_at == 0 || inferred_reset_at < earliest_end {
+                break;
+            }
+            if known_cycles.insert((schedule_key.clone(), inferred_reset_at)) {
+                let mut observation = seed.clone();
+                observation.source = "derived_usage_window".to_string();
+                observation.freshness = Some("unknown".to_string());
+                observation.observed_at_unix_secs = inferred_reset_at.saturating_sub(1);
+                observation.bucket_start_unix_secs = observation.observed_at_unix_secs;
+                observation.credits_balance = None;
+                observation.credits_unlimited = None;
+                observation.reset_credits_count = 0;
+
+                let mut window = seed_window.clone();
+                window.used_percent = None;
+                window.remaining_percent = None;
+                window.used_value = None;
+                window.remaining_value = None;
+                window.limit_value = None;
+                window.reset_at_unix_secs = Some(inferred_reset_at);
+                window.exhausted = false;
+                window.local_request_count = 0;
+                window.local_total_tokens = 0;
+                window.local_cost_usd = 0.0;
+                observation.windows = vec![window];
+                observations.push(observation);
+            }
+            let next_reset_at = inferred_reset_at.saturating_sub(window_secs);
+            if next_reset_at == inferred_reset_at {
+                break;
+            }
+            inferred_reset_at = next_reset_at;
+        }
+    }
 }
 
 fn aggregate_quota_cycle_history(
@@ -1636,6 +1723,37 @@ mod tests {
         assert_eq!(cycles[0].windows[0].reset_at_unix_secs, Some(2_000));
         assert_eq!(cycles[0].windows[0].used_percent, Some(20.0));
         assert_eq!(cycles[1].windows[0].reset_at_unix_secs, Some(1_000));
+    }
+
+    #[test]
+    fn inferred_quota_cycles_preserve_real_snapshots_without_copying_quota_values() {
+        let now = QUOTA_HISTORY_LOOKBACK_SECS + 20_000;
+        let previous_reset = now - 60 * 60;
+        let mut observations = vec![
+            quota_observation(now - 100, now, 10.0),
+            quota_observation(previous_reset - 100, previous_reset, 80.0),
+        ];
+
+        append_inferred_quota_cycles(&mut observations, now);
+        let cycles = aggregate_quota_cycle_history(observations);
+
+        assert_eq!(cycles.len(), MAX_INFERRED_QUOTA_CYCLES_PER_WINDOW + 1);
+        let real_previous = cycles
+            .iter()
+            .find(|item| item.windows[0].reset_at_unix_secs == Some(previous_reset))
+            .expect("real previous cycle should remain");
+        assert_eq!(real_previous.source, "test");
+        assert_eq!(real_previous.windows[0].used_percent, Some(80.0));
+
+        let inferred = cycles
+            .iter()
+            .find(|item| item.windows[0].reset_at_unix_secs == Some(previous_reset - 60 * 60))
+            .expect("older cycle should be inferred");
+        assert_eq!(inferred.source, "derived_usage_window");
+        assert_eq!(inferred.freshness.as_deref(), Some("unknown"));
+        assert_eq!(inferred.windows[0].used_percent, None);
+        assert_eq!(inferred.windows[0].remaining_percent, None);
+        assert_eq!(inferred.windows[0].local_request_count, 0);
     }
 
     #[test]

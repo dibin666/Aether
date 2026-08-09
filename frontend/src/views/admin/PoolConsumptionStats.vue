@@ -595,8 +595,8 @@
                     <div>
                       <h3>额度与重置周期</h3>
                     </div>
-                    <span class="sync-pill" :class="syncClass(accountDetail.account.quota.freshness)">
-                      {{ quotaSyncLabel(accountDetail.account.quota) }}
+                    <span class="sync-pill" :class="activeDetailQuotaCycleIsDerived ? 'sync-unknown' : syncClass(accountDetail.account.quota.freshness)">
+                      {{ activeDetailQuotaCycleIsDerived ? '由历史用量还原' : quotaSyncLabel(accountDetail.account.quota) }}
                     </span>
                   </div>
 
@@ -636,9 +636,11 @@
                           <span class="window-label" :title="windowDisplayLabel(activeDetailQuotaCycle.window)">{{ windowDisplayLabel(activeDetailQuotaCycle.window) }}</span>
                           <span v-if="activeDetailQuotaCycle.window.window_minutes" class="window-duration">{{ windowDurationLabel(activeDetailQuotaCycle.window.window_minutes) }}</span>
                         </div>
-                        <strong class="window-remaining">{{ quotaWindowRemainingText(activeDetailQuotaCycle.window) }} 可用</strong>
+                        <strong class="window-remaining">
+                          {{ activeDetailQuotaCycleIsDerived ? '上游额度快照未留存' : `${quotaWindowRemainingText(activeDetailQuotaCycle.window)} 可用` }}
+                        </strong>
                       </div>
-                      <div class="quota-meter" aria-hidden="true">
+                      <div v-if="!activeDetailQuotaCycleIsDerived" class="quota-meter" aria-hidden="true">
                         <div
                           class="quota-meter-fill"
                           :class="riskBar(activeDetailQuotaCycle.observation.risk)"
@@ -646,7 +648,7 @@
                         />
                       </div>
                       <div class="detail-window-meta">
-                        <span>{{ quotaWindowUsedText(activeDetailQuotaCycle.window) }}</span>
+                        <span>{{ activeDetailQuotaCycleIsDerived ? '仅展示 Aether 本地用量' : quotaWindowUsedText(activeDetailQuotaCycle.window) }}</span>
                         <span>{{ resetLabel(activeDetailQuotaCycle.window.reset_at_unix_secs) }}</span>
                       </div>
                       <div class="detail-window-facts">
@@ -866,6 +868,9 @@ const activeDetailQuotaCycleIndex = computed(() => {
 })
 const activeDetailQuotaCycle = computed<DetailQuotaCycle | undefined>(() => (
   detailQuotaCycles.value[activeDetailQuotaCycleIndex.value]
+))
+const activeDetailQuotaCycleIsDerived = computed(() => (
+  activeDetailQuotaCycle.value?.observation.source === 'derived_usage_window'
 ))
 const hasOlderDetailQuotaCycle = computed(() => activeDetailQuotaCycleIndex.value < detailQuotaCycles.value.length - 1)
 const hasNewerDetailQuotaCycle = computed(() => activeDetailQuotaCycleIndex.value > 0)
