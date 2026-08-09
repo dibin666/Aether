@@ -1,240 +1,346 @@
 <template>
-  <div class="pool-consumption-page space-y-5 pb-8">
-    <Card class="pool-shell overflow-hidden border-book-cloth/30 dark:border-book-cloth/25 shadow-sm">
-      <div class="pool-header border-b border-border/60 px-4 py-4 sm:px-6">
-        <div class="pool-header-main">
-          <div class="pool-title-block min-w-0">
-            <div class="flex items-center gap-2">
-              <Gauge class="h-5 w-5 shrink-0 text-primary" />
-              <div class="min-w-0">
-                <p class="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                  运营数据
-                </p>
-                <div class="mt-0.5 flex flex-wrap items-center gap-2">
-                  <h2 class="text-lg font-bold text-foreground">账号消耗统计</h2>
-                  <Badge v-if="dashboard" variant="secondary" class="text-xs font-mono">
-                    {{ dashboard.provider_type }}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-
+  <div class="space-y-6 pb-8">
+    <!-- 页头区 (对齐 PageHeader 视觉效果) -->
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-4">
+      <div class="flex items-center gap-3">
+        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
+          <Gauge class="h-5 w-5 text-primary" />
+        </div>
+        <div>
+          <p class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            运营数据
+          </p>
+          <div class="mt-1 flex flex-wrap items-center gap-2">
+            <h2 class="text-xl font-bold text-foreground">账号消耗统计</h2>
+            <Badge v-if="dashboard" variant="secondary" class="text-xs font-mono">
+              {{ dashboard.provider_type }}
+            </Badge>
           </div>
+        </div>
+      </div>
 
-          <div class="pool-toolbar grid gap-2.5 sm:grid-cols-[minmax(220px,1fr)_150px_auto] xl:min-w-[540px]">
-            <Select
-              :model-value="selectedProviderId"
-              :disabled="overviewLoading || poolProviders.length === 0"
-              @update:model-value="selectProvider"
+      <div class="flex flex-wrap items-center gap-2">
+        <Select
+          :model-value="selectedProviderId"
+          :disabled="overviewLoading || poolProviders.length === 0"
+          @update:model-value="selectProvider"
+        >
+          <SelectTrigger class="h-9 w-[200px] border-border/60 text-xs font-medium focus:ring-2 focus:ring-primary/20">
+            <SelectValue placeholder="选择账号池" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem
+              v-for="provider in poolProviders"
+              :key="provider.provider_id"
+              :value="provider.provider_id"
             >
-              <SelectTrigger class="h-9 border-border/60 text-xs font-medium focus:ring-2 focus:ring-primary/20">
-                <SelectValue placeholder="选择账号池" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem
-                  v-for="provider in poolProviders"
-                  :key="provider.provider_id"
-                  :value="provider.provider_id"
-                >
-                  {{ provider.provider_name }} · {{ provider.provider_type }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
+              {{ provider.provider_name }} · {{ provider.provider_type }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
 
-            <Select :model-value="filters.range" @update:model-value="setRange">
-              <SelectTrigger class="h-9 border-border/60 text-xs font-medium focus:ring-2 focus:ring-primary/20">
+        <Select :model-value="filters.range" @update:model-value="setRange">
+          <SelectTrigger class="h-9 w-[120px] border-border/60 text-xs font-medium focus:ring-2 focus:ring-primary/20">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="option in rangeOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+
+        <RefreshButton :loading="refreshing" class="h-9" @click="refreshAll" />
+      </div>
+    </div>
+
+    <!-- 筛选面板 -->
+    <Card v-if="poolProviders.length > 0" class="border-border/60 bg-muted/30 p-4 rounded-xl shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border/40 pb-3">
+        <div class="flex items-center gap-2">
+          <Activity class="h-4 w-4 text-primary" />
+          <span class="text-sm font-bold text-foreground">账号筛选</span>
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-xs font-medium text-muted-foreground whitespace-nowrap">排序</span>
+            <Select
+              :model-value="`${filters.sort_by}:${filters.sort_order}`"
+              @update:model-value="setSortPreset"
+            >
+              <SelectTrigger class="h-8 text-xs min-w-[130px] border-border/60 focus:ring-2 focus:ring-primary/20 bg-background/50">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem v-for="option in rangeOptions" :key="option.value" :value="option.value">
-                  {{ option.label }}
-                </SelectItem>
+                <SelectItem value="cost:desc">费用最高</SelectItem>
+                <SelectItem value="requests:desc">请求最多</SelectItem>
+                <SelectItem value="tokens:desc">Token 最多</SelectItem>
+                <SelectItem value="quota:asc">剩余额度最低</SelectItem>
+                <SelectItem value="last_used:desc">最近使用</SelectItem>
               </SelectContent>
             </Select>
-
-            <RefreshButton :loading="refreshing" class="h-9" @click="refreshAll" />
           </div>
-        </div>
-
-        <div class="filter-panel mt-4 rounded-xl border border-border/80 bg-muted/40 p-3.5 sm:p-4">
-          <div class="filter-panel-heading flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-2.5">
-            <div class="flex min-w-0 items-center gap-2">
-              <Activity class="h-4 w-4 shrink-0 text-primary" />
-              <span class="filter-panel-title text-xs font-bold text-foreground">账号筛选</span>
-            </div>
-            <div class="flex flex-wrap items-center gap-2.5">
-              <div class="flex items-center gap-1.5 text-xs">
-                <span class="text-[11px] font-medium text-muted-foreground whitespace-nowrap">排序</span>
-                <select
-                  :value="`${filters.sort_by}:${filters.sort_order}`"
-                  class="filter-control h-8 text-xs min-w-[125px]"
-                  aria-label="排序方式"
-                  @change="setSortPreset(($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="cost:desc">费用最高</option>
-                  <option value="requests:desc">请求最多</option>
-                  <option value="tokens:desc">Token 最多</option>
-                  <option value="quota:asc">剩余额度最低</option>
-                  <option value="last_used:desc">最近使用</option>
-                </select>
-              </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                class="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground"
-                @click="resetListFilters"
-              >
-                清除筛选
-              </Button>
-            </div>
-          </div>
-
-          <div v-if="filters.range === 'custom'" class="custom-range-row mt-3 flex flex-wrap items-center gap-2">
-            <label class="filter-date flex items-center gap-2 text-xs">
-              <span class="text-muted-foreground">开始</span>
-              <input v-model="filters.start_date" type="date" aria-label="开始日期" class="filter-control">
-            </label>
-            <span class="text-xs text-muted-foreground">至</span>
-            <label class="filter-date flex items-center gap-2 text-xs">
-              <span class="text-muted-foreground">结束</span>
-              <input v-model="filters.end_date" type="date" aria-label="结束日期" class="filter-control">
-            </label>
-            <Button size="sm" variant="outline" class="h-8 text-xs" @click="applyFilters">应用日期</Button>
-          </div>
-
-          <div class="filter-columns mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-            <!-- 左侧列：搜索检索分组 -->
-            <div class="filter-group flex flex-col justify-between gap-1.5 rounded-lg border border-border/60 bg-background/60 p-2.5">
-              <span class="text-[11px] font-semibold text-muted-foreground">搜索账号 / 认证方式</span>
-              <div class="relative flex items-center">
-                <Search class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  v-model="searchInput"
-                  type="search"
-                  class="filter-control w-full pl-9 pr-8"
-                  placeholder="例如 feature.like_4e@icloud.com"
-                  aria-label="搜索账号"
-                  @input="scheduleSearch"
-                >
-                <button
-                  v-if="searchInput"
-                  type="button"
-                  class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-muted-foreground hover:text-foreground"
-                  aria-label="清空搜索"
-                  @click="searchInput = ''; scheduleSearch()"
-                >
-                  <X class="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-
-            <!-- 右侧列：状态筛选分组 -->
-            <div class="filter-group flex flex-col justify-between gap-1.5 rounded-lg border border-border/60 bg-background/60 p-2.5">
-              <span class="text-[11px] font-semibold text-muted-foreground">状态与属性</span>
-              <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
-                <label class="filter-field">
-                  <span>使用情况</span>
-                  <select v-model="filters.usage" class="filter-control" aria-label="用量筛选" @change="applyFilters">
-                    <option value="all">全部</option>
-                    <option value="used">有请求</option>
-                    <option value="idle">暂无请求</option>
-                  </select>
-                </label>
-                <label class="filter-field">
-                  <span>额度状态</span>
-                  <select v-model="filters.risk" class="filter-control" aria-label="额度状态" @change="applyFilters">
-                    <option value="all">全部</option>
-                    <option value="exhausted">已用完</option>
-                    <option value="critical">可能提前用完</option>
-                    <option value="warning">额度偏低</option>
-                    <option value="healthy">额度正常</option>
-                    <option value="unknown">暂未知</option>
-                  </select>
-                </label>
-                <label class="filter-field">
-                  <span>额度同步</span>
-                  <select v-model="filters.freshness" class="filter-control" aria-label="额度更新状态" @change="applyFilters">
-                    <option value="all">全部</option>
-                    <option value="fresh">最近已同步</option>
-                    <option value="stale">额度同步较早</option>
-                    <option value="unknown">无同步记录</option>
-                  </select>
-                </label>
-                <label class="filter-field">
-                  <span>账号状态</span>
-                  <select v-model="filters.active" class="filter-control" aria-label="账号状态" @change="applyFilters">
-                    <option value="all">全部</option>
-                    <option value="active">已启用</option>
-                    <option value="inactive">已停用</option>
-                    <option value="blocked">不可用</option>
-                  </select>
-                </label>
-                <label class="filter-field">
-                  <span>请求结果</span>
-                  <select v-model="filters.result" class="filter-control" aria-label="请求结果" @change="applyFilters">
-                    <option value="all">全部</option>
-                    <option value="success">有成功</option>
-                    <option value="failed">有失败</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            class="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground"
+            @click="resetListFilters"
+          >
+            清除筛选
+          </Button>
         </div>
       </div>
 
-      <div v-if="overviewLoading && poolProviders.length === 0" class="empty-state">
-        <div class="loading-orbit" aria-hidden="true" />
-        <p>正在读取账号池…</p>
+      <!-- 自定义时间范围行 -->
+      <div v-if="filters.range === 'custom'" class="mt-3 flex flex-wrap items-center gap-2.5 bg-background/40 p-2.5 rounded-lg border border-border/40">
+        <label class="flex items-center gap-2 text-xs">
+          <span class="text-muted-foreground font-medium">开始</span>
+          <input v-model="filters.start_date" type="date" aria-label="开始日期" class="h-8 rounded-md border border-border/60 px-2 text-xs bg-background focus:ring-2 focus:ring-primary/20 outline-none">
+        </label>
+        <span class="text-xs text-muted-foreground">至</span>
+        <label class="flex items-center gap-2 text-xs">
+          <span class="text-muted-foreground font-medium">结束</span>
+          <input v-model="filters.end_date" type="date" aria-label="结束日期" class="h-8 rounded-md border border-border/60 px-2 text-xs bg-background focus:ring-2 focus:ring-primary/20 outline-none">
+        </label>
+        <Button size="sm" variant="outline" class="h-8 text-xs" @click="applyFilters">应用日期</Button>
       </div>
-      <div v-else-if="overviewError && poolProviders.length === 0" class="empty-state text-destructive">
-        <p>{{ overviewError }}</p>
-        <Button size="sm" variant="outline" class="mt-3" @click="refreshAll">重试</Button>
-      </div>
-      <div v-else-if="poolProviders.length === 0" class="empty-state">
-        <Gauge class="mb-3 h-10 w-10 opacity-30" />
-        <p>暂无可统计的账号池</p>
-        <p class="mt-1 text-xs">请先在账号管理中启用一个包含账号的账号池。</p>
+
+      <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <!-- 左侧列：搜索检索分组 -->
+        <div class="flex flex-col gap-2 rounded-lg border border-border/40 bg-background/40 p-3">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">搜索账号 / 认证方式</span>
+          <div class="relative flex items-center">
+            <Search class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              v-model="searchInput"
+              type="search"
+              class="h-9 border-border/60 pl-9 pr-8 text-xs focus-visible:ring-2 focus-visible:ring-primary/20 bg-background/50 rounded-full"
+              placeholder="例如 feature.like_4e@icloud.com"
+              aria-label="搜索账号"
+              @input="scheduleSearch"
+            />
+            <button
+              v-if="searchInput"
+              type="button"
+              class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-muted-foreground hover:text-foreground"
+              aria-label="清空搜索"
+              @click="searchInput = ''; scheduleSearch()"
+            >
+              <X class="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+
+        <!-- 右侧列：状态筛选分组 (全线替换为标准系统 Select) -->
+        <div class="flex flex-col gap-2 rounded-lg border border-border/40 bg-background/40 p-3">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">状态与属性</span>
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+            <div class="flex flex-col gap-1 min-w-0">
+              <span class="text-[10px] font-medium text-muted-foreground whitespace-nowrap">使用情况</span>
+              <Select :model-value="filters.usage" @update:model-value="val => { filters.usage = val as any; applyFilters() }">
+                <SelectTrigger class="h-8 border-border/60 text-xs focus:ring-2 focus:ring-primary/20 bg-background/50">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部</SelectItem>
+                  <SelectItem value="used">有请求</SelectItem>
+                  <SelectItem value="idle">暂无请求</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div class="flex flex-col gap-1 min-w-0">
+              <span class="text-[10px] font-medium text-muted-foreground whitespace-nowrap">额度状态</span>
+              <Select :model-value="filters.risk" @update:model-value="val => { filters.risk = val as any; applyFilters() }">
+                <SelectTrigger class="h-8 border-border/60 text-xs focus:ring-2 focus:ring-primary/20 bg-background/50">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部</SelectItem>
+                  <SelectItem value="exhausted">已用完</SelectItem>
+                  <SelectItem value="critical">可能提前用完</SelectItem>
+                  <SelectItem value="warning">额度偏低</SelectItem>
+                  <SelectItem value="healthy">额度正常</SelectItem>
+                  <SelectItem value="unknown">暂未知</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div class="flex flex-col gap-1 min-w-0">
+              <span class="text-[10px] font-medium text-muted-foreground whitespace-nowrap">额度同步</span>
+              <Select :model-value="filters.freshness" @update:model-value="val => { filters.freshness = val as any; applyFilters() }">
+                <SelectTrigger class="h-8 border-border/60 text-xs focus:ring-2 focus:ring-primary/20 bg-background/50">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部</SelectItem>
+                  <SelectItem value="fresh">最近已同步</SelectItem>
+                  <SelectItem value="stale">额度同步较早</SelectItem>
+                  <SelectItem value="unknown">无同步记录</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div class="flex flex-col gap-1 min-w-0">
+              <span class="text-[10px] font-medium text-muted-foreground whitespace-nowrap">账号状态</span>
+              <Select :model-value="filters.active" @update:model-value="val => { filters.active = val as any; applyFilters() }">
+                <SelectTrigger class="h-8 border-border/60 text-xs focus:ring-2 focus:ring-primary/20 bg-background/50">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部</SelectItem>
+                  <SelectItem value="active">已启用</SelectItem>
+                  <SelectItem value="inactive">已停用</SelectItem>
+                  <SelectItem value="blocked">不可用</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div class="flex flex-col gap-1 min-w-0">
+              <span class="text-[10px] font-medium text-muted-foreground whitespace-nowrap">请求结果</span>
+              <Select :model-value="filters.result" @update:model-value="val => { filters.result = val as any; applyFilters() }">
+                <SelectTrigger class="h-8 border-border/60 text-xs focus:ring-2 focus:ring-primary/20 bg-background/50">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部</SelectItem>
+                  <SelectItem value="success">有成功</SelectItem>
+                  <SelectItem value="failed">有失败</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
       </div>
     </Card>
 
+    <div v-if="overviewLoading && poolProviders.length === 0" class="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+      <div class="w-8 h-8 rounded-full border-2 border-border/60 border-t-primary animate-spin mb-4" />
+      <p class="text-sm">正在读取账号池…</p>
+    </div>
+    <Card v-else-if="overviewError && poolProviders.length === 0" class="border-destructive/20 bg-destructive/5 p-8 text-center text-destructive">
+      <p class="text-sm font-medium">{{ overviewError }}</p>
+      <Button size="sm" variant="outline" class="mt-4" @click="refreshAll">重试</Button>
+    </Card>
+    <Card v-else-if="poolProviders.length === 0" class="border-border/60 p-12 text-center text-muted-foreground">
+      <Gauge class="mx-auto mb-4 h-12 w-12 opacity-30" />
+      <p class="text-sm font-medium">暂无可统计的账号池</p>
+      <p class="mt-2 text-xs">请先在账号管理中启用一个包含账号的账号池。</p>
+    </Card>
+
     <template v-if="poolProviders.length > 0">
-      <div v-if="statsLoading && !dashboard" class="empty-state min-h-[18rem]">
-        <div class="loading-orbit" aria-hidden="true" />
-        <p>正在读取账号数据…</p>
+      <div v-if="statsLoading && !dashboard" class="flex flex-col items-center justify-center py-24 text-center text-muted-foreground">
+        <div class="w-8 h-8 rounded-full border-2 border-border/60 border-t-primary animate-spin mb-4" />
+        <p class="text-sm">正在读取账号数据…</p>
       </div>
-      <Card v-else-if="statsError && !dashboard" class="empty-state text-destructive">
-        <p>{{ statsError }}</p>
-        <Button size="sm" variant="outline" class="mt-3" @click="loadDashboard(true)">重试</Button>
+      <Card v-else-if="statsError && !dashboard" class="border-destructive/20 bg-destructive/5 p-8 text-center text-destructive">
+        <p class="text-sm font-medium">{{ statsError }}</p>
+        <Button size="sm" variant="outline" class="mt-4" @click="loadDashboard(true)">重试</Button>
       </Card>
 
       <template v-else-if="dashboard">
-        <section class="summary-strip" aria-label="账号池汇总">
-          <div class="summary-item summary-item-accent">
-            <span>账号</span>
-            <strong>{{ formatInteger(dashboard.summary.account_count) }}</strong>
-            <small>{{ formatInteger(dashboard.summary.used_account_count) }} 个有请求</small>
-          </div>
-          <div class="summary-item">
-            <span>请求</span>
-            <strong>{{ formatInteger(dashboard.summary.request_count) }}</strong>
-            <small>{{ formatPercent(dashboard.summary.success_rate) }} 成功</small>
-          </div>
-          <div class="summary-item">
-            <span>Token</span>
-            <strong>{{ formatToken(dashboard.summary.total_tokens) }}</strong>
-            <small>输入 {{ formatToken(dashboard.summary.input_tokens) }} · 输出 {{ formatToken(dashboard.summary.output_tokens) }}</small>
-          </div>
-          <div class="summary-item">
-            <span>费用</span>
-            <strong>{{ formatUsd(dashboard.summary.total_cost_usd) }}</strong>
-            <small>实际 {{ formatUsd(dashboard.summary.actual_total_cost_usd) }}</small>
-          </div>
-          <div class="summary-item">
-            <span>缓存命中</span>
-            <strong>{{ formatPercent(dashboard.summary.cache_hit_rate) }}</strong>
-            <small>P95 {{ formatLatency(dashboard.summary.p95_response_time_ms) }}</small>
-          </div>
+        <!-- 汇总 KPI 卡片组 (严格对齐主程序'运维总览'样式，复用系统组件) -->
+        <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5" aria-label="账号池汇总">
+          <!-- 账号 KPI 卡片 (带左侧点缀色条，复用 Aether 设计特征) -->
+          <Card class="p-4 border-border/60 bg-card hover:shadow-sm transition-all relative overflow-hidden min-h-[110px]">
+            <div class="absolute left-0 top-0 bottom-0 w-1 bg-primary" />
+            <div class="flex items-start justify-between gap-3 pl-1">
+              <div class="min-w-0">
+                <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  账号
+                </p>
+                <div class="mt-2 text-2xl font-bold tabular-nums text-foreground">
+                  {{ formatInteger(dashboard.summary.account_count) }}
+                </div>
+              </div>
+              <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40">
+                <Users class="h-4 w-4 text-primary" />
+              </div>
+            </div>
+            <p class="mt-2 text-xs text-muted-foreground truncate pl-1">
+              {{ formatInteger(dashboard.summary.used_account_count) }} 个有请求
+            </p>
+          </Card>
+
+          <!-- 请求 KPI 卡片 -->
+          <Card class="p-4 border-border/60 bg-card hover:shadow-sm transition-all min-h-[110px]">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  请求
+                </p>
+                <div class="mt-2 text-2xl font-bold tabular-nums text-foreground">
+                  {{ formatInteger(dashboard.summary.request_count) }}
+                </div>
+              </div>
+              <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40">
+                <Activity class="h-4 w-4 text-primary" />
+              </div>
+            </div>
+            <p class="mt-2 text-xs text-muted-foreground truncate">
+              {{ formatPercent(dashboard.summary.success_rate) }} 成功率
+            </p>
+          </Card>
+
+          <!-- Token KPI 卡片 -->
+          <Card class="p-4 border-border/60 bg-card hover:shadow-sm transition-all min-h-[110px]">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Token 消耗
+                </p>
+                <div class="mt-2 text-2xl font-bold tabular-nums text-foreground">
+                  {{ formatToken(dashboard.summary.total_tokens) }}
+                </div>
+              </div>
+              <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40">
+                <Coins class="h-4 w-4 text-primary" />
+              </div>
+            </div>
+            <p class="mt-2 text-xs text-muted-foreground truncate">
+              输入 {{ formatToken(dashboard.summary.input_tokens) }} · 输出 {{ formatToken(dashboard.summary.output_tokens) }}
+            </p>
+          </Card>
+
+          <!-- 费用 KPI 卡片 -->
+          <Card class="p-4 border-border/60 bg-card hover:shadow-sm transition-all min-h-[110px]">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  费用统计
+                </p>
+                <div class="mt-2 text-2xl font-bold tabular-nums text-foreground">
+                  {{ formatUsd(dashboard.summary.total_cost_usd) }}
+                </div>
+              </div>
+              <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40">
+                <DollarSign class="h-4 w-4 text-primary" />
+              </div>
+            </div>
+            <p class="mt-2 text-xs text-muted-foreground truncate">
+              实际消耗 {{ formatUsd(dashboard.summary.actual_total_cost_usd) }}
+            </p>
+          </Card>
+
+          <!-- 缓存命中 KPI 卡片 -->
+          <Card class="p-4 border-border/60 bg-card hover:shadow-sm transition-all min-h-[110px]">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  缓存命中
+                </p>
+                <div class="mt-2 text-2xl font-bold tabular-nums text-foreground">
+                  {{ formatPercent(dashboard.summary.cache_hit_rate) }}
+                </div>
+              </div>
+              <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40">
+                <Zap class="h-4 w-4 text-primary" />
+              </div>
+            </div>
+            <p class="mt-2 text-xs text-muted-foreground truncate">
+              P95 响应延迟 {{ formatLatency(dashboard.summary.p95_response_time_ms) }}
+            </p>
+          </Card>
         </section>
 
         <section class="account-list-header" aria-labelledby="account-list-title">
@@ -257,106 +363,131 @@
           {{ statsError }}
         </div>
 
-        <div v-if="dashboard.accounts.length" class="account-grid">
-          <Card v-for="account in dashboard.accounts" :key="account.key_id" class="account-card">
-            <div class="account-card-top">
-              <button
-                type="button"
-                class="account-identity"
-                :aria-label="`查看 ${account.key_name} 的详情`"
+        <div v-if="dashboard.accounts.length" class="grid grid-cols-1 gap-4">
+          <Card 
+            v-for="account in dashboard.accounts" 
+            :key="account.key_id" 
+            class="flex flex-col lg:flex-row border border-border/60 hover:border-primary/50 bg-card hover:shadow-md transition-all rounded-xl overflow-hidden"
+          >
+            <!-- 左侧：身份标识 (原 account-card-top) -->
+            <div class="flex flex-col justify-between gap-3 p-4 bg-muted/20 border-b lg:border-b-0 lg:border-r border-border/60 lg:w-[240px] shrink-0">
+              <div class="min-w-0">
+                <button
+                  type="button"
+                  class="w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded"
+                  :aria-label="`查看 ${account.key_name} 的详情`"
+                  @click="openAccount(account)"
+                >
+                  <div class="flex items-center gap-1.5 flex-wrap min-w-0">
+                    <span class="text-sm font-bold truncate block max-w-full text-foreground hover:text-primary transition-colors" :title="account.key_name">
+                      {{ account.key_name }}
+                    </span>
+                    <Badge v-if="account.quota?.plan_type" variant="outline" class="text-[10px] uppercase font-mono px-1.5 py-0.5 h-4 border-primary/30 text-primary bg-background/50">
+                      {{ planTypeLabel(account.quota.plan_type) }}
+                    </Badge>
+                  </div>
+                  <div class="flex items-center gap-1.5 mt-2 text-xs text-muted-foreground">
+                    <span class="w-2 h-2 rounded-full shrink-0" :class="account.is_active ? 'bg-emerald-500' : 'bg-muted-foreground'" />
+                    <span>{{ accountStatusLabel(account) }} · {{ account.auth_type }}</span>
+                  </div>
+                </button>
+              </div>
+              
+              <div class="flex">
+                <span class="sync-pill shrink-0" :class="syncClass(account.quota.freshness)">
+                  {{ quotaSyncLabel(account.quota) }}
+                </span>
+              </div>
+            </div>
+
+            <!-- 中间：配额/进度条/指标 (原 account-card-body) -->
+            <div class="flex-1 grid grid-cols-1 md:grid-cols-12 gap-4 items-center p-4">
+              <!-- 配额进度条 (占 5/12 列) -->
+              <div class="md:col-span-5 flex flex-col justify-center min-w-0">
+                <div class="flex items-center justify-between gap-2">
+                  <h4 class="text-xs font-semibold text-foreground">额度与重置周期</h4>
+                  <span v-if="account.quota.windows.length" class="text-[10px] font-medium text-muted-foreground whitespace-nowrap bg-muted/40 px-1.5 py-0.5 rounded">
+                    {{ account.quota.windows.length }} 个窗口
+                  </span>
+                </div>
+
+                <div v-if="account.quota.windows.length" class="space-y-2 mt-2">
+                  <div v-for="window in account.quota.windows" :key="window.window_identity" class="border border-border/40 rounded-lg bg-muted/10 p-2 text-xs">
+                    <div class="flex items-baseline justify-between gap-2">
+                      <span class="font-semibold text-foreground truncate max-w-[140px]" :title="windowDisplayLabel(window)">
+                        {{ windowDisplayLabel(window) }}
+                      </span>
+                      <strong class="text-foreground font-bold">{{ quotaWindowRemainingText(window) }} 可用</strong>
+                    </div>
+                    <!-- 美化后的进度条，高度h-1.5，有过渡和圆角 -->
+                    <div class="h-1.5 w-full bg-muted/60 rounded-full overflow-hidden mt-1.5" aria-hidden="true">
+                      <div
+                        class="h-full rounded-full transition-all duration-500 ease-out"
+                        :class="riskBar(window.forecast?.risk || account.quota_risk)"
+                        :style="{ width: `${quotaWindowRemainingPercent(window)}%` }"
+                      />
+                    </div>
+                    <div class="flex justify-between items-center text-[10px] text-muted-foreground mt-1.5">
+                      <span>{{ quotaWindowUsedText(window) }}</span>
+                      <span>{{ resetLabel(window.reset_at_unix_secs) }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="border border-dashed border-border/80 rounded-lg p-3 text-center text-xs mt-2 text-muted-foreground bg-muted/5">
+                  <strong class="block text-foreground mb-0.5">{{ quotaMessage(account.quota) }}</strong>
+                </div>
+              </div>
+
+              <!-- 6个指标列表 (占 7/12 列) -->
+              <div class="md:col-span-7 border-t md:border-t-0 md:border-l border-border/60 pt-4 md:pt-0 md:pl-4">
+                <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center md:text-left">
+                  <div class="min-w-0">
+                    <span class="text-[10px] font-medium text-muted-foreground block truncate">请求</span>
+                    <strong class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">{{ formatInteger(account.request_count) }}</strong>
+                  </div>
+                  <div class="min-w-0">
+                    <span class="text-[10px] font-medium text-muted-foreground block truncate">Token</span>
+                    <strong class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">{{ formatToken(account.total_tokens) }}</strong>
+                  </div>
+                  <div class="min-w-0">
+                    <span class="text-[10px] font-medium text-muted-foreground block truncate">成功率</span>
+                    <strong class="text-sm font-bold block mt-0.5 tabular-nums" :class="rateClass(account.success_rate)">
+                      {{ formatPercent(account.success_rate) }}
+                    </strong>
+                  </div>
+                  <div class="min-w-0">
+                    <span class="text-[10px] font-medium text-muted-foreground block truncate">P95 响应</span>
+                    <strong class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">{{ formatLatency(account.p95_response_time_ms) }}</strong>
+                  </div>
+                  <div class="min-w-0">
+                    <span class="text-[10px] font-medium text-muted-foreground block truncate">缓存命中</span>
+                    <strong class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">{{ formatPercent(account.cache_hit_rate) }}</strong>
+                  </div>
+                  <div class="min-w-0">
+                    <span class="text-[10px] font-medium text-muted-foreground block truncate">费用</span>
+                    <strong class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">{{ formatUsd(account.total_cost_usd) }}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 右侧：最后使用与详情链接 (原 account-card-footer) -->
+            <div class="flex flex-row lg:flex-col justify-between items-center lg:items-end border-t lg:border-t-0 lg:border-l border-border/60 p-4 bg-muted/10 lg:w-[140px] shrink-0 gap-2">
+              <span class="text-[10px] text-muted-foreground lg:text-right">{{ lastUsedLabel(account.last_used_at_unix_secs) }}</span>
+              <button 
+                type="button" 
+                class="text-xs font-bold text-primary hover:text-primary/80 hover:underline inline-flex items-center gap-1 transition-colors" 
                 @click="openAccount(account)"
               >
-                <div class="flex items-center gap-1.5 flex-wrap">
-                  <span class="account-name" :title="account.key_name">{{ account.key_name }}</span>
-                  <Badge v-if="account.quota?.plan_type" variant="outline" class="plan-type-badge text-[10px] uppercase font-mono px-1.5 py-0.5 h-4 border-primary/30 text-primary">
-                    {{ planTypeLabel(account.quota.plan_type) }}
-                  </Badge>
-                </div>
-                <span class="account-subline">
-                  <span class="status-dot" :class="account.is_active ? 'status-dot-active' : 'status-dot-inactive'" />
-                  {{ accountStatusLabel(account) }} · {{ account.auth_type }}
-                </span>
-              </button>
-              <span class="sync-pill" :class="syncClass(account.quota.freshness)">
-                {{ quotaSyncLabel(account.quota) }}
-              </span>
-            </div>
-
-            <div class="account-card-body">
-              <div class="quota-heading">
-                <div>
-                  <h4>额度与重置周期</h4>
-
-                </div>
-                <span v-if="account.quota.windows.length" class="window-count">
-                  {{ account.quota.windows.length }} 个窗口
-                </span>
-              </div>
-
-              <div v-if="account.quota.windows.length" class="quota-window-list">
-                <div v-for="window in account.quota.windows" :key="window.window_identity" class="quota-window">
-                  <div class="window-topline">
-                    <span class="window-label" :title="windowDisplayLabel(window)">{{ windowDisplayLabel(window) }}</span>
-                    <strong class="window-remaining">{{ quotaWindowRemainingText(window) }} 可用</strong>
-                  </div>
-                  <div class="quota-meter" aria-hidden="true">
-                    <div
-                      class="quota-meter-fill"
-                      :class="riskBar(window.forecast?.risk || account.quota_risk)"
-                      :style="{ width: `${quotaWindowRemainingPercent(window)}%` }"
-                    />
-                  </div>
-                  <div class="window-bottomline">
-                    <span>{{ quotaWindowUsedText(window) }}</span>
-                    <span>{{ resetLabel(window.reset_at_unix_secs) }}</span>
-                  </div>
-                </div>
-              </div>
-              <div v-else class="quota-empty">
-                <strong>{{ quotaMessage(account.quota) }}</strong>
-
-              </div>
-
-              <div class="account-metrics">
-                <div class="account-metric">
-                  <span>请求</span>
-                  <strong>{{ formatInteger(account.request_count) }}</strong>
-                </div>
-                <div class="account-metric">
-                  <span>Token</span>
-                  <strong>{{ formatToken(account.total_tokens) }}</strong>
-                </div>
-                <div class="account-metric">
-                  <span>成功率</span>
-                  <strong :class="rateClass(account.success_rate)">{{ formatPercent(account.success_rate) }}</strong>
-                </div>
-                <div class="account-metric">
-                  <span>P95 响应</span>
-                  <strong>{{ formatLatency(account.p95_response_time_ms) }}</strong>
-                </div>
-                <div class="account-metric">
-                  <span>缓存命中</span>
-                  <strong>{{ formatPercent(account.cache_hit_rate) }}</strong>
-                </div>
-                <div class="account-metric">
-                  <span>费用</span>
-                  <strong>{{ formatUsd(account.total_cost_usd) }}</strong>
-                </div>
-              </div>
-            </div>
-
-            <div class="account-card-footer">
-              <span class="last-used">{{ lastUsedLabel(account.last_used_at_unix_secs) }}</span>
-              <button type="button" class="detail-link" @click="openAccount(account)">
                 查看详情 <span aria-hidden="true">→</span>
               </button>
             </div>
           </Card>
         </div>
-        <Card v-else class="empty-state">
-          <Search class="mb-3 h-8 w-8 opacity-30" />
-          <p>当前筛选没有账号</p>
-          <p class="mt-1 text-xs">可以清空搜索或放宽筛选条件后重试。</p>
+        <Card v-else class="border-border/60 p-12 text-center text-muted-foreground">
+          <Search class="mx-auto mb-4 h-12 w-12 opacity-30" />
+          <p class="text-sm font-medium">当前筛选没有账号</p>
+          <p class="mt-2 text-xs">可以清空搜索或放宽筛选条件后重试。</p>
         </Card>
 
         <Pagination
@@ -659,15 +790,19 @@ import {
   ChevronLeft,
   ChevronRight,
   Coins,
+  DollarSign,
   Gauge,
   Search,
+  Users,
   X,
+  Zap,
 } from 'lucide-vue-next'
 import type { ChartData, ChartOptions } from 'chart.js'
 import {
   Badge,
   Button,
   Card,
+  Input,
   Pagination,
   Select,
   SelectContent,
@@ -1392,88 +1527,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.pool-consumption-page {
-  --pc-border: color-mix(in srgb, var(--border) 80%, transparent);
-  --pc-border-strong: color-mix(in srgb, var(--border) 95%, transparent);
-  --pc-muted-surface: color-mix(in srgb, var(--muted) 54%, var(--background));
-  --pc-primary-soft: color-mix(in srgb, var(--primary) 10%, var(--background));
-  color: var(--foreground);
-}
-
-.pool-shell { border-color: color-mix(in srgb, var(--book-cloth, #a34828) 30%, var(--border)); background-color: var(--card); }
-.pool-header { padding: 1.15rem 1.25rem 1.25rem; }
-.pool-header-main { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(30rem, .92fr); align-items: start; gap: 1rem 2rem; }
-.pool-title-block { min-width: 0; }
-.pool-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 9rem auto; align-items: center; gap: .65rem; min-width: 0; padding-top: .1rem; }
-.toolbar-field { display: grid; min-width: 0; gap: .3rem; }
-.toolbar-field > span { color: var(--muted-foreground); font-size: .6875rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
-.filter-panel { margin-top: 1.1rem; border: 1px solid var(--pc-border-strong); border-radius: .85rem; background-color: var(--pc-muted-surface); padding: .85rem; }
-.filter-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; border-bottom: 1px solid var(--pc-border); padding: 0 .1rem .65rem; }
-.filter-panel-title { font-size: .78rem; font-weight: 700; color: var(--foreground); }
-.filter-panel-note { color: var(--muted-foreground); font-size: .6875rem; }
-.filter-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .65rem; padding-top: .75rem; }
-.filter-search-field { grid-column: span 2; }
-.filter-field { display: grid; min-width: 0; gap: .3rem; }
-.filter-field > span, .filter-date > span { color: var(--muted-foreground); font-size: .6875rem; font-weight: 500; }
-.filter-control { height: 2.125rem; min-width: 0; border: 1px solid var(--pc-border-strong); border-radius: 1rem; background-color: color-mix(in srgb, var(--card) 82%, var(--background)); padding: 0 .75rem; color: var(--foreground); font-size: .75rem; outline: none; box-shadow: 0 1px 2px rgba(61, 57, 41, 0.04); transition: border-color .15s ease, box-shadow .15s ease; }
-.filter-control::placeholder { color: var(--muted-foreground); }
-.filter-control:focus { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 18%, transparent); }
-.filter-date { display: inline-flex; align-items: center; gap: .4rem; }
-.filter-date input { height: 2.125rem; border: 1px solid var(--pc-border-strong); border-radius: .5rem; background-color: var(--background); padding: 0 .55rem; color: var(--foreground); font-size: .75rem; }
-.custom-range-row { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; padding: .75rem .1rem 0; }
-
-.summary-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); overflow: hidden; border: 1px solid color-mix(in srgb, var(--book-cloth, #a34828) 30%, var(--border)); border-radius: .85rem; background-color: var(--card); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04); }
-.summary-item { position: relative; min-width: 0; padding: .9rem 1rem; }
-.summary-item + .summary-item { border-left: 1px solid var(--pc-border); }
-.summary-item-accent { background-color: var(--pc-primary-soft); }
-.summary-item-accent::before { position: absolute; inset: 0 auto 0 0; width: 3.5px; background-color: var(--primary); content: ''; }
-.summary-item span { display: block; color: var(--muted-foreground); font-size: .6875rem; font-weight: 600; letter-spacing: .02em; }
-.summary-item strong { display: block; margin: .3rem 0 .2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; color: var(--foreground); }
-.summary-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .6875rem; color: var(--muted-foreground); }
-
-.empty-state { display: flex; min-height: 12rem; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; color: var(--muted-foreground); font-size: .875rem; text-align: center; }
-.loading-orbit { width: 1.6rem; height: 1.6rem; margin-bottom: .75rem; border: 2px solid var(--pc-border-strong); border-top-color: var(--primary); border-radius: 999px; animation: orbit .8s linear infinite; }
-.section-kicker { color: var(--muted-foreground); font-size: .6875rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
-.account-list-header { display: flex; align-items: end; justify-content: space-between; gap: 1rem; border-left: 3.5px solid var(--primary); padding: .2rem 0 .2rem 1rem; }
-.account-grid { display: grid; gap: .75rem; }
-.account-card { display: grid; grid-template-columns: minmax(190px, 1.15fr) minmax(0, 4fr) minmax(112px, .62fr); min-width: 0; overflow: hidden; border: 1px solid var(--pc-border-strong); background-color: var(--card); transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; border-radius: .75rem; }
-.account-card:hover { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); box-shadow: 0 10px 24px color-mix(in srgb, var(--foreground) 8%, transparent); transform: translateY(-1px); }
-.account-card-top { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: .42rem; border-right: 1px solid var(--pc-border); padding: .55rem .75rem; background-color: color-mix(in srgb, var(--muted) 20%, var(--card)); }
-.account-identity { min-width: 0; width: 100%; text-align: left; outline: none; }
-.account-identity:focus-visible, .detail-link:focus-visible { border-radius: .35rem; box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 35%, transparent); }
-.account-name { display: block; overflow-wrap: anywhere; color: var(--foreground); font-size: .8125rem; font-weight: 700; line-height: 1.35; }
-.account-subline { display: flex; align-items: center; gap: .4rem; margin-top: .3rem; color: var(--muted-foreground); font-size: .72rem; }
-.status-dot { width: .45rem; height: .45rem; flex: 0 0 auto; border-radius: 999px; }
-.status-dot-active { background-color: rgb(16 185 129); }.status-dot-inactive { background-color: var(--muted-foreground); }
-.sync-pill { display: inline-flex; max-width: 100%; flex: 0 0 auto; align-items: center; border: 1px solid currentColor; border-radius: 999px; padding: .2rem .5rem; font-size: .6875rem; font-weight: 500; line-height: 1.2; }
-.sync-good { color: rgb(5 150 105); background-color: rgb(16 185 129 / 8%); }.sync-warning { color: rgb(180 83 9); background-color: rgb(245 158 11 / 10%); }.sync-unknown { color: var(--muted-foreground); background-color: var(--pc-muted-surface); }
-.account-card-body { display: grid; grid-template-columns: minmax(210px, 1fr) minmax(400px, 1.8fr); min-width: 0; gap: .55rem; align-items: center; padding: .55rem .75rem; }
-.account-card-body > .quota-heading, .account-card-body > .quota-window-list, .account-card-body > .quota-empty { grid-column: 1; }
-.account-card-body > .account-metrics { grid-column: 2; grid-row: 1 / span 2; }
-.quota-heading, .detail-section-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
-.quota-heading h4, .detail-section-heading h3 { color: var(--foreground); font-size: .8125rem; font-weight: 700; }
-.window-count { flex: 0 0 auto; color: var(--muted-foreground); font-size: .6875rem; font-weight: 500; white-space: nowrap; }
-.quota-window-list, .detail-window-list { display: grid; gap: .32rem; margin-top: .32rem; }
-.quota-window, .detail-window { min-width: 0; border: 1px solid var(--pc-border); border-radius: .5rem; background-color: var(--pc-muted-surface); padding: .4rem .55rem; }
-.detail-window { padding: .85rem 1rem; }
-.window-topline, .window-bottomline, .detail-window-meta { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: .65rem; }
-.window-label { min-width: 0; overflow: hidden; color: var(--foreground); font-size: .72rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.window-remaining { flex: 0 0 auto; font-size: .75rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-.quota-meter { height: .3rem; margin-top: .35rem; overflow: hidden; border-radius: 999px; background-color: var(--pc-border-strong); }
-.quota-meter-fill { height: 100%; min-width: 2px; border-radius: inherit; transition: width .25s ease; }
-.window-bottomline, .detail-window-meta { margin-top: .3rem; color: var(--muted-foreground); font-size: .6875rem; }
-.window-bottomline span:last-child, .detail-window-meta span:last-child { overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
-.window-duration { display: inline-block; margin-left: .4rem; color: var(--muted-foreground); font-size: .6875rem; }
-.quota-empty { display: grid; gap: .25rem; margin-top: .4rem; border: 1px dashed var(--pc-border-strong); border-radius: .5rem; padding: .6rem; color: var(--muted-foreground); font-size: .72rem; }
-.quota-empty strong { color: var(--foreground); font-size: .78rem; font-weight: 600; }
-.account-metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .35rem; min-width: 0; margin: 0; border-left: 1px solid var(--pc-border); padding-left: .7rem; }
-.account-metric { min-width: 0; }
-.account-metric span { display: block; overflow: hidden; color: var(--muted-foreground); font-size: .6875rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.account-metric strong { display: block; margin-top: .15rem; overflow: hidden; font-size: .8125rem; font-weight: 700; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; color: var(--foreground); }
-.account-card-footer { display: flex; min-width: 0; flex-direction: column; align-items: flex-end; justify-content: space-between; gap: .35rem; border-left: 1px solid var(--pc-border); padding: .55rem .7rem; background-color: color-mix(in srgb, var(--muted) 15%, var(--card)); }
-.last-used { min-width: 0; color: var(--muted-foreground); font-size: .6875rem; text-align: right; }
-.detail-link { flex: 0 0 auto; color: var(--primary); font-size: .75rem; font-weight: 700; outline: none; }
-
+/* 抽屉弹出与过渡动画 */
 .drawer-enter-active,
 .drawer-leave-active {
   transition: opacity 0.3s ease;
@@ -1497,55 +1551,63 @@ onBeforeUnmount(() => {
 .drawer-leave-from .relative {
   transform: translateX(0);
 }
-.drawer-callout { display: flex; gap: .6rem; border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border)); border-radius: .65rem; background-color: var(--pc-primary-soft); padding: .75rem .85rem; color: var(--foreground); font-size: .75rem; line-height: 1.5; }
+
+.drawer-callout { display: flex; gap: .6rem; border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border)); border-radius: .65rem; background-color: color-mix(in srgb, var(--primary) 10%, var(--background)); padding: .75rem .85rem; color: var(--foreground); font-size: .75rem; line-height: 1.5; }
 .callout-mark { padding-top: .2rem; color: var(--primary); font-size: .55rem; }
+
+/* 账号诊断与详情指标样式 */
 .detail-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .55rem; margin-top: .85rem; }
-.detail-stat { min-width: 0; border: 1px solid var(--pc-border); border-radius: .6rem; background-color: var(--pc-muted-surface); padding: .7rem .75rem; }
+.detail-stat { min-width: 0; border: 1px solid var(--border); border-radius: .6rem; background-color: color-mix(in srgb, var(--muted) 20%, var(--background)); padding: .7rem .75rem; }
 .detail-stat span { display: block; color: var(--muted-foreground); font-size: .6875rem; font-weight: 500; }
 .detail-stat strong { display: block; margin-top: .25rem; overflow: hidden; color: var(--foreground); font-size: .875rem; font-weight: 700; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.detail-section { position: relative; margin-top: .9rem; border: 1px solid color-mix(in srgb, var(--border) 92%, var(--foreground)); border-radius: .75rem; background-color: color-mix(in srgb, var(--card) 94%, var(--muted)); padding: .9rem 1rem; box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 5%, transparent); }
+
+.detail-section { position: relative; margin-top: .9rem; border: 1px solid var(--border); border-radius: .75rem; background-color: color-mix(in srgb, var(--card) 94%, var(--muted)); padding: .9rem 1rem; box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 5%, transparent); }
 .detail-section::before { position: absolute; inset: .75rem auto .75rem 0; width: 2px; border-radius: 999px; background-color: color-mix(in srgb, var(--primary) 70%, var(--border)); content: ''; }
-.detail-section-heading { border-bottom: 1px solid var(--pc-border); padding-bottom: .65rem; }
+.detail-section-heading { border-bottom: 1px solid var(--border); padding-bottom: .65rem; }
 .detail-section-heading h3 { font-size: .8125rem; font-weight: 700; }
 .detail-quota-section::before { background-color: rgb(16 185 129); }
 .detail-history-section::before { background-color: rgb(71 112 116); }
 .detail-distribution-section::before { background-color: rgb(194 111 74); }
 .detail-window-facts { display: flex; flex-wrap: wrap; gap: .4rem .8rem; margin-top: .65rem; color: var(--muted-foreground); font-size: .6875rem; }
 .detail-window-forecast { margin-top: .6rem; color: var(--primary); font-size: .6875rem; line-height: 1.4; }
-.detail-chart-section { border-color: color-mix(in srgb, var(--primary) 28%, var(--border)); background-color: var(--pc-muted-surface); }
+.detail-chart-section { border-color: color-mix(in srgb, var(--primary) 28%, var(--border)); background-color: color-mix(in srgb, var(--muted) 54%, var(--background)); }
 .chart-heading { align-items: center; }
 .chart-live-mark { display: inline-flex; align-items: center; gap: .3rem; color: var(--muted-foreground); font-size: .6875rem; }
 .chart-live-mark span { width: .4rem; height: .4rem; border-radius: 999px; background-color: rgb(16 185 129); box-shadow: 0 0 0 3px rgb(16 185 129 / 12%); }
+
+/* 日历选择弹出层系列样式 (纯手工高级日历样式，完全复用页面既有样式结构) */
 .detail-date-picker { position: relative; flex: 0 0 auto; }
 .calendar-trigger { display: inline-flex; align-items: center; gap: .38rem; border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border)); border-radius: .55rem; background-color: var(--background); padding: .38rem .55rem; color: var(--foreground); font-size: .6875rem; font-weight: 600; outline: none; box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 5%, transparent); }
 .calendar-trigger:hover, .calendar-trigger:focus-visible { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 16%, transparent); }
-.calendar-popover { position: absolute; z-index: 30; top: calc(100% + .55rem); right: 0; width: 17.5rem; border: 1px solid color-mix(in srgb, var(--border) 92%, var(--foreground)); border-radius: .75rem; background-color: var(--background); padding: .75rem; box-shadow: 0 16px 40px color-mix(in srgb, var(--foreground) 18%, transparent); }
-.calendar-popover-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; border-bottom: 1px solid var(--pc-border); padding-bottom: .65rem; }
+.calendar-popover { position: absolute; z-index: 30; top: calc(100% + .55rem); right: 0; width: 17.5rem; border: 1px solid var(--border); border-radius: .75rem; background-color: var(--background); padding: .75rem; box-shadow: 0 16px 40px color-mix(in srgb, var(--foreground) 18%, transparent); }
+.calendar-popover-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; border-bottom: 1px solid var(--border); padding-bottom: .65rem; }
 .calendar-popover-heading > div:first-child { display: grid; gap: .12rem; }
 .calendar-popover-heading span { color: var(--muted-foreground); font-size: .625rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .calendar-popover-heading strong { color: var(--foreground); font-size: .8rem; font-weight: 700; }
 .calendar-nav { display: inline-flex; gap: .25rem; }
-.calendar-nav button { display: inline-flex; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; border: 1px solid var(--pc-border); border-radius: .4rem; color: var(--muted-foreground); outline: none; }
+.calendar-nav button { display: inline-flex; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; border: 1px solid var(--border); border-radius: .4rem; color: var(--muted-foreground); outline: none; }
 .calendar-nav button:hover:not(:disabled), .calendar-nav button:focus-visible { border-color: var(--primary); color: var(--foreground); }
 .calendar-nav button:disabled { cursor: not-allowed; opacity: .35; }
 .calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: .18rem; }
 .calendar-weekdays { margin-top: .7rem; color: var(--muted-foreground); font-size: .625rem; font-weight: 700; text-align: center; }
 .calendar-grid { margin-top: .3rem; }
 .calendar-day { display: inline-flex; align-items: center; justify-content: center; aspect-ratio: 1; min-width: 0; border-radius: .42rem; color: var(--foreground); font-size: .7rem; font-variant-numeric: tabular-nums; outline: none; }
-.calendar-day:hover:not(:disabled), .calendar-day:focus-visible { background-color: var(--pc-primary-soft); color: var(--primary); }
+.calendar-day:hover:not(:disabled), .calendar-day:focus-visible { background-color: color-mix(in srgb, var(--primary) 10%, var(--background)); color: var(--primary); }
 .calendar-day-today { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 55%, transparent); color: var(--primary); font-weight: 700; }
 .calendar-day-selected { background-color: var(--primary); color: var(--primary-foreground) !important; box-shadow: 0 2px 5px color-mix(in srgb, var(--primary) 24%, transparent); }
 .calendar-day-disabled { cursor: not-allowed; color: var(--muted-foreground); opacity: .35; }
 .calendar-day-empty { pointer-events: none; }
-.calendar-popover-footer { display: flex; align-items: center; justify-content: space-between; gap: .5rem; border-top: 1px solid var(--pc-border); margin-top: .7rem; padding-top: .6rem; color: var(--muted-foreground); font-size: .625rem; }
+.calendar-popover-footer { display: flex; align-items: center; justify-content: space-between; gap: .5rem; border-top: 1px solid var(--border); margin-top: .7rem; padding-top: .6rem; color: var(--muted-foreground); font-size: .625rem; }
 .calendar-popover-footer button { color: var(--primary); font-size: .6875rem; font-weight: 700; outline: none; }
 .calendar-popover-footer button:hover, .calendar-popover-footer button:focus-visible { text-decoration: underline; }
-.calendar-quick-ranges { display: flex; gap: .25rem; margin-top: .55rem; border-top: 1px solid var(--pc-border); padding-top: .55rem; }
+.calendar-quick-ranges { display: flex; gap: .25rem; margin-top: .55rem; border-top: 1px solid var(--border); padding-top: .55rem; }
 .calendar-quick-ranges button { flex: 1; border-radius: .35rem; padding: .28rem .2rem; color: var(--muted-foreground); font-size: .625rem; font-weight: 600; outline: none; }
-.calendar-quick-ranges button:hover, .calendar-quick-ranges button:focus-visible { background-color: var(--pc-primary-soft); color: var(--foreground); }
-.calendar-quick-ranges .calendar-quick-range-active { background-color: var(--pc-primary-soft); color: var(--primary); }
+.calendar-quick-ranges button:hover, .calendar-quick-ranges button:focus-visible { background-color: color-mix(in srgb, var(--primary) 10%, var(--background)); color: var(--foreground); }
+.calendar-quick-ranges .calendar-quick-range-active { background-color: color-mix(in srgb, var(--primary) 10%, var(--background)); color: var(--primary); }
+
+/* 图表与指标明细 */
 .detail-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin-top: .85rem; }
-.detail-chart-card { min-width: 0; border: 1px solid var(--pc-border); border-radius: .65rem; background-color: var(--background); padding: .75rem; }
+.detail-chart-card { min-width: 0; border: 1px solid var(--border); border-radius: .65rem; background-color: var(--background); padding: .75rem; }
 .chart-card-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .chart-card-heading strong { font-size: .8125rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .chart-card-label { display: flex; align-items: center; gap: .4rem; color: var(--muted-foreground); font-size: .6875rem; font-weight: 500; }
@@ -1556,13 +1618,13 @@ onBeforeUnmount(() => {
 .chart-loading, .chart-empty { display: flex; min-height: 10.5rem; align-items: center; justify-content: center; gap: .6rem; color: var(--muted-foreground); font-size: .75rem; }
 .chart-loading .loading-orbit { width: 1.25rem; height: 1.25rem; margin: 0; }
 .history-list, .distribution-list { display: grid; gap: .55rem; margin-top: .7rem; }
-.history-row, .distribution-row { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: .75rem; border-bottom: 1px solid var(--pc-border); padding-bottom: .55rem; font-size: .72rem; }
+.history-row, .distribution-row { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: .75rem; border-bottom: 1px solid var(--border); padding-bottom: .55rem; font-size: .72rem; }
 .history-row:last-child, .distribution-row:last-child { border-bottom: 0; padding-bottom: 0; }
 .history-time { display: grid; flex: 0 0 auto; gap: .15rem; }
 .history-time strong { font-size: .75rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .history-time span { color: var(--muted-foreground); font-size: .6875rem; }
 .history-values { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .3rem; color: var(--muted-foreground); text-align: right; }
-.history-values span { border-radius: .35rem; background-color: var(--pc-muted-surface); padding: .2rem .4rem; font-size: .6875rem; }
+.history-values span { border-radius: .35rem; background-color: color-mix(in srgb, var(--muted) 54%, var(--background)); padding: .2rem .4rem; font-size: .6875rem; }
 .distribution-row span { min-width: 0; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
 .distribution-row strong { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .empty-inline { margin-top: .7rem; color: var(--muted-foreground); font-size: .72rem; }
@@ -1570,16 +1632,33 @@ onBeforeUnmount(() => {
 .quota-period-switcher-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; color: var(--foreground); font-size: .6875rem; font-weight: 700; }
 .quota-period-switcher-heading small { color: var(--muted-foreground); font-size: .625rem; font-weight: 500; }
 .quota-period-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: .35rem; margin-top: .45rem; }
-.quota-period-tabs button { display: grid; min-width: 0; gap: .18rem; border: 1px solid var(--pc-border); border-radius: .45rem; background-color: var(--background); padding: .45rem .5rem; text-align: left; outline: none; }
+.quota-period-tabs button { display: grid; min-width: 0; gap: .18rem; border: 1px solid var(--border); border-radius: .45rem; background-color: var(--background); padding: .45rem .5rem; text-align: left; outline: none; }
 .quota-period-tabs button:hover, .quota-period-tabs button:focus-visible { border-color: var(--primary); }
 .quota-period-tabs button span { overflow: hidden; color: var(--foreground); font-size: .6875rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .quota-period-tabs button small { overflow: hidden; color: var(--muted-foreground); font-size: .625rem; text-overflow: ellipsis; white-space: nowrap; }
-.quota-period-tabs .quota-period-active { border-color: var(--primary); background-color: var(--pc-primary-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent); }
+.quota-period-tabs .quota-period-active { border-color: var(--primary); background-color: color-mix(in srgb, var(--primary) 10%, var(--background)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent); }
+
+/* 配额同步药丸、进度条等微调 */
+.sync-pill { display: inline-flex; max-width: 100%; flex: 0 0 auto; align-items: center; border: 1px solid currentColor; border-radius: 999px; padding: .2rem .5rem; font-size: .6875rem; font-weight: 500; line-height: 1.2; }
+.sync-good { color: rgb(5 150 105); background-color: rgb(16 185 129 / 8%); }
+.sync-warning { color: rgb(180 83 9); background-color: rgb(245 158 11 / 10%); }
+.sync-unknown { color: var(--muted-foreground); background-color: color-mix(in srgb, var(--muted) 54%, var(--background)); }
 
 @keyframes orbit { to { transform: rotate(360deg); } }
-@media (max-width: 1100px) { .pool-header-main { grid-template-columns: 1fr; gap: .9rem; }.pool-toolbar { max-width: none; }.filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.filter-search-field { grid-column: span 2; }.account-card { grid-template-columns: minmax(170px, 1.1fr) minmax(0, 3fr); }.account-card-body { grid-template-columns: minmax(0, 1fr); }.account-card-body > .account-metrics { grid-column: 1; grid-row: auto; border-top: 1px solid var(--pc-border); border-left: 0; padding-top: .55rem; padding-left: 0; }.account-card-footer { grid-column: 1 / -1; flex-direction: row; align-items: center; border-top: 1px solid var(--pc-border); border-left: 0; }.last-used { text-align: left; } }
-@media (max-width: 820px) { .pool-header { padding-inline: 1rem; }.pool-toolbar { grid-template-columns: minmax(0, 1fr) 8rem auto; }.summary-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }.summary-item:nth-child(4) { border-left: 0; border-top: 1px solid var(--pc-border); }.summary-item:nth-child(5) { border-top: 1px solid var(--pc-border); }.account-card { display: block; }.account-card-top { flex-direction: row; align-items: flex-start; border-right: 0; border-bottom: 1px solid var(--pc-border); }.account-card-body { display: block; }.account-metrics { margin-top: .8rem; border-top: 1px solid var(--pc-border); border-left: 0; padding-top: .75rem; padding-left: 0; }.account-card-footer { border-top: 1px solid var(--pc-border); }.detail-chart-grid { grid-template-columns: 1fr; }.detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }.detail-metrics .detail-stat:nth-child(4), .detail-metrics .detail-stat:nth-child(5) { grid-column: span 1; }.chart-heading { align-items: flex-start; flex-direction: column; }.detail-date-picker { width: 100%; }.calendar-trigger { width: 100%; justify-content: space-between; }.calendar-popover { left: 0; right: auto; } }
-@media (max-width: 640px) { .pool-header { padding: .95rem .8rem 1rem; }.pool-toolbar { grid-template-columns: 1fr 1fr; min-width: 0; }.pool-toolbar > :last-child { grid-column: span 2; }.filter-panel { padding: .65rem; }.filter-panel-note { display: none; }.filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.filter-search-field { grid-column: span 2; }.summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }.summary-item:nth-child(3) { border-left: 0; border-top: 1px solid var(--pc-border); }.summary-item:nth-child(4) { border-left: 1px solid var(--pc-border); }.summary-item:nth-child(5) { grid-column: span 2; border-left: 0; }.account-list-header { align-items: flex-start; flex-direction: column; }.account-card-top { flex-direction: column; }.sync-pill { max-width: none; }.detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.detail-metrics .detail-stat:nth-child(5) { grid-column: span 2; }.quota-period-tabs { grid-template-columns: 1fr; }.calendar-popover { width: min(17.5rem, calc(100vw - 3rem)); }.drawer-header, .drawer-scroll { padding-inline: .85rem; } }
-@media (prefers-reduced-motion: reduce) { .loading-orbit, .account-card, .quota-meter-fill, .drawer-enter-active, .drawer-leave-active { animation: none; transition: none; } }
-@media (min-width: 1101px) { .account-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+@media (max-width: 820px) {
+  .detail-chart-grid { grid-template-columns: 1fr; }
+  .detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .detail-metrics .detail-stat:nth-child(4), .detail-metrics .detail-stat:nth-child(5) { grid-column: span 1; }
+  .chart-heading { align-items: flex-start; flex-direction: column; }
+  .detail-date-picker { width: 100%; }
+  .calendar-trigger { width: 100%; justify-content: space-between; }
+  .calendar-popover { left: 0; right: auto; }
+}
+@media (max-width: 640px) {
+  .detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detail-metrics .detail-stat:nth-child(5) { grid-column: span 2; }
+  .quota-period-tabs { grid-template-columns: 1fr; }
+  .calendar-popover { width: min(17.5rem, calc(100vw - 3rem)); }
+}
+@media (prefers-reduced-motion: reduce) { .drawer-enter-active, .drawer-leave-active { animation: none; transition: none; } }
 </style>
