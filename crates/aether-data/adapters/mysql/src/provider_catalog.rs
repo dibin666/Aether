@@ -142,7 +142,7 @@ FROM provider_api_keys
 "#;
 
 const KEY_MAINTENANCE_SUMMARY_SELECT_SQL: &str = r#"
-SELECT id, provider_id, is_active, upstream_metadata
+SELECT id, provider_id, is_active, upstream_metadata, status_snapshot
 FROM provider_api_keys
 "#;
 
@@ -2660,6 +2660,10 @@ fn map_key_maintenance_summary_row(
         upstream_metadata: optional_json_from_string(
             row.try_get("upstream_metadata").map_sql_err()?,
             "provider_api_keys.upstream_metadata",
+        )?,
+        status_snapshot: optional_json_from_string(
+            row.try_get("status_snapshot").map_sql_err()?,
+            "provider_api_keys.status_snapshot",
         )?,
     })
 }

@@ -433,6 +433,7 @@ pub struct StoredProviderCatalogKeyMaintenanceSummary {
     pub provider_id: String,
     pub is_active: bool,
     pub upstream_metadata: Option<serde_json::Value>,
+    pub status_snapshot: Option<serde_json::Value>,
 }
 
 impl StoredProviderCatalogKey {
