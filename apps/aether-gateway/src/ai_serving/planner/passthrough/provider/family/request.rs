@@ -13,9 +13,10 @@ use crate::ai_serving::planner::redaction::{
 };
 use crate::ai_serving::transport::antigravity::{
     build_antigravity_safe_v1internal_request, build_antigravity_static_identity_headers,
-    classify_local_antigravity_request_support, AntigravityEnvelopeRequestType,
-    AntigravityRequestAuthUnsupportedReason, AntigravityRequestEnvelopeSupport,
-    AntigravityRequestSideSupport, AntigravityRequestSideUnsupportedReason,
+    classify_local_antigravity_request_support, finalize_antigravity_request_headers,
+    AntigravityEnvelopeRequestType, AntigravityRequestAuthUnsupportedReason,
+    AntigravityRequestEnvelopeSupport, AntigravityRequestSideSupport,
+    AntigravityRequestSideUnsupportedReason,
 };
 use crate::ai_serving::transport::{
     body_rules_have_enabled_rules, build_gemini_cli_v1internal_request, build_grok_browser_headers,
@@ -576,6 +577,12 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         .await;
         return Ok(None);
     };
+    if prepared.is_antigravity {
+        finalize_antigravity_request_headers(
+            &mut provider_request_headers,
+            prepared.upstream_is_stream,
+        );
+    }
     crate::ai_serving::apply_codex_openai_special_headers(
         &mut provider_request_headers,
         &provider_request_body,

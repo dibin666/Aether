@@ -9,7 +9,7 @@ use super::request::{
     classify_antigravity_safe_request_body, AntigravityEnvelopeRequestType,
     AntigravityRequestEnvelopeUnsupportedReason,
 };
-use crate::rules::{body_rules_have_enabled_rules, header_rules_have_enabled_rules};
+use crate::rules::body_rules_have_enabled_rules;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AntigravityRequestSideSpec {
@@ -77,26 +77,11 @@ pub fn classify_local_antigravity_request_support(
             AntigravityRequestSideUnsupportedReason::UnsupportedCustomPath,
         );
     }
-    if header_rules_have_enabled_rules(transport.endpoint.header_rules.as_ref()) {
-        return AntigravityRequestSideSupport::Unsupported(
-            AntigravityRequestSideUnsupportedReason::UnsupportedHeaderRules,
-        );
-    }
     if body_rules_have_enabled_rules(transport.endpoint.body_rules.as_ref()) {
         return AntigravityRequestSideSupport::Unsupported(
             AntigravityRequestSideUnsupportedReason::UnsupportedBodyRules,
         );
     }
-    if transport.provider.proxy.is_some()
-        || transport.endpoint.proxy.is_some()
-        || transport.key.proxy.is_some()
-        || transport.key.fingerprint.is_some()
-    {
-        return AntigravityRequestSideSupport::Unsupported(
-            AntigravityRequestSideUnsupportedReason::UnsupportedNetworkConfig,
-        );
-    }
-
     let auth = match resolve_local_antigravity_request_auth(transport) {
         AntigravityRequestAuthSupport::Supported(auth) => auth,
         AntigravityRequestAuthSupport::Unsupported(reason) => {

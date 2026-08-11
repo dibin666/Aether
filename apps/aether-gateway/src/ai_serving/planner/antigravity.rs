@@ -5,10 +5,10 @@ use serde_json::Value;
 
 use crate::ai_serving::transport::antigravity::{
     build_antigravity_safe_v1internal_request, build_antigravity_static_identity_headers,
-    classify_local_antigravity_request_support, AntigravityEnvelopeRequestType,
-    AntigravityRequestAuth, AntigravityRequestAuthUnsupportedReason,
-    AntigravityRequestEnvelopeSupport, AntigravityRequestSideSupport,
-    AntigravityRequestSideUnsupportedReason,
+    classify_local_antigravity_request_support, finalize_antigravity_request_headers,
+    AntigravityEnvelopeRequestType, AntigravityRequestAuth,
+    AntigravityRequestAuthUnsupportedReason, AntigravityRequestEnvelopeSupport,
+    AntigravityRequestSideSupport, AntigravityRequestSideUnsupportedReason,
 };
 use crate::ai_serving::transport::{
     build_standard_provider_request_headers, GatewayProviderTransportSnapshot,
@@ -89,9 +89,7 @@ pub(crate) async fn build_antigravity_v1internal_provider_request(
             upstream_is_stream: input.upstream_is_stream,
         })
         .ok_or(AntigravityV1InternalRequestError::HeaderRulesApplyFailed)?;
-    headers
-        .headers
-        .insert("accept".to_string(), "text/event-stream".to_string());
+    finalize_antigravity_request_headers(&mut headers.headers, input.upstream_is_stream);
 
     Ok(AntigravityV1InternalRequest {
         transport: payload.transport,

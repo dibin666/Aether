@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use url::form_urlencoded;
 
+use super::super::snapshot::GatewayProviderTransportSnapshot;
+
 pub const ANTIGRAVITY_V1INTERNAL_PATH_TEMPLATE: &str = "/v1internal:{action}";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,4 +72,26 @@ pub fn build_antigravity_v1internal_url(
     }
 
     Some(url)
+}
+
+pub fn resolve_antigravity_api_base_url(transport: &GatewayProviderTransportSnapshot) -> &str {
+    for config in [
+        transport.endpoint.config.as_ref(),
+        transport.provider.config.as_ref(),
+    ] {
+        let Some(config) = config else {
+            continue;
+        };
+        for pointer in ["/antigravity_api_url", "/antigravity/api_url"] {
+            if let Some(base_url) = config
+                .pointer(pointer)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                return base_url;
+            }
+        }
+    }
+    transport.endpoint.base_url.as_str()
 }

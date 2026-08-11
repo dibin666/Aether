@@ -2030,14 +2030,13 @@ async fn gateway_executes_antigravity_gemini_cli_stream_via_local_decision_gate_
         seen_execution_runtime_request.project,
         "project-antigravity-stream-local-1"
     );
-    assert_eq!(
-        seen_execution_runtime_request.request_id,
-        "trace-antigravity-cli-oauth-local-stream-123"
-    );
+    assert!(seen_execution_runtime_request
+        .request_id
+        .starts_with("agent/"));
     assert_eq!(seen_execution_runtime_request.model, "claude-sonnet-4-5");
     assert_eq!(
         seen_execution_runtime_request.user_agent,
-        aether_provider_transport::antigravity::ANTIGRAVITY_REQUEST_USER_AGENT
+        aether_provider_transport::antigravity::ANTIGRAVITY_ENVELOPE_USER_AGENT
     );
     assert_eq!(seen_execution_runtime_request.request_type, "agent");
     assert_eq!(seen_execution_runtime_request.contents_len, 0);
@@ -2248,10 +2247,9 @@ async fn gateway_executes_antigravity_gemini_cli_stream_via_local_decision_gate_
         seen_bearer_only_execution_runtime_request.authorization,
         "Bearer refreshed-antigravity-cli-stream-access-token"
     );
-    assert_eq!(
-        seen_bearer_only_execution_runtime_request.request_id,
-        "client-v1internal-request-789"
-    );
+    assert!(seen_bearer_only_execution_runtime_request
+        .request_id
+        .starts_with("agent/"));
     assert_eq!(
         seen_bearer_only_execution_runtime_request.request_type,
         "agent"
@@ -2355,10 +2353,9 @@ async fn gateway_executes_antigravity_gemini_cli_stream_via_local_decision_gate_
         seen_native_model_execution_runtime_request.model,
         "claude-sonnet-4-5"
     );
-    assert_eq!(
-        seen_native_model_execution_runtime_request.request_id,
-        "client-v1internal-request-790"
-    );
+    assert!(seen_native_model_execution_runtime_request
+        .request_id
+        .starts_with("agent/"));
     assert!(
         (seen_native_model_execution_runtime_request.exact_temperature - 0.6).abs() < f64::EPSILON
     );

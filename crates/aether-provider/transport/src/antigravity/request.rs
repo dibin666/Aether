@@ -1,6 +1,11 @@
 use serde_json::{Map, Value};
+use uuid::Uuid;
 
-use super::auth::{AntigravityRequestAuth, ANTIGRAVITY_REQUEST_USER_AGENT};
+use super::auth::AntigravityRequestAuth;
+use super::normalize::normalize_antigravity_cli_inner_request;
+use super::profile::{
+    current_antigravity_compatibility_profile, ANTIGRAVITY_GOOGLE_ONE_AI_CREDIT_TYPE,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AntigravityEnvelopeRequestType {
@@ -10,7 +15,7 @@ pub enum AntigravityEnvelopeRequestType {
 }
 
 impl AntigravityEnvelopeRequestType {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Agent => "agent",
             Self::Checkpoint => "checkpoint",
@@ -73,40 +78,60 @@ pub fn build_antigravity_safe_v1internal_request(
         );
     };
 
-    if let Some(existing_request) = existing_v1internal_request_object(source) {
-        let mut inner_request: Map<String, Value> = existing_request.clone();
-        inner_request.remove("model");
-        inner_request.remove("safetySettings");
-        inner_request.remove("safety_settings");
-        let request_id = non_empty_string_field(source, "requestId").unwrap_or(request_id);
-        let user_agent =
-            non_empty_string_field(source, "userAgent").unwrap_or(ANTIGRAVITY_REQUEST_USER_AGENT);
-        let request_type =
-            existing_v1internal_request_type(source).unwrap_or_else(|| request_type.as_str());
+    let mut inner_request: Map<String, Value> = existing_v1internal_request_object(source)
+        .cloned()
+        .unwrap_or_else(|| source.clone());
+    let effective_request_type = existing_v1internal_request_type(source).unwrap_or(request_type);
+    let raw_request_id = non_empty_string_field(source, "requestId").unwrap_or(request_id);
+    let effective_request_id =
+        normalize_antigravity_request_id(raw_request_id, effective_request_type);
+    normalize_antigravity_cli_inner_request(
+        &mut inner_request,
+        effective_request_id.as_str(),
+        model,
+        effective_request_type == AntigravityEnvelopeRequestType::Agent,
+    );
 
-        return AntigravityRequestEnvelopeSupport::Supported(serde_json::json!({
-            "project": auth.project_id,
-            "requestId": request_id,
-            "request": Value::Object(inner_request),
-            "model": model,
-            "userAgent": user_agent,
-            "requestType": request_type,
-        }));
+    let profile = current_antigravity_compatibility_profile();
+    let mut envelope = Map::from_iter([
+        (
+            "project".to_string(),
+            Value::String(auth.project_id.clone()),
+        ),
+        ("requestId".to_string(), Value::String(effective_request_id)),
+        ("request".to_string(), Value::Object(inner_request)),
+        ("model".to_string(), Value::String(model.to_string())),
+        (
+            "userAgent".to_string(),
+            Value::String(profile.envelope_user_agent.to_string()),
+        ),
+        (
+            "requestType".to_string(),
+            Value::String(effective_request_type.as_str().to_string()),
+        ),
+    ]);
+    if auth.enable_google_one_ai_credit {
+        envelope.insert(
+            "enabledCreditTypes".to_string(),
+            Value::Array(vec![Value::String(
+                ANTIGRAVITY_GOOGLE_ONE_AI_CREDIT_TYPE.to_string(),
+            )]),
+        );
     }
 
-    let mut inner_request: Map<String, Value> = source.clone();
-    inner_request.remove("model");
-    inner_request.remove("safetySettings");
-    inner_request.remove("safety_settings");
+    AntigravityRequestEnvelopeSupport::Supported(Value::Object(envelope))
+}
 
-    AntigravityRequestEnvelopeSupport::Supported(serde_json::json!({
-        "project": auth.project_id,
-        "requestId": request_id,
-        "request": Value::Object(inner_request),
-        "model": model,
-        "userAgent": ANTIGRAVITY_REQUEST_USER_AGENT,
-        "requestType": request_type.as_str(),
-    }))
+fn normalize_antigravity_request_id(
+    request_id: &str,
+    request_type: AntigravityEnvelopeRequestType,
+) -> String {
+    let request_id = request_id.trim();
+    if request_type != AntigravityEnvelopeRequestType::Agent || request_id.starts_with("agent/") {
+        return request_id.to_string();
+    }
+    let stable_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, request_id.as_bytes());
+    format!("agent/{stable_id}")
 }
 
 fn existing_v1internal_request_object(source: &Map<String, Value>) -> Option<&Map<String, Value>> {
@@ -124,11 +149,13 @@ fn non_empty_string_field<'a>(source: &'a Map<String, Value>, key: &str) -> Opti
         .filter(|value| !value.is_empty())
 }
 
-fn existing_v1internal_request_type(source: &Map<String, Value>) -> Option<&str> {
+fn existing_v1internal_request_type(
+    source: &Map<String, Value>,
+) -> Option<AntigravityEnvelopeRequestType> {
     match non_empty_string_field(source, "requestType")? {
-        "agent" => Some("agent"),
-        "checkpoint" => Some("checkpoint"),
-        "endpoint_test" => Some("endpoint_test"),
+        "agent" => Some(AntigravityEnvelopeRequestType::Agent),
+        "checkpoint" => Some(AntigravityEnvelopeRequestType::Checkpoint),
+        "endpoint_test" => Some(AntigravityEnvelopeRequestType::EndpointTest),
         _ => None,
     }
 }
@@ -141,13 +168,14 @@ mod tests {
         build_antigravity_safe_v1internal_request, classify_antigravity_safe_request_body,
         AntigravityEnvelopeRequestType, AntigravityRequestAuth, AntigravityRequestEnvelopeSupport,
     };
-    use crate::antigravity::ANTIGRAVITY_REQUEST_USER_AGENT;
+    use crate::antigravity::ANTIGRAVITY_ENVELOPE_USER_AGENT;
 
     fn sample_auth() -> AntigravityRequestAuth {
         AntigravityRequestAuth {
             project_id: "project-ant-123".to_string(),
             client_version: None,
             session_id: None,
+            enable_google_one_ai_credit: false,
         }
     }
 
@@ -227,9 +255,11 @@ mod tests {
         };
 
         assert_eq!(envelope["project"], "project-ant-123");
-        assert_eq!(envelope["requestId"], "request-ant-agent-123");
+        assert!(envelope["requestId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("agent/")));
         assert_eq!(envelope["model"], "gemini-3.5-flash-low");
-        assert_eq!(envelope["userAgent"], ANTIGRAVITY_REQUEST_USER_AGENT);
+        assert_eq!(envelope["userAgent"], ANTIGRAVITY_ENVELOPE_USER_AGENT);
         assert_eq!(envelope["requestType"], "agent");
         assert!(envelope["request"].get("model").is_none());
         assert!(envelope["request"].get("safetySettings").is_none());
@@ -237,10 +267,9 @@ mod tests {
             envelope["request"]["systemInstruction"]["parts"][0]["text"],
             "Antigravity agent system prompt"
         );
-        assert_eq!(
-            envelope["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            4000
-        );
+        assert!(envelope["request"]["generationConfig"]
+            .get("thinkingConfig")
+            .is_none());
         assert_eq!(
             envelope["request"]["toolConfig"]["functionCallingConfig"]["mode"],
             "VALIDATED"
@@ -251,7 +280,7 @@ mod tests {
         );
         assert_eq!(
             envelope["request"]["labels"]["trajectory_id"],
-            "trajectory-123"
+            "session-ant-123"
         );
         assert_eq!(envelope["request"]["sessionId"], "session-ant-123");
     }
@@ -363,5 +392,41 @@ mod tests {
             envelope["request"]["toolConfig"]["functionCallingConfig"]["mode"],
             "NONE"
         );
+    }
+
+    #[test]
+    fn google_one_ai_credit_is_only_emitted_after_explicit_opt_in() {
+        let request_body = json!({
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}]
+        });
+        let without_credit = match build_antigravity_safe_v1internal_request(
+            &sample_auth(),
+            "request-without-credit",
+            "gemini-3-flash-agent",
+            &request_body,
+            AntigravityEnvelopeRequestType::Agent,
+        ) {
+            AntigravityRequestEnvelopeSupport::Supported(envelope) => envelope,
+            AntigravityRequestEnvelopeSupport::Unsupported(reason) => {
+                panic!("request should be supported: {reason:?}")
+            }
+        };
+        assert!(without_credit.get("enabledCreditTypes").is_none());
+
+        let mut auth = sample_auth();
+        auth.enable_google_one_ai_credit = true;
+        let with_credit = match build_antigravity_safe_v1internal_request(
+            &auth,
+            "request-with-credit",
+            "gemini-3-flash-agent",
+            &request_body,
+            AntigravityEnvelopeRequestType::Agent,
+        ) {
+            AntigravityRequestEnvelopeSupport::Supported(envelope) => envelope,
+            AntigravityRequestEnvelopeSupport::Unsupported(reason) => {
+                panic!("request should be supported: {reason:?}")
+            }
+        };
+        assert_eq!(with_credit["enabledCreditTypes"], json!(["GOOGLE_ONE_AI"]));
     }
 }

@@ -1551,17 +1551,16 @@ async fn gateway_executes_openai_responses_antigravity_cross_format_upstream_str
         seen_remote_execution_runtime_request.project,
         "project-antigravity-local-1"
     );
-    assert_eq!(
-        seen_remote_execution_runtime_request.request_id,
-        "trace-openai-cli-antigravity-xfmt-stream-123"
-    );
+    assert!(seen_remote_execution_runtime_request
+        .request_id
+        .starts_with("agent/"));
     assert_eq!(
         seen_remote_execution_runtime_request.model,
         "claude-sonnet-4-5"
     );
     assert_eq!(
         seen_remote_execution_runtime_request.user_agent,
-        aether_provider_transport::antigravity::ANTIGRAVITY_REQUEST_USER_AGENT
+        aether_provider_transport::antigravity::ANTIGRAVITY_ENVELOPE_USER_AGENT
     );
     assert_eq!(seen_remote_execution_runtime_request.request_type, "agent");
     assert_eq!(seen_remote_execution_runtime_request.contents_len, 1);

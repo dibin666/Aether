@@ -2697,15 +2697,11 @@ mod tests {
             payload.provider_request_body["project"],
             "test-antigravity-project"
         );
-        assert_eq!(
-            payload.provider_request_body["requestId"],
-            "trace-openai-chat-antigravity"
-        );
+        assert!(payload.provider_request_body["requestId"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("agent/")));
         assert_eq!(payload.provider_request_body["model"], "gemini-2.5-pro");
-        assert_eq!(
-            payload.provider_request_body["userAgent"],
-            "antigravity/cli/1.0.16 (aidev_client; os_type=linux; arch=arm64; auth_method=consumer)"
-        );
+        assert_eq!(payload.provider_request_body["userAgent"], "antigravity");
         assert_eq!(payload.provider_request_body["requestType"], "agent");
         assert!(payload.provider_request_body.get("contents").is_none());
         assert!(payload.provider_request_body["request"]
