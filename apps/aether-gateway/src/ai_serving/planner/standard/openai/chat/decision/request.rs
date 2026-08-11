@@ -32,7 +32,10 @@ use crate::ai_serving::planner::standard::{
     openai_provider_request_contract_failure_extra_data, request_body_build_failure_extra_data,
     request_conversion_failure_extra_data,
 };
-use crate::ai_serving::transport::antigravity::is_antigravity_provider_transport;
+use crate::ai_serving::transport::antigravity::{
+    convert_antigravity_entry_request_to_gemini, finalize_antigravity_request_headers,
+    is_antigravity_provider_transport,
+};
 use crate::ai_serving::transport::auth::resolve_local_openai_bearer_auth;
 use crate::ai_serving::transport::kiro::{
     build_kiro_provider_headers, build_kiro_provider_request_body,
@@ -221,6 +224,8 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
         .trim()
         .eq_ignore_ascii_case("grok");
     let is_antigravity = is_antigravity_provider_transport(transport);
+    let is_antigravity_openai_entry = is_antigravity
+        && crate::ai_serving::normalize_api_format_alias(provider_api_format) == "openai:chat";
     let is_gemini_cli = is_gemini_cli_provider_transport(transport);
 
     if is_grok && is_grok_text_provider_api_format(provider_api_format) {
@@ -408,7 +413,7 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
         .await;
     }
 
-    if provider_api_format == "openai:chat" {
+    if provider_api_format == "openai:chat" && !is_antigravity_openai_entry {
         if let Some(skip_reason) = local_openai_chat_transport_unsupported_reason(transport) {
             mark_skipped_local_openai_chat_candidate(
                 state,
@@ -625,7 +630,11 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
         }));
     };
 
-    let provider_api_format = provider_api_format.trim().to_ascii_lowercase();
+    let provider_api_format = if is_antigravity_openai_entry {
+        "gemini:generate_content".to_string()
+    } else {
+        provider_api_format.trim().to_ascii_lowercase()
+    };
     let normalized_provider_api_format =
         crate::ai_serving::normalize_api_format_alias(provider_api_format.as_str());
     if provider_api_format == "openai:image" {
@@ -777,22 +786,27 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
         }
     };
 
-    let Some(mut provider_request_body) = build_cross_format_openai_chat_request_body(
-        body_json,
-        &prepared_candidate.mapped_model,
-        transport.provider.provider_type.as_str(),
-        provider_api_format.as_str(),
-        upstream_is_stream,
-        force_body_stream_field,
-        if is_kiro_claude_cli {
-            None
-        } else {
-            transport.endpoint.body_rules.as_ref()
-        },
-        Some(input.auth_context.api_key_id.as_str()),
-        effective_headers,
-        false,
-    ) else {
+    let converted_request_body = if is_antigravity_openai_entry {
+        convert_antigravity_entry_request_to_gemini("openai:chat", body_json)
+    } else {
+        build_cross_format_openai_chat_request_body(
+            body_json,
+            &prepared_candidate.mapped_model,
+            transport.provider.provider_type.as_str(),
+            provider_api_format.as_str(),
+            upstream_is_stream,
+            force_body_stream_field,
+            if is_kiro_claude_cli {
+                None
+            } else {
+                transport.endpoint.body_rules.as_ref()
+            },
+            Some(input.auth_context.api_key_id.as_str()),
+            effective_headers,
+            false,
+        )
+    };
+    let Some(mut provider_request_body) = converted_request_body else {
         mark_skipped_local_openai_chat_candidate_with_extra_data(
             state,
             input,
@@ -814,7 +828,14 @@ pub(crate) async fn resolve_local_openai_chat_candidate_payload_parts(
         .await;
         return Ok(None);
     };
-    if let Some(extra_data) = finalize_openai_chat_provider_request_body(
+    if is_antigravity_openai_entry {
+        if let Some(mapping) = model_directive_mapping.as_ref() {
+            crate::ai_serving::apply_model_directive_mapping_patch(
+                &mut provider_request_body,
+                mapping,
+            );
+        }
+    } else if let Some(extra_data) = finalize_openai_chat_provider_request_body(
         &mut provider_request_body,
         model_directive_mapping.as_ref(),
         provider_api_format.as_str(),
@@ -1130,6 +1151,7 @@ async fn build_antigravity_openai_chat_cross_format_payload_parts(
         &mut provider_request_headers,
         request_redacted,
     );
+    finalize_antigravity_request_headers(&mut provider_request_headers, upstream_is_stream);
 
     let resolved_report_kind = if decision_kind == OPENAI_CHAT_STREAM_PLAN_KIND {
         "openai_chat_stream_success".to_string()
@@ -2328,6 +2350,22 @@ mod tests {
         eligible
     }
 
+    fn sample_antigravity_openai_entry_eligible() -> EligibleLocalExecutionCandidate {
+        let mut transport = sample_antigravity_transport();
+        transport.endpoint.api_format = "openai:chat".to_string();
+        transport.endpoint.api_family = Some("openai".to_string());
+        transport.endpoint.endpoint_kind = Some("chat_completions".to_string());
+        transport.key.api_formats = Some(vec!["openai:chat".to_string()]);
+
+        let mut eligible = sample_antigravity_eligible();
+        eligible.candidate.endpoint_api_format = "openai:chat".to_string();
+        eligible.candidate.global_model_name = "claude-sonnet-4-6".to_string();
+        eligible.candidate.selected_provider_model_name = "claude-sonnet-4-6".to_string();
+        eligible.transport = Arc::new(transport);
+        eligible.provider_api_format = "openai:chat".to_string();
+        eligible
+    }
+
     fn sample_openai_chat_eligible(provider_type: &str) -> EligibleLocalExecutionCandidate {
         let mut transport = sample_gemini_cli_transport();
         transport.provider.name = provider_type.to_string();
@@ -2672,26 +2710,21 @@ mod tests {
                 .map(String::as_str),
             Some("Bearer imported-antigravity-token")
         );
+        assert!(!payload
+            .provider_request_headers
+            .contains_key("x-client-name"));
+        assert!(!payload
+            .provider_request_headers
+            .contains_key("x-client-version"));
+        assert!(!payload
+            .provider_request_headers
+            .contains_key("x-vscode-sessionid"));
         assert_eq!(
             payload
                 .provider_request_headers
-                .get("x-client-name")
+                .get("accept")
                 .map(String::as_str),
-            Some("antigravity")
-        );
-        assert_eq!(
-            payload
-                .provider_request_headers
-                .get("x-client-version")
-                .map(String::as_str),
-            Some("1.2.3")
-        );
-        assert_eq!(
-            payload
-                .provider_request_headers
-                .get("x-vscode-sessionid")
-                .map(String::as_str),
-            Some("sess-antigravity-chat")
+            Some("*/*")
         );
         assert_eq!(
             payload.provider_request_body["project"],
@@ -2710,6 +2743,67 @@ mod tests {
         assert!(payload.provider_request_body["request"]
             .get("model")
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn openai_antigravity_entry_uses_dedicated_gcli_compatible_bridge() {
+        let state = AppState::new().expect("state should build");
+        let request = http::Request::builder()
+            .method("POST")
+            .uri("/v1/chat/completions")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(())
+            .expect("request should build");
+        let (parts, _) = request.into_parts();
+        let body_json = json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [
+                {"role": "system", "content": "be concise"},
+                {"role": "user", "content": "hello"}
+            ],
+            "max_tokens": 4096,
+            "stream": true
+        });
+
+        let mut input = sample_input();
+        input.requested_model = "claude-sonnet-4-6".to_string();
+        let payload = resolve_local_openai_chat_candidate_payload_parts(
+            &state,
+            &parts,
+            "trace-openai-antigravity-entry",
+            &body_json,
+            &input,
+            None,
+            &sample_antigravity_openai_entry_eligible(),
+            0,
+            "candidate-0",
+            OPENAI_CHAT_STREAM_PLAN_KIND,
+            "openai_chat_stream_success",
+            true,
+        )
+        .await
+        .expect("candidate resolution should not fail")
+        .expect("logical OpenAI Antigravity endpoint should build a payload");
+
+        assert_eq!(payload.provider_api_format, "gemini:generate_content");
+        assert_eq!(
+            payload.upstream_url,
+            "https://antigravity.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+        );
+        assert_eq!(payload.envelope_name, Some("antigravity:v1internal"));
+        assert_eq!(payload.provider_request_body["model"], "claude-sonnet-4-6");
+        assert_eq!(
+            payload.provider_request_body["request"]["systemInstruction"]["parts"][0]["text"],
+            "be concise"
+        );
+        assert_eq!(
+            payload.provider_request_body["request"]["generationConfig"]["maxOutputTokens"],
+            64_000
+        );
+        assert_eq!(
+            payload.provider_request_body["enabledCreditTypes"],
+            json!(["GOOGLE_ONE_AI"])
+        );
     }
 
     #[test]

@@ -1258,12 +1258,13 @@ async fn gateway_executes_openai_responses_antigravity_cross_format_upstream_str
     let execution_runtime = Router::new().route(
         "/v1/execute/sync",
         any(move |request: Request| {
-            let seen_remote_execution_runtime_inner = Arc::clone(&seen_remote_execution_runtime_clone);
+            let seen_remote_execution_runtime_inner =
+                Arc::clone(&seen_remote_execution_runtime_clone);
             async move {
                 let (parts, body) = request.into_parts();
                 let raw_body = to_bytes(body, usize::MAX).await.expect("body should read");
-                let payload: serde_json::Value =
-                    serde_json::from_slice(&raw_body).expect("execution runtime payload should parse");
+                let payload: serde_json::Value = serde_json::from_slice(&raw_body)
+                    .expect("execution runtime payload should parse");
                 *seen_remote_execution_runtime_inner
                     .lock()
                     .expect("mutex should lock") = Some(SeenRemoteExecutionRuntimeRequest {
@@ -1521,32 +1522,25 @@ async fn gateway_executes_openai_responses_antigravity_cross_format_upstream_str
     );
     assert_eq!(
         seen_remote_execution_runtime_request.url,
-        "https://antigravity.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+        "https://antigravity.googleapis.com/v1internal:generateContent"
     );
-    assert_eq!(
-        seen_remote_execution_runtime_request.accept,
-        "text/event-stream"
-    );
+    assert_eq!(seen_remote_execution_runtime_request.accept, "*/*");
     assert_eq!(
         seen_remote_execution_runtime_request.authorization,
         "Bearer refreshed-antigravity-cli-access-token"
     );
-    assert_eq!(
-        seen_remote_execution_runtime_request.x_client_name,
-        "antigravity"
-    );
-    assert_eq!(
-        seen_remote_execution_runtime_request.x_client_version,
-        "1.2.3"
-    );
-    assert_eq!(
-        seen_remote_execution_runtime_request.x_vscode_sessionid,
-        "sess-antigravity-local-123"
-    );
-    assert_eq!(
-        seen_remote_execution_runtime_request.x_goog_api_client,
-        "gl-node/18.18.2 fire/0.8.6 grpc/1.10.x"
-    );
+    assert!(seen_remote_execution_runtime_request
+        .x_client_name
+        .is_empty());
+    assert!(seen_remote_execution_runtime_request
+        .x_client_version
+        .is_empty());
+    assert!(seen_remote_execution_runtime_request
+        .x_vscode_sessionid
+        .is_empty());
+    assert!(seen_remote_execution_runtime_request
+        .x_goog_api_client
+        .is_empty());
     assert_eq!(
         seen_remote_execution_runtime_request.project,
         "project-antigravity-local-1"
@@ -1556,7 +1550,7 @@ async fn gateway_executes_openai_responses_antigravity_cross_format_upstream_str
         .starts_with("agent/"));
     assert_eq!(
         seen_remote_execution_runtime_request.model,
-        "claude-sonnet-4-5"
+        "claude-sonnet-4-6"
     );
     assert_eq!(
         seen_remote_execution_runtime_request.user_agent,

@@ -2067,127 +2067,142 @@ async fn gateway_executes_antigravity_gemini_cli_sync_via_local_decision_gate_af
             async move {
                 let (parts, body) = request.into_parts();
                 let raw_body = to_bytes(body, usize::MAX).await.expect("body should read");
-                let payload: serde_json::Value =
-                    serde_json::from_slice(&raw_body).expect("execution runtime payload should parse");
-                *seen_execution_runtime_inner.lock().expect("mutex should lock") =
-                    Some(SeenExecutionRuntimeSyncRequest {
-                        trace_id: parts
-                            .headers
-                            .get(TRACE_ID_HEADER)
-                            .and_then(|value| value.to_str().ok())
-                            .unwrap_or_default()
-                            .to_string(),
-                        url: payload
-                            .get("url")
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        accept: payload
-                            .get("headers")
-                            .and_then(|value| value.get("accept"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        authorization: payload
-                            .get("headers")
-                            .and_then(|value| value.get("authorization"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        x_client_name: payload
-                            .get("headers")
-                            .and_then(|value| value.get("x-client-name"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        x_client_version: payload
-                            .get("headers")
-                            .and_then(|value| value.get("x-client-version"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        x_vscode_sessionid: payload
-                            .get("headers")
-                            .and_then(|value| value.get("x-vscode-sessionid"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        x_goog_api_client: payload
-                            .get("headers")
-                            .and_then(|value| value.get("x-goog-api-client"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        project: payload
-                            .get("body")
-                            .and_then(|value| value.get("json_body"))
-                            .and_then(|value| value.get("project"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        request_id: payload
-                            .get("body")
-                            .and_then(|value| value.get("json_body"))
-                            .and_then(|value| value.get("requestId"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        model: payload
-                            .get("body")
-                            .and_then(|value| value.get("json_body"))
-                            .and_then(|value| value.get("model"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        user_agent: payload
-                            .get("body")
-                            .and_then(|value| value.get("json_body"))
-                            .and_then(|value| value.get("userAgent"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        request_type: payload
-                            .get("body")
-                            .and_then(|value| value.get("json_body"))
-                            .and_then(|value| value.get("requestType"))
-                            .and_then(|value| value.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        contents_len: payload
-                            .get("body")
-                            .and_then(|value| value.get("json_body"))
-                            .and_then(|value| value.get("request"))
-                            .and_then(|value| value.get("contents"))
-                            .and_then(|value| value.as_array())
-                            .map(Vec::len)
-                            .unwrap_or_default(),
-                        exact_temperature: payload
-                            .get("body")
-                            .and_then(|value| value.get("json_body"))
-                            .and_then(|value| value.get("request"))
-                            .and_then(|value| value.get("generationConfig"))
-                            .and_then(|value| value.get("temperature"))
-                            .and_then(|value| value.as_f64())
-                            .unwrap_or_default(),
-                        request_has_model: payload
-                            .get("body")
-                            .and_then(|value| value.get("json_body"))
-                            .and_then(|value| value.get("request"))
-                            .and_then(|value| value.get("model"))
-                            .is_some(),
-                    });
+                let payload: serde_json::Value = serde_json::from_slice(&raw_body)
+                    .expect("execution runtime payload should parse");
+                *seen_execution_runtime_inner
+                    .lock()
+                    .expect("mutex should lock") = Some(SeenExecutionRuntimeSyncRequest {
+                    trace_id: parts
+                        .headers
+                        .get(TRACE_ID_HEADER)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string(),
+                    url: payload
+                        .get("url")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    accept: payload
+                        .get("headers")
+                        .and_then(|value| value.get("accept"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    authorization: payload
+                        .get("headers")
+                        .and_then(|value| value.get("authorization"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    x_client_name: payload
+                        .get("headers")
+                        .and_then(|value| value.get("x-client-name"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    x_client_version: payload
+                        .get("headers")
+                        .and_then(|value| value.get("x-client-version"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    x_vscode_sessionid: payload
+                        .get("headers")
+                        .and_then(|value| value.get("x-vscode-sessionid"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    x_goog_api_client: payload
+                        .get("headers")
+                        .and_then(|value| value.get("x-goog-api-client"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    project: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("project"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    request_id: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("requestId"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    model: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("model"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    user_agent: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("userAgent"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    request_type: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("requestType"))
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    contents_len: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("request"))
+                        .and_then(|value| value.get("contents"))
+                        .and_then(|value| value.as_array())
+                        .map(Vec::len)
+                        .unwrap_or_default(),
+                    exact_temperature: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("request"))
+                        .and_then(|value| value.get("generationConfig"))
+                        .and_then(|value| value.get("temperature"))
+                        .and_then(|value| value.as_f64())
+                        .unwrap_or_default(),
+                    request_has_model: payload
+                        .get("body")
+                        .and_then(|value| value.get("json_body"))
+                        .and_then(|value| value.get("request"))
+                        .and_then(|value| value.get("model"))
+                        .is_some(),
+                });
                 Json(json!({
                     "request_id": "trace-antigravity-cli-oauth-local-sync-123",
                     "status_code": 200,
                     "headers": {
-                        "content-type": "text/event-stream"
+                        "content-type": "application/json"
                     },
                     "body": {
-                        "body_bytes_b64": base64::engine::general_purpose::STANDARD.encode(
-                            concat!(
-                                "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello Antigravity CLI\"}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"modelVersion\":\"claude-sonnet-4-5\",\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":3,\"totalTokenCount\":5}},\"responseId\":\"resp_antigravity_cli_local_sync_123\"}\n\n"
-                            )
-                        )
+                        "json_body": {
+                            "response": {
+                                "candidates": [{
+                                    "content": {
+                                        "parts": [{"text": "Hello Antigravity CLI"}],
+                                        "role": "model"
+                                    },
+                                    "finishReason": "STOP",
+                                    "index": 0
+                                }],
+                                "modelVersion": "claude-sonnet-4-5",
+                                "usageMetadata": {
+                                    "promptTokenCount": 2,
+                                    "candidatesTokenCount": 3,
+                                    "totalTokenCount": 5
+                                }
+                            },
+                            "responseId": "resp_antigravity_cli_local_sync_123"
+                        }
                     },
                     "telemetry": {
                         "elapsed_ms": 27
@@ -2261,7 +2276,6 @@ async fn gateway_executes_antigravity_gemini_cli_sync_via_local_decision_gate_af
     assert_eq!(
         response_json,
         json!({
-            "responseId": "resp-local-stream",
             "_v1internal_response_id": "resp_antigravity_cli_local_sync_123",
             "candidates": [{
                 "content": {
@@ -2313,23 +2327,17 @@ async fn gateway_executes_antigravity_gemini_cli_sync_via_local_decision_gate_af
     );
     assert_eq!(
         seen_execution_runtime_request.url,
-        "https://antigravity.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+        "https://antigravity.googleapis.com/v1internal:generateContent"
     );
-    assert_eq!(seen_execution_runtime_request.accept, "text/event-stream");
+    assert_eq!(seen_execution_runtime_request.accept, "*/*");
     assert_eq!(
         seen_execution_runtime_request.authorization,
         "Bearer refreshed-antigravity-cli-access-token"
     );
-    assert_eq!(seen_execution_runtime_request.x_client_name, "antigravity");
-    assert_eq!(seen_execution_runtime_request.x_client_version, "1.2.3");
-    assert_eq!(
-        seen_execution_runtime_request.x_vscode_sessionid,
-        "sess-antigravity-local-123"
-    );
-    assert_eq!(
-        seen_execution_runtime_request.x_goog_api_client,
-        "gl-node/18.18.2 fire/0.8.6 grpc/1.10.x"
-    );
+    assert!(seen_execution_runtime_request.x_client_name.is_empty());
+    assert!(seen_execution_runtime_request.x_client_version.is_empty());
+    assert!(seen_execution_runtime_request.x_vscode_sessionid.is_empty());
+    assert!(seen_execution_runtime_request.x_goog_api_client.is_empty());
     assert_eq!(
         seen_execution_runtime_request.project,
         "project-antigravity-local-1"
@@ -2337,7 +2345,7 @@ async fn gateway_executes_antigravity_gemini_cli_sync_via_local_decision_gate_af
     assert!(seen_execution_runtime_request
         .request_id
         .starts_with("agent/"));
-    assert_eq!(seen_execution_runtime_request.model, "claude-sonnet-4-5");
+    assert_eq!(seen_execution_runtime_request.model, "claude-sonnet-4-6");
     assert_eq!(
         seen_execution_runtime_request.user_agent,
         aether_provider_transport::antigravity::ANTIGRAVITY_ENVELOPE_USER_AGENT

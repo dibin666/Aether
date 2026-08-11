@@ -172,7 +172,7 @@ pub fn classify_same_format_provider_request_behavior_for_operation(
             transport.provider.provider_type.as_str(),
             params.provider_api_format,
             params.require_streaming,
-            is_kiro || is_antigravity || gemini_cli_requires_upstream_streaming,
+            is_kiro || gemini_cli_requires_upstream_streaming,
         );
     let force_body_stream_field = !operation_requires_sync
         && aether_ai_formats::api_format_uses_body_stream_field(params.provider_api_format)

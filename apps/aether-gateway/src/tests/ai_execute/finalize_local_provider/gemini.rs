@@ -1948,15 +1948,33 @@ async fn gateway_executes_antigravity_gemini_cli_sync_upstream_stream_via_local_
                     "request_id": "trace-antigravity-cli-stream-sync-direct-123",
                     "status_code": 200,
                     "headers": {
-                        "content-type": "text/event-stream"
+                        "content-type": "application/json"
                     },
                     "body": {
-                        "body_bytes_b64": base64::engine::general_purpose::STANDARD.encode(
-                            concat!(
-                                "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"SF\"}}}],\"role\":\"model\"},\"index\":0}],\"modelVersion\":\"claude-sonnet-4-5\"},\"responseId\":\"resp_antigravity_cli_sync_123\"}\n\n",
-                                "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello Antigravity CLI\"},{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"SF\"}}}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}],\"modelVersion\":\"claude-sonnet-4-5\",\"usageMetadata\":{\"promptTokenCount\":3,\"candidatesTokenCount\":5,\"totalTokenCount\":10}},\"responseId\":\"resp_antigravity_cli_sync_123\"}\n\n"
-                            )
-                        )
+                        "json_body": {
+                            "response": {
+                                "responseId": "resp-local-stream",
+                                "candidates": [{
+                                    "content": {
+                                        "parts": [
+                                            {"functionCall": {"name": "get_weather", "args": {"city": "SF"}}},
+                                            {"text": "Hello Antigravity CLI"},
+                                            {"functionCall": {"name": "get_weather", "args": {"city": "SF"}}}
+                                        ],
+                                        "role": "model"
+                                    },
+                                    "finishReason": "STOP",
+                                    "index": 0
+                                }],
+                                "modelVersion": "claude-sonnet-4-5",
+                                "usageMetadata": {
+                                    "promptTokenCount": 3,
+                                    "candidatesTokenCount": 5,
+                                    "totalTokenCount": 10
+                                }
+                            },
+                            "responseId": "resp_antigravity_cli_sync_123"
+                        }
                     },
                     "telemetry": {
                         "elapsed_ms": 33
@@ -2039,18 +2057,18 @@ async fn gateway_executes_antigravity_gemini_cli_sync_upstream_stream_via_local_
                 "content": {
                     "parts": [
                         {
-                            "functionCall": {
-                                "name": "get_weather",
-                                "args": {"city": "SF"},
-                                "id": "call_get_weather_0"
-                            }
+                                            "functionCall": {
+                                                "name": "get_weather",
+                                                "args": {"city": "SF"},
+                                                "id": "call_get_weather_0"
+                                            }
                         },
                         {"text": "Hello Antigravity CLI"},
                         {
                             "functionCall": {
                                 "name": "get_weather",
                                 "args": {"city": "SF"},
-                                "id": "call_get_weather_0"
+                                "id": "call_get_weather_1"
                             }
                         }
                     ],
@@ -2107,32 +2125,25 @@ async fn gateway_executes_antigravity_gemini_cli_sync_upstream_stream_via_local_
     );
     assert_eq!(
         seen_remote_execution_runtime_request.url,
-        "https://antigravity.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+        "https://antigravity.googleapis.com/v1internal:generateContent"
     );
-    assert_eq!(
-        seen_remote_execution_runtime_request.accept,
-        "text/event-stream"
-    );
+    assert_eq!(seen_remote_execution_runtime_request.accept, "*/*");
     assert_eq!(
         seen_remote_execution_runtime_request.authorization,
         "Bearer refreshed-antigravity-cli-access-token"
     );
-    assert_eq!(
-        seen_remote_execution_runtime_request.x_client_name,
-        "antigravity"
-    );
-    assert_eq!(
-        seen_remote_execution_runtime_request.x_client_version,
-        "1.2.3"
-    );
-    assert_eq!(
-        seen_remote_execution_runtime_request.x_vscode_sessionid,
-        "sess-antigravity-local-123"
-    );
-    assert_eq!(
-        seen_remote_execution_runtime_request.x_goog_api_client,
-        "gl-node/18.18.2 fire/0.8.6 grpc/1.10.x"
-    );
+    assert!(seen_remote_execution_runtime_request
+        .x_client_name
+        .is_empty());
+    assert!(seen_remote_execution_runtime_request
+        .x_client_version
+        .is_empty());
+    assert!(seen_remote_execution_runtime_request
+        .x_vscode_sessionid
+        .is_empty());
+    assert!(seen_remote_execution_runtime_request
+        .x_goog_api_client
+        .is_empty());
     assert_eq!(
         seen_remote_execution_runtime_request.project,
         "project-antigravity-local-1"
@@ -2142,7 +2153,7 @@ async fn gateway_executes_antigravity_gemini_cli_sync_upstream_stream_via_local_
         .starts_with("agent/"));
     assert_eq!(
         seen_remote_execution_runtime_request.model,
-        "claude-sonnet-4-5"
+        "claude-sonnet-4-6"
     );
     assert_eq!(
         seen_remote_execution_runtime_request.user_agent,

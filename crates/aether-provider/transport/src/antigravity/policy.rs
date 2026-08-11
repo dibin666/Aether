@@ -62,7 +62,10 @@ pub fn classify_local_antigravity_request_support(
 
     let endpoint_format =
         aether_ai_formats::normalize_api_format_alias(&transport.endpoint.api_format);
-    if endpoint_format != "gemini:generate_content" {
+    if !matches!(
+        endpoint_format.as_str(),
+        "openai:chat" | "claude:messages" | "gemini:generate_content"
+    ) {
         return AntigravityRequestSideSupport::Unsupported(
             AntigravityRequestSideUnsupportedReason::UnsupportedApiFormat,
         );

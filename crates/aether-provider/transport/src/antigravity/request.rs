@@ -2,7 +2,9 @@ use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use super::auth::AntigravityRequestAuth;
-use super::normalize::normalize_antigravity_cli_inner_request;
+use super::normalize::{
+    normalize_antigravity_cli_inner_request, resolve_antigravity_upstream_model,
+};
 use super::profile::{
     current_antigravity_compatibility_profile, ANTIGRAVITY_GOOGLE_ONE_AI_CREDIT_TYPE,
 };
@@ -85,10 +87,12 @@ pub fn build_antigravity_safe_v1internal_request(
     let raw_request_id = non_empty_string_field(source, "requestId").unwrap_or(request_id);
     let effective_request_id =
         normalize_antigravity_request_id(raw_request_id, effective_request_type);
+    let upstream_model = resolve_antigravity_upstream_model(model);
     normalize_antigravity_cli_inner_request(
         &mut inner_request,
         effective_request_id.as_str(),
         model,
+        upstream_model.as_str(),
         effective_request_type == AntigravityEnvelopeRequestType::Agent,
     );
 
@@ -100,7 +104,7 @@ pub fn build_antigravity_safe_v1internal_request(
         ),
         ("requestId".to_string(), Value::String(effective_request_id)),
         ("request".to_string(), Value::Object(inner_request)),
-        ("model".to_string(), Value::String(model.to_string())),
+        ("model".to_string(), Value::String(upstream_model)),
         (
             "userAgent".to_string(),
             Value::String(profile.envelope_user_agent.to_string()),
@@ -127,11 +131,10 @@ fn normalize_antigravity_request_id(
     request_type: AntigravityEnvelopeRequestType,
 ) -> String {
     let request_id = request_id.trim();
-    if request_type != AntigravityEnvelopeRequestType::Agent || request_id.starts_with("agent/") {
+    if request_type != AntigravityEnvelopeRequestType::Agent {
         return request_id.to_string();
     }
-    let stable_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, request_id.as_bytes());
-    format!("agent/{stable_id}")
+    format!("agent/{}", Uuid::new_v4())
 }
 
 fn existing_v1internal_request_object(source: &Map<String, Value>) -> Option<&Map<String, Value>> {
@@ -395,7 +398,7 @@ mod tests {
     }
 
     #[test]
-    fn google_one_ai_credit_is_only_emitted_after_explicit_opt_in() {
+    fn google_one_ai_credit_follows_resolved_auth_policy() {
         let request_body = json!({
             "contents": [{"role": "user", "parts": [{"text": "hello"}]}]
         });

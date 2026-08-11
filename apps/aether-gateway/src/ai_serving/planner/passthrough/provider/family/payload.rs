@@ -56,9 +56,9 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         ..
     } = &attempt;
     let candidate = &eligible.candidate;
-    let (execution_strategy, conversion_mode) =
-        ai_local_execution_contract_for_formats(spec_metadata.api_format, spec_metadata.api_format);
-    let Some(resolved) = resolve_local_same_format_provider_candidate_payload_parts(
+    // Bound the provider-specific resolver's contribution to the caller future;
+    // the compatibility bridges retain multiple owned request representations.
+    let Some(resolved) = Box::pin(resolve_local_same_format_provider_candidate_payload_parts(
         state,
         parts,
         trace_id,
@@ -67,11 +67,17 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         input,
         &attempt,
         spec,
-    )
+    ))
     .await?
     else {
         return Ok(None);
     };
+    let (execution_strategy, conversion_mode) = ai_local_execution_contract_for_formats(
+        spec_metadata.api_format,
+        resolved.provider_api_format.as_str(),
+    );
+    let needs_conversion = crate::ai_serving::normalize_api_format_alias(spec_metadata.api_format)
+        != crate::ai_serving::normalize_api_format_alias(&resolved.provider_api_format);
     let has_binary_body = resolved.provider_request_body_base64.is_some();
     let request_redacted = resolved.request_redacted;
     let compatibility_edits_empty = resolved.compatibility_edits.is_empty();
@@ -223,7 +229,7 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
                 },
                 upstream_is_stream: resolved.upstream_is_stream,
                 has_envelope: resolved.is_kiro || resolved.is_antigravity || resolved.is_gemini_cli,
-                needs_conversion: false,
+                needs_conversion,
                 extra_fields,
             }),
             execution_strategy,

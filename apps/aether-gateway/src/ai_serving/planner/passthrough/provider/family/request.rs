@@ -13,10 +13,10 @@ use crate::ai_serving::planner::redaction::{
 };
 use crate::ai_serving::transport::antigravity::{
     build_antigravity_safe_v1internal_request, build_antigravity_static_identity_headers,
-    classify_local_antigravity_request_support, finalize_antigravity_request_headers,
-    AntigravityEnvelopeRequestType, AntigravityRequestAuthUnsupportedReason,
-    AntigravityRequestEnvelopeSupport, AntigravityRequestSideSupport,
-    AntigravityRequestSideUnsupportedReason,
+    classify_local_antigravity_request_support, convert_antigravity_entry_request_to_gemini,
+    finalize_antigravity_request_headers, AntigravityEnvelopeRequestType,
+    AntigravityRequestAuthUnsupportedReason, AntigravityRequestEnvelopeSupport,
+    AntigravityRequestSideSupport, AntigravityRequestSideUnsupportedReason,
 };
 use crate::ai_serving::transport::{
     body_rules_have_enabled_rules, build_gemini_cli_v1internal_request, build_grok_browser_headers,
@@ -254,6 +254,50 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
     };
     let mut base_provider_request_body = base_provider_request.body;
     let mut compatibility_edits = base_provider_request.compatibility_edits;
+    let antigravity_entry_bridge = prepared.is_antigravity
+        && matches!(
+            crate::ai_serving::normalize_api_format_alias(prepared.provider_api_format.as_str())
+                .as_str(),
+            "openai:chat" | "claude:messages"
+        );
+    if antigravity_entry_bridge {
+        let Some(converted) = convert_antigravity_entry_request_to_gemini(
+            prepared.provider_api_format.as_str(),
+            body_json,
+        ) else {
+            mark_skipped_local_same_format_provider_candidate_with_extra_data(
+                state,
+                input,
+                trace_id,
+                candidate,
+                attempt.candidate_index,
+                &attempt.candidate_id,
+                "provider_request_body_missing",
+                same_format_provider_request_body_failure_extra_data(
+                    body_json,
+                    attempt.eligible.provider_api_format.as_str(),
+                    prepared.transport.endpoint.body_rules.as_ref(),
+                    "antigravity_entry_conversion",
+                ),
+            )
+            .await;
+            return Ok(None);
+        };
+        base_provider_request_body = converted;
+        compatibility_edits.push(SameFormatProviderCompatibilityEdit {
+            field: "$".to_string(),
+            action: SameFormatProviderCompatibilityEditAction::ProviderCompatibilityRewrite,
+            detail: format!(
+                "converted {} entry request with Antigravity compatibility bridge",
+                prepared.provider_api_format
+            ),
+        });
+    }
+    let effective_provider_api_format = if antigravity_entry_bridge {
+        "gemini:generate_content".to_string()
+    } else {
+        prepared.provider_api_format.clone()
+    };
     if let Some(mapping) = model_directive_mapping.as_ref() {
         let before_mapping = base_provider_request_body.clone();
         crate::ai_serving::apply_model_directive_mapping_patch(
@@ -287,46 +331,48 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         .unwrap_or(input.requested_model.as_str());
     let codex_model_capabilities = codex_model_capabilities_for_transport(
         &transport,
-        prepared.provider_api_format.as_str(),
+        effective_provider_api_format.as_str(),
         prepared.mapped_model.as_str(),
         source_model,
     );
-    if let Err(violation) =
-        crate::ai_serving::finalize_openai_provider_request_with_codex_model_capabilities(
-            &mut base_provider_request_body,
-            crate::ai_serving::OpenAiProviderRequestFinalization {
-                source_api_format: spec.api_format,
-                provider_api_format: prepared.provider_api_format.as_str(),
-                provider_type: transport.provider.provider_type.as_str(),
-                provider_model: prepared.mapped_model.as_str(),
-                source_model,
-                body_rules: transport.endpoint.body_rules.as_ref(),
-                upstream_is_stream: prepared.upstream_is_stream,
-                require_body_stream_field: request_requires_body_stream_field(
-                    body_json,
-                    prepared.force_body_stream_field,
-                ),
-            },
-            codex_model_capabilities.as_ref(),
-        )
-    {
-        mark_skipped_local_same_format_provider_candidate_with_extra_data(
-            state,
-            input,
-            trace_id,
-            candidate,
-            attempt.candidate_index,
-            &attempt.candidate_id,
-            "provider_request_body_build_failed",
-            Some(openai_provider_request_contract_failure_extra_data(
-                &violation,
-                spec.api_format,
-                prepared.provider_api_format.as_str(),
-                "same_format_provider_request_finalization",
-            )),
-        )
-        .await;
-        return Ok(None);
+    if !antigravity_entry_bridge {
+        if let Err(violation) =
+            crate::ai_serving::finalize_openai_provider_request_with_codex_model_capabilities(
+                &mut base_provider_request_body,
+                crate::ai_serving::OpenAiProviderRequestFinalization {
+                    source_api_format: spec.api_format,
+                    provider_api_format: effective_provider_api_format.as_str(),
+                    provider_type: transport.provider.provider_type.as_str(),
+                    provider_model: prepared.mapped_model.as_str(),
+                    source_model,
+                    body_rules: transport.endpoint.body_rules.as_ref(),
+                    upstream_is_stream: prepared.upstream_is_stream,
+                    require_body_stream_field: request_requires_body_stream_field(
+                        body_json,
+                        prepared.force_body_stream_field,
+                    ),
+                },
+                codex_model_capabilities.as_ref(),
+            )
+        {
+            mark_skipped_local_same_format_provider_candidate_with_extra_data(
+                state,
+                input,
+                trace_id,
+                candidate,
+                attempt.candidate_index,
+                &attempt.candidate_id,
+                "provider_request_body_build_failed",
+                Some(openai_provider_request_contract_failure_extra_data(
+                    &violation,
+                    spec.api_format,
+                    effective_provider_api_format.as_str(),
+                    "same_format_provider_request_finalization",
+                )),
+            )
+            .await;
+            return Ok(None);
+        }
     }
 
     let antigravity_auth = if prepared.is_antigravity {
@@ -497,7 +543,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
             parts,
             &transport,
             &prepared.mapped_model,
-            prepared.provider_api_format.as_str(),
+            effective_provider_api_format.as_str(),
             spec,
             prepared.upstream_is_stream,
             prepared.kiro_auth.as_ref(),
@@ -577,18 +623,12 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         .await;
         return Ok(None);
     };
-    if prepared.is_antigravity {
-        finalize_antigravity_request_headers(
-            &mut provider_request_headers,
-            prepared.upstream_is_stream,
-        );
-    }
     crate::ai_serving::apply_codex_openai_special_headers(
         &mut provider_request_headers,
         &provider_request_body,
         effective_headers,
         transport.provider.provider_type.as_str(),
-        prepared.provider_api_format.as_str(),
+        effective_provider_api_format.as_str(),
         Some(trace_id),
         transport.key.decrypted_auth_config.as_deref(),
     );
@@ -600,7 +640,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         &mut provider_request_headers,
         Some(&provider_request_body),
         transport.provider.provider_type.as_str(),
-        prepared.provider_api_format.as_str(),
+        effective_provider_api_format.as_str(),
         provider_model,
         source_model,
         codex_model_capabilities.as_ref(),
@@ -609,6 +649,12 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         &mut provider_request_headers,
         redaction.redacted,
     );
+    if prepared.is_antigravity {
+        finalize_antigravity_request_headers(
+            &mut provider_request_headers,
+            prepared.upstream_is_stream,
+        );
+    }
 
     Ok(Some(LocalSameFormatProviderCandidatePayloadParts {
         transport,
@@ -617,7 +663,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         is_kiro: prepared.is_kiro,
         auth_header: prepared.auth_header,
         auth_value: prepared.auth_value,
-        provider_api_format: prepared.provider_api_format,
+        provider_api_format: effective_provider_api_format,
         mapped_model: prepared.mapped_model,
         report_kind: prepared.report_kind,
         upstream_is_stream: prepared.upstream_is_stream,
