@@ -247,6 +247,13 @@ pub(crate) fn build_admin_provider_summary_value(
             .cloned()),
     );
     summary.insert(
+        "codex_fingerprint_convergence_enabled".to_owned(),
+        json!(crate::provider_transport::codex_fingerprint_convergence_enabled(
+            &provider.provider_type,
+            provider.config.as_ref(),
+        )),
+    );
+    summary.insert(
         "oauth_token_refresh".to_owned(),
         json!(config
             .and_then(|cfg| cfg.get("oauth_token_refresh"))
