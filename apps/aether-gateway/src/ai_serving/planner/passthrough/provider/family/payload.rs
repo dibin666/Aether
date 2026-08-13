@@ -72,6 +72,10 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
     else {
         return Ok(None);
     };
+    let (execution_strategy, conversion_mode) = ai_local_execution_contract_for_formats(
+        spec_metadata.api_format,
+        resolved.provider_api_format.as_str(),
+    );
     let needs_conversion = crate::ai_serving::normalize_api_format_alias(spec_metadata.api_format)
         != crate::ai_serving::normalize_api_format_alias(&resolved.provider_api_format);
     let has_binary_body = resolved.provider_request_body_base64.is_some();
