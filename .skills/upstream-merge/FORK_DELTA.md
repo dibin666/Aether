@@ -15,9 +15,18 @@
 5. 将本文件和 `SKILL.md` 的必要调整放进独立的文档 commit，不 amend merge commit。这样本文件可以稳定引用不会因文档修改而变化的 merge commit。
 6. 最终交付必须同时报告 merge commit、文档更新 commit 和复核结论；两者完成前不得推送或宣布合并完成。
 
+## 本次合并后复核（2026-08-13）
+
+- 合并基线：merge commit `32e4f482739e48db75143c8fc3f2691df847aa71`，上游 `f3a12c10080cff724fa0b58fb196f4c6e40c409b`。
+- 冲突策略：`1C, 2C, 3C`；同格式请求保留 multipart/二进制保真与上游转换契约，Provider 摘要同时保留 OAuth 自动刷新与 Codex fingerprint convergence，前端类型同时保留两者。
+- 功能结论：无 fork 特有功能被删除；Audio Transcriptions、OAuth 自动刷新、额度/消费统计、self-scope usage detail、永不熔断、chunk 恢复及 Responses/Usage 诊断继续保留。
+- 路径级复核：merge-base 为 `f3a12c10080cff724fa0b58fb196f4c6e40c409b`；upstream-only 为 0 个提交、0 个路径；合并后双边重叠为 0 个路径。
+- 本次上游接入：Codex image edit validation、OAuth fingerprint convergence、Turnstile typing 修复、默认模型测试温度修复、server pool floor 调整、Claude Code 跨格式转换及相关测试。
+- 验证：`frontend` 的 `npm run build` 通过；`cargo check --workspace` 通过；`git diff --check` 通过。非阻塞警告：`caniuse-lite` 数据已 11 个月未更新。
+
 ## 最近一次合并后复核
 
-- 合并基线：merge commit `704a16fcfa12076baf3a7fc405fecbdecad19310`，上游 `1aab31a148a2705320f7c1f6cfa0b59a87301f49`；没有文本冲突，冲突策略为“Git 自动合并 + P0 组合语义复核”，未使用 `ours`/`theirs` 或人工覆盖。
+- 合并基线：merge commit `32e4f482739e48db75143c8fc3f2691df847aa71`，上游 `f3a12c10080cff724fa0b58fb196f4c6e40c409b`；没有文本冲突，冲突策略为“Git 自动合并 + P0 组合语义复核”，未使用 `ours`/`theirs` 或人工覆盖。
 - 功能结论：无 fork 功能差异变化。本轮上游功能已接入，fork 特有的转写、额度/消费统计、OAuth 自动刷新、永不熔断、self-scope 请求详情、chunk 恢复、Responses history 与 Usage 诊断等行为继续保留。
 - 上游接入：Responses routed policy 继承全局 conversion-priority override；显式 reasoning effort 在格式转换中保留并由映射后的实际 provider model 校验；标准流支持由独立 `event:` 行提供 SSE 类型；Allowed Models 对话框补齐加载状态回归覆盖。
 - 重叠复核：5 个双边路径全部自动合并。candidate ranking 同时保留全局 conversion-priority override 和 fork cache-affinity pool group 提升；format/stream 同时保留 SSE event-only normalization 与 transcription 非标准格式/流式直通；same-format transport 同时保留实际模型 effort 校验与 multipart boundary、直连鉴权。
@@ -27,24 +36,24 @@
 
 ## 基线快照
 
-快照日期：2026-08-04（已执行 `git fetch --prune upstream`，完成合并、验证和合并后复核）。
+快照日期：2026-08-13（已执行 `git fetch --prune upstream`，完成合并、验证和合并后复核）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline（已验证的不可变 merge commit） | `704a16fcfa12076baf3a7fc405fecbdecad19310` |
-| upstream HEAD | `1aab31a148a2705320f7c1f6cfa0b59a87301f49` |
-| merge-base | `1aab31a148a2705320f7c1f6cfa0b59a87301f49` |
-| 分叉计数 | fork-only 130，upstream-only 0 |
-| fork 侧净改动 | 196 个路径，`+12497/-880` |
+| fork code baseline（已验证的不可变 merge commit） | `32e4f482739e48db75143c8fc3f2691df847aa71` |
+| upstream HEAD | `f3a12c10080cff724fa0b58fb196f4c6e40c409b` |
+| merge-base | `f3a12c10080cff724fa0b58fb196f4c6e40c409b` |
+| 分叉计数 | fork-only 152，upstream-only 0 |
+| fork 侧净改动 | 272 个路径（合并后相对 upstream/main） |
 | upstream 侧净改动 | 0 个路径，`+0/-0` |
 | 双边同时改动 | 0 个路径（合并前 5 个路径已复核） |
 
 ## 当前待合入上游功能
 
-- 无。`upstream/main` 已完整合入 merge commit `704a16fcfa12076baf3a7fc405fecbdecad19310`；`git rev-list HEAD..upstream/main` 为 0。
+- 无。`upstream/main` 已完整合入 merge commit `32e4f482739e48db75143c8fc3f2691df847aa71`；`git rev-list HEAD..upstream/main` 为 0。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -282,7 +291,7 @@ Provider 级覆盖位于 `provider.config.oauth_token_refresh`：`enabled`、`lo
 
 ## 当前 0 个双边改动路径
 
-合并后 `merge-base` 为 `1aab31a148a2705320f7c1f6cfa0b59a87301f49`，等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，双边重叠为 0 个路径。下一次 `git fetch upstream` 后必须重新计算，不能沿用本次的 0。
+合并后 `merge-base` 为 `f3a12c10080cff724fa0b58fb196f4c6e40c409b`，等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，双边重叠为 0 个路径。下一次 `git fetch upstream` 后必须重新计算，不能沿用本次的 0。
 
 本轮合并前共有 5 个双边路径，没有产生文本冲突。自动合并后的组合行为复核如下：
 
