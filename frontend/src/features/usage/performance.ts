@@ -21,8 +21,20 @@ export function getGenerationTimeMs(timing: UsagePerformanceTiming): number | nu
 }
 
 export function getOutputRateDurationMs(timing: UsagePerformanceTiming): number | null {
-  // All endpoint types use the time spent generating output after the first byte.
-  return getGenerationTimeMs(timing)
+  const generationTimeMs = getGenerationTimeMs(timing)
+  if (generationTimeMs != null) return generationTimeMs
+
+  const responseTimeMs = timing.response_time_ms
+  const firstByteTimeMs = timing.first_byte_time_ms
+
+  if (responseTimeMs == null || firstByteTimeMs == null) return null
+  if (!Number.isFinite(responseTimeMs) || !Number.isFinite(firstByteTimeMs)) return null
+  if (responseTimeMs <= 0 || firstByteTimeMs < 0) return null
+  if ((timing.upstream_is_stream ?? timing.is_stream) !== false) return null
+
+  // Buffered non-SSE responses report the first byte when the complete body is
+  // available, so there is no separately measurable generation tail.
+  return firstByteTimeMs >= responseTimeMs ? responseTimeMs : null
 }
 
 export function getVisibleOutputTokens(timing: UsagePerformanceTiming): number | null {

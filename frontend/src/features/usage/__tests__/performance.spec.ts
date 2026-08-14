@@ -93,6 +93,19 @@ describe('usage performance metrics', () => {
     })).toBeNull()
   })
 
+  it('falls back to total response time for buffered responses', () => {
+    const timing = {
+      output_tokens: 54,
+      response_time_ms: 2780,
+      first_byte_time_ms: 2780,
+      upstream_is_stream: false,
+    }
+
+    expect(getOutputRateDurationMs(timing)).toBe(2780)
+    expect(calculateOutputRate(timing)).toBeCloseTo(19.42446, 4)
+    expect(getDisplayOutputRate(timing)).toBeCloseTo(19.42446, 4)
+  })
+
   it('hides implausible rates from very short generation tails', () => {
     const timing = {
       output_tokens: 300,

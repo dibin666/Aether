@@ -231,6 +231,28 @@ describe('UsageRecordsTable', () => {
     ].join('\n'))
   })
 
+  it('shows TPS for buffered upstream responses whose first byte equals completion', () => {
+    const root = mountUsageRecordsTable([buildRecord({
+      output_tokens: 54,
+      response_time_ms: 2780,
+      first_byte_time_ms: 2780,
+      upstream_is_stream: false,
+    })])
+
+    expect(root.textContent).toContain('19.4 tps')
+    const titles = [...root.querySelectorAll<HTMLElement>('[title]')]
+      .map((element) => element.getAttribute('title'))
+    expect(titles).toContain([
+      '端到端首字: 2.78s',
+      '端到端总耗时: 2.78s',
+      '成功候选首字: 2.78s',
+      '成功候选耗时: 2.78s',
+      '生成耗时: -',
+      '计速耗时: 2.78s',
+      '输出速度: 19.4 tokens/s',
+    ].join('\n'))
+  })
+
   it('shows end-to-end latency while keeping output TPS scoped to the successful candidate', () => {
     const root = mountUsageRecordsTable([buildRecord({
       output_tokens: 50,
