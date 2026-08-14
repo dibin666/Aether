@@ -323,6 +323,7 @@ export async function refreshProviderQuota(
 
 export interface ConsumeCodexResetCreditPayload {
   idempotency_key: string
+  expected_credential_generation: string | null
 }
 
 export interface ConsumeCodexResetCreditResult {
@@ -333,6 +334,8 @@ export interface ConsumeCodexResetCreditResult {
     | 'already_redeemed'
     | 'nothing_to_reset'
     | 'no_credit'
+    | 'historical_replay'
+    | 'credential_changed'
     | 'unknown'
     | 'error'
     | string

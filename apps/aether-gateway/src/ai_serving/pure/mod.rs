@@ -83,6 +83,7 @@ pub(crate) use aether_ai_formats::api::{
     parse_model_directive_with_suffixes, parse_multipart_fields, parse_openai_stop_sequences,
     parse_openai_tool_result_content, parse_openai_transcription_request,
     prepare_local_success_response_parts, prepare_local_success_response_parts_owned,
+    project_codex_catalog_model_card,
     project_codex_openai_image_api_request_body, project_openai_image_api_request_body,
     provider_adaptation_allows_sync_finalize_envelope, provider_adaptation_anchor_api_format,
     provider_adaptation_descriptor_for_envelope, provider_adaptation_descriptor_for_provider_type,
@@ -179,6 +180,7 @@ pub(crate) use aether_ai_formats::{
     is_rerank_api_format, openai_responses_request_operation,
     openai_responses_synthetic_reasoning_item_id,
     strip_incompatible_openai_responses_reasoning_items, ApiOperation, ClientSurface,
+    CODEX_CLIENT_VERSION,
 };
 
 pub(crate) fn plan_kind_matches_api_operation(
