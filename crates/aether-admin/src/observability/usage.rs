@@ -1014,15 +1014,26 @@ fn admin_usage_infer_client_stream_from_captured_bodies(
 fn admin_usage_infer_upstream_stream_from_captured_bodies(
     item: &StoredRequestUsageAudit,
 ) -> Option<bool> {
-    let provider_stream = admin_usage_body_is_sse_capture(item.response_body.as_ref());
+    let provider_stream = admin_usage_captured_body_stream_mode(item.response_body.as_ref());
     let client_stream = admin_usage_body_is_sse_capture(item.client_response_body.as_ref());
-    if provider_stream {
-        Some(true)
-    } else if client_stream && item.response_body.is_some() {
-        Some(false)
-    } else {
-        None
+    provider_stream.or_else(|| (client_stream && item.response_body.is_some()).then_some(false))
+}
+
+fn admin_usage_captured_body_stream_mode(value: Option<&Value>) -> Option<bool> {
+    let object = value.and_then(Value::as_object)?;
+    let chunks = object.get("chunks").and_then(Value::as_array);
+    if chunks.is_some() {
+        return object
+            .get("metadata")
+            .and_then(Value::as_object)
+            .and_then(|metadata| metadata.get("stream"))
+            .and_then(Value::as_bool)
+            .or(Some(false));
     }
+
+    // A loaded ordinary JSON body is evidence that the upstream response was
+    // buffered, unless the response headers already identified a stream.
+    Some(false)
 }
 
 fn admin_usage_request_path_implies_client_stream(item: &StoredRequestUsageAudit) -> bool {
@@ -1053,13 +1064,27 @@ pub fn admin_usage_client_is_stream(item: &StoredRequestUsageAudit) -> bool {
 }
 
 fn admin_usage_upstream_is_stream(item: &StoredRequestUsageAudit) -> bool {
-    item.request_metadata
+    let planned_upstream_stream = item
+        .request_metadata
         .as_ref()
         .and_then(Value::as_object)
         .and_then(|metadata| metadata.get(UPSTREAM_IS_STREAM_KEY))
-        .and_then(Value::as_bool)
-        .or_else(|| admin_usage_headers_stream_flag(item.response_headers.as_ref()))
+        .and_then(Value::as_bool);
+    let is_kiro_stream_envelope = item
+        .request_metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|metadata| metadata.get("envelope_name"))
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.eq_ignore_ascii_case("kiro:generateAssistantResponse"));
+
+    if is_kiro_stream_envelope && planned_upstream_stream == Some(true) {
+        return true;
+    }
+
+    admin_usage_headers_stream_flag(item.response_headers.as_ref())
         .or_else(|| admin_usage_infer_upstream_stream_from_captured_bodies(item))
+        .or(planned_upstream_stream)
         .unwrap_or(item.is_stream)
 }
 
@@ -3017,6 +3042,32 @@ mod tests {
         assert_eq!(record["upstream_is_stream"], true);
         assert_eq!(record["client_requested_stream"], false);
         assert_eq!(record["client_is_stream"], false);
+    }
+
+    #[test]
+    fn upstream_stream_uses_observed_non_stream_response_over_planned_flag() {
+        let item = StoredRequestUsageAudit {
+            is_stream: true,
+            request_metadata: Some(json!({
+                "upstream_is_stream": true
+            })),
+            response_headers: Some(json!({
+                "content-type": "application/json",
+                "content-length": "128"
+            })),
+            ..sample_usage("completed", Some(200), None)
+        };
+
+        let record = admin_usage_record_json(
+            &item,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            false,
+            false,
+            None,
+        );
+        assert_eq!(record["is_stream"], true);
+        assert_eq!(record["upstream_is_stream"], false);
     }
 
     #[test]

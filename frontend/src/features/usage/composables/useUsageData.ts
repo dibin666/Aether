@@ -486,20 +486,14 @@ export function useUsageData(options: UseUsageDataOptions) {
     return existingValue ?? nextValue
   }
 
-  function mergeBooleanTrueWins(
+  function mergeBooleanSnapshot(
     existingValue: boolean | null | undefined,
-    nextValue: boolean | null | undefined
+    nextValue: boolean | null | undefined,
+    preferNext: boolean,
   ): boolean | undefined {
-    if (existingValue === true || nextValue === true) {
-      return true
-    }
-    if (typeof nextValue === 'boolean') {
-      return nextValue
-    }
-    if (typeof existingValue === 'boolean') {
-      return existingValue
-    }
-    return undefined
+    if (preferNext && typeof nextValue === 'boolean') return nextValue
+    if (typeof existingValue === 'boolean') return existingValue
+    return typeof nextValue === 'boolean' ? nextValue : undefined
   }
 
   function mergeRecordStatus(
@@ -545,6 +539,8 @@ export function useUsageData(options: UseUsageDataOptions) {
       const isPendingProvider = !isUsageProviderVisible(record.provider)
       const hasValidExistingProvider = isUsageProviderVisible(existing.provider)
       const protectProvider = isPendingProvider && hasValidExistingProvider
+      const nextStreamSnapshotIsResolved = record.response_time_ms != null ||
+        record.first_byte_time_ms != null
 
       const recordUpstreamIsStream = typeof record.upstream_is_stream === 'boolean'
         ? record.upstream_is_stream
@@ -556,7 +552,11 @@ export function useUsageData(options: UseUsageDataOptions) {
         : typeof existing.is_stream === 'boolean'
           ? existing.is_stream
           : undefined
-      const upstreamIsStream = mergeBooleanTrueWins(existingUpstreamIsStream, recordUpstreamIsStream) ?? false
+      const upstreamIsStream = mergeBooleanSnapshot(
+        existingUpstreamIsStream,
+        recordUpstreamIsStream,
+        statusProgressed && nextStreamSnapshotIsResolved,
+      ) ?? false
 
       const recordClientRequestedStream = typeof record.client_requested_stream === 'boolean'
         ? record.client_requested_stream
@@ -568,7 +568,11 @@ export function useUsageData(options: UseUsageDataOptions) {
         : typeof existing.client_is_stream === 'boolean'
           ? existing.client_is_stream
           : undefined
-      const clientRequestedStream = mergeBooleanTrueWins(existingClientRequestedStream, recordClientRequestedStream)
+      const clientRequestedStream = mergeBooleanSnapshot(
+        existingClientRequestedStream,
+        recordClientRequestedStream,
+        statusProgressed && nextStreamSnapshotIsResolved,
+      )
 
       const recordClientIsStream = typeof record.client_is_stream === 'boolean'
         ? record.client_is_stream
@@ -580,7 +584,11 @@ export function useUsageData(options: UseUsageDataOptions) {
         : typeof existing.client_requested_stream === 'boolean'
           ? existing.client_requested_stream
           : undefined
-      const clientIsStream = mergeBooleanTrueWins(existingClientIsStream, recordClientIsStream) ?? clientRequestedStream
+      const clientIsStream = mergeBooleanSnapshot(
+        existingClientIsStream,
+        recordClientIsStream,
+        statusProgressed && nextStreamSnapshotIsResolved,
+      ) ?? clientRequestedStream
       const nextTimingIsAuthoritative = statusProgressed &&
         (record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled')
       const responseTiming = mergeUsageRecordResponseTiming(

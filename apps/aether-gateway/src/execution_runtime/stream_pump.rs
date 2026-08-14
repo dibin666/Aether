@@ -66,6 +66,16 @@ pub(crate) fn build_direct_execution_frame_stream(
                 );
             }
         }
+        let buffered_upstream_response =
+            should_buffer_non_stream_response(&headers, &observer_context);
+        if buffered_upstream_response {
+            // The plan may request streaming while the provider returns a complete JSON body.
+            // Record the observed wire mode so usage-rate calculations do not treat body
+            // buffering time as post-first-byte generation time.
+            if let Some(object) = observer_context.as_object_mut() {
+                object.insert("upstream_is_stream".to_string(), Value::Bool(false));
+            }
+        }
         let normalized_observer_context =
             normalize_provider_private_report_context(Some(&observer_context))
                 .unwrap_or_else(|| observer_context.clone());
@@ -74,7 +84,7 @@ pub(crate) fn build_direct_execution_frame_stream(
         let mut stream_terminal_observer = StreamingStandardTerminalObserver::default();
         let mut observer_buffered = Vec::new();
 
-        if should_buffer_non_stream_response(&headers, &observer_context) {
+        if buffered_upstream_response {
             let original_headers = headers.clone();
             match buffer_non_sse_upstream_body(
                 prefetched_body,
@@ -622,6 +632,23 @@ pub(crate) fn build_direct_execution_frame_stream(
     }
 }
 
+pub(crate) fn mark_buffered_non_stream_response(
+    report_context: Option<Value>,
+    headers: &BTreeMap<String, String>,
+) -> Option<Value> {
+    let context_for_detection = report_context.as_ref().unwrap_or(&Value::Null);
+    if !should_buffer_non_stream_response(headers, context_for_detection) {
+        return report_context;
+    }
+
+    let mut object = match report_context {
+        Some(Value::Object(object)) => object,
+        Some(_) | None => serde_json::Map::new(),
+    };
+    object.insert("upstream_is_stream".to_string(), Value::Bool(false));
+    Some(Value::Object(object))
+}
+
 fn encode_headers_frame(
     status_code: u16,
     headers: BTreeMap<String, String>,
@@ -749,9 +776,10 @@ fn append_buffered_upstream_body_chunk(
 }
 
 fn response_headers_indicate_sse(headers: &BTreeMap<String, String>) -> bool {
-    headers
-        .get("content-type")
-        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+    headers.get("content-type").is_some_and(|value| {
+        let normalized = value.to_ascii_lowercase();
+        normalized.contains("text/event-stream") || normalized.contains("x-ndjson")
+    })
 }
 
 fn should_treat_upstream_response_as_stream(
@@ -1245,9 +1273,9 @@ mod tests {
     use tokio::sync::watch;
 
     use super::{
-        build_direct_execution_frame_stream, observe_normalized_bytes,
-        should_buffer_non_stream_response, should_treat_upstream_response_as_stream,
-        STREAM_USAGE_OBSERVER_MAX_LINE_BYTES,
+        build_direct_execution_frame_stream, mark_buffered_non_stream_response,
+        observe_normalized_bytes, should_buffer_non_stream_response,
+        should_treat_upstream_response_as_stream, STREAM_USAGE_OBSERVER_MAX_LINE_BYTES,
     };
     use crate::ai_serving::api::StreamingStandardTerminalObserver;
     use crate::execution_runtime::transport::{
@@ -1312,6 +1340,38 @@ mod tests {
             &BTreeMap::from([("content-type".into(), "text/event-stream".into())]),
             &non_stream_context
         ));
+    }
+
+    #[test]
+    fn marks_json_responses_as_non_stream_for_usage_rate_calculation() {
+        let context = serde_json::json!({
+            "provider_api_format": "gemini:generate_content",
+            "client_api_format": "claude:messages",
+            "upstream_is_stream": true,
+        });
+        let headers = BTreeMap::from([
+            ("content-type".into(), "application/json".into()),
+            ("content-length".into(), "128".into()),
+        ]);
+
+        let observed = mark_buffered_non_stream_response(Some(context), &headers)
+            .expect("response context should exist");
+
+        assert_eq!(observed["upstream_is_stream"], false);
+    }
+
+    #[test]
+    fn preserves_kiro_stream_envelopes_with_json_content_type() {
+        let context = serde_json::json!({
+            "envelope_name": "kiro:generateAssistantResponse",
+            "upstream_is_stream": true,
+        });
+        let headers = BTreeMap::from([("content-type".into(), "application/json".into())]);
+
+        let observed = mark_buffered_non_stream_response(Some(context), &headers)
+            .expect("response context should exist");
+
+        assert_eq!(observed["upstream_is_stream"], true);
     }
 
     #[test]
