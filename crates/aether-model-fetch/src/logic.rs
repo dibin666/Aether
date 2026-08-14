@@ -708,6 +708,7 @@ pub fn aggregate_models_for_cache(models: &[Value]) -> Vec<Value> {
         };
         let Some(model_id) = object
             .get("id")
+            .or_else(|| object.get("slug"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -717,6 +718,9 @@ pub fn aggregate_models_for_cache(models: &[Value]) -> Vec<Value> {
 
         let entry = aggregated.entry(model_id.to_string()).or_insert_with(|| {
             let mut cloned = object.clone();
+            // Codex cards may expose only `slug`; normalize it for the generic admin model list
+            // while retaining the original opaque card fields for downstream consumers.
+            cloned.insert("id".to_string(), Value::String(model_id.to_string()));
             cloned.remove("api_format");
             cloned
         });
@@ -1173,6 +1177,24 @@ mod tests {
             aggregated[0]["api_formats"],
             json!(["openai:chat", "openai:responses"])
         );
+    }
+
+    #[test]
+    fn aggregate_models_for_cache_normalizes_codex_slug_only_cards() {
+        let aggregated = aggregate_models_for_cache(&[json!({
+            "slug": "gpt-future-dynamic",
+            "model_messages": {"instructions_template": "Future instructions"},
+            "future_capability": {"opaque": true}
+        })]);
+
+        assert_eq!(aggregated.len(), 1);
+        assert_eq!(aggregated[0]["id"], "gpt-future-dynamic");
+        assert_eq!(aggregated[0]["slug"], "gpt-future-dynamic");
+        assert_eq!(
+            aggregated[0]["model_messages"]["instructions_template"],
+            "Future instructions"
+        );
+        assert_eq!(aggregated[0]["future_capability"]["opaque"], true);
     }
 
     #[test]
