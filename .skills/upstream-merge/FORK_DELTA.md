@@ -15,45 +15,43 @@
 5. 将本文件和 `SKILL.md` 的必要调整放进独立的文档 commit，不 amend merge commit。这样本文件可以稳定引用不会因文档修改而变化的 merge commit。
 6. 最终交付必须同时报告 merge commit、文档更新 commit 和复核结论；两者完成前不得推送或宣布合并完成。
 
-## 本次合并后复核（2026-08-13）
+## 本次合并后复核（2026-08-14）
 
-- 合并基线：merge commit `32e4f482739e48db75143c8fc3f2691df847aa71`，上游 `f3a12c10080cff724fa0b58fb196f4c6e40c409b`。
-- 冲突策略：`1C, 2C, 3C`；同格式请求保留 multipart/二进制保真与上游转换契约，Provider 摘要同时保留 OAuth 自动刷新与 Codex fingerprint convergence，前端类型同时保留两者。
-- 功能结论：无 fork 特有功能被删除；Audio Transcriptions、OAuth 自动刷新、额度/消费统计、self-scope usage detail、永不熔断、chunk 恢复及 Responses/Usage 诊断继续保留。
-- 路径级复核：merge-base 为 `f3a12c10080cff724fa0b58fb196f4c6e40c409b`；upstream-only 为 0 个提交、0 个路径；合并后双边重叠为 0 个路径。
-- 本次上游接入：Codex image edit validation、OAuth fingerprint convergence、Turnstile typing 修复、默认模型测试温度修复、server pool floor 调整、Claude Code 跨格式转换及相关测试。
-- 验证：`frontend` 的 `npm run build` 通过；`cargo check --workspace` 通过；`git diff --check` 通过。非阻塞警告：`caniuse-lite` 数据已 11 个月未更新。
+- 合并基线：merge commit `596e1830f`，上游 `b7fca851b8c8c357d17d664433f061efaa37b0c9`。
+- 冲突策略：`1C`；21 个合并前重叠路径中，只有 `apps/aether-gateway/src/ai_serving/pure/mod.rs` 产生文本冲突，手工同时保留 Audio Transcriptions 的 multipart/转写导出和上游动态 Codex catalog 导出；其余路径由 Git 自动合并后进行 P0 语义复核，未使用整文件 `ours`/`theirs`。
+- 功能结论：无 fork 特有功能被删除或改变。Audio Transcriptions、OAuth 自动刷新、额度/消费统计、self-scope usage detail、永不熔断、chunk 恢复及 Responses/Usage 诊断继续保留。
+- 本次上游接入：versioned dynamic Codex model catalogs、routing model overrides 与 allowed-scope 解耦、allowlist 编辑保存修复、Codex quota 并发更新保护及相关状态/测试改动。
+- 路径级复核：合并后 merge-base 为上游 `b7fca851b`；upstream-only 为 0 个提交、0 个路径；fork-only 为 155 个提交、272 个路径；两棵最终代码树相差 272 个 fork 特有路径，合并后双边重叠为 0 个路径。
+- P0 复核：`pure/mod.rs` 同时导出转写解析、multipart 保真、动态 Codex catalog 投影和 `CODEX_CLIENT_VERSION`；provider catalog、OAuth/quota、routing state 和 fork 的 usage/billing、pool scheduler、self-scope 权限边界均未丢失或改变。
+- 验证：`cd frontend && npm run build` 通过；`cargo check --workspace` 通过；合并树和文档更新的 `git diff --check` 通过。非阻塞警告：`caniuse-lite` 数据已 11 个月未更新；`npm install` 报告 11 个依赖漏洞（2 个 critical），未在本次合并中擅自升级依赖。
 
 ## 最近一次合并后复核
 
-- 合并基线：merge commit `32e4f482739e48db75143c8fc3f2691df847aa71`，上游 `f3a12c10080cff724fa0b58fb196f4c6e40c409b`；没有文本冲突，冲突策略为“Git 自动合并 + P0 组合语义复核”，未使用 `ours`/`theirs` 或人工覆盖。
-- 功能结论：无 fork 功能差异变化。本轮上游功能已接入，fork 特有的转写、额度/消费统计、OAuth 自动刷新、永不熔断、self-scope 请求详情、chunk 恢复、Responses history 与 Usage 诊断等行为继续保留。
-- 上游接入：Responses routed policy 继承全局 conversion-priority override；显式 reasoning effort 在格式转换中保留并由映射后的实际 provider model 校验；标准流支持由独立 `event:` 行提供 SSE 类型；Allowed Models 对话框补齐加载状态回归覆盖。
-- 重叠复核：5 个双边路径全部自动合并。candidate ranking 同时保留全局 conversion-priority override 和 fork cache-affinity pool group 提升；format/stream 同时保留 SSE event-only normalization 与 transcription 非标准格式/流式直通；same-format transport 同时保留实际模型 effort 校验与 multipart boundary、直连鉴权。
-- P0 复核：本轮仅 15 个上游路径进入 merge tree；逐项确认 transcription、cache affinity、动态 quota/消费统计、OAuth 自动刷新、usage/billing 跨数据库契约、`disable_circuit_breaker`、self-scope 权限边界及 Responses/Usage 诊断未丢失或改变。
-- 路径级复核：合并前 5 个双边路径均自动合并；合并后 `merge-base` 等于 `upstream/main`，upstream-only 为 0 个提交、0 个路径，双边重叠为 0 个路径。
-- 验证：前端生产构建、`cargo check --workspace`、合并差异与文档 `git diff --check` 均通过。没有实际冲突或 merge-regression 修复，因此未扩展执行专项行为测试；非阻塞警告为 `caniuse-lite` 数据已 11 个月未更新，浏览器烟测仍需人工完成。
+- 合并基线：merge commit `596e1830f`，上游 `b7fca851b8c8c357d17d664433f061efaa37b0c9`；采用冲突策略 `1C`，无未解决冲突。
+- 功能结论：无功能差异变化。本轮上游功能已接入，fork 特有的转写、额度/消费统计、OAuth 自动刷新、永不熔断、self-scope 请求详情、chunk 恢复、Responses history 与 Usage 诊断等行为继续保留。
+- 组合语义：routing 的 model override/allowlist 状态和 Codex quota 更新采用上游修复；AI export 同时保留 transcription 与动态 catalog；既有 cache affinity、动态 quota、OAuth 限流/代理、usage/billing 跨数据库契约和 Pool header 兼容行为继续生效。
+- 验证：前端生产构建、`cargo check --workspace`、合并差异与文档 `git diff --check` 均通过；未扩展执行专项行为测试，浏览器烟测仍需人工完成。
 
 ## 基线快照
 
-快照日期：2026-08-13（已执行 `git fetch --prune upstream`，完成合并、验证和合并后复核）。
+快照日期：2026-08-14（已执行 `git fetch upstream`，完成合并、验证和合并后复核）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline（已验证的不可变 merge commit） | `32e4f482739e48db75143c8fc3f2691df847aa71` |
-| upstream HEAD | `f3a12c10080cff724fa0b58fb196f4c6e40c409b` |
-| merge-base | `f3a12c10080cff724fa0b58fb196f4c6e40c409b` |
-| 分叉计数 | fork-only 152，upstream-only 0 |
+| fork code baseline（已验证的不可变 merge commit） | `596e1830f` |
+| upstream HEAD | `b7fca851b8c8c357d17d664433f061efaa37b0c9` |
+| merge-base | `b7fca851b8c8c357d17d664433f061efaa37b0c9` |
+| 分叉计数 | fork-only 155，upstream-only 0 |
 | fork 侧净改动 | 272 个路径（合并后相对 upstream/main） |
 | upstream 侧净改动 | 0 个路径，`+0/-0` |
-| 双边同时改动 | 0 个路径（合并前 5 个路径已复核） |
+| 双边同时改动 | 0 个路径（合并前 21 个路径已复核，其中 1 个文本冲突按 `1C` 手工混合） |
 
 ## 当前待合入上游功能
 
-- 无。`upstream/main` 已完整合入 merge commit `32e4f482739e48db75143c8fc3f2691df847aa71`；`git rev-list HEAD..upstream/main` 为 0。
+- 无。`upstream/main` 已完整合入 merge commit `596e1830f`；`git rev-list HEAD..upstream/main` 为 0。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -291,22 +289,22 @@ Provider 级覆盖位于 `provider.config.oauth_token_refresh`：`enabled`、`lo
 
 ## 当前 0 个双边改动路径
 
-合并后 `merge-base` 为 `f3a12c10080cff724fa0b58fb196f4c6e40c409b`，等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，双边重叠为 0 个路径。下一次 `git fetch upstream` 后必须重新计算，不能沿用本次的 0。
+合并后 `merge-base` 为 `b7fca851b8c8c357d17d664433f061efaa37b0c9`，等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，当前双边重叠为 0 个路径。下一次 `git fetch upstream` 后必须重新计算，不能沿用本次的 0。
 
-本轮合并前共有 5 个双边路径，没有产生文本冲突。自动合并后的组合行为复核如下：
+本轮合并前共有 21 个双边路径，其中 1 个产生文本冲突；已按用户选择 `1C` 完成组合行为复核如下：
 
 | 组 | 选择 | 合并后行为 |
 |---|---|---|
-| Responses routing / candidate ranking | 自动合并 + P0 复核 | routed policy 继承全局 `keep_priority_on_conversion`；cache-affinity 命中 pool group 时仍提升 provider/key/global-format priority |
-| reasoning effort / format registry | 自动合并 + P0 复核 | conversion 保留显式 effort，最终 provider/model 负责校验；`OpenAiTranscription` 继续走非标准 JSON 解析/发射分支 |
-| SSE stream normalization | 自动合并 + P0 复核 | 独立 `event:` 行可补全 data payload 类型；transcription 同格式流仍原样直通，parser/emitter/error 仍覆盖转写格式 |
-| same-format provider transport | 自动合并 + P0 复核 | 映射后实际模型校验 reasoning effort；transcription boundary、直连鉴权和原始 multipart `Content-Type` 同时保留 |
+| AI export / Codex catalog | `1C` manual hybrid | `pure/mod.rs` 同时保留 `parse_multipart_fields`、`parse_openai_transcription_request`、`project_codex_catalog_model_card` 和 `CODEX_CLIENT_VERSION`，转写与动态模型目录均可继续使用 |
+| routing model overrides / allowlist | Git 自动合并 + P0 复核 | 上游将 model overrides 与 allowed scope 解耦，并保留 allowlist 编辑后的持久化状态；fork 的 routing/cache-affinity 约束继续保留 |
+| Codex quota / provider state | Git 自动合并 + P0 复核 | 上游并发 quota 更新保护、provider catalog cache 和动态模型目录状态进入 merge tree，fork 的动态 quota、消费统计和 OAuth 行为继续保留 |
+| provider catalog adapters / frontend provider types | Git 自动合并 + P0 复核 | MySQL/Postgres/SQLite catalog 契约和前端 provider 类型同时通过编译，未删除 fork 的 provider/API 契约 |
 
 P0 复核结果：无功能差异变化。转写、cache affinity、动态 quota/消费统计、OAuth 自动刷新、usage/billing 跨数据库契约、self-scope 请求详情、`disable_circuit_breaker`、chunk 恢复、Responses continuation history 与 Usage 端到端/候选时序均保留；当前 pool scheduler score phase 与 Pool header 行为未改变。
 
 ## 当前尚未合入的上游功能
 
-- 无。`upstream/main` 已并入 merge commit `704a16fcfa12076baf3a7fc405fecbdecad19310`；`git rev-list HEAD..upstream/main` 为 0。
+- 无。`upstream/main` 已并入 merge commit `596e1830f`；`git rev-list HEAD..upstream/main` 为 0。
 
 ## 配置与 API 契约速查
 
@@ -383,12 +381,13 @@ npm run test:run -- \
   src/views/admin/__tests__/PoolManagement.codex-cycle-stats.spec.ts
 ```
 
-本次 `704a16fcf` 验证结果：
+本次 `596e1830f` 验证结果：
 
-- `cd frontend && npm run build`：通过；非阻塞警告为 `caniuse-lite` 数据已 11 个月未更新。
-- `cargo check --workspace`：通过，耗时 4 分 58 秒。
-- merge tree、暂存差异与文档的 `git diff --check`：通过。
-- 本轮没有实际冲突，也没有 merge-regression 修复；按技能的最小验证规则未扩展执行专项行为测试，文档列出的命令保留为后续回归清单。
+- `cd frontend && npm run build`：通过，耗时约 20 秒；非阻塞警告为 `caniuse-lite` 数据已 11 个月未更新。
+- `cargo check --workspace`：通过，耗时 3 分 26 秒。
+- merge tree、合并提交与文档的 `git diff --check`：通过。
+- 本轮仅 `pure/mod.rs` 发生实际文本冲突，已按 `1C` 完成手工混合；没有 merge-regression 修复，按技能的最小验证规则未扩展执行专项行为测试，文档列出的命令保留为后续回归清单。
+- `npm install` 审计报告 11 个依赖漏洞（2 个 critical）；未执行自动修复，避免把依赖升级混入上游合并。
 - 浏览器烟测未自动执行；当前会话未授权浏览器自动化，需人工完成下列检查。
 
 还必须做六个烟测：
