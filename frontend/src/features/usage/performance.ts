@@ -20,25 +20,9 @@ export function getGenerationTimeMs(timing: UsagePerformanceTiming): number | nu
   return responseTimeMs - firstByteTimeMs
 }
 
-function isOpenAIResponsesFormat(value: string | null | undefined): boolean {
-  const normalized = value?.trim().toLowerCase().replaceAll('_', ':')
-  return normalized === 'openai:responses' || normalized?.startsWith('openai:responses:') === true
-}
-
-export function isOutputRateUsingGenerationTime(timing: UsagePerformanceTiming): boolean {
-  const upstreamFormat = timing.endpoint_api_format ?? timing.api_format
-  if (isOpenAIResponsesFormat(upstreamFormat)) return false
-  return timing.upstream_is_stream ?? timing.is_stream ?? false
-}
-
 export function getOutputRateDurationMs(timing: UsagePerformanceTiming): number | null {
-  if (isOutputRateUsingGenerationTime(timing)) {
-    return getGenerationTimeMs(timing)
-  }
-
-  const responseTimeMs = timing.response_time_ms
-  if (responseTimeMs == null || !Number.isFinite(responseTimeMs) || responseTimeMs <= 0) return null
-  return responseTimeMs
+  // All endpoint types use the time spent generating output after the first byte.
+  return getGenerationTimeMs(timing)
 }
 
 export function getVisibleOutputTokens(timing: UsagePerformanceTiming): number | null {
@@ -67,8 +51,6 @@ export function shouldHideOutputRate(
   outputRate: number | null,
   timing: UsagePerformanceTiming,
 ): boolean {
-  if (!isOutputRateUsingGenerationTime(timing)) return false
-
   const responseTimeMs = timing.response_time_ms
   const generationTimeMs = getGenerationTimeMs(timing)
 

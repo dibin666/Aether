@@ -208,7 +208,7 @@ describe('UsageRecordsTable', () => {
     expect(titles.join('\n')).not.toContain('首字后生成耗时')
   })
 
-  it('uses total response time for OpenAI Responses TPS', () => {
+  it('uses generation time for OpenAI Responses TPS', () => {
     const root = mountUsageRecordsTable([buildRecord({
       output_tokens: 1320,
       response_time_ms: 33_000,
@@ -217,7 +217,7 @@ describe('UsageRecordsTable', () => {
       endpoint_api_format: 'openai:responses',
     })])
 
-    expect(root.textContent).toContain('40.0 tps')
+    expect(root.textContent).toContain('244 tps')
     const titles = [...root.querySelectorAll<HTMLElement>('[title]')]
       .map((element) => element.getAttribute('title'))
     expect(titles).toContain([
@@ -226,8 +226,8 @@ describe('UsageRecordsTable', () => {
       '成功候选首字: 27.60s',
       '成功候选耗时: 33.00s',
       '生成耗时: 5.40s',
-      '计速耗时: 33.00s',
-      '输出速度: 40.0 tokens/s',
+      '计速耗时: 5.40s',
+      '输出速度: 244 tokens/s',
     ].join('\n'))
   })
 

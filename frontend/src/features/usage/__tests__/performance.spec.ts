@@ -38,7 +38,7 @@ describe('usage performance metrics', () => {
     })).toBe(100)
   })
 
-  it('calculates standard output tokens per total response second', () => {
+  it('calculates every output rate from the generation time after first byte', () => {
     const timing = {
       output_tokens: 50,
       response_time_ms: 1000,
@@ -46,12 +46,12 @@ describe('usage performance metrics', () => {
       upstream_is_stream: false,
     }
 
-    expect(getOutputRateDurationMs(timing)).toBe(1000)
-    expect(calculateOutputRate(timing)).toBe(50)
-    expect(getDisplayOutputRate(timing)).toBe(50)
+    expect(getOutputRateDurationMs(timing)).toBe(500)
+    expect(calculateOutputRate(timing)).toBe(100)
+    expect(getDisplayOutputRate(timing)).toBe(100)
   })
 
-  it('uses total response time for streamed OpenAI Responses requests', () => {
+  it('uses generation time for streamed OpenAI Responses requests too', () => {
     const timing = {
       output_tokens: 1320,
       response_time_ms: 33_000,
@@ -61,19 +61,19 @@ describe('usage performance metrics', () => {
       endpoint_api_format: 'openai:responses',
     }
 
-    expect(getOutputRateDurationMs(timing)).toBe(33_000)
-    expect(calculateOutputRate(timing)).toBe(40)
-    expect(getDisplayOutputRate(timing)).toBe(40)
+    expect(getOutputRateDurationMs(timing)).toBe(5_400)
+    expect(calculateOutputRate(timing)).toBeCloseTo(244.4444, 4)
+    expect(getDisplayOutputRate(timing)).toBeCloseTo(244.4444, 4)
   })
 
-  it('normalizes Responses format aliases before choosing the TPS duration', () => {
+  it('uses generation time regardless of the endpoint format alias', () => {
     expect(calculateOutputRate({
       output_tokens: 80,
       response_time_ms: 12_220,
       first_byte_time_ms: 7_980,
       upstream_is_stream: true,
       endpoint_api_format: 'openai_responses',
-    })).toBeCloseTo(6.5466, 4)
+    })).toBeCloseTo(18.8679, 4)
   })
 
   it('does not calculate output rate without output tokens', () => {
@@ -118,12 +118,12 @@ describe('usage performance metrics', () => {
     expect(getDisplayOutputRate(timing)).toBe(100)
   })
 
-  it('calculates standard output rate without first byte timing', () => {
+  it('does not calculate output rate without first byte timing', () => {
     expect(getDisplayOutputRate({
       output_tokens: 50,
       response_time_ms: 1000,
       upstream_is_stream: false,
-    })).toBe(50)
+    })).toBeNull()
   })
 
   it('formats durations and output rates for compact UI display', () => {
