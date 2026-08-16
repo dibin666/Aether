@@ -1040,6 +1040,7 @@ async function openAccount(account: PoolConsumptionDashboardAccount): Promise<vo
 
 async function loadAccountDetailForQuotaCycle(cycle: DetailQuotaCycle): Promise<void> {
   if (!selectedAccount.value) return
+  const account = selectedAccount.value
   const requestId = ++detailRequestId
   detailRefreshing.value = true
   detailError.value = ''
