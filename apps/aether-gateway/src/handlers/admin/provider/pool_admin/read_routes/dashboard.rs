@@ -305,6 +305,7 @@ async fn build_dashboard_overview(
                 now,
             )
         })
+        .filter(|account| account.request_count > 0)
         .filter(|account| account_matches_query(account, query))
         .collect::<Vec<_>>();
 
@@ -325,6 +326,7 @@ async fn build_dashboard_overview(
                 now,
             )
         })
+        .filter(|account| account.request_count > 0)
         .filter(|account| account_matches_query(account, query))
         .collect::<Vec<_>>();
     let previous_summary = range

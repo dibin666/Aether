@@ -1,0 +1,3115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>账号消耗统计 · 交互原型预览 (Aether Design)</title>
+<style>
+/* ==========================================================================
+   Aether Design System Semantic Tokens (Light & Dark)
+   ========================================================================== */
+:root {
+  /* Claude / Aether theme palette */
+  --slate-dark: #3d3929;
+  --slate-medium: #6c695c;
+  --slate-light: #cbc9c2;
+  --cloud-dark: #3d3d3a;
+  --cloud-medium: #e9e6dc;
+  --cloud-light: #f5f4ee;
+  --ivory-dark: #ede9de;
+  --ivory-medium: #e9e6dc;
+  --ivory-light: #faf9f5;
+  --book-cloth: #c96442;
+  --kraft: #e4b2a0;
+  --manilla: #f4e0d9;
+  --focus: rgba(201, 100, 66, 0.35);
+  --error: #ef4444;
+
+  /* Typography */
+  --font-sans: 'StyreneA', 'Helvetica Neue', 'HarmonyOS Sans', 'SF Pro Display', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans SC', sans-serif;
+  --font-serif: 'TiemposText', 'STZhongsong', 'Fang Song', Georgia, serif;
+  --font-mono: 'Cascadia Code', 'Cascadia mono', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+
+  /* Theme tokens - Light Mode (Default) */
+  --background: #faf9f5;
+  --foreground: #3d3929;
+  --card: #ffffff;
+  --card-foreground: #1a1815;
+  --card-subtle: #fbfaf6;
+  --popover: #ffffff;
+  --popover-foreground: #3d3929;
+  --primary: #c96442;
+  --primary-hover: #b85736;
+  --primary-foreground: #ffffff;
+  --secondary: #f0ede5;
+  --secondary-foreground: #3d3929;
+  --muted: #ede9de;
+  --muted-foreground: #6c695c;
+  --muted-light: #f5f3ed;
+  --border: rgba(61, 57, 41, 0.14);
+  --border-strong: rgba(61, 57, 41, 0.24);
+  --input: #e9e6dc;
+  --ring: rgba(201, 100, 66, 0.35);
+  --radius: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --shadow-sm: 0 1px 2px 0 rgba(61, 57, 41, 0.05);
+  --shadow: 0 1px 3px 0 rgba(61, 57, 41, 0.08), 0 1px 2px -1px rgba(61, 57, 41, 0.08);
+  --shadow-md: 0 4px 6px -1px rgba(61, 57, 41, 0.08), 0 2px 4px -2px rgba(61, 57, 41, 0.08);
+  --shadow-lg: 0 10px 15px -3px rgba(61, 57, 41, 0.08), 0 4px 6px -4px rgba(61, 57, 41, 0.08);
+  --shadow-xl: 0 20px 25px -5px rgba(61, 57, 41, 0.1), 0 8px 10px -6px rgba(61, 57, 41, 0.1);
+
+  /* Status Tokens */
+  --emerald-bg: rgba(16, 185, 129, 0.1);
+  --emerald-text: #059669;
+  --emerald-bar: #10b981;
+  --amber-bg: rgba(245, 158, 11, 0.1);
+  --amber-text: #b45309;
+  --amber-bar: #f59e0b;
+  --orange-bg: rgba(249, 115, 22, 0.12);
+  --orange-text: #c2410c;
+  --orange-bar: #f97316;
+  --rose-bg: rgba(225, 29, 72, 0.1);
+  --rose-text: #e11d48;
+  --rose-bar: #e11d48;
+  --blue-accent: #3b82f6;
+}
+
+/* Dark Mode Tokens */
+body[data-theme='dark'] {
+  --background: #262624;
+  --foreground: #faf9f5;
+  --card: #30302e;
+  --card-foreground: #faf9f5;
+  --card-subtle: #2b2b29;
+  --popover: #30302e;
+  --popover-foreground: #faf9f5;
+  --primary: #d97757;
+  --primary-hover: #e58768;
+  --primary-foreground: #ffffff;
+  --secondary: #3d3d3a;
+  --secondary-foreground: #faf9f5;
+  --muted: #3e3e38;
+  --muted-foreground: #b7b5a9;
+  --muted-light: #343431;
+  --border: rgba(227, 224, 211, 0.16);
+  --border-strong: rgba(227, 224, 211, 0.28);
+  --input: #44443e;
+  --ring: rgba(217, 119, 87, 0.35);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.25);
+  --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+
+  --emerald-bg: rgba(16, 185, 129, 0.15);
+  --emerald-text: #34d399;
+  --amber-bg: rgba(245, 158, 11, 0.15);
+  --amber-text: #fbbf24;
+  --orange-bg: rgba(249, 115, 22, 0.18);
+  --orange-text: #fb923c;
+  --rose-bg: rgba(225, 29, 72, 0.18);
+  --rose-text: #fb7185;
+}
+
+/* ==========================================================================
+   Base & Reset
+   ========================================================================== */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+html {
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+body {
+  font-family: var(--font-sans);
+  background-color: var(--background);
+  color: var(--foreground);
+  line-height: 1.5;
+  min-height: 100vh;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+button, input, select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+svg {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   Layout Containers
+   ========================================================================== */
+.preview-banner {
+  background: color-mix(in srgb, var(--primary) 12%, var(--card));
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border));
+  padding: 0.5rem 1.25rem;
+  font-size: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--foreground);
+}
+.banner-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  background-color: color-mix(in srgb, var(--primary) 20%, transparent);
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 0.7rem;
+}
+.banner-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* Floating / Embedded State Switcher Bar */
+.state-switcher-bar {
+  background-color: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  box-shadow: var(--shadow-sm);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+.state-label {
+  font-weight: 600;
+  color: var(--muted-foreground);
+  margin-right: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.state-btn {
+  padding: 0.25rem 0.65rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  background-color: var(--card-subtle);
+  color: var(--foreground);
+  font-weight: 500;
+  font-size: 0.75rem;
+  transition: all 0.15s ease;
+  min-height: 28px;
+}
+.state-btn:hover {
+  background-color: var(--muted);
+  border-color: var(--border-strong);
+}
+.state-btn.active {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+  box-shadow: 0 1px 2px rgba(201, 100, 66, 0.3);
+}
+
+.theme-toggle-btn {
+  margin-left: auto;
+  padding: 0.25rem 0.65rem;
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  background-color: var(--secondary);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 28px;
+}
+.theme-toggle-btn:hover {
+  background-color: var(--muted);
+}
+
+.app-container {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+@media (max-width: 768px) {
+  .app-container {
+    padding: 1rem;
+  }
+}
+
+/* ==========================================================================
+   Header Section (Aligning PageHeader)
+   ========================================================================== */
+.page-header {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.5rem;
+}
+@media (min-width: 768px) {
+  .page-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+}
+.header-icon-box {
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in srgb, var(--primary) 12%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+}
+.header-kicker {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
+}
+.header-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.15rem;
+}
+.header-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+}
+.provider-badge {
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.375rem;
+  background-color: var(--secondary);
+  border: 1px solid var(--border);
+  color: var(--secondary-foreground);
+}
+
+.header-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.select-trigger {
+  height: 2.25rem;
+  padding: 0 0.75rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+  font-size: 0.8rem;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.15s ease;
+  min-width: 140px;
+}
+.select-trigger:hover {
+  border-color: var(--border-strong);
+}
+.select-trigger:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.select-trigger.pool-select {
+  min-width: 190px;
+}
+.refresh-btn {
+  height: 2.25rem;
+  padding: 0 0.85rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+  font-size: 0.8rem;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.15s ease;
+}
+.refresh-btn:hover {
+  background-color: var(--muted-light);
+  border-color: var(--border-strong);
+}
+.refresh-btn.spinning svg {
+  animation: spin 1s linear infinite;
+}
+
+/* ==========================================================================
+   Filter Panel
+   ========================================================================== */
+.filter-card {
+  background-color: color-mix(in srgb, var(--muted) 35%, var(--card));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-sm);
+}
+.filter-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.filter-header-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.filter-header-title svg {
+  color: var(--primary);
+}
+.filter-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.sort-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+}
+.sort-label {
+  color: var(--muted-foreground);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.btn-ghost-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  border-radius: var(--radius);
+  transition: color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.btn-ghost-sm:hover {
+  color: var(--foreground);
+  background-color: var(--muted);
+}
+
+.custom-range-row {
+  margin-top: 0.75rem;
+  background-color: color-mix(in srgb, var(--card) 80%, var(--background));
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  font-size: 0.75rem;
+}
+.custom-range-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+.custom-date-input {
+  height: 2rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+  padding: 0 0.5rem;
+  font-size: 0.75rem;
+}
+.custom-date-input:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.btn-outline-sm {
+  height: 2rem;
+  padding: 0 0.75rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+.btn-outline-sm:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.filter-grid {
+  margin-top: 0.85rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
+}
+@media (min-width: 1024px) {
+  .filter-grid {
+    grid-template-columns: 1fr 1.6fr;
+  }
+}
+.filter-search-col {
+  background-color: color-mix(in srgb, var(--card) 75%, var(--background));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.col-kicker {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+}
+.search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.search-icon {
+  position: absolute;
+  left: 0.75rem;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+.search-input {
+  width: 100%;
+  height: 2.25rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+  padding: 0 2.2rem 0 2.2rem;
+  font-size: 0.75rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.search-input:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+.search-clear-btn {
+  position: absolute;
+  right: 0.65rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-foreground);
+}
+.search-clear-btn:hover {
+  color: var(--foreground);
+  background-color: var(--muted);
+}
+
+.filter-selects-col {
+  background-color: color-mix(in srgb, var(--card) 75%, var(--background));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.selects-5-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+@media (min-width: 640px) {
+  .selects-5-group {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (min-width: 900px) {
+  .selects-5-group {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.field-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.select-compact {
+  height: 2rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  padding: 0 0.5rem;
+  width: 100%;
+}
+.select-compact:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+/* ==========================================================================
+   KPI Summary Cards
+   ========================================================================== */
+.kpi-section {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
+  margin-bottom: 1.5rem;
+}
+@media (min-width: 640px) {
+  .kpi-section {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1024px) {
+  .kpi-section {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+.kpi-card {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+  position: relative;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  min-height: 108px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.kpi-card:hover {
+  box-shadow: var(--shadow-md);
+}
+.kpi-card.accent-left::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background-color: var(--primary);
+}
+.kpi-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.kpi-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
+}
+.kpi-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--foreground);
+  margin-top: 0.25rem;
+  line-height: 1.2;
+}
+.kpi-icon {
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background-color: color-mix(in srgb, var(--muted) 40%, var(--card));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+}
+.kpi-hint {
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 0.4rem;
+}
+
+/* ==========================================================================
+   Trend Chart Section
+   ========================================================================== */
+.trend-card {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-sm);
+}
+.trend-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.trend-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.trend-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.trend-legends {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.75rem;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted-foreground);
+}
+.legend-box {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 0.2rem;
+}
+.legend-box.token-in { background-color: #c96442; }
+.legend-box.token-out { background-color: #e4b2a0; }
+.legend-box.cost-line { background-color: #477074; height: 3px; border-radius: 99px; }
+
+.chart-container-svg {
+  width: 100%;
+  height: 180px;
+  position: relative;
+}
+.chart-tooltip {
+  position: absolute;
+  display: none;
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  font-size: 0.72rem;
+  pointer-events: none;
+  z-index: 20;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   Account List Section & Cards
+   ========================================================================== */
+.list-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+.list-title-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.list-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.list-count-meta {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+.nav-link-btn {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--primary);
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border));
+  background-color: color-mix(in srgb, var(--primary) 8%, var(--card));
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: all 0.15s ease;
+}
+.nav-link-btn:hover {
+  background-color: color-mix(in srgb, var(--primary) 15%, var(--card));
+}
+
+.account-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+.account-card {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.account-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
+  box-shadow: var(--shadow-md);
+}
+@media (min-width: 1024px) {
+  .account-card {
+    flex-direction: row;
+  }
+}
+
+/* Left: Identity Block */
+.acc-col-identity {
+  background-color: color-mix(in srgb, var(--muted) 25%, var(--card));
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-width: 220px;
+}
+@media (min-width: 1024px) {
+  .acc-col-identity {
+    border-bottom: none;
+    border-right: 1px solid var(--border);
+    width: 230px;
+    flex-shrink: 0;
+  }
+}
+.acc-name-btn {
+  text-align: left;
+  display: block;
+  width: 100%;
+}
+.acc-name-line {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.acc-name-text {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+  transition: color 0.15s ease;
+}
+.acc-name-btn:hover .acc-name-text {
+  color: var(--primary);
+}
+.plan-badge {
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  background-color: color-mix(in srgb, var(--primary) 10%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border));
+  color: var(--primary);
+}
+.acc-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+  margin-top: 0.25rem;
+}
+.status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+}
+.status-dot.active { background-color: #10b981; }
+.status-dot.inactive { background-color: var(--muted-foreground); }
+.status-dot.blocked { background-color: #ef4444; }
+
+.sync-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  border: 1px solid currentColor;
+  width: fit-content;
+}
+.sync-good {
+  color: var(--emerald-text);
+  background-color: var(--emerald-bg);
+}
+.sync-warning {
+  color: var(--amber-text);
+  background-color: var(--amber-bg);
+}
+.sync-unknown {
+  color: var(--muted-foreground);
+  background-color: color-mix(in srgb, var(--muted) 50%, var(--card));
+}
+
+/* Middle: Quota & 6 Metrics */
+.acc-col-body {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
+  align-items: center;
+}
+@media (min-width: 768px) {
+  .acc-col-body {
+    grid-template-columns: 5fr 7fr;
+  }
+}
+
+.quota-box {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.quota-box-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+.quota-box-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.quota-window-count-tag {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  background-color: var(--muted);
+  color: var(--muted-foreground);
+}
+.quota-card-inner {
+  border: 1px solid var(--border);
+  background-color: color-mix(in srgb, var(--muted) 15%, var(--card));
+  border-radius: var(--radius);
+  padding: 0.5rem 0.65rem;
+  font-size: 0.75rem;
+}
+.quota-inner-topline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.quota-window-name {
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+}
+.quota-remaining-val {
+  font-weight: 700;
+  color: var(--foreground);
+}
+.meter-track {
+  height: 0.35rem;
+  width: 100%;
+  border-radius: 9999px;
+  background-color: var(--muted);
+  overflow: hidden;
+  margin: 0.35rem 0;
+}
+.meter-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.4s ease;
+}
+.meter-fill.healthy { background-color: var(--emerald-bar); }
+.meter-fill.warning { background-color: var(--amber-bar); }
+.meter-fill.critical { background-color: var(--orange-bar); }
+.meter-fill.exhausted { background-color: var(--rose-bar); }
+.meter-fill.unknown { background-color: var(--muted-foreground); }
+
+.quota-inner-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+}
+
+.metrics-6-grid {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  text-align: center;
+}
+@media (min-width: 640px) {
+  .metrics-6-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+@media (min-width: 768px) {
+  .metrics-6-grid {
+    border-top: none;
+    border-left: 1px solid var(--border);
+    padding-top: 0;
+    padding-left: 0.85rem;
+    text-align: left;
+  }
+}
+.metric-cell {
+  display: flex;
+  flex-direction: column;
+}
+.metric-cell-label {
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.metric-cell-val {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--foreground);
+  margin-top: 0.15rem;
+}
+.metric-cell-val.rate-good { color: var(--emerald-text); }
+.metric-cell-val.rate-bad { color: var(--rose-text); }
+
+/* Right: Last-used & Action */
+.acc-col-action {
+  background-color: color-mix(in srgb, var(--muted) 15%, var(--card));
+  border-top: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+@media (min-width: 1024px) {
+  .acc-col-action {
+    border-top: none;
+    border-left: 1px solid var(--border);
+    width: 135px;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+}
+.last-used-text {
+  font-size: 0.68rem;
+  color: var(--muted-foreground);
+}
+@media (min-width: 1024px) {
+  .last-used-text {
+    text-align: right;
+  }
+}
+.btn-detail-link {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  transition: all 0.15s ease;
+}
+.btn-detail-link:hover {
+  text-decoration: underline;
+  transform: translateX(2px);
+}
+
+/* ==========================================================================
+   Pagination Section
+   ========================================================================== */
+.pagination-wrap {
+  margin-top: 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.5rem;
+  font-size: 0.75rem;
+}
+.page-info-meta {
+  color: var(--muted-foreground);
+}
+.page-nav-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.page-btn {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.page-btn:hover:not(:disabled) {
+  background-color: var(--muted);
+  border-color: var(--border-strong);
+}
+.page-btn.active {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+  font-weight: 700;
+}
+.page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
+   State Placeholders (Loading / Error / Empty)
+   ========================================================================== */
+.state-box {
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: 3.5rem 1.5rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+.state-box.error-box {
+  border-color: color-mix(in srgb, #ef4444 30%, var(--border));
+  background-color: color-mix(in srgb, #ef4444 5%, var(--card));
+}
+.spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid color-mix(in srgb, var(--primary) 20%, transparent);
+  border-top-color: var(--primary);
+  border-radius: 9999px;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Skeleton Loaders */
+.skeleton {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--muted) 60%, transparent) 25%, color-mix(in srgb, var(--muted) 90%, transparent) 50%, color-mix(in srgb, var(--muted) 60%, transparent) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 0.35rem;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton-card {
+  height: 80px;
+  border-radius: var(--radius-lg);
+  margin-bottom: 0.75rem;
+}
+
+/* ==========================================================================
+   Account Detail Drawer (Slide-Over)
+   ========================================================================== */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(26, 24, 21, 0.45);
+  backdrop-filter: blur(4px);
+  z-index: 50;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.drawer-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.drawer-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: 820px;
+  background-color: var(--background);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-xl);
+  z-index: 51;
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+}
+.drawer-backdrop.open .drawer-panel {
+  transform: translateX(0);
+}
+
+.drawer-header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background-color: var(--card);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.drawer-kicker {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
+}
+.drawer-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--foreground);
+  margin-top: 0.15rem;
+}
+.drawer-close-btn {
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-foreground);
+  transition: all 0.15s ease;
+}
+.drawer-close-btn:hover {
+  background-color: var(--muted);
+  color: var(--foreground);
+}
+
+.drawer-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* Drawer State Switcher Sub-bar */
+.drawer-state-bar {
+  background-color: color-mix(in srgb, var(--muted) 40%, var(--card));
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+}
+.drawer-state-btn {
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.25rem;
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  color: var(--foreground);
+  font-size: 0.7rem;
+}
+.drawer-state-btn.active {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+
+/* Drawer KPI metrics */
+.detail-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+@media (min-width: 640px) {
+  .detail-metrics-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+.detail-metric-box {
+  background-color: color-mix(in srgb, var(--muted) 25%, var(--card));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.75rem;
+}
+.detail-metric-label {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  display: block;
+}
+.detail-metric-val {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--foreground);
+  margin-top: 0.2rem;
+  display: block;
+}
+
+/* Drawer Sections */
+.detail-card-section {
+  position: relative;
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+  box-shadow: var(--shadow-sm);
+}
+.detail-card-section::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.85rem;
+  bottom: 0.85rem;
+  width: 3px;
+  border-radius: 9999px;
+  background-color: var(--primary);
+}
+.detail-card-section.quota-accent::before {
+  background-color: #10b981;
+}
+.detail-card-section.dist-accent::before {
+  background-color: #c26f4a;
+}
+.detail-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.85rem;
+}
+.detail-section-title {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+/* Drawer Charts Grid */
+.detail-charts-2col {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
+}
+@media (min-width: 640px) {
+  .detail-charts-2col {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.chart-subcard {
+  border: 1px solid var(--border);
+  background-color: color-mix(in srgb, var(--muted) 15%, var(--card));
+  border-radius: var(--radius);
+  padding: 0.75rem;
+}
+.chart-subcard-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.chart-subcard-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.chart-subcard-val {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+/* Quota Window Navigation in Drawer */
+.quota-nav-box {
+  display: grid;
+  grid-template-columns: 2rem 1fr 2rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--border));
+  background-color: color-mix(in srgb, var(--primary) 5%, var(--card));
+  border-radius: var(--radius);
+  margin-bottom: 0.85rem;
+}
+.quota-nav-arrow {
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--foreground);
+  transition: all 0.15s ease;
+}
+.quota-nav-arrow:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.quota-nav-arrow:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.quota-nav-center {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.quota-nav-count {
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+}
+.quota-nav-name {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.quota-nav-range {
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+}
+
+.window-detail-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background-color: var(--card);
+  padding: 0.75rem 0.85rem;
+}
+.window-facts-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.72rem;
+  color: var(--muted-foreground);
+}
+
+/* Distributions in Drawer */
+.distributions-2col {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.85rem;
+}
+@media (min-width: 640px) {
+  .distributions-2col {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.dist-item-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+}
+.dist-item-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.dist-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.dist-item-name {
+  color: var(--foreground);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dist-bar-track {
+  height: 4px;
+  background-color: var(--muted);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.dist-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background-color: var(--primary);
+}
+.dist-bar-fill.error-fill {
+  background-color: #ef4444;
+}
+
+/* ==========================================================================
+   Footer Attribution
+   ========================================================================== */
+.preview-footer {
+  margin-top: 3rem;
+  padding: 1.5rem 0;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* ==========================================================================
+   Reduced Motion
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+</style>
+</head>
+<body data-theme="light">
+
+<!-- Top Banner for Preview Context & Attribution -->
+<div class="preview-banner">
+  <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+    <span class="banner-badge">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg>
+      Aether UI Concept Preview
+    </span>
+    <span>账号消耗统计 · 100% 形式页面功能交互对齐原型</span>
+  </div>
+  <div class="banner-right">
+    <span style="color: var(--muted-foreground);">Preview generated by designer agent · ui-ux-pro-max</span>
+  </div>
+</div>
+
+<!-- State Switcher Bar for Product & UX Reviewers -->
+<div class="state-switcher-bar" role="toolbar" aria-label="页面状态切换栏">
+  <span class="state-label">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+    评审状态切换:
+  </span>
+  <button class="state-btn active" onclick="switchMainState('normal')">1. 正常展示 (完整交互)</button>
+  <button class="state-btn" onclick="switchMainState('loading')">2. 加载骨架屏</button>
+  <button class="state-btn" onclick="switchMainState('overview-error')">3. 账号池加载失败</button>
+  <button class="state-btn" onclick="switchMainState('stats-error')">4. 统计数据加载失败</button>
+  <button class="state-btn" onclick="switchMainState('no-pool')">5. 无可用账号池</button>
+  <button class="state-btn" onclick="switchMainState('no-match')">6. 筛选无匹配账号</button>
+
+  <button class="theme-toggle-btn" onclick="toggleTheme()" aria-label="切换明暗主题">
+    <svg id="themeIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+    <span id="themeText">切换深色</span>
+  </button>
+</div>
+
+<!-- Main App Container -->
+<main class="app-container">
+
+  <!-- Main View States (Normal, Loading, Errors, Empty) -->
+  <div id="stateContainer">
+    <!-- Will be dynamically populated or toggled -->
+  </div>
+
+</main>
+
+<!-- Account Detail Drawer (Teleported / Fixed Overlay) -->
+<div id="accountDrawer" class="drawer-backdrop" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" onclick="handleBackdropClick(event)">
+  <div class="drawer-panel" onclick="event.stopPropagation()">
+    <!-- Sticky Drawer Header -->
+    <div class="drawer-header">
+      <div>
+        <p class="drawer-kicker">账号诊断</p>
+        <h2 id="drawerTitle" class="drawer-title">加载中…</h2>
+      </div>
+      <button class="drawer-close-btn" onclick="closeDrawer()" aria-label="关闭详情抽屉">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+    </div>
+
+    <!-- Drawer State Switcher Sub-bar -->
+    <div style="padding: 0.5rem 1.5rem; background-color: var(--muted-light); border-bottom: 1px solid var(--border);">
+      <div class="drawer-state-bar">
+        <span style="font-weight: 600; color: var(--muted-foreground);">抽屉状态测试:</span>
+        <button class="drawer-state-btn active" onclick="switchDrawerState('normal')">正常</button>
+        <button class="drawer-state-btn" onclick="switchDrawerState('loading')">加载中</button>
+        <button class="drawer-state-btn" onclick="switchDrawerState('error')">加载失败</button>
+        <button class="drawer-state-btn" onclick="switchDrawerState('empty')">无记录</button>
+      </div>
+    </div>
+
+    <!-- Drawer Body -->
+    <div id="drawerBody" class="drawer-content">
+      <!-- Dynamic Drawer Content populated by JS -->
+    </div>
+  </div>
+</div>
+
+<!-- Footer Attribution -->
+<footer class="preview-footer">
+  <p><strong>Aether 账号消耗统计 · 交互原型预览</strong></p>
+  <p>Preview generated by designer agent · ui-ux-pro-max · 严格对齐 StyreneA/TiemposText 与语义主题 Tokens</p>
+</footer>
+
+<!-- ==========================================================================
+   Interactive Fixture Data & Client-side Logic
+   ========================================================================== -->
+<script>
+// Mock Dataset for 3 Different Account Pools
+const POOLS = [
+  { id: 'pool-openai-prod', name: 'OpenAI 主力池', type: 'openai', provider_type: 'openai' },
+  { id: 'pool-claude-prod', name: 'Claude 生产池', type: 'anthropic', provider_type: 'anthropic' },
+  { id: 'pool-deepseek-mix', name: 'DeepSeek 混合池', type: 'deepseek', provider_type: 'deepseek' }
+];
+
+// Accounts Fixture
+const MOCK_ACCOUNTS = [
+  {
+    key_id: 'acc-01',
+    pool_id: 'pool-openai-prod',
+    key_name: 'prod-oai-tier4-team-01@corp.internal',
+    auth_type: 'OAuth 2.0',
+    plan_type: 'team',
+    is_active: true,
+    status: 'healthy',
+    last_used_at_unix_secs: Date.now() / 1000 - 120, // 2 mins ago
+    request_count: 8420,
+    total_tokens: 6180400,
+    input_tokens: 4420000,
+    output_tokens: 1760400,
+    success_rate: 99.4,
+    p95_response_time_ms: 780,
+    cache_hit_rate: 42.5,
+    total_cost_usd: 24.85,
+    actual_total_cost_usd: 21.20,
+    quota: {
+      freshness: 'fresh',
+      observed_at_unix_secs: Date.now() / 1000 - 300,
+      supported: true,
+      windows: [
+        {
+          code: 'monthly-tokens',
+          label: '月度 Token 额度',
+          model: 'GPT-4o',
+          remaining_percent: 68.4,
+          remaining_value: 34200000,
+          limit_value: 50000000,
+          used_percent: 31.6,
+          used_value: 15800000,
+          unit: 'Tokens',
+          window_minutes: 43200,
+          reset_at_unix_secs: Date.now() / 1000 + 86400 * 12,
+          forecast: { risk: 'healthy' }
+        },
+        {
+          code: 'rate-limit-tpm',
+          label: '每分钟速率 (TPM)',
+          model: 'GPT-4o',
+          remaining_percent: 82.0,
+          remaining_value: 820000,
+          limit_value: 1000000,
+          used_percent: 18.0,
+          used_value: 180000,
+          unit: 'TPM',
+          window_minutes: 1,
+          reset_at_unix_secs: Date.now() / 1000 + 45,
+          forecast: { risk: 'healthy' }
+        }
+      ]
+    },
+    model_distribution: [
+      { model: 'gpt-4o-2024-08-06', request_count: 5200 },
+      { model: 'gpt-4o-mini', request_count: 2480 },
+      { model: 'o1-preview', request_count: 540 },
+      { model: 'text-embedding-3-small', request_count: 200 }
+    ],
+    error_distribution: [
+      { error_category: '429 Rate Limit Exceeded', count: 32 },
+      { error_category: '504 Gateway Timeout', count: 12 },
+      { error_category: '400 Context Length Exceeded', count: 6 }
+    ]
+  },
+  {
+    key_id: 'acc-02',
+    pool_id: 'pool-openai-prod',
+    key_name: 'feature.like_4e@icloud.com',
+    auth_type: 'Session Token',
+    plan_type: 'plus',
+    is_active: true,
+    status: 'healthy',
+    last_used_at_unix_secs: Date.now() / 1000 - 1800, // 30 mins ago
+    request_count: 3120,
+    total_tokens: 2840000,
+    input_tokens: 2100000,
+    output_tokens: 740000,
+    success_rate: 98.2,
+    p95_response_time_ms: 1120,
+    cache_hit_rate: 31.0,
+    total_cost_usd: 11.40,
+    actual_total_cost_usd: 10.20,
+    quota: {
+      freshness: 'fresh',
+      observed_at_unix_secs: Date.now() / 1000 - 1200,
+      supported: true,
+      windows: [
+        {
+          code: '3h-window',
+          label: '3小时消息上限',
+          model: 'GPT-4o',
+          remaining_percent: 24.0,
+          remaining_value: 12,
+          limit_value: 50,
+          used_percent: 76.0,
+          used_value: 38,
+          unit: '次',
+          window_minutes: 180,
+          reset_at_unix_secs: Date.now() / 1000 + 4200,
+          forecast: { risk: 'warning' }
+        }
+      ]
+    },
+    model_distribution: [
+      { model: 'gpt-4o', request_count: 2100 },
+      { model: 'gpt-4o-mini', request_count: 1020 }
+    ],
+    error_distribution: [
+      { error_category: '429 Usage Cap Reached', count: 48 },
+      { error_category: '502 Bad Gateway', count: 8 }
+    ]
+  },
+  {
+    key_id: 'acc-03',
+    pool_id: 'pool-openai-prod',
+    key_name: 'enterprise-shared-batch-03',
+    auth_type: 'API Key',
+    plan_type: 'pro',
+    is_active: true,
+    status: 'degraded',
+    last_used_at_unix_secs: Date.now() / 1000 - 7200, // 2 hours ago
+    request_count: 4620,
+    total_tokens: 4120000,
+    input_tokens: 3200000,
+    output_tokens: 920000,
+    success_rate: 89.1,
+    p95_response_time_ms: 2450,
+    cache_hit_rate: 18.2,
+    total_cost_usd: 16.90,
+    actual_total_cost_usd: 15.10,
+    quota: {
+      freshness: 'stale',
+      observed_at_unix_secs: Date.now() / 1000 - 86400 * 2,
+      supported: true,
+      windows: [
+        {
+          code: 'daily-cap',
+          label: '日配额',
+          model: 'GPT-4o',
+          remaining_percent: 8.5,
+          remaining_value: 85,
+          limit_value: 1000,
+          used_percent: 91.5,
+          used_value: 915,
+          unit: 'USD',
+          window_minutes: 1440,
+          reset_at_unix_secs: Date.now() / 1000 + 7200,
+          forecast: { risk: 'critical' }
+        }
+      ]
+    },
+    model_distribution: [
+      { model: 'gpt-4o', request_count: 3100 },
+      { model: 'o1-mini', request_count: 1520 }
+    ],
+    error_distribution: [
+      { error_category: '504 Gateway Timeout', count: 320 },
+      { error_category: '429 Rate Limit', count: 180 },
+      { error_category: '500 Internal Server Error', count: 14 }
+    ]
+  },
+  {
+    key_id: 'acc-04',
+    pool_id: 'pool-openai-prod',
+    key_name: 'legacy-backup-service-key-09',
+    auth_type: 'API Key',
+    plan_type: 'free',
+    is_active: false,
+    status: 'inactive',
+    last_used_at_unix_secs: Date.now() / 1000 - 86400 * 5, // 5 days ago
+    request_count: 0,
+    total_tokens: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    success_rate: null,
+    p95_response_time_ms: null,
+    cache_hit_rate: 0,
+    total_cost_usd: 0,
+    actual_total_cost_usd: 0,
+    quota: {
+      freshness: 'unknown',
+      observed_at_unix_secs: null,
+      supported: false,
+      message: '账号已停用，无配额同步',
+      windows: []
+    },
+    model_distribution: [],
+    error_distribution: []
+  },
+  {
+    key_id: 'acc-05',
+    pool_id: 'pool-openai-prod',
+    key_name: 'vip-agent-pipeline-east-01',
+    auth_type: 'OAuth 2.0',
+    plan_type: 'team',
+    is_active: true,
+    status: 'healthy',
+    last_used_at_unix_secs: Date.now() / 1000 - 60, // 1 min ago
+    request_count: 11200,
+    total_tokens: 9400000,
+    input_tokens: 7200000,
+    output_tokens: 2200000,
+    success_rate: 99.8,
+    p95_response_time_ms: 640,
+    cache_hit_rate: 54.0,
+    total_cost_usd: 36.50,
+    actual_total_cost_usd: 28.40,
+    quota: {
+      freshness: 'fresh',
+      observed_at_unix_secs: Date.now() / 1000 - 180,
+      supported: true,
+      windows: [
+        {
+          code: 'rolling-window',
+          label: '5小时周期',
+          model: 'GPT-4o',
+          remaining_percent: 74.5,
+          remaining_value: 298,
+          limit_value: 400,
+          used_percent: 25.5,
+          used_value: 102,
+          unit: '次',
+          window_minutes: 300,
+          reset_at_unix_secs: Date.now() / 1000 + 9800,
+          forecast: { risk: 'healthy' }
+        }
+      ]
+    },
+    model_distribution: [
+      { model: 'gpt-4o-2024-08-06', request_count: 8200 },
+      { model: 'gpt-4o-mini', request_count: 3000 }
+    ],
+    error_distribution: [
+      { error_category: '429 Rate Limit', count: 18 }
+    ]
+  },
+  {
+    key_id: 'acc-06',
+    pool_id: 'pool-openai-prod',
+    key_name: 'sandbox-test-exhausted-account',
+    auth_type: 'Session Token',
+    plan_type: 'plus',
+    is_active: true,
+    status: 'blocked',
+    last_used_at_unix_secs: Date.now() / 1000 - 3600 * 4,
+    request_count: 1890,
+    total_tokens: 1450000,
+    input_tokens: 1100000,
+    output_tokens: 350000,
+    success_rate: 74.2,
+    p95_response_time_ms: 3200,
+    cache_hit_rate: 12.0,
+    total_cost_usd: 6.20,
+    actual_total_cost_usd: 5.80,
+    quota: {
+      freshness: 'fresh',
+      observed_at_unix_secs: Date.now() / 1000 - 600,
+      supported: true,
+      windows: [
+        {
+          code: 'exhausted-window',
+          label: '3小时配额',
+          model: 'GPT-4o',
+          remaining_percent: 0.0,
+          remaining_value: 0,
+          limit_value: 40,
+          used_percent: 100.0,
+          used_value: 40,
+          unit: '次',
+          window_minutes: 180,
+          reset_at_unix_secs: Date.now() / 1000 + 5400,
+          forecast: { risk: 'exhausted' }
+        }
+      ]
+    },
+    model_distribution: [
+      { model: 'gpt-4o', request_count: 1890 }
+    ],
+    error_distribution: [
+      { error_category: '429 Quota Exhausted', count: 480 },
+      { error_category: '401 Unauthorized Session', count: 8 }
+    ]
+  }
+];
+
+// App State
+let state = {
+  mainState: 'normal', // 'normal' | 'loading' | 'overview-error' | 'stats-error' | 'no-pool' | 'no-match'
+  selectedPoolId: 'pool-openai-prod',
+  range: 'last7days',
+  customStartDate: '2026-08-09',
+  customEndDate: '2026-08-16',
+  customRangeActive: false,
+  search: '',
+  filters: {
+    usage: 'all',      // 'all' | 'used' | 'idle'
+    risk: 'all',       // 'all' | 'healthy' | 'warning' | 'critical' | 'exhausted' | 'unknown'
+    freshness: 'all',  // 'all' | 'fresh' | 'stale' | 'unknown'
+    active: 'all',     // 'all' | 'active' | 'inactive' | 'blocked'
+    result: 'all'      // 'all' | 'success' | 'failed'
+  },
+  sortBy: 'cost',      // 'cost' | 'requests' | 'tokens' | 'quota' | 'last_used'
+  sortOrder: 'desc',
+  page: 1,
+  pageSize: 10,
+  refreshing: false,
+
+  // Drawer State
+  drawerOpen: false,
+  drawerState: 'normal', // 'normal' | 'loading' | 'error' | 'empty'
+  selectedAccount: null,
+  activeQuotaIndex: 0
+};
+
+// Formatters
+function formatInteger(num) {
+  return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 }).format(num || 0);
+}
+function formatCompactNumber(num) {
+  return new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(num || 0);
+}
+function formatToken(num) {
+  const n = num || 0;
+  if (n >= 1000000) return `${(n / 1000000).toFixed(n >= 10000000 ? 1 : 2)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}K`;
+  return formatInteger(n);
+}
+function formatUsd(num) {
+  const n = Number(num || 0);
+  return `$${n.toFixed(n >= 100 ? 2 : 4)}`;
+}
+function formatPercent(num) {
+  return num == null ? '—' : `${Number(num).toFixed(1)}%`;
+}
+function formatLatency(num) {
+  if (num == null) return '—';
+  return num >= 1000 ? `${(num / 1000).toFixed(2)}s` : `${Math.round(num)}ms`;
+}
+function formatShortDate(unixSecs) {
+  if (!unixSecs) return '—';
+  const d = new Date(unixSecs * 1000);
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hr = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${m}/${day} ${hr}:${min}`;
+}
+function lastUsedLabel(unixSecs) {
+  if (!unixSecs) return '暂无使用记录';
+  const diffSecs = Math.max(0, Math.floor(Date.now() / 1000 - unixSecs));
+  if (diffSecs < 60) return '刚刚使用';
+  if (diffSecs < 3600) return `${Math.floor(diffSecs / 60)} 分钟前`;
+  if (diffSecs < 86400) return `${Math.floor(diffSecs / 3600)} 小时前`;
+  return `最后使用 ${formatShortDate(unixSecs)}`;
+}
+function quotaSyncLabel(quota) {
+  if (quota.freshness === 'fresh') {
+    return quota.observed_at_unix_secs ? `已同步 ${formatShortDate(quota.observed_at_unix_secs)}` : '已同步';
+  }
+  if (quota.freshness === 'stale') {
+    return quota.observed_at_unix_secs ? `上次同步 ${formatShortDate(quota.observed_at_unix_secs)}` : '同步较早';
+  }
+  return '尚未同步';
+}
+function syncClass(freshness) {
+  if (freshness === 'fresh') return 'sync-good';
+  if (freshness === 'stale') return 'sync-warning';
+  return 'sync-unknown';
+}
+function rateClass(rate) {
+  if (rate == null) return '';
+  if (rate >= 98) return 'rate-good';
+  if (rate < 90) return 'rate-bad';
+  return '';
+}
+function riskBarClass(risk) {
+  return risk || 'healthy';
+}
+
+// Filter and Sort Accounts
+function getFilteredAccounts() {
+  let list = [...MOCK_ACCOUNTS];
+
+  // Pool filter
+  if (state.selectedPoolId) {
+    list = list.filter(a => a.pool_id === state.selectedPoolId);
+  }
+
+  // Search filter
+  if (state.search.trim()) {
+    const q = state.search.toLowerCase().trim();
+    list = list.filter(a =>
+      a.key_name.toLowerCase().includes(q) ||
+      a.auth_type.toLowerCase().includes(q) ||
+      a.plan_type.toLowerCase().includes(q)
+    );
+  }
+
+  // 5 Filter Groups
+  if (state.filters.usage !== 'all') {
+    if (state.filters.usage === 'used') list = list.filter(a => a.request_count > 0);
+    if (state.filters.usage === 'idle') list = list.filter(a => a.request_count === 0);
+  }
+  if (state.filters.risk !== 'all') {
+    list = list.filter(a => {
+      const windowRisk = a.quota?.windows?.[0]?.forecast?.risk || 'unknown';
+      return windowRisk === state.filters.risk;
+    });
+  }
+  if (state.filters.freshness !== 'all') {
+    list = list.filter(a => a.quota?.freshness === state.filters.freshness);
+  }
+  if (state.filters.active !== 'all') {
+    if (state.filters.active === 'active') list = list.filter(a => a.is_active);
+    if (state.filters.active === 'inactive') list = list.filter(a => !a.is_active);
+    if (state.filters.active === 'blocked') list = list.filter(a => a.status === 'blocked');
+  }
+  if (state.filters.result !== 'all') {
+    if (state.filters.result === 'success') list = list.filter(a => a.success_rate != null && a.success_rate > 95);
+    if (state.filters.result === 'failed') list = list.filter(a => (a.error_distribution?.length || 0) > 0 || (a.success_rate != null && a.success_rate < 95));
+  }
+
+  // Sorting
+  list.sort((a, b) => {
+    let factor = state.sortOrder === 'asc' ? 1 : -1;
+    if (state.sortBy === 'cost') return factor * (a.total_cost_usd - b.total_cost_usd);
+    if (state.sortBy === 'requests') return factor * (a.request_count - b.request_count);
+    if (state.sortBy === 'tokens') return factor * (a.total_tokens - b.total_tokens);
+    if (state.sortBy === 'quota') {
+      const qA = a.quota?.windows?.[0]?.remaining_percent ?? 999;
+      const qB = b.quota?.windows?.[0]?.remaining_percent ?? 999;
+      return factor * (qA - qB);
+    }
+    if (state.sortBy === 'last_used') {
+      const uA = a.last_used_at_unix_secs || 0;
+      const uB = b.last_used_at_unix_secs || 0;
+      return factor * (uA - uB);
+    }
+    return 0;
+  });
+
+  return list;
+}
+
+// Calculate Summary KPIs
+function computeSummary(accounts) {
+  const account_count = accounts.length;
+  const used_account_count = accounts.filter(a => a.request_count > 0).length;
+  const request_count = accounts.reduce((acc, a) => acc + a.request_count, 0);
+  const total_tokens = accounts.reduce((acc, a) => acc + a.total_tokens, 0);
+  const input_tokens = accounts.reduce((acc, a) => acc + a.input_tokens, 0);
+  const output_tokens = accounts.reduce((acc, a) => acc + a.output_tokens, 0);
+  const total_cost_usd = accounts.reduce((acc, a) => acc + a.total_cost_usd, 0);
+  const actual_total_cost_usd = accounts.reduce((acc, a) => acc + a.actual_total_cost_usd, 0);
+
+  const ratedAccounts = accounts.filter(a => a.success_rate != null);
+  const success_rate = ratedAccounts.length ? (ratedAccounts.reduce((acc, a) => acc + a.success_rate, 0) / ratedAccounts.length) : 100;
+  const cache_hit_rate = accounts.length ? (accounts.reduce((acc, a) => acc + a.cache_hit_rate, 0) / accounts.length) : 0;
+  const p95_response_time_ms = 820;
+
+  return {
+    account_count,
+    used_account_count,
+    request_count,
+    total_tokens,
+    input_tokens,
+    output_tokens,
+    total_cost_usd,
+    actual_total_cost_usd,
+    success_rate,
+    cache_hit_rate,
+    p95_response_time_ms
+  };
+}
+
+// ==========================================================================
+// RENDER FUNCTIONS
+// ==========================================================================
+
+function renderApp() {
+  const container = document.getElementById('stateContainer');
+
+  if (state.mainState === 'loading') {
+    container.innerHTML = renderLoadingState();
+    return;
+  }
+  if (state.mainState === 'overview-error') {
+    container.innerHTML = renderOverviewErrorState();
+    return;
+  }
+  if (state.mainState === 'stats-error') {
+    container.innerHTML = renderStatsErrorState();
+    return;
+  }
+  if (state.mainState === 'no-pool') {
+    container.innerHTML = renderNoPoolState();
+    return;
+  }
+
+  // Normal View with filtered accounts
+  const allFiltered = getFilteredAccounts();
+  const summary = computeSummary(allFiltered);
+
+  // Pagination slice
+  const total = allFiltered.length;
+  const totalPages = Math.max(1, Math.ceil(total / state.pageSize));
+  if (state.page > totalPages) state.page = totalPages;
+  const startIdx = (state.page - 1) * state.pageSize;
+  const pagedAccounts = allFiltered.slice(startIdx, startIdx + state.pageSize);
+
+  const isNoMatch = (state.mainState === 'no-match' || total === 0);
+
+  container.innerHTML = `
+    <!-- 1. Page Header -->
+    <header class="page-header">
+      <div class="header-left">
+        <div class="header-icon-box">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+        </div>
+        <div>
+          <p class="header-kicker">运营数据</p>
+          <div class="header-title-wrap">
+            <h1 class="header-title">账号消耗统计</h1>
+            <span class="provider-badge">${state.selectedPoolId.split('-')[1] || 'openai'}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <!-- Pool Selector -->
+        <select class="select-trigger pool-select" onchange="handlePoolChange(this.value)" aria-label="选择账号池">
+          ${POOLS.map(p => `<option value="${p.id}" ${p.id === state.selectedPoolId ? 'selected' : ''}>${p.name} · ${p.type}</option>`).join('')}
+        </select>
+
+        <!-- Time Range Selector -->
+        <select class="select-trigger" onchange="handleRangeChange(this.value)" aria-label="选择时间范围">
+          <option value="today" ${state.range === 'today' ? 'selected' : ''}>今天</option>
+          <option value="last3days" ${state.range === 'last3days' ? 'selected' : ''}>近 3 天</option>
+          <option value="last7days" ${state.range === 'last7days' ? 'selected' : ''}>近 7 天</option>
+          <option value="last30days" ${state.range === 'last30days' ? 'selected' : ''}>近 30 天</option>
+          <option value="last90days" ${state.range === 'last90days' ? 'selected' : ''}>近 90 天</option>
+          <option value="all" ${state.range === 'all' ? 'selected' : ''}>全部历史</option>
+          <option value="custom" ${state.range === 'custom' ? 'selected' : ''}>自定义范围</option>
+        </select>
+
+        <!-- Refresh Button -->
+        <button class="refresh-btn ${state.refreshing ? 'spinning' : ''}" onclick="handleRefresh()" aria-label="刷新数据">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+          <span>${state.refreshing ? '刷新中…' : '刷新'}</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 2. Filter Panel (With 5 Filter Groups, Search, Sort Preset, Custom Range) -->
+    <section class="filter-card" aria-label="账号筛选面板">
+      <div class="filter-header">
+        <div class="filter-header-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          <span>账号筛选与检索</span>
+        </div>
+        <div class="filter-header-actions">
+          <div class="sort-wrap">
+            <span class="sort-label">排序预设:</span>
+            <select class="select-compact" style="min-width: 130px;" onchange="handleSortPreset(this.value)" aria-label="排序方式">
+              <option value="cost:desc" ${state.sortBy === 'cost' && state.sortOrder === 'desc' ? 'selected' : ''}>费用最高</option>
+              <option value="cost:asc" ${state.sortBy === 'cost' && state.sortOrder === 'asc' ? 'selected' : ''}>费用最低</option>
+              <option value="requests:desc" ${state.sortBy === 'requests' && state.sortOrder === 'desc' ? 'selected' : ''}>请求最多</option>
+              <option value="tokens:desc" ${state.sortBy === 'tokens' && state.sortOrder === 'desc' ? 'selected' : ''}>Token 最多</option>
+              <option value="quota:asc" ${state.sortBy === 'quota' && state.sortOrder === 'asc' ? 'selected' : ''}>剩余额度最低</option>
+              <option value="last_used:desc" ${state.sortBy === 'last_used' && state.sortOrder === 'desc' ? 'selected' : ''}>最近使用</option>
+            </select>
+          </div>
+          <button class="btn-ghost-sm" onclick="handleResetFilters()" aria-label="清除所有筛选">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            清除筛选
+          </button>
+        </div>
+      </div>
+
+      <!-- Custom Date Range Disclosure -->
+      ${state.range === 'custom' || state.customRangeActive ? `
+        <div class="custom-range-row">
+          <span class="custom-range-label">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+            自定义范围:
+          </span>
+          <label class="custom-range-label">开始 <input type="date" class="custom-date-input" id="customStartDate" value="${state.customStartDate}" aria-label="开始日期"></label>
+          <span style="color: var(--muted-foreground);">至</span>
+          <label class="custom-range-label">结束 <input type="date" class="custom-date-input" id="customEndDate" value="${state.customEndDate}" aria-label="结束日期"></label>
+          <button class="btn-outline-sm" onclick="handleApplyCustomDate()">应用日期</button>
+        </div>
+      ` : ''}
+
+      <div class="filter-grid">
+        <!-- Search input column -->
+        <div class="filter-search-col">
+          <span class="col-kicker">搜索账号 / 认证方式</span>
+          <div class="search-input-wrap">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <input
+              type="search"
+              class="search-input"
+              placeholder="搜索账号名、邮箱或认证类型 (例如 feature.like_4e@icloud.com)"
+              value="${state.search}"
+              oninput="handleSearchInput(this.value)"
+              aria-label="搜索账号"
+            />
+            ${state.search ? `
+              <button class="search-clear-btn" onclick="handleClearSearch()" aria-label="清空搜索">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            ` : ''}
+          </div>
+        </div>
+
+        <!-- 5 Named Filter Groups -->
+        <div class="filter-selects-col">
+          <span class="col-kicker">状态与属性筛选 (5 项组合)</span>
+          <div class="selects-5-group">
+            <!-- 1. 使用情况 -->
+            <div class="filter-field">
+              <span class="field-label">使用情况</span>
+              <select class="select-compact" onchange="handleFilterUpdate('usage', this.value)" aria-label="使用情况筛选">
+                <option value="all" ${state.filters.usage === 'all' ? 'selected' : ''}>全部</option>
+                <option value="used" ${state.filters.usage === 'used' ? 'selected' : ''}>有请求</option>
+                <option value="idle" ${state.filters.usage === 'idle' ? 'selected' : ''}>暂无请求</option>
+              </select>
+            </div>
+
+            <!-- 2. 额度状态 -->
+            <div class="filter-field">
+              <span class="field-label">额度状态</span>
+              <select class="select-compact" onchange="handleFilterUpdate('risk', this.value)" aria-label="额度状态筛选">
+                <option value="all" ${state.filters.risk === 'all' ? 'selected' : ''}>全部</option>
+                <option value="healthy" ${state.filters.risk === 'healthy' ? 'selected' : ''}>额度充足</option>
+                <option value="warning" ${state.filters.risk === 'warning' ? 'selected' : ''}>额度偏低</option>
+                <option value="critical" ${state.filters.risk === 'critical' ? 'selected' : ''}>可能提前用完</option>
+                <option value="exhausted" ${state.filters.risk === 'exhausted' ? 'selected' : ''}>额度已用完</option>
+                <option value="unknown" ${state.filters.risk === 'unknown' ? 'selected' : ''}>暂未知</option>
+              </select>
+            </div>
+
+            <!-- 3. 额度同步 -->
+            <div class="filter-field">
+              <span class="field-label">额度同步</span>
+              <select class="select-compact" onchange="handleFilterUpdate('freshness', this.value)" aria-label="额度同步筛选">
+                <option value="all" ${state.filters.freshness === 'all' ? 'selected' : ''}>全部</option>
+                <option value="fresh" ${state.filters.freshness === 'fresh' ? 'selected' : ''}>最近已同步</option>
+                <option value="stale" ${state.filters.freshness === 'stale' ? 'selected' : ''}>同步较早</option>
+                <option value="unknown" ${state.filters.freshness === 'unknown' ? 'selected' : ''}>无同步记录</option>
+              </select>
+            </div>
+
+            <!-- 4. 账号状态 -->
+            <div class="filter-field">
+              <span class="field-label">账号状态</span>
+              <select class="select-compact" onchange="handleFilterUpdate('active', this.value)" aria-label="账号状态筛选">
+                <option value="all" ${state.filters.active === 'all' ? 'selected' : ''}>全部</option>
+                <option value="active" ${state.filters.active === 'active' ? 'selected' : ''}>已启用</option>
+                <option value="inactive" ${state.filters.active === 'inactive' ? 'selected' : ''}>已停用</option>
+                <option value="blocked" ${state.filters.active === 'blocked' ? 'selected' : ''}>不可用</option>
+              </select>
+            </div>
+
+            <!-- 5. 请求结果 -->
+            <div class="filter-field">
+              <span class="field-label">请求结果</span>
+              <select class="select-compact" onchange="handleFilterUpdate('result', this.value)" aria-label="请求结果筛选">
+                <option value="all" ${state.filters.result === 'all' ? 'selected' : ''}>全部</option>
+                <option value="success" ${state.filters.result === 'success' ? 'selected' : ''}>全部成功</option>
+                <option value="failed" ${state.filters.result === 'failed' ? 'selected' : ''}>包含失败</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. KPI Summary Cards (5 Cards) -->
+    <section class="kpi-section" aria-label="账号池概览 KPI">
+      <!-- 账号 KPI -->
+      <div class="kpi-card accent-left">
+        <div class="kpi-top">
+          <div>
+            <p class="kpi-label">账号总数</p>
+            <div class="kpi-value tabular-nums">${formatInteger(summary.account_count)}</div>
+          </div>
+          <div class="kpi-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+        </div>
+        <p class="kpi-hint">${formatInteger(summary.used_account_count)} 个有请求记录</p>
+      </div>
+
+      <!-- 请求 KPI -->
+      <div class="kpi-card">
+        <div class="kpi-top">
+          <div>
+            <p class="kpi-label">总请求数</p>
+            <div class="kpi-value tabular-nums">${formatInteger(summary.request_count)}</div>
+          </div>
+          <div class="kpi-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          </div>
+        </div>
+        <p class="kpi-hint">${formatPercent(summary.success_rate)} 请求成功率</p>
+      </div>
+
+      <!-- Token KPI -->
+      <div class="kpi-card">
+        <div class="kpi-top">
+          <div>
+            <p class="kpi-label">Token 消耗</p>
+            <div class="kpi-value tabular-nums">${formatToken(summary.total_tokens)}</div>
+          </div>
+          <div class="kpi-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="m7 6 5 5"/></svg>
+          </div>
+        </div>
+        <p class="kpi-hint">输入 ${formatToken(summary.input_tokens)} · 输出 ${formatToken(summary.output_tokens)}</p>
+      </div>
+
+      <!-- 费用 KPI -->
+      <div class="kpi-card">
+        <div class="kpi-top">
+          <div>
+            <p class="kpi-label">费用统计</p>
+            <div class="kpi-value tabular-nums">${formatUsd(summary.total_cost_usd)}</div>
+          </div>
+          <div class="kpi-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          </div>
+        </div>
+        <p class="kpi-hint">实际消耗 ${formatUsd(summary.actual_total_cost_usd)}</p>
+      </div>
+
+      <!-- 缓存命中 KPI -->
+      <div class="kpi-card">
+        <div class="kpi-top">
+          <div>
+            <p class="kpi-label">缓存命中率</p>
+            <div class="kpi-value tabular-nums">${formatPercent(summary.cache_hit_rate)}</div>
+          </div>
+          <div class="kpi-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
+        </div>
+        <p class="kpi-hint">P95 响应延迟 ${formatLatency(summary.p95_response_time_ms)}</p>
+      </div>
+    </section>
+
+    <!-- 4. Daily Token & Cost Trend Chart -->
+    <section class="trend-card" aria-label="用量与费用趋势">
+      <div class="trend-header">
+        <div class="trend-title-wrap">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--primary);"><line x1="18" x2="18" y1="20" y2="10"/><line x1="12" x2="12" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="14"/></svg>
+          <h2 class="trend-title">每日 Token 与费用趋势 (近 7 天)</h2>
+        </div>
+        <div class="trend-legends">
+          <div class="legend-item"><span class="legend-box token-in"></span><span>输入 Token</span></div>
+          <div class="legend-item"><span class="legend-box token-out"></span><span>输出 Token</span></div>
+          <div class="legend-item"><span class="legend-box cost-line"></span><span>费用 ($)</span></div>
+        </div>
+      </div>
+      <div class="chart-container-svg" id="trendChartSvgContainer">
+        ${renderTrendChartSvg()}
+      </div>
+    </section>
+
+    <!-- 5. Account Rows List / Empty State -->
+    <section aria-labelledby="accountListHeading">
+      <div class="list-section-header">
+        <div class="list-title-wrap">
+          <h3 id="accountListHeading" class="list-title">账号明细列表</h3>
+          <span class="list-count-meta">共 ${total} 个账号 · 页面展示 ${pagedAccounts.length} 条</span>
+        </div>
+        <button class="nav-link-btn" onclick="alert('已模拟跳转至账号池管理配置页')">
+          前往账号管理
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+        </button>
+      </div>
+
+      ${isNoMatch ? `
+        <div class="state-box">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--muted-foreground); opacity: 0.5;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <div>
+            <h4 style="font-size: 1rem; font-weight: 700; color: var(--foreground);">当前筛选没有找到匹配账号</h4>
+            <p style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 0.25rem;">可以尝试清空搜索关键词或放宽状态筛选条件。</p>
+          </div>
+          <button class="btn-outline-sm" style="margin-top: 0.5rem;" onclick="handleResetFilters()">清除所有筛选条件</button>
+        </div>
+      ` : `
+        <div class="account-cards-list">
+          ${pagedAccounts.map(account => renderAccountCard(account)).join('')}
+        </div>
+
+        <!-- 6. Pagination Bar -->
+        <div class="pagination-wrap">
+          <div class="page-info-meta">
+            展示第 ${startIdx + 1}-${Math.min(total, startIdx + state.pageSize)} 条 / 共 ${total} 条账号
+          </div>
+          <div class="page-nav-controls">
+            <button class="page-btn" ${state.page <= 1 ? 'disabled' : ''} onclick="changePage(${state.page - 1})" aria-label="上一页">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+
+            ${Array.from({ length: totalPages }, (_, i) => i + 1).map(p => `
+              <button class="page-btn ${p === state.page ? 'active' : ''}" onclick="changePage(${p})">${p}</button>
+            `).join('')}
+
+            <button class="page-btn" ${state.page >= totalPages ? 'disabled' : ''} onclick="changePage(${state.page + 1})" aria-label="下一页">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+
+            <select class="select-compact" style="width: auto; margin-left: 0.5rem;" onchange="changePageSize(Number(this.value))" aria-label="每页条数">
+              <option value="5" ${state.pageSize === 5 ? 'selected' : ''}>5 条/页</option>
+              <option value="10" ${state.pageSize === 10 ? 'selected' : ''}>10 条/页</option>
+              <option value="25" ${state.pageSize === 25 ? 'selected' : ''}>25 条/页</option>
+              <option value="50" ${state.pageSize === 50 ? 'selected' : ''}>50 条/页</option>
+            </select>
+          </div>
+        </div>
+      `}
+    </section>
+  `;
+}
+
+// Render Single Account Card Row
+function renderAccountCard(account) {
+  const window0 = account.quota?.windows?.[0];
+  const risk = window0?.forecast?.risk || 'healthy';
+
+  return `
+    <article class="account-card" data-key-id="${account.key_id}">
+      <!-- Left Column: Identity & Status -->
+      <div class="acc-col-identity">
+        <div>
+          <button type="button" class="acc-name-btn" onclick="openDrawer('${account.key_id}')" aria-label="查看 ${account.key_name} 诊断详情">
+            <div class="acc-name-line">
+              <span class="acc-name-text" title="${account.key_name}">${account.key_name}</span>
+              ${account.plan_type ? `<span class="plan-badge">${account.plan_type}</span>` : ''}
+            </div>
+            <div class="acc-meta-line">
+              <span class="status-dot ${account.is_active ? 'active' : 'inactive'}"></span>
+              <span>${account.is_active ? '已启用' : '已停用'} · ${account.auth_type}</span>
+            </div>
+          </button>
+        </div>
+
+        <div>
+          <span class="sync-pill ${syncClass(account.quota?.freshness)}">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+            ${quotaSyncLabel(account.quota)}
+          </span>
+        </div>
+      </div>
+
+      <!-- Middle Column: Quota & 6 Metrics -->
+      <div class="acc-col-body">
+        <!-- Quota Progress Meter -->
+        <div class="quota-box">
+          <div class="quota-box-header">
+            <span class="quota-box-title">额度与重置周期</span>
+            ${account.quota?.windows?.length ? `<span class="quota-window-count-tag">${account.quota.windows.length} 个窗口</span>` : ''}
+          </div>
+
+          ${window0 ? `
+            <div class="quota-card-inner">
+              <div class="quota-inner-topline">
+                <span class="quota-window-name" title="${window0.label}">${window0.label}</span>
+                <strong class="quota-remaining-val">${window0.remaining_percent.toFixed(1)}% 可用</strong>
+              </div>
+              <div class="meter-track" aria-hidden="true">
+                <div class="meter-fill ${riskBarClass(risk)}" style="width: ${window0.remaining_percent}%;"></div>
+              </div>
+              <div class="quota-inner-footer">
+                <span>已用 ${window0.used_value != null ? formatCompactNumber(window0.used_value) : '—'} ${window0.unit || ''}</span>
+                <span>重置于 ${formatShortDate(window0.reset_at_unix_secs)}</span>
+              </div>
+            </div>
+          ` : `
+            <div class="quota-card-inner" style="text-align: center; color: var(--muted-foreground); padding: 0.75rem;">
+              <span>${account.quota?.message || '账号未提供额度数据'}</span>
+            </div>
+          `}
+        </div>
+
+        <!-- 6 Metrics Grid -->
+        <div class="metrics-6-grid">
+          <div class="metric-cell">
+            <span class="metric-cell-label">请求</span>
+            <strong class="metric-cell-val tabular-nums">${formatInteger(account.request_count)}</strong>
+          </div>
+          <div class="metric-cell">
+            <span class="metric-cell-label">Token</span>
+            <strong class="metric-cell-val tabular-nums">${formatToken(account.total_tokens)}</strong>
+          </div>
+          <div class="metric-cell">
+            <span class="metric-cell-label">成功率</span>
+            <strong class="metric-cell-val tabular-nums ${rateClass(account.success_rate)}">${formatPercent(account.success_rate)}</strong>
+          </div>
+          <div class="metric-cell">
+            <span class="metric-cell-label">P95 响应</span>
+            <strong class="metric-cell-val tabular-nums">${formatLatency(account.p95_response_time_ms)}</strong>
+          </div>
+          <div class="metric-cell">
+            <span class="metric-cell-label">缓存命中</span>
+            <strong class="metric-cell-val tabular-nums">${formatPercent(account.cache_hit_rate)}</strong>
+          </div>
+          <div class="metric-cell">
+            <span class="metric-cell-label">费用</span>
+            <strong class="metric-cell-val tabular-nums">${formatUsd(account.total_cost_usd)}</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Last Used & Detail Action -->
+      <div class="acc-col-action">
+        <span class="last-used-text">${lastUsedLabel(account.last_used_at_unix_secs)}</span>
+        <button type="button" class="btn-detail-link" onclick="openDrawer('${account.key_id}')" aria-label="查看 ${account.key_name} 详情">
+          查看详情
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+        </button>
+      </div>
+    </article>
+  `;
+}
+
+// Render Daily SVG Trend Chart
+function renderTrendChartSvg() {
+  const days = [
+    { label: '08/10', inTokens: 1200000, outTokens: 420000, cost: 4.80 },
+    { label: '08/11', inTokens: 1850000, outTokens: 610000, cost: 7.20 },
+    { label: '08/12', inTokens: 1400000, outTokens: 520000, cost: 5.60 },
+    { label: '08/13', inTokens: 2100000, outTokens: 780000, cost: 8.40 },
+    { label: '08/14', inTokens: 1950000, outTokens: 690000, cost: 7.90 },
+    { label: '08/15', inTokens: 2450000, outTokens: 890000, cost: 9.80 },
+    { label: '08/16', inTokens: 1600000, outTokens: 580000, cost: 6.40 }
+  ];
+
+  const maxTokens = 3500000;
+  const maxCost = 12.0;
+  const width = 800;
+  const height = 160;
+  const paddingX = 40;
+  const paddingBottom = 30;
+  const chartHeight = height - paddingBottom;
+  const barGroupWidth = (width - paddingX * 2) / days.length;
+  const barWidth = 24;
+
+  let barsSvg = '';
+  let linePoints = [];
+
+  days.forEach((d, idx) => {
+    const x = paddingX + idx * barGroupWidth + (barGroupWidth - barWidth) / 2;
+    const totalTokens = d.inTokens + d.outTokens;
+    const barH = (totalTokens / maxTokens) * (chartHeight - 20);
+    const inH = (d.inTokens / maxTokens) * (chartHeight - 20);
+    const outH = (d.outTokens / maxTokens) * (chartHeight - 20);
+
+    const yOut = chartHeight - barH;
+    const yIn = yOut + outH;
+
+    // SVG Bars
+    barsSvg += `
+      <!-- Out Tokens Bar -->
+      <rect x="${x}" y="${yOut}" width="${barWidth}" height="${outH}" rx="3" fill="#e4b2a0" opacity="0.9" />
+      <!-- In Tokens Bar -->
+      <rect x="${x}" y="${yIn}" width="${barWidth}" height="${inH}" rx="3" fill="#c96442" opacity="0.95" />
+      <!-- Day Label -->
+      <text x="${x + barWidth / 2}" y="${height - 8}" text-anchor="middle" font-size="11" fill="var(--muted-foreground)">${d.label}</text>
+    `;
+
+    // Cost line coordinate
+    const costY = chartHeight - (d.cost / maxCost) * (chartHeight - 20);
+    linePoints.push(`${x + barWidth / 2},${costY}`);
+  });
+
+  const polylineSvg = `<polyline fill="none" stroke="#477074" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${linePoints.join(' ')}" />`;
+  const dotsSvg = linePoints.map((pt, i) => `<circle cx="${pt.split(',')[0]}" cy="${pt.split(',')[1]}" r="4" fill="#ffffff" stroke="#477074" stroke-width="2.5" />`).join('');
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" style="width: 100%; height: 100%; overflow: visible;" preserveAspectRatio="none">
+      <!-- Grid lines -->
+      <line x1="${paddingX}" y1="${chartHeight * 0.25}" x2="${width - paddingX}" y2="${chartHeight * 0.25}" stroke="var(--border)" stroke-dasharray="4" opacity="0.6"/>
+      <line x1="${paddingX}" y1="${chartHeight * 0.5}" x2="${width - paddingX}" y2="${chartHeight * 0.5}" stroke="var(--border)" stroke-dasharray="4" opacity="0.6"/>
+      <line x1="${paddingX}" y1="${chartHeight * 0.75}" x2="${width - paddingX}" y2="${chartHeight * 0.75}" stroke="var(--border)" stroke-dasharray="4" opacity="0.6"/>
+      <line x1="${paddingX}" y1="${chartHeight}" x2="${width - paddingX}" y2="${chartHeight}" stroke="var(--border)"/>
+
+      ${barsSvg}
+      ${polylineSvg}
+      ${dotsSvg}
+    </svg>
+  `;
+}
+
+// ==========================================================================
+// DRAWER RENDERING & LOGIC
+// ==========================================================================
+
+function openDrawer(keyId) {
+  const account = MOCK_ACCOUNTS.find(a => a.key_id === keyId) || MOCK_ACCOUNTS[0];
+  state.selectedAccount = account;
+  state.activeQuotaIndex = 0;
+  state.drawerState = 'normal';
+  state.drawerOpen = true;
+
+  document.getElementById('drawerTitle').innerText = account.key_name;
+  document.getElementById('accountDrawer').classList.add('open');
+  renderDrawerContent();
+}
+
+function closeDrawer() {
+  state.drawerOpen = false;
+  document.getElementById('accountDrawer').classList.remove('open');
+}
+
+function handleBackdropClick(event) {
+  if (event.target === document.getElementById('accountDrawer')) {
+    closeDrawer();
+  }
+}
+
+function renderDrawerContent() {
+  const container = document.getElementById('drawerBody');
+  const account = state.selectedAccount;
+
+  if (!account) return;
+
+  if (state.drawerState === 'loading') {
+    container.innerHTML = `
+      <div class="state-box" style="min-height: 300px;">
+        <div class="spinner"></div>
+        <p style="font-size: 0.85rem; color: var(--muted-foreground); margin-top: 0.5rem;">正在读取账号诊断数据…</p>
+      </div>
+    `;
+    return;
+  }
+  if (state.drawerState === 'error') {
+    container.innerHTML = `
+      <div class="state-box error-box" style="min-height: 260px;">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+        <p style="font-size: 0.9rem; font-weight: 700; color: #ef4444;">无法读取该账号诊断数据</p>
+        <p style="font-size: 0.75rem; color: var(--muted-foreground);">后端服务响应超时 (504 Gateway Timeout)</p>
+        <button class="btn-outline-sm" onclick="switchDrawerState('normal')">重试加载</button>
+      </div>
+    `;
+    return;
+  }
+  if (state.drawerState === 'empty') {
+    container.innerHTML = `
+      <div class="state-box" style="min-height: 260px;">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--muted-foreground);"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>
+        <p style="font-size: 0.9rem; font-weight: 700; color: var(--foreground);">该账号近期暂无任何请求或配额记录</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Normal Drawer View
+  const windows = account.quota?.windows || [];
+  const currentWindow = windows[state.activeQuotaIndex] || windows[0];
+
+  container.innerHTML = `
+    <!-- 1. 5 Summary Metric Stats -->
+    <div class="detail-metrics-grid">
+      <div class="detail-metric-box">
+        <span class="detail-metric-label">总请求数</span>
+        <strong class="detail-metric-val tabular-nums">${formatInteger(account.request_count)}</strong>
+      </div>
+      <div class="detail-metric-box">
+        <span class="detail-metric-label">Token 消耗</span>
+        <strong class="detail-metric-val tabular-nums">${formatToken(account.total_tokens)}</strong>
+      </div>
+      <div class="detail-metric-box">
+        <span class="detail-metric-label">成功率</span>
+        <strong class="detail-metric-val tabular-nums ${rateClass(account.success_rate)}">${formatPercent(account.success_rate)}</strong>
+      </div>
+      <div class="detail-metric-box">
+        <span class="detail-metric-label">P95 响应</span>
+        <strong class="detail-metric-val tabular-nums">${formatLatency(account.p95_response_time_ms)}</strong>
+      </div>
+      <div class="detail-metric-box">
+        <span class="detail-metric-label">总费用</span>
+        <strong class="detail-metric-val tabular-nums">${formatUsd(account.total_cost_usd)}</strong>
+      </div>
+    </div>
+
+    <!-- 2. Two Visual Charts (Token Trend & Cost Trend) -->
+    <section class="detail-card-section" aria-label="Token与费用趋势">
+      <div class="detail-section-header">
+        <h3 class="detail-section-title">Token 与费用趋势</h3>
+        <span style="font-size: 0.7rem; color: var(--muted-foreground); display: flex; align-items: center; gap: 0.3rem;">
+          <span style="width: 6px; height: 6px; border-radius: 99px; background-color: #10b981;"></span>
+          ${formatShortDate(Date.now() / 1000 - 86400 * 7)} - ${formatShortDate(Date.now() / 1000)}
+        </span>
+      </div>
+
+      <div class="detail-charts-2col">
+        <!-- Token Chart Card -->
+        <div class="chart-subcard">
+          <div class="chart-subcard-top">
+            <span class="chart-subcard-title"><span style="width: 6px; height: 6px; background-color: #c96442; border-radius: 2px;"></span>Token 使用量</span>
+            <strong class="chart-subcard-val tabular-nums">${formatToken(account.total_tokens)}</strong>
+          </div>
+          <div style="height: 100px; display: flex; align-items: flex-end; gap: 6px; padding-top: 10px;">
+            ${[35, 55, 40, 75, 60, 90, 48].map((h, i) => `
+              <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                <div style="width: 100%; height: ${h}%; background-color: #c96442; border-radius: 2px;"></div>
+                <span style="font-size: 9px; color: var(--muted-foreground);">08/${10 + i}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Cost Chart Card -->
+        <div class="chart-subcard">
+          <div class="chart-subcard-top">
+            <span class="chart-subcard-title"><span style="width: 6px; height: 6px; background-color: #477074; border-radius: 2px;"></span>费用趋势 ($)</span>
+            <strong class="chart-subcard-val tabular-nums">${formatUsd(account.total_cost_usd)}</strong>
+          </div>
+          <div style="height: 100px; display: flex; align-items: flex-end; gap: 6px; padding-top: 10px;">
+            ${[25, 45, 30, 65, 50, 80, 42].map((h, i) => `
+              <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                <div style="width: 100%; height: ${h}%; background-color: #477074; border-radius: 2px;"></div>
+                <span style="font-size: 9px; color: var(--muted-foreground);">08/${10 + i}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Quota Window Navigation & Meter -->
+    <section class="detail-card-section quota-accent" aria-label="额度与重置周期">
+      <div class="detail-section-header">
+        <h3 class="detail-section-title">额度与重置周期</h3>
+        <span class="sync-pill ${syncClass(account.quota?.freshness)}">${quotaSyncLabel(account.quota)}</span>
+      </div>
+
+      ${currentWindow ? `
+        <!-- Older/Newer Quota Window Navigation Buttons -->
+        <div class="quota-nav-box" aria-label="额度窗口导航">
+          <button
+            class="quota-nav-arrow"
+            ${state.activeQuotaIndex >= windows.length - 1 ? 'disabled' : ''}
+            onclick="shiftQuotaCycle(1)"
+            aria-label="查看更早的额度窗口"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
+
+          <div class="quota-nav-center">
+            <span class="quota-nav-count">${state.activeQuotaIndex + 1} / ${windows.length} 个窗口</span>
+            <strong class="quota-nav-name">${currentWindow.label}</strong>
+            <span class="quota-nav-range">重置于 ${formatShortDate(currentWindow.reset_at_unix_secs)}</span>
+          </div>
+
+          <button
+            class="quota-nav-arrow"
+            ${state.activeQuotaIndex <= 0 ? 'disabled' : ''}
+            onclick="shiftQuotaCycle(-1)"
+            aria-label="查看更新的额度窗口"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
+        </div>
+
+        <div class="window-detail-card">
+          <div class="quota-inner-topline">
+            <span class="quota-window-name">${currentWindow.model || '标准模型'} · ${currentWindow.label}</span>
+            <strong class="quota-remaining-val">${currentWindow.remaining_percent.toFixed(1)}% 可用</strong>
+          </div>
+          <div class="meter-track" aria-hidden="true" style="height: 6px; margin: 0.5rem 0;">
+            <div class="meter-fill ${riskBarClass(currentWindow.forecast?.risk)}" style="width: ${currentWindow.remaining_percent}%;"></div>
+          </div>
+          <div class="quota-inner-footer">
+            <span>已用 ${formatCompactNumber(currentWindow.used_value || 0)} ${currentWindow.unit || ''}</span>
+            <span>周期重置时间：${formatShortDate(currentWindow.reset_at_unix_secs)}</span>
+          </div>
+          <div class="window-facts-row">
+            <span>本窗口请求：<strong>${formatInteger(account.request_count)}</strong></span>
+            <span>本窗口 Token：<strong>${formatToken(account.total_tokens)}</strong></span>
+            <span>本窗口费用：<strong>${formatUsd(account.total_cost_usd)}</strong></span>
+          </div>
+        </div>
+      ` : `
+        <div style="text-align: center; color: var(--muted-foreground); padding: 1rem;">
+          <p>${account.quota?.message || '当前账号没有可展示的额度窗口'}</p>
+        </div>
+      `}
+    </section>
+
+    <!-- 4. Model & Failed Request Distributions (2 Columns) -->
+    <div class="distributions-2col">
+      <!-- Model Distribution -->
+      <section class="detail-card-section dist-accent" aria-label="模型使用分布">
+        <div class="detail-section-header">
+          <h3 class="detail-section-title">模型使用分布</h3>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 0.65rem;">
+          ${(account.model_distribution && account.model_distribution.length > 0) ? account.model_distribution.map(m => {
+            const pct = Math.round((m.request_count / (account.request_count || 1)) * 100);
+            return `
+              <div class="dist-item-row">
+                <div class="dist-item-top">
+                  <span class="dist-item-name" title="${m.model}">${m.model}</span>
+                  <strong class="tabular-nums">${formatInteger(m.request_count)} 次 (${pct}%)</strong>
+                </div>
+                <div class="dist-bar-track">
+                  <div class="dist-bar-fill" style="width: ${pct}%;"></div>
+                </div>
+              </div>
+            `;
+          }).join('') : `
+            <p style="font-size: 0.75rem; color: var(--muted-foreground);">暂无模型调用数据</p>
+          `}
+        </div>
+      </section>
+
+      <!-- Error Distribution -->
+      <section class="detail-card-section" aria-label="失败请求分布">
+        <div class="detail-section-header">
+          <h3 class="detail-section-title">失败请求分布</h3>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 0.65rem;">
+          ${(account.error_distribution && account.error_distribution.length > 0) ? account.error_distribution.map(e => `
+            <div class="dist-item-row">
+              <div class="dist-item-top">
+                <span class="dist-item-name" title="${e.error_category}">${e.error_category}</span>
+                <strong class="tabular-nums" style="color: #ef4444;">${formatInteger(e.count)} 次</strong>
+              </div>
+              <div class="dist-bar-track">
+                <div class="dist-bar-fill error-fill" style="width: ${Math.min(100, e.count * 2)}%;"></div>
+              </div>
+            </div>
+          `).join('') : `
+            <p style="font-size: 0.75rem; color: var(--emerald-text);">近期无失败请求记录</p>
+          `}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function shiftQuotaCycle(offset) {
+  const windows = state.selectedAccount?.quota?.windows || [];
+  const nextIdx = state.activeQuotaIndex + offset;
+  if (nextIdx >= 0 && nextIdx < windows.length) {
+    state.activeQuotaIndex = nextIdx;
+    renderDrawerContent();
+  }
+}
+
+function switchDrawerState(targetState) {
+  state.drawerState = targetState;
+  document.querySelectorAll('.drawer-state-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.innerText.includes(
+      targetState === 'normal' ? '正常' :
+      targetState === 'loading' ? '加载中' :
+      targetState === 'error' ? '加载失败' : '无记录'
+    ));
+  });
+  renderDrawerContent();
+}
+
+// ==========================================================================
+// STATE & EVENT HANDLERS
+// ==========================================================================
+
+function switchMainState(newState) {
+  state.mainState = newState;
+  document.querySelectorAll('.state-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${newState}'`));
+  });
+  renderApp();
+}
+
+function toggleTheme() {
+  const current = document.body.getAttribute('data-theme') || 'light';
+  const next = current === 'light' ? 'dark' : 'light';
+  document.body.setAttribute('data-theme', next);
+
+  const themeText = document.getElementById('themeText');
+  if (themeText) {
+    themeText.innerText = next === 'light' ? '切换深色' : '切换浅色';
+  }
+}
+
+function handlePoolChange(poolId) {
+  state.selectedPoolId = poolId;
+  state.page = 1;
+  renderApp();
+}
+
+function handleRangeChange(rangeVal) {
+  state.range = rangeVal;
+  state.customRangeActive = (rangeVal === 'custom');
+  state.page = 1;
+  renderApp();
+}
+
+function handleApplyCustomDate() {
+  const startEl = document.getElementById('customStartDate');
+  const endEl = document.getElementById('customEndDate');
+  if (startEl && endEl) {
+    state.customStartDate = startEl.value;
+    state.customEndDate = endEl.value;
+  }
+  alert(`已应用自定义日期范围: ${state.customStartDate} 至 ${state.customEndDate}`);
+  renderApp();
+}
+
+function handleSearchInput(val) {
+  state.search = val;
+  state.page = 1;
+  renderApp();
+}
+
+function handleClearSearch() {
+  state.search = '';
+  state.page = 1;
+  renderApp();
+}
+
+function handleFilterUpdate(group, val) {
+  state.filters[group] = val;
+  state.page = 1;
+  renderApp();
+}
+
+function handleSortPreset(val) {
+  const [field, order] = val.split(':');
+  state.sortBy = field;
+  state.sortOrder = order;
+  renderApp();
+}
+
+function handleResetFilters() {
+  state.search = '';
+  state.filters = {
+    usage: 'all',
+    risk: 'all',
+    freshness: 'all',
+    active: 'all',
+    result: 'all'
+  };
+  state.sortBy = 'cost';
+  state.sortOrder = 'desc';
+  state.page = 1;
+  renderApp();
+}
+
+function handleRefresh() {
+  state.refreshing = true;
+  renderApp();
+  setTimeout(() => {
+    state.refreshing = false;
+    renderApp();
+  }, 600);
+}
+
+function changePage(newPage) {
+  state.page = newPage;
+  renderApp();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function changePageSize(size) {
+  state.pageSize = size;
+  state.page = 1;
+  renderApp();
+}
+
+// Keyboard shortcuts (Escape key closes drawer)
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.drawerOpen) {
+    closeDrawer();
+  }
+});
+
+// State Placeholders HTML
+function renderLoadingState() {
+  return `
+    <div class="page-header">
+      <div class="skeleton" style="width: 260px; height: 40px;"></div>
+      <div class="skeleton" style="width: 320px; height: 36px;"></div>
+    </div>
+    <div class="skeleton" style="height: 140px; margin-bottom: 1.5rem;"></div>
+    <div class="kpi-section">
+      ${Array.from({ length: 5 }).map(() => `<div class="skeleton kpi-card"></div>`).join('')}
+    </div>
+    <div class="skeleton" style="height: 200px; margin-bottom: 1.5rem;"></div>
+    <div class="account-cards-list">
+      ${Array.from({ length: 4 }).map(() => `<div class="skeleton skeleton-card"></div>`).join('')}
+    </div>
+  `;
+}
+
+function renderOverviewErrorState() {
+  return `
+    <div class="state-box error-box" style="margin-top: 3rem;">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+      <h3 style="font-size: 1.1rem; font-weight: 700; color: #ef4444;">账号池概览加载失败</h3>
+      <p style="font-size: 0.8rem; color: var(--muted-foreground); max-width: 420px;">
+        无法连接至账号池服务，上游接口返回错误。请检查网络配置或重新刷新。
+      </p>
+      <button class="btn-outline-sm" style="margin-top: 0.5rem;" onclick="switchMainState('normal')">点击重试</button>
+    </div>
+  `;
+}
+
+function renderStatsErrorState() {
+  return `
+    <div class="state-box error-box" style="margin-top: 3rem;">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+      <h3 style="font-size: 1.1rem; font-weight: 700; color: #ef4444;">统计数据加载失败</h3>
+      <p style="font-size: 0.8rem; color: var(--muted-foreground); max-width: 420px;">
+        读取该账号池的 Token 与费用统计指标时出错，数据库聚合查询超时。
+      </p>
+      <button class="btn-outline-sm" style="margin-top: 0.5rem;" onclick="switchMainState('normal')">重新加载统计</button>
+    </div>
+  `;
+}
+
+function renderNoPoolState() {
+  return `
+    <div class="state-box" style="margin-top: 3rem;">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--muted-foreground); opacity: 0.4;"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+      <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--foreground);">暂无可统计的账号池</h3>
+      <p style="font-size: 0.8rem; color: var(--muted-foreground); max-width: 400px;">
+        当前系统未发现已启用的可用账号池。请先在账号管理中配置并启用一个包含有效账号的账号池。
+      </p>
+      <button class="btn-outline-sm" style="margin-top: 0.5rem;" onclick="alert('跳转到账号池创建页')">去配置账号池</button>
+    </div>
+  `;
+}
+
+// Initial render
+document.addEventListener('DOMContentLoaded', () => {
+  renderApp();
+});
+renderApp();
+</script>
+</body>
+</html>

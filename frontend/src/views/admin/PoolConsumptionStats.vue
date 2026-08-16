@@ -1,74 +1,48 @@
 <template>
-  <div class="space-y-6 pb-8">
-    <!-- 页头区 (对齐 PageHeader 视觉效果) -->
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-4">
-      <div class="flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
-          <Gauge class="h-5 w-5 text-primary" />
-        </div>
-        <div>
-          <p class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            运营数据
-          </p>
-          <div class="mt-1 flex flex-wrap items-center gap-2">
-            <h2 class="text-xl font-bold text-foreground">账号消耗统计</h2>
-            <Badge v-if="dashboard" variant="secondary" class="text-xs font-mono">
-              {{ dashboard.provider_type }}
-            </Badge>
-          </div>
-        </div>
-      </div>
-
-      <div class="flex flex-wrap items-center gap-2">
+  <PageContainer max-width="2xl" padding="md">
+    <PageHeader
+      title="账号消耗统计"
+      description="按账号池、时间窗口和调用状态查看实际使用情况"
+      :icon="Gauge"
+    >
+      <template #actions>
         <Select
           :model-value="selectedProviderId"
           :disabled="overviewLoading || poolProviders.length === 0"
           @update:model-value="selectProvider"
         >
-          <SelectTrigger class="h-9 w-[200px] border-border/60 text-xs font-medium focus:ring-2 focus:ring-primary/20">
+          <SelectTrigger class="h-9 w-full sm:w-[200px] border-border/60 text-xs font-medium focus:ring-2 focus:ring-primary/20">
             <SelectValue placeholder="选择账号池" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem
-              v-for="provider in poolProviders"
-              :key="provider.provider_id"
-              :value="provider.provider_id"
-            >
+            <SelectItem v-for="provider in poolProviders" :key="provider.provider_id" :value="provider.provider_id">
               {{ provider.provider_name }} · {{ provider.provider_type }}
             </SelectItem>
           </SelectContent>
         </Select>
-
         <Select :model-value="filters.range" @update:model-value="setRange">
-          <SelectTrigger class="h-9 w-[120px] border-border/60 text-xs font-medium focus:ring-2 focus:ring-primary/20">
+          <SelectTrigger class="h-9 w-full sm:w-[120px] border-border/60 text-xs font-medium focus:ring-2 focus:ring-primary/20">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem v-for="option in rangeOptions" :key="option.value" :value="option.value">
-              {{ option.label }}
-            </SelectItem>
+            <SelectItem v-for="option in rangeOptions" :key="option.value" :value="option.value">{{ option.label }}</SelectItem>
           </SelectContent>
         </Select>
-
         <RefreshButton :loading="refreshing" class="h-9" @click="refreshAll" />
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
-    <!-- 筛选面板 -->
     <Card v-if="poolProviders.length > 0" class="border-border/60 bg-muted/30 p-4 rounded-xl shadow-sm">
       <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border/40 pb-3">
         <div class="flex items-center gap-2">
           <Activity class="h-4 w-4 text-primary" />
-          <span class="text-sm font-bold text-foreground">账号筛选</span>
+          <span class="text-sm font-bold text-foreground">账号筛选与检索</span>
         </div>
         <div class="flex flex-wrap items-center gap-3">
           <div class="flex items-center gap-2 text-xs">
-            <span class="text-xs font-medium text-muted-foreground whitespace-nowrap">排序</span>
-            <Select
-              :model-value="`${filters.sort_by}:${filters.sort_order}`"
-              @update:model-value="setSortPreset"
-            >
-              <SelectTrigger class="h-8 text-xs min-w-[130px] border-border/60 focus:ring-2 focus:ring-primary/20 bg-background/50">
+            <span class="font-medium text-muted-foreground whitespace-nowrap">排序</span>
+            <Select :model-value="`${filters.sort_by}:${filters.sort_order}`" @update:model-value="setSortPreset">
+              <SelectTrigger class="h-8 min-w-[130px] border-border/60 bg-background/50 text-xs focus:ring-2 focus:ring-primary/20">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -80,133 +54,73 @@
               </SelectContent>
             </Select>
           </div>
-          <Button
-            size="sm"
-            variant="ghost"
-            class="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground"
-            @click="resetListFilters"
-          >
+          <Button size="sm" variant="ghost" class="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground" @click="resetListFilters">
             清除筛选
           </Button>
         </div>
       </div>
 
-      <!-- 自定义时间范围行 -->
-      <div v-if="filters.range === 'custom'" class="mt-3 flex flex-wrap items-center gap-2.5 bg-background/40 p-2.5 rounded-lg border border-border/40">
+      <div v-if="filters.range === 'custom'" class="mt-3 flex flex-wrap items-center gap-2.5 rounded-lg border border-border/40 bg-background/40 p-2.5">
         <label class="flex items-center gap-2 text-xs">
-          <span class="text-muted-foreground font-medium">开始</span>
-          <input v-model="filters.start_date" type="date" aria-label="开始日期" class="h-8 rounded-md border border-border/60 px-2 text-xs bg-background focus:ring-2 focus:ring-primary/20 outline-none">
+          <span class="font-medium text-muted-foreground">开始</span>
+          <input v-model="filters.start_date" type="date" aria-label="开始日期" class="h-8 rounded-md border border-border/60 bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-primary/20">
         </label>
         <span class="text-xs text-muted-foreground">至</span>
         <label class="flex items-center gap-2 text-xs">
-          <span class="text-muted-foreground font-medium">结束</span>
-          <input v-model="filters.end_date" type="date" aria-label="结束日期" class="h-8 rounded-md border border-border/60 px-2 text-xs bg-background focus:ring-2 focus:ring-primary/20 outline-none">
+          <span class="font-medium text-muted-foreground">结束</span>
+          <input v-model="filters.end_date" type="date" aria-label="结束日期" class="h-8 rounded-md border border-border/60 bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-primary/20">
         </label>
         <Button size="sm" variant="outline" class="h-8 text-xs" @click="applyFilters">应用日期</Button>
       </div>
 
-      <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <!-- 左侧列：搜索检索分组 -->
+      <div class="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,2fr)]">
         <div class="flex flex-col gap-2 rounded-lg border border-border/40 bg-background/40 p-3">
           <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">搜索账号 / 认证方式</span>
           <div class="relative flex items-center">
             <Search class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              v-model="searchInput"
-              type="search"
-              class="h-9 border-border/60 pl-9 pr-8 text-xs focus-visible:ring-2 focus-visible:ring-primary/20 bg-background/50 rounded-full"
-              placeholder="例如 feature.like_4e@icloud.com"
-              aria-label="搜索账号"
-              @input="scheduleSearch"
-            />
-            <button
-              v-if="searchInput"
-              type="button"
-              class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-muted-foreground hover:text-foreground"
-              aria-label="清空搜索"
-              @click="searchInput = ''; scheduleSearch()"
-            >
+            <Input v-model="searchInput" type="search" class="h-9 rounded-full border-border/60 bg-background/50 pl-9 pr-8 text-xs focus-visible:ring-2 focus-visible:ring-primary/20" placeholder="搜索账号名、邮箱或认证方式" aria-label="搜索账号" @input="scheduleSearch" />
+            <button v-if="searchInput" type="button" class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground hover:text-foreground" aria-label="清空搜索" @click="searchInput = ''; scheduleSearch()">
               <X class="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
 
-        <!-- 右侧列：状态筛选分组 (全线替换为标准系统 Select) -->
         <div class="flex flex-col gap-2 rounded-lg border border-border/40 bg-background/40 p-3">
-          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">状态与属性</span>
-          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
-            <div class="flex flex-col gap-1 min-w-0">
-              <span class="text-[10px] font-medium text-muted-foreground whitespace-nowrap">使用情况</span>
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">状态与属性筛选</span>
+          <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
+            <div class="flex min-w-0 flex-col gap-1">
+              <span class="text-[10px] font-medium text-muted-foreground">使用情况</span>
               <Select :model-value="filters.usage" @update:model-value="val => { filters.usage = val as any; applyFilters() }">
-                <SelectTrigger class="h-8 border-border/60 text-xs focus:ring-2 focus:ring-primary/20 bg-background/50">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">全部</SelectItem>
-                  <SelectItem value="used">有请求</SelectItem>
-                  <SelectItem value="idle">暂无请求</SelectItem>
-                </SelectContent>
+                <SelectTrigger class="h-8 border-border/60 bg-background/50 text-xs focus:ring-2 focus:ring-primary/20"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">全部已调用账号</SelectItem><SelectItem value="used">有请求</SelectItem></SelectContent>
               </Select>
             </div>
-
-            <div class="flex flex-col gap-1 min-w-0">
-              <span class="text-[10px] font-medium text-muted-foreground whitespace-nowrap">额度状态</span>
+            <div class="flex min-w-0 flex-col gap-1">
+              <span class="text-[10px] font-medium text-muted-foreground">额度状态</span>
               <Select :model-value="filters.risk" @update:model-value="val => { filters.risk = val as any; applyFilters() }">
-                <SelectTrigger class="h-8 border-border/60 text-xs focus:ring-2 focus:ring-primary/20 bg-background/50">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">全部</SelectItem>
-                  <SelectItem value="exhausted">已用完</SelectItem>
-                  <SelectItem value="critical">可能提前用完</SelectItem>
-                  <SelectItem value="warning">额度偏低</SelectItem>
-                  <SelectItem value="healthy">额度正常</SelectItem>
-                  <SelectItem value="unknown">暂未知</SelectItem>
-                </SelectContent>
+                <SelectTrigger class="h-8 border-border/60 bg-background/50 text-xs focus:ring-2 focus:ring-primary/20"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="healthy">额度充足</SelectItem><SelectItem value="warning">额度偏低</SelectItem><SelectItem value="critical">可能提前用完</SelectItem><SelectItem value="exhausted">额度已用完</SelectItem><SelectItem value="unknown">暂未知</SelectItem></SelectContent>
               </Select>
             </div>
-
-            <div class="flex flex-col gap-1 min-w-0">
-              <span class="text-[10px] font-medium text-muted-foreground whitespace-nowrap">额度同步</span>
+            <div class="flex min-w-0 flex-col gap-1">
+              <span class="text-[10px] font-medium text-muted-foreground">额度同步</span>
               <Select :model-value="filters.freshness" @update:model-value="val => { filters.freshness = val as any; applyFilters() }">
-                <SelectTrigger class="h-8 border-border/60 text-xs focus:ring-2 focus:ring-primary/20 bg-background/50">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">全部</SelectItem>
-                  <SelectItem value="fresh">最近已同步</SelectItem>
-                  <SelectItem value="stale">额度同步较早</SelectItem>
-                  <SelectItem value="unknown">无同步记录</SelectItem>
-                </SelectContent>
+                <SelectTrigger class="h-8 border-border/60 bg-background/50 text-xs focus:ring-2 focus:ring-primary/20"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="fresh">最近已同步</SelectItem><SelectItem value="stale">同步较早</SelectItem><SelectItem value="unknown">无同步记录</SelectItem></SelectContent>
               </Select>
             </div>
-
-            <div class="flex flex-col gap-1 min-w-0">
-              <span class="text-[10px] font-medium text-muted-foreground whitespace-nowrap">账号状态</span>
+            <div class="flex min-w-0 flex-col gap-1">
+              <span class="text-[10px] font-medium text-muted-foreground">账号状态</span>
               <Select :model-value="filters.active" @update:model-value="val => { filters.active = val as any; applyFilters() }">
-                <SelectTrigger class="h-8 border-border/60 text-xs focus:ring-2 focus:ring-primary/20 bg-background/50">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">全部</SelectItem>
-                  <SelectItem value="active">已启用</SelectItem>
-                  <SelectItem value="inactive">已停用</SelectItem>
-                  <SelectItem value="blocked">不可用</SelectItem>
-                </SelectContent>
+                <SelectTrigger class="h-8 border-border/60 bg-background/50 text-xs focus:ring-2 focus:ring-primary/20"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="active">已启用</SelectItem><SelectItem value="inactive">已停用</SelectItem><SelectItem value="blocked">不可用</SelectItem></SelectContent>
               </Select>
             </div>
-
-            <div class="flex flex-col gap-1 min-w-0">
-              <span class="text-[10px] font-medium text-muted-foreground whitespace-nowrap">请求结果</span>
+            <div class="flex min-w-0 flex-col gap-1">
+              <span class="text-[10px] font-medium text-muted-foreground">请求结果</span>
               <Select :model-value="filters.result" @update:model-value="val => { filters.result = val as any; applyFilters() }">
-                <SelectTrigger class="h-8 border-border/60 text-xs focus:ring-2 focus:ring-primary/20 bg-background/50">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">全部</SelectItem>
-                  <SelectItem value="success">有成功</SelectItem>
-                  <SelectItem value="failed">有失败</SelectItem>
-                </SelectContent>
+                <SelectTrigger class="h-8 border-border/60 bg-background/50 text-xs focus:ring-2 focus:ring-primary/20"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="success">有成功</SelectItem><SelectItem value="failed">有失败</SelectItem></SelectContent>
               </Select>
             </div>
           </div>
@@ -394,7 +308,7 @@
               
               <div class="flex">
                 <span class="sync-pill shrink-0" :class="syncClass(account.quota.freshness)">
-                  {{ quotaSyncLabel(account.quota) }}
+                  {{ lastCallLabel(account) }}
                 </span>
               </div>
             </div>
@@ -596,7 +510,7 @@
                       <h3>额度与重置周期</h3>
                     </div>
                     <span class="sync-pill" :class="activeDetailQuotaCycleIsDerived ? 'sync-unknown' : syncClass(accountDetail.account.quota.freshness)">
-                      {{ activeDetailQuotaCycleIsDerived ? '由历史用量还原' : quotaSyncLabel(accountDetail.account.quota) }}
+                      {{ activeDetailQuotaCycleIsDerived ? '由历史用量还原' : lastCallLabel(accountDetail.account) }}
                     </span>
                   </div>
 
@@ -693,7 +607,7 @@
         </div>
       </Transition>
     </Teleport>
-  </div>
+  </PageContainer>
 </template>
 
 <script setup lang="ts">
@@ -723,6 +637,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui'
+import PageContainer from '@/components/layout/PageContainer.vue'
+import PageHeader from '@/components/layout/PageHeader.vue'
 import BarChart from '@/components/charts/BarChart.vue'
 import RefreshButton from '@/components/ui/refresh-button.vue'
 import {
@@ -1184,14 +1100,10 @@ function planTypeLabel(value: string | null | undefined): string {
   return labels[normalized] || `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`
 }
 
-function quotaSyncLabel(quota: PoolConsumptionDashboardAccount['quota']): string {
-  if (quota.freshness === 'fresh') {
-    return quota.observed_at_unix_secs ? `已同步 ${formatShortDate(quota.observed_at_unix_secs)}` : '已同步'
-  }
-  if (quota.freshness === 'stale') {
-    return quota.observed_at_unix_secs ? `上次同步 ${formatShortDate(quota.observed_at_unix_secs)}` : '尚未同步'
-  }
-  return '尚未同步'
+function lastCallLabel(account: PoolConsumptionDashboardAccount): string {
+  return account.last_used_at_unix_secs
+    ? `上次调用 ${formatShortDate(account.last_used_at_unix_secs)}`
+    : '暂无调用记录'
 }
 
 function syncClass(freshness: string): string {
