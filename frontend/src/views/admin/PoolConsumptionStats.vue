@@ -993,12 +993,19 @@ function refreshAll(): void {
 
 function buildDetailQuery(window?: QuotaWindowObservation): PoolConsumptionDashboardQuery {
   const bounds = quotaWindowBounds(window)
+  const activeRange = filters.value.range
+  const hasWindowBounds = bounds != null
+  const range = hasWindowBounds ? 'last7days' : activeRange
   return {
     ...timezoneParams(),
-    range: 'last7days',
+    range,
+    start_date: !hasWindowBounds && activeRange === 'custom' ? filters.value.start_date : undefined,
+    end_date: !hasWindowBounds && activeRange === 'custom' ? filters.value.end_date : undefined,
     start_unix_secs: bounds?.startUnixSecs,
     end_unix_secs: bounds?.endUnixSecs,
-    granularity: bounds && bounds.endUnixSecs - bounds.startUnixSecs <= 7 * 24 * 60 * 60 ? 'hour' : 'day',
+    granularity: bounds
+      ? bounds.endUnixSecs - bounds.startUnixSecs <= 7 * 24 * 60 * 60 ? 'hour' : 'day'
+      : filters.value.granularity,
     page: 1,
     page_size: 1,
   }
@@ -1018,7 +1025,7 @@ async function openAccount(account: PoolConsumptionDashboardAccount): Promise<vo
     const response = await getPoolConsumptionAccountDetail(
       selectedProviderId.value,
       account.key_id,
-      buildDetailQuery(initialWindow),
+      buildDetailQuery(),
       { cacheTtlMs: 0 },
     )
     if (requestId !== detailRequestId || !drawerOpen.value) return
@@ -1033,7 +1040,6 @@ async function openAccount(account: PoolConsumptionDashboardAccount): Promise<vo
 
 async function loadAccountDetailForQuotaCycle(cycle: DetailQuotaCycle): Promise<void> {
   if (!selectedAccount.value) return
-  const account = selectedAccount.value
   const requestId = ++detailRequestId
   detailRefreshing.value = true
   detailError.value = ''

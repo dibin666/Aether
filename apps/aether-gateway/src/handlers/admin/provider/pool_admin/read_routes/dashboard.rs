@@ -495,6 +495,15 @@ async fn build_dashboard_account_detail(
         query.model.as_deref(),
     )
     .await?;
+    if summaries
+        .get(key_id)
+        .is_none_or(|summary| summary.request_count == 0)
+    {
+        return Ok(build_admin_pool_error_response(
+            http::StatusCode::NOT_FOUND,
+            format!("账号 {key_id} 在当前时间范围内没有调用记录"),
+        ));
+    }
     let now = chrono::Utc::now().timestamp().max(0) as u64;
     let mut observations = state
         .app()
