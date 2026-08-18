@@ -455,12 +455,10 @@ const hasActiveRequests = computed(() => activeRequestIds.value.length > 0)
 // 自动刷新定时器
 let autoRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let activeDiscoveryTimer: ReturnType<typeof setTimeout> | null = null
-let globalAutoRefreshTimer: ReturnType<typeof setInterval> | null = null
 let refreshInFlight: Promise<void> | null = null
 const AUTO_REFRESH_INTERVAL = 1000 // 1秒刷新一次（用于活跃请求）
 const ACTIVE_DISCOVERY_HOT_INTERVAL = 1000 // 有活跃请求时 1 秒扫描一次
 const ACTIVE_DISCOVERY_IDLE_INTERVAL = 5000 // 空闲时降频，避免后台持续刷日志
-const GLOBAL_AUTO_REFRESH_INTERVAL = 3000 // 3秒刷新一次（全局自动刷新）
 const globalAutoRefresh = ref(true) // 全局自动刷新开关（默认开启）
 const isPageVisible = ref(typeof document === 'undefined' ? true : !document.hidden)
 
@@ -488,13 +486,13 @@ async function pollActiveRequests() {
     const { requests } = await loadActiveRequestUpdates(activeRequestIds.value)
 
     const recordMap = new Map(currentRecords.value.map(record => [record.id, record]))
-    let shouldRefresh = false
+    let shouldDiscover = false
 
     for (const update of requests) {
       const record = recordMap.get(update.id)
       if (!record) {
-        // 活跃接口发现了列表之外的新请求，重新拉取完整列表。
-        shouldRefresh = true
+        // 活跃接口发现了列表之外的新请求，交给发现流程处理。
+        shouldDiscover = true
         continue
       }
 
@@ -524,10 +522,6 @@ async function pollActiveRequests() {
 
       if (shouldApply && record.status !== update.status) {
         record.status = update.status
-      }
-      if (shouldApply && ['completed', 'failed', 'cancelled'].includes(update.status)) {
-        // 终态需要用完整列表快照同步排序、分页和最终字段。
-        shouldRefresh = true
       }
       if (shouldApplyData) {
         if ('image_progress' in update) {
@@ -652,8 +646,8 @@ async function pollActiveRequests() {
       }
     }
 
-    if (shouldRefresh) {
-      await refreshData()
+    if (shouldDiscover) {
+      await discoverActiveRequests()
     }
   } catch (error) {
     log.error('轮询活跃请求状态失败:', error)
@@ -684,7 +678,10 @@ async function discoverActiveRequests() {
 
     if (unseenActiveRequestIds.length > 0) {
       unseenActiveRequestIds.forEach(id => discoveredActiveRequestIds.add(id))
-      await refreshData()
+      // A newly discovered request still needs one list request to obtain its
+      // display fields, but do not let a transient empty/error response clear
+      // the already rendered snapshot.
+      await refreshData({ preserveOnFailure: true, preserveOnEmpty: true })
     }
   } catch (error) {
     log.error('发现新活跃请求失败:', error)
@@ -758,36 +755,18 @@ watch(hasActiveRequests, (hasActive) => {
   }
 }, { immediate: true })
 
-// 启动全局自动刷新
-function startGlobalAutoRefresh() {
-  if (!isPageVisible.value) return
-  if (globalAutoRefreshTimer) return
-  globalAutoRefreshTimer = setInterval(refreshData, GLOBAL_AUTO_REFRESH_INTERVAL)
-}
-
-// 停止全局自动刷新
-function stopGlobalAutoRefresh() {
-  if (globalAutoRefreshTimer) {
-    clearInterval(globalAutoRefreshTimer)
-    globalAutoRefreshTimer = null
-  }
-}
-
 // 处理自动刷新开关变化
 function handleAutoRefreshChange(value: boolean) {
   globalAutoRefresh.value = value
   if (value) {
     if (isPageVisible.value) {
-      refreshData() // 立即刷新一次
       startActiveDiscovery()
       if (hasActiveRequests.value) {
         startAutoRefresh()
       }
     }
-    startGlobalAutoRefresh()
   } else {
     stopActiveDiscovery()
-    stopGlobalAutoRefresh()
   }
 }
 
@@ -804,7 +783,6 @@ function handleVisibilityChange() {
   if (!isPageVisible.value) {
     stopAutoRefresh()
     stopActiveDiscovery()
-    stopGlobalAutoRefresh()
     return
   }
   if (hasActiveRequests.value) {
@@ -812,8 +790,6 @@ function handleVisibilityChange() {
   }
   if (globalAutoRefresh.value) {
     startActiveDiscovery()
-    refreshData()
-    startGlobalAutoRefresh()
   }
 }
 
@@ -822,7 +798,6 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   stopAutoRefresh()
   stopActiveDiscovery()
-  stopGlobalAutoRefresh()
 })
 
 // 用户页面的前端分页（后端一次性返回所有记录，前端分页+筛选）
@@ -898,10 +873,6 @@ onMounted(async () => {
 
   if (globalAutoRefresh.value && isPageVisible.value) {
     startActiveDiscovery()
-  }
-
-  if (globalAutoRefresh.value && isPageVisible.value) {
-    startGlobalAutoRefresh()
   }
 })
 
@@ -1021,7 +992,10 @@ async function handleFilterClientFamilyChange(value: string) {
 }
 
 // 刷新数据
-async function refreshData() {
+async function refreshData(options: {
+  preserveOnFailure?: boolean
+  preserveOnEmpty?: boolean
+} = {}) {
   if (!isPageVisible.value) return
   if (refreshInFlight) return refreshInFlight
 
@@ -1030,12 +1004,13 @@ async function refreshData() {
       await loadRecords(
         { page: currentPage.value, pageSize: pageSize.value },
         getCurrentFilters(),
-        timeRange.value
+        timeRange.value,
+        options
       )
       return
     }
 
-    await loadStats(timeRange.value)
+    await loadStats(timeRange.value, options)
     // 用户页面：loadStats 已包含记录加载
   })()
 

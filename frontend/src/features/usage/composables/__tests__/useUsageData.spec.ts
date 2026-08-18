@@ -146,6 +146,50 @@ describe('useUsageData', () => {
     expect(currentRecords.value[0]?.is_websocket).toBe(true)
   })
 
+  it('keeps the last records snapshot when a background page refresh fails', async () => {
+    const isAdminPage = ref(true)
+    const { loadRecords, currentRecords, totalRecords } = useUsageData({ isAdminPage })
+    const dateRange = { preset: 'today', tz_offset_minutes: 0 }
+
+    await loadRecords({ page: 1, pageSize: 20 }, undefined, dateRange)
+
+    getAllUsageRecordsMock.mockRejectedValueOnce(new Error('temporary refresh failure'))
+    await loadRecords(
+      { page: 1, pageSize: 20 },
+      undefined,
+      dateRange,
+      { preserveOnFailure: true, preserveOnEmpty: true },
+    )
+
+    expect(currentRecords.value).toHaveLength(1)
+    expect(currentRecords.value[0]?.id).toBe('usage-1')
+    expect(totalRecords.value).toBe(1)
+  })
+
+  it('keeps the last records snapshot when a background page refresh is empty', async () => {
+    const isAdminPage = ref(true)
+    const { loadRecords, currentRecords, totalRecords } = useUsageData({ isAdminPage })
+    const dateRange = { preset: 'today', tz_offset_minutes: 0 }
+
+    await loadRecords({ page: 1, pageSize: 20 }, undefined, dateRange)
+
+    getAllUsageRecordsMock.mockResolvedValueOnce({
+      records: [],
+      total: 0,
+      limit: 20,
+      offset: 0,
+    })
+    await loadRecords(
+      { page: 1, pageSize: 20 },
+      undefined,
+      dateRange,
+      { preserveOnFailure: true, preserveOnEmpty: true },
+    )
+
+    expect(currentRecords.value).toHaveLength(1)
+    expect(totalRecords.value).toBe(1)
+  })
+
   it('keeps locally resolved failure fields when a stale active record refreshes', async () => {
     const isAdminPage = ref(true)
     const { loadRecords, currentRecords } = useUsageData({ isAdminPage })

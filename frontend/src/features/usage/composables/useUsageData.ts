@@ -28,6 +28,12 @@ export interface UseUsageDataOptions {
 export interface LoadStatsOptions {
   force?: boolean
   preserveOnFailure?: boolean
+  preserveOnEmpty?: boolean
+}
+
+export interface LoadRecordsOptions {
+  preserveOnFailure?: boolean
+  preserveOnEmpty?: boolean
 }
 
 export interface PaginationParams {
@@ -310,8 +316,13 @@ export function useUsageData(options: UseUsageDataOptions) {
       // 用户页面：记录直接从 userData 获取（数量较少）
       // 使用 mergeRecordStatus 保护已有的活跃状态，避免轮询更新被覆盖
       const nextRecords = (userData.records || []) as UsageRecord[]
-      currentRecords.value = mergeRecordStatus(currentRecords.value, nextRecords)
-      totalRecords.value = userData.pagination?.total ?? currentRecords.value.length
+      const shouldApplyUserRecords = !options.preserveOnEmpty ||
+        nextRecords.length > 0 ||
+        currentRecords.value.length === 0
+      if (shouldApplyUserRecords) {
+        currentRecords.value = mergeRecordStatus(currentRecords.value, nextRecords)
+        totalRecords.value = userData.pagination?.total ?? currentRecords.value.length
+      }
 
       // 从记录中提取筛选选项
       const models = new Set<string>()
@@ -351,9 +362,11 @@ export function useUsageData(options: UseUsageDataOptions) {
       if (!isAdminPage.value) {
         stats.value = createDefaultStats()
         modelStats.value = []
-        // 用户页的 records 依赖 stats 一起加载；管理员页的 records 是独立分页，不应被统计失败清空。
-        currentRecords.value = []
-        totalRecords.value = 0
+        // 用户页的 records 依赖 stats 一起加载；后台刷新失败时保留最后成功的记录快照。
+        if (!options.preserveOnFailure) {
+          currentRecords.value = []
+          totalRecords.value = 0
+        }
       }
       return true
     } finally {
@@ -367,7 +380,8 @@ export function useUsageData(options: UseUsageDataOptions) {
   async function loadRecords(
     pagination: PaginationParams,
     filters?: FilterParams,
-    dateRange?: DateRangeParams
+    dateRange?: DateRangeParams,
+    options: LoadRecordsOptions = {}
   ): Promise<void> {
     const requestId = ++loadRecordsRequestId
     isLoadingRecords.value = true
@@ -423,11 +437,16 @@ export function useUsageData(options: UseUsageDataOptions) {
           return
         }
         const nextRecords = (response.records || []) as UsageRecord[]
-        currentRecords.value = mergeRecordStatus(currentRecords.value, nextRecords)
-        const totalKey = buildAdminRecordTotalKey(params)
-        applyAdminRecordTotal(totalKey, response.total ?? 0, response.total_is_estimated === true)
-        if (response.total_is_estimated === true) {
-          void refreshAdminRecordTotal(params, requestId, totalKey)
+        const shouldApplyAdminRecords = !options.preserveOnEmpty ||
+          nextRecords.length > 0 ||
+          currentRecords.value.length === 0
+        if (shouldApplyAdminRecords) {
+          currentRecords.value = mergeRecordStatus(currentRecords.value, nextRecords)
+          const totalKey = buildAdminRecordTotalKey(params)
+          applyAdminRecordTotal(totalKey, response.total ?? 0, response.total_is_estimated === true)
+          if (response.total_is_estimated === true) {
+            void refreshAdminRecordTotal(params, requestId, totalKey)
+          }
         }
       } else {
         // 用户页面：使用用户 API
@@ -436,16 +455,23 @@ export function useUsageData(options: UseUsageDataOptions) {
           return
         }
         const nextRecords = (userData.records || []) as UsageRecord[]
-        currentRecords.value = mergeRecordStatus(currentRecords.value, nextRecords)
-        totalRecords.value = userData.pagination?.total || currentRecords.value.length
+        const shouldApplyUserRecords = !options.preserveOnEmpty ||
+          nextRecords.length > 0 ||
+          currentRecords.value.length === 0
+        if (shouldApplyUserRecords) {
+          currentRecords.value = mergeRecordStatus(currentRecords.value, nextRecords)
+          totalRecords.value = userData.pagination?.total || currentRecords.value.length
+        }
       }
     } catch (error) {
       if (requestId !== loadRecordsRequestId) {
         return
       }
       log.error('加载记录失败:', error)
-      currentRecords.value = []
-      totalRecords.value = 0
+      if (!options.preserveOnFailure || currentRecords.value.length === 0) {
+        currentRecords.value = []
+        totalRecords.value = 0
+      }
     } finally {
       if (requestId === loadRecordsRequestId) {
         isLoadingRecords.value = false

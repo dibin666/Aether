@@ -40,4 +40,23 @@ describe('admin usage initial loading', () => {
       "if (typeof update.requested_reasoning_effort === 'string' && update.requested_reasoning_effort.trim())",
     )
   })
+
+  it('does not replace the records page on the automatic refresh path', () => {
+    const refreshBlock = source
+      .split('// 处理自动刷新开关变化')[1]
+      ?.split('async function handleHideUnknownRecordsChange')[0]
+    const discoveryBlock = source
+      .split('async function discoverActiveRequests()')[1]
+      ?.split('function scheduleNextAutoRefresh()')[0]
+
+    expect(refreshBlock).toBeTruthy()
+    expect(refreshBlock).toContain('startActiveDiscovery()')
+    expect(refreshBlock).not.toContain('refreshData()')
+    expect(source).not.toContain('setInterval(refreshData')
+    expect(source).not.toContain('GLOBAL_AUTO_REFRESH_INTERVAL')
+    expect(discoveryBlock).toBeTruthy()
+    expect(discoveryBlock).toContain(
+      'refreshData({ preserveOnFailure: true, preserveOnEmpty: true })',
+    )
+  })
 })
