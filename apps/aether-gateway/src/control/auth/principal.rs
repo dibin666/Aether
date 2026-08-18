@@ -49,7 +49,6 @@ mod tests {
                 balance_remaining: Some(1.5),
                 access_allowed: Some(true),
             }),
-            trusted_admin_headers: None,
             bundle: GatewayCredentialBundle::default(),
             primary: Some(GatewayPrimaryCredential::ProviderApiKey {
                 raw: "sk-test".to_string(),
@@ -67,7 +66,6 @@ mod tests {
     fn derives_api_key_hash_candidate_for_provider_api_key() {
         let candidate = derive_principal_candidate(&GatewayExtractedCredentials {
             trusted_headers: None,
-            trusted_admin_headers: None,
             bundle: GatewayCredentialBundle::default(),
             primary: Some(GatewayPrimaryCredential::ProviderApiKey {
                 raw: "sk-test".to_string(),
@@ -91,7 +89,6 @@ mod tests {
     fn derives_deferred_cookie_candidate_for_cookie_credentials() {
         let candidate = derive_principal_candidate(&GatewayExtractedCredentials {
             trusted_headers: None,
-            trusted_admin_headers: None,
             bundle: GatewayCredentialBundle::default(),
             primary: Some(GatewayPrimaryCredential::CookieHeader {
                 raw: "session=test".to_string(),

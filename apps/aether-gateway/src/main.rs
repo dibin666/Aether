@@ -284,6 +284,7 @@ const MIN_AUTO_GATEWAY_REQUEST_CONCURRENCY: usize = 512;
 const MAX_AUTO_GATEWAY_REQUEST_CONCURRENCY: usize = 65_536;
 const AUTO_GATEWAY_REQUEST_FD_DIVISOR: usize = 2;
 const AUTO_GATEWAY_REQUEST_FD_RESERVE: usize = 256;
+const DEFAULT_GATEWAY_BIND_ADDRESS: &str = "127.0.0.1";
 fn env_var_trimmed(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()
@@ -1513,10 +1514,18 @@ fn validate_app_port(app_port: u16) -> Result<u16, std::io::Error> {
 }
 
 fn gateway_bind_addr(app_port: u16) -> Result<std::net::SocketAddr, std::io::Error> {
-    Ok(std::net::SocketAddr::from((
-        [0, 0, 0, 0],
+    let bind_address = env_var_trimmed("AETHER_GATEWAY_BIND_ADDRESS")
+        .unwrap_or_else(|| DEFAULT_GATEWAY_BIND_ADDRESS.to_string());
+    let bind_ip = bind_address.parse::<std::net::IpAddr>().map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("AETHER_GATEWAY_BIND_ADDRESS must be a valid IP address: {error}"),
+        )
+    })?;
+    Ok(std::net::SocketAddr::new(
+        bind_ip,
         validate_app_port(app_port)?,
-    )))
+    ))
 }
 
 fn gateway_listen_backlog(backlog: i32) -> i32 {

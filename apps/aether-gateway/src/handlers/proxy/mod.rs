@@ -56,6 +56,7 @@ use crate::handlers::shared::{
     build_admin_proxy_auth_required_response, build_unhandled_admin_proxy_response, ip_rules_allow,
     json_ip_rules_allow, local_proxy_route_requires_buffered_body, request_enables_control_execute,
     should_strip_forwarded_provider_credential_header, should_strip_forwarded_trusted_admin_header,
+    strip_untrusted_admin_headers,
 };
 use crate::headers::{
     effective_client_ip, extract_or_generate_trace_id, request_origin_from_headers_and_remote_addr,
@@ -950,8 +951,11 @@ pub(crate) async fn proxy_request(
 async fn proxy_request_inner(
     state: AppState,
     remote_addr: std::net::SocketAddr,
-    request: Request,
+    mut request: Request,
 ) -> Result<Response<Body>, GatewayError> {
+    // Admin identity headers are never a client credential. Remove them before
+    // any control-route authentication can inspect the request.
+    strip_untrusted_admin_headers(request.headers_mut());
     let started_at = Instant::now();
     let client_ip = effective_client_ip(request.headers(), &remote_addr);
     let trace_id = extract_or_generate_trace_id(request.headers());

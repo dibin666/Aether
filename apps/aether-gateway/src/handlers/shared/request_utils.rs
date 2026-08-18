@@ -6,7 +6,7 @@ use crate::control::GatewayControlDecision;
 use crate::control::GatewayPublicRequestContext;
 use crate::headers::header_value_str;
 use crate::tunnel::TUNNEL_ROUTE_FAMILY;
-use axum::http::{self, HeaderName};
+use axum::http::{self, HeaderMap, HeaderName};
 use chrono::{SecondsFormat, Utc};
 use url::form_urlencoded;
 
@@ -61,6 +61,18 @@ pub(crate) fn should_strip_forwarded_provider_credential_header(
         header_name.as_str(),
         "authorization" | "x-api-key" | "api-key" | "x-goog-api-key"
     )
+}
+
+pub(crate) fn strip_untrusted_admin_headers(headers: &mut HeaderMap) {
+    let headers_to_remove = headers
+        .keys()
+        .filter(|name| name.as_str().starts_with("x-aether-admin-"))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    for name in headers_to_remove {
+        headers.remove(name);
+    }
 }
 
 pub(crate) fn should_strip_forwarded_trusted_admin_header(

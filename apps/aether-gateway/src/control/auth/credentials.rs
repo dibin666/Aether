@@ -14,7 +14,7 @@ use crate::{
 use super::super::GatewayControlDecision;
 use super::types::{
     GatewayCredentialBundle, GatewayCredentialCarrier, GatewayExtractedCredentials,
-    GatewayPrimaryCredential, GatewayTrustedAdminHeaders, GatewayTrustedAuthHeaders,
+    GatewayPrimaryCredential, GatewayTrustedAuthHeaders,
 };
 
 pub(crate) fn extract_requested_model(
@@ -70,12 +70,10 @@ pub(super) fn extract_request_credentials(
         cookie_header: header_value_str(headers, http::header::COOKIE.as_str()),
     };
     let trusted_headers = extract_trusted_auth_headers(headers);
-    let trusted_admin_headers = extract_trusted_admin_headers(headers);
     let primary = select_primary_credential(auth_endpoint_signature, &bundle);
 
     GatewayExtractedCredentials {
         trusted_headers,
-        trusted_admin_headers,
         bundle,
         primary,
     }
@@ -184,45 +182,6 @@ fn extract_trusted_auth_headers(headers: &http::HeaderMap) -> Option<GatewayTrus
         api_key_id,
         balance_remaining,
         access_allowed,
-    })
-}
-
-pub(super) fn extract_trusted_admin_headers(
-    headers: &http::HeaderMap,
-) -> Option<GatewayTrustedAdminHeaders> {
-    if !has_trusted_gateway_marker(headers) {
-        return None;
-    }
-    let user_id = header_value_str(headers, crate::constants::TRUSTED_ADMIN_USER_ID_HEADER)?
-        .trim()
-        .to_string();
-    if user_id.is_empty() {
-        return None;
-    }
-    let user_role = header_value_str(headers, crate::constants::TRUSTED_ADMIN_USER_ROLE_HEADER)?
-        .trim()
-        .to_string();
-    if !crate::roles::can_access_admin_console(&user_role) {
-        return None;
-    }
-    let session_id = header_value_str(headers, crate::constants::TRUSTED_ADMIN_SESSION_ID_HEADER)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let management_token_id = header_value_str(
-        headers,
-        crate::constants::TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER,
-    )
-    .map(|value| value.trim().to_string())
-    .filter(|value| !value.is_empty());
-    if session_id.is_none() && management_token_id.is_none() {
-        return None;
-    }
-
-    Some(GatewayTrustedAdminHeaders {
-        user_id,
-        user_role,
-        session_id,
-        management_token_id,
     })
 }
 
@@ -426,8 +385,7 @@ pub(super) fn current_unix_secs() -> u64 {
 mod tests {
     use super::{
         build_auth_context_cache_key, extract_request_credentials, extract_requested_model,
-        GatewayCredentialCarrier, GatewayPrimaryCredential, GatewayTrustedAdminHeaders,
-        GatewayTrustedAuthHeaders,
+        GatewayCredentialCarrier, GatewayPrimaryCredential, GatewayTrustedAuthHeaders,
     };
     use crate::control::GatewayControlDecision;
     use axum::body::Bytes;
@@ -772,7 +730,6 @@ mod tests {
                 access_allowed: Some(true),
             })
         );
-        assert_eq!(extracted.trusted_admin_headers, None);
     }
 
     #[test]
@@ -793,79 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn extracts_trusted_admin_headers() {
-        let mut headers = http::HeaderMap::new();
-        headers.insert(
-            crate::constants::GATEWAY_HEADER,
-            "rust-phase3b".parse().unwrap(),
-        );
-        headers.insert(
-            crate::constants::TRUSTED_ADMIN_USER_ID_HEADER,
-            "admin-user-1".parse().unwrap(),
-        );
-        headers.insert(
-            crate::constants::TRUSTED_ADMIN_USER_ROLE_HEADER,
-            "admin".parse().unwrap(),
-        );
-        headers.insert(
-            crate::constants::TRUSTED_ADMIN_SESSION_ID_HEADER,
-            "sess-1".parse().unwrap(),
-        );
-
-        let extracted = extract_request_credentials(
-            &headers,
-            &uri("/api/admin/endpoints/health/api-formats"),
-            "admin:endpoints_health",
-        );
-        assert_eq!(
-            extracted.trusted_admin_headers,
-            Some(GatewayTrustedAdminHeaders {
-                user_id: "admin-user-1".to_string(),
-                user_role: "admin".to_string(),
-                session_id: Some("sess-1".to_string()),
-                management_token_id: None,
-            })
-        );
-    }
-
-    #[test]
-    fn extracts_trusted_audit_admin_headers() {
-        let mut headers = http::HeaderMap::new();
-        headers.insert(
-            crate::constants::GATEWAY_HEADER,
-            "rust-phase3b".parse().unwrap(),
-        );
-        headers.insert(
-            crate::constants::TRUSTED_ADMIN_USER_ID_HEADER,
-            "audit-admin-1".parse().unwrap(),
-        );
-        headers.insert(
-            crate::constants::TRUSTED_ADMIN_USER_ROLE_HEADER,
-            "audit_admin".parse().unwrap(),
-        );
-        headers.insert(
-            crate::constants::TRUSTED_ADMIN_SESSION_ID_HEADER,
-            "sess-audit-1".parse().unwrap(),
-        );
-
-        let extracted = extract_request_credentials(
-            &headers,
-            &uri("/api/admin/endpoints/health/api-formats"),
-            "admin:endpoints_health",
-        );
-        assert_eq!(
-            extracted.trusted_admin_headers,
-            Some(GatewayTrustedAdminHeaders {
-                user_id: "audit-admin-1".to_string(),
-                user_role: "audit_admin".to_string(),
-                session_id: Some("sess-audit-1".to_string()),
-                management_token_id: None,
-            })
-        );
-    }
-
-    #[test]
-    fn ignores_trusted_admin_headers_without_gateway_marker() {
+    fn ignores_admin_identity_headers() {
         let mut headers = http::HeaderMap::new();
         headers.insert(
             crate::constants::TRUSTED_ADMIN_USER_ID_HEADER,
@@ -885,6 +770,7 @@ mod tests {
             &uri("/api/admin/endpoints/health/api-formats"),
             "admin:endpoints_health",
         );
-        assert_eq!(extracted.trusted_admin_headers, None);
+        assert_eq!(extracted.trusted_headers, None);
+        assert_eq!(extracted.primary, None);
     }
 }

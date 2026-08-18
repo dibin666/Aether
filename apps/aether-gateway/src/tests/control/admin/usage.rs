@@ -16,7 +16,7 @@ use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UsageBod
 use axum::body::{Body, Bytes};
 use axum::routing::{any, get, post};
 use axum::{extract::Request, Router};
-use http::{HeaderMap, HeaderValue, StatusCode};
+use http::{HeaderMap, StatusCode};
 use serde_json::json;
 
 use super::super::{
@@ -28,8 +28,7 @@ use crate::admin_api::{
 };
 use crate::audit::AdminAuditEvent;
 use crate::constants::{
-    GATEWAY_HEADER, TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER, TRUSTED_ADMIN_SESSION_ID_HEADER,
-    TRUSTED_ADMIN_USER_ID_HEADER, TRUSTED_ADMIN_USER_ROLE_HEADER,
+    TRUSTED_ADMIN_SESSION_ID_HEADER, TRUSTED_ADMIN_USER_ID_HEADER, TRUSTED_ADMIN_USER_ROLE_HEADER,
 };
 use crate::control::resolve_public_request_context;
 use crate::data::GatewayDataState;
@@ -46,24 +45,21 @@ fn admin_request(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
 }
 
-fn trusted_admin_headers() -> HeaderMap {
+async fn authenticated_admin_headers(state: &AppState) -> HeaderMap {
+    let client_device_id = "device-admin-usage-local";
+    let access_token = issue_test_admin_access_token(state, client_device_id).await;
     let mut headers = HeaderMap::new();
-    headers.insert(GATEWAY_HEADER, HeaderValue::from_static("rust-phase3b"));
     headers.insert(
-        TRUSTED_ADMIN_USER_ID_HEADER,
-        HeaderValue::from_static("admin-user-123"),
+        http::header::AUTHORIZATION,
+        format!("Bearer {access_token}")
+            .parse()
+            .expect("authorization header should build"),
     );
     headers.insert(
-        TRUSTED_ADMIN_USER_ROLE_HEADER,
-        HeaderValue::from_static("admin"),
-    );
-    headers.insert(
-        TRUSTED_ADMIN_SESSION_ID_HEADER,
-        HeaderValue::from_static("session-123"),
-    );
-    headers.insert(
-        TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER,
-        HeaderValue::from_static("management-token-123"),
+        "x-client-device-id",
+        client_device_id
+            .parse()
+            .expect("device header should build"),
     );
     headers
 }
@@ -74,7 +70,7 @@ async fn local_admin_usage_response(
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> axum::response::Response<Body> {
-    let headers = trusted_admin_headers();
+    let headers = authenticated_admin_headers(state).await;
     let request_context = resolve_public_request_context(
         state,
         &method,

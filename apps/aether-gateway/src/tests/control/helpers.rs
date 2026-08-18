@@ -112,7 +112,7 @@ pub(super) fn build_test_auth_token(
     )
 }
 
-pub(super) async fn issue_test_admin_access_token(
+pub(crate) async fn issue_test_admin_access_token(
     state: &AppState,
     client_device_id: &str,
 ) -> String {

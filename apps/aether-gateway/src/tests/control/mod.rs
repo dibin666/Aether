@@ -45,15 +45,15 @@ use http::{HeaderMap, StatusCode};
 use serde_json::json;
 
 mod admin;
-mod helpers;
+pub(super) mod helpers;
 mod internal;
 mod proxy;
 
 use super::{
-    build_router, build_router_with_execution_runtime_override, build_router_with_state,
-    build_state_with_execution_runtime_override, start_server, wait_until, AppState,
-    FrontdoorCorsConfig, FrontdoorUserRpmConfig, GatewayFallbackMetricKind, GatewayFallbackReason,
-    Infallible, UsageRuntimeConfig, VideoTaskTruthSourceMode,
+    build_production_router_with_state, build_router, build_router_with_execution_runtime_override,
+    build_router_with_state, build_state_with_execution_runtime_override, start_server, wait_until,
+    AppState, FrontdoorCorsConfig, FrontdoorUserRpmConfig, GatewayFallbackMetricKind,
+    GatewayFallbackReason, Infallible, UsageRuntimeConfig, VideoTaskTruthSourceMode,
 };
 use crate::constants::*;
 use crate::data::GatewayDataState;

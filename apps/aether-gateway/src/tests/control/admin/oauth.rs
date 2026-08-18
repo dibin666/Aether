@@ -27,13 +27,13 @@ use axum::body::{to_bytes, Body, Bytes};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, delete, get, patch, post, put};
 use axum::{extract::Request, Json, Router};
-use http::{HeaderMap, HeaderValue, StatusCode};
+use http::{HeaderMap, StatusCode};
 use serde_json::{json, Value};
 
 use super::super::{
     build_router_with_state, build_state_with_execution_runtime_override, hash_management_token,
-    sample_endpoint, sample_key, sample_management_token, sample_oauth_provider_config,
-    sample_provider, sample_proxy_node, start_server, AppState,
+    issue_test_admin_access_token, sample_endpoint, sample_key, sample_management_token,
+    sample_oauth_provider_config, sample_provider, sample_proxy_node, start_server, AppState,
 };
 use crate::admin_api::{
     maybe_build_local_admin_provider_oauth_response, AdminAppState, AdminRequestContext,
@@ -43,8 +43,7 @@ use crate::ai_serving::{
 };
 use crate::audit::AdminAuditEvent;
 use crate::constants::{
-    GATEWAY_HEADER, TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER, TRUSTED_ADMIN_SESSION_ID_HEADER,
-    TRUSTED_ADMIN_USER_ID_HEADER, TRUSTED_ADMIN_USER_ROLE_HEADER,
+    TRUSTED_ADMIN_SESSION_ID_HEADER, TRUSTED_ADMIN_USER_ID_HEADER, TRUSTED_ADMIN_USER_ROLE_HEADER,
 };
 use crate::control::resolve_public_request_context;
 use crate::data::GatewayDataState;
@@ -73,24 +72,21 @@ where
     }
 }
 
-fn trusted_admin_headers() -> HeaderMap {
+async fn authenticated_admin_headers(state: &AppState) -> HeaderMap {
+    let client_device_id = "device-admin-oauth-local";
+    let access_token = issue_test_admin_access_token(state, client_device_id).await;
     let mut headers = HeaderMap::new();
-    headers.insert(GATEWAY_HEADER, HeaderValue::from_static("rust-phase3b"));
     headers.insert(
-        TRUSTED_ADMIN_USER_ID_HEADER,
-        HeaderValue::from_static("admin-user-123"),
+        http::header::AUTHORIZATION,
+        format!("Bearer {access_token}")
+            .parse()
+            .expect("authorization header should build"),
     );
     headers.insert(
-        TRUSTED_ADMIN_USER_ROLE_HEADER,
-        HeaderValue::from_static("admin"),
-    );
-    headers.insert(
-        TRUSTED_ADMIN_SESSION_ID_HEADER,
-        HeaderValue::from_static("session-123"),
-    );
-    headers.insert(
-        TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER,
-        HeaderValue::from_static("management-token-123"),
+        "x-client-device-id",
+        client_device_id
+            .parse()
+            .expect("device header should build"),
     );
     headers
 }
@@ -101,7 +97,7 @@ async fn local_admin_provider_oauth_response(
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> Response<Body> {
-    let headers = trusted_admin_headers();
+    let headers = authenticated_admin_headers(state).await;
     let request_context = resolve_public_request_context(
         state,
         &method,
@@ -299,17 +295,18 @@ async fn gateway_handles_admin_provider_oauth_supported_types_locally_with_trust
     );
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
-    let gateway = build_router_with_state(AppState::new().expect("gateway should build"));
+    let state = AppState::new().expect("gateway should build");
+    let client_device_id = "device-admin-oauth-supported-types";
+    let access_token = issue_test_admin_access_token(&state, client_device_id).await;
+    let gateway = build_router_with_state(state);
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
     let response = reqwest::Client::new()
         .get(format!(
             "{gateway_url}/api/admin/provider-oauth/supported-types"
         ))
-        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
-        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
-        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
-        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .header("authorization", format!("Bearer {access_token}"))
+        .header("x-client-device-id", client_device_id)
         .send()
         .await
         .expect("request should succeed");
