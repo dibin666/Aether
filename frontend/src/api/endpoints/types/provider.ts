@@ -194,13 +194,18 @@ export interface CodexProviderConfig {
   [key: string]: unknown
 }
 
+export interface ResponsesWebSocketProviderConfig {
+  enabled: boolean
+}
+
 export interface ProviderConfig {
   chat_pii_redaction?: ChatPiiRedactionProviderConfig
+  codex?: CodexProviderConfig
+  responses_websocket?: ResponsesWebSocketProviderConfig
   pool_advanced?: PoolAdvancedConfig
   failover_rules?: FailoverRulesConfig
   claude_code_advanced?: ClaudeCodeAdvancedConfig
   oauth_token_refresh?: OAuthTokenRefreshProviderConfig | null
-  codex?: CodexProviderConfig
   [key: string]: unknown
 }
 
@@ -929,6 +934,7 @@ export interface ProviderWithEndpointsSummary {
   ops_architecture_id?: string  // 扩展操作使用的架构 ID（如 cubence, anyrouter）
   codex_fingerprint_convergence_enabled?: boolean
   kiro_simulated_cache_enabled?: boolean
+  responses_websocket_enabled?: boolean
   ops_quota_alert_enabled?: boolean
   created_at: string
   updated_at: string

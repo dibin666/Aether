@@ -1302,6 +1302,10 @@ fn provider_query_pool_catalog_key_context(
             quota_snapshot,
         ),
         ignore_pool_cooldown: key.ignore_pool_cooldown,
+        quota_hard_blocked: admin_provider_pool_pure::admin_pool_key_quota_hard_blocked(
+            key,
+            provider_type,
+        ),
         health_score,
         latency_avg_ms,
         catalog_lru_score: Some(key.last_used_at_unix_secs.unwrap_or(0) as f64),

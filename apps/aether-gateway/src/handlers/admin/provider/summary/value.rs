@@ -4,7 +4,7 @@ use crate::handlers::admin::provider::shared::support::{
 };
 use crate::handlers::admin::shared::unix_secs_to_rfc3339;
 use crate::handlers::public::{request_candidate_event_unix_ms, request_candidate_status_label};
-use crate::orchestration::codex_cyber_flag_passthrough_enabled;
+use crate::orchestration::{codex_cyber_flag_passthrough_enabled, responses_websocket_adapter};
 use crate::provider_key_auth::provider_key_effective_api_formats;
 use aether_data_contracts::repository::candidates::{
     RequestCandidateStatus, StoredRequestCandidate,
@@ -248,10 +248,12 @@ pub(crate) fn build_admin_provider_summary_value(
     );
     summary.insert(
         "codex_fingerprint_convergence_enabled".to_owned(),
-        json!(crate::provider_transport::codex_fingerprint_convergence_enabled(
-            &provider.provider_type,
-            provider.config.as_ref(),
-        )),
+        json!(
+            crate::provider_transport::codex_fingerprint_convergence_enabled(
+                &provider.provider_type,
+                provider.config.as_ref(),
+            )
+        ),
     );
     summary.insert(
         "oauth_token_refresh".to_owned(),
@@ -285,6 +287,13 @@ pub(crate) fn build_admin_provider_summary_value(
     summary.insert(
         "codex_cyber_flag_passthrough_enabled".to_owned(),
         json!(codex_cyber_flag_passthrough),
+    );
+    summary.insert(
+        "responses_websocket_enabled".to_owned(),
+        json!(
+            responses_websocket_adapter(&provider.provider_type, provider.config.as_ref(),)
+                .is_some()
+        ),
     );
     summary.insert(
         "ops_quota_alert_enabled".to_owned(),
