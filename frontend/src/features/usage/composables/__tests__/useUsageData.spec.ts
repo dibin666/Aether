@@ -121,6 +121,31 @@ describe('useUsageData', () => {
     expect(totalRecords.value).toBe(1)
   })
 
+  it('keeps records when merging the websocket transport flag during refresh', async () => {
+    const isAdminPage = ref(true)
+    const { loadRecords, currentRecords } = useUsageData({ isAdminPage })
+    const dateRange = { preset: 'today', tz_offset_minutes: 0 }
+
+    getAllUsageRecordsMock.mockResolvedValueOnce({
+      records: [buildUsageRecord({ is_websocket: true })],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    })
+    await loadRecords({ page: 1, pageSize: 20 }, undefined, dateRange)
+
+    getAllUsageRecordsMock.mockResolvedValueOnce({
+      records: [buildUsageRecord({ is_websocket: false })],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    })
+    await loadRecords({ page: 1, pageSize: 20 }, undefined, dateRange)
+
+    expect(currentRecords.value).toHaveLength(1)
+    expect(currentRecords.value[0]?.is_websocket).toBe(true)
+  })
+
   it('keeps locally resolved failure fields when a stale active record refreshes', async () => {
     const isAdminPage = ref(true)
     const { loadRecords, currentRecords } = useUsageData({ isAdminPage })

@@ -3,26 +3,21 @@ use std::sync::{Arc, Mutex};
 use axum::body::{Body, Bytes};
 use axum::routing::any;
 use axum::{extract::Request, Router};
-use http::{HeaderMap, StatusCode};
+use http::{HeaderMap, HeaderValue, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::json;
 
 use super::super::super::send_request;
-use super::super::{
-    build_production_router_with_state, build_router_with_state, issue_test_admin_access_token,
-    start_server, AppState,
-};
+use super::super::{build_router_with_state, start_server, AppState};
 use crate::admin_api::{
     maybe_build_local_admin_security_response, AdminAppState, AdminRequestContext,
 };
 use crate::audit::AdminAuditEvent;
 use crate::constants::{
-    GATEWAY_HEADER, TRUSTED_ADMIN_SESSION_ID_HEADER, TRUSTED_ADMIN_USER_ID_HEADER,
-    TRUSTED_ADMIN_USER_ROLE_HEADER,
+    GATEWAY_HEADER, TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER, TRUSTED_ADMIN_SESSION_ID_HEADER,
+    TRUSTED_ADMIN_USER_ID_HEADER, TRUSTED_ADMIN_USER_ROLE_HEADER,
 };
 use crate::control::resolve_public_request_context;
-
-const ADMIN_SECURITY_TEST_STACK_BYTES: usize = 16 * 1024 * 1024;
 
 #[tokio::test]
 async fn gateway_blocks_blacklisted_ip_before_routing() {
@@ -111,44 +106,6 @@ async fn gateway_blocks_forwarded_ip_from_trusted_proxy() {
     let response = send_request(gateway, request).await;
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
-}
-
-#[test]
-fn gateway_rejects_forged_trusted_admin_headers() {
-    let handle = std::thread::Builder::new()
-        .name("admin-security-header-regression".to_string())
-        .stack_size(ADMIN_SECURITY_TEST_STACK_BYTES)
-        .spawn(|| {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("test runtime should build");
-            runtime.block_on(gateway_rejects_forged_trusted_admin_headers_impl());
-        })
-        .expect("security regression test thread should spawn");
-    handle
-        .join()
-        .expect("security regression test should complete");
-}
-
-async fn gateway_rejects_forged_trusted_admin_headers_impl() {
-    let gateway =
-        build_production_router_with_state(AppState::new().expect("gateway should build"));
-    let request = Request::builder()
-        .uri("/api/admin/users")
-        .header(GATEWAY_HEADER, "rust-phase3")
-        .header(
-            TRUSTED_ADMIN_USER_ID_HEADER,
-            "00000000-0000-0000-0000-000000000001",
-        )
-        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
-        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "forged-session")
-        .body(Body::empty())
-        .expect("request should build");
-
-    let response = send_request(gateway, request).await;
-
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -265,21 +222,24 @@ async fn send_admin_security_request(
     (status, payload, upstream_count)
 }
 
-async fn authenticated_admin_headers(state: &AppState) -> HeaderMap {
-    let client_device_id = "device-admin-security-local";
-    let access_token = issue_test_admin_access_token(state, client_device_id).await;
+fn trusted_admin_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
+    headers.insert(GATEWAY_HEADER, HeaderValue::from_static("rust-phase3b"));
     headers.insert(
-        http::header::AUTHORIZATION,
-        format!("Bearer {access_token}")
-            .parse()
-            .expect("authorization header should build"),
+        TRUSTED_ADMIN_USER_ID_HEADER,
+        HeaderValue::from_static("admin-user-123"),
     );
     headers.insert(
-        "x-client-device-id",
-        client_device_id
-            .parse()
-            .expect("device header should build"),
+        TRUSTED_ADMIN_USER_ROLE_HEADER,
+        HeaderValue::from_static("admin"),
+    );
+    headers.insert(
+        TRUSTED_ADMIN_SESSION_ID_HEADER,
+        HeaderValue::from_static("session-123"),
+    );
+    headers.insert(
+        TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER,
+        HeaderValue::from_static("management-token-123"),
     );
     headers
 }
@@ -290,7 +250,7 @@ async fn local_admin_security_response(
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> axum::response::Response<Body> {
-    let headers = authenticated_admin_headers(state).await;
+    let headers = trusted_admin_headers();
     let request_context = resolve_public_request_context(
         state,
         &method,

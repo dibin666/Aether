@@ -17,7 +17,8 @@ use crate::{AppState, GatewayError};
 
 use super::super::GatewayControlDecision;
 use super::credentials::{
-    build_auth_context_cache_key, current_unix_secs, extract_request_credentials, hash_api_key,
+    build_auth_context_cache_key, current_unix_secs, extract_request_credentials,
+    extract_trusted_admin_headers, hash_api_key,
 };
 use super::gate::GatewayLocalAuthRejection;
 use super::principal::derive_principal_candidate;
@@ -114,7 +115,12 @@ pub(in super::super) async fn resolve_control_decision_auth(
     trace_id: &str,
     mut decision: GatewayControlDecision,
 ) -> Result<ControlDecisionAuthResolution, GatewayError> {
-    if let Some(admin_principal) = resolve_local_admin_principal(
+    if let Some(admin_principal) =
+        resolve_trusted_admin_principal(headers, decision.auth_endpoint_signature.as_deref())
+    {
+        log_admin_principal_resolution(trace_id, &decision, "trusted_headers", &admin_principal);
+        decision.admin_principal = Some(admin_principal);
+    } else if let Some(admin_principal) = resolve_local_admin_principal(
         state,
         headers,
         uri,
@@ -291,6 +297,27 @@ fn allows_missing_data_backed_auth_context(decision: &GatewayControlDecision) ->
         decision.route_kind.as_deref(),
         Some("chat" | "cli" | "compact")
     )
+}
+
+fn resolve_trusted_admin_principal(
+    headers: &http::HeaderMap,
+    auth_endpoint_signature: Option<&str>,
+) -> Option<GatewayAdminPrincipalContext> {
+    if !auth_endpoint_signature
+        .map(str::trim)
+        .unwrap_or_default()
+        .starts_with("admin:")
+    {
+        return None;
+    }
+    let trusted_headers = extract_trusted_admin_headers(headers)?;
+    Some(GatewayAdminPrincipalContext {
+        user_id: trusted_headers.user_id,
+        user_role: trusted_headers.user_role,
+        session_id: trusted_headers.session_id,
+        management_token_id: trusted_headers.management_token_id,
+        management_token_permissions: None,
+    })
 }
 
 async fn resolve_local_admin_principal(

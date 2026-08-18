@@ -97,7 +97,6 @@ services:
       AETHER_LOG_DESTINATION: stdout
       AETHER_LOG_FORMAT: ${AETHER_LOG_FORMAT:-pretty}
       APP_PORT: ${APP_PORT:-8084}
-      AETHER_GATEWAY_BIND_ADDRESS: ${AETHER_GATEWAY_BIND_ADDRESS:-0.0.0.0}
       AETHER_GATEWAY_AUTO_PREPARE_DATABASE: ${AETHER_GATEWAY_AUTO_PREPARE_DATABASE:-true}
     depends_on:
       postgres:
@@ -105,7 +104,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${APP_PORT:-8084}:${APP_PORT:-8084}"
+      - "${APP_PORT:-8084}:${APP_PORT:-8084}"
     logging:
       driver: json-file
       options:

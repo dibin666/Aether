@@ -486,6 +486,22 @@ export function useUsageData(options: UseUsageDataOptions) {
     return existingValue ?? nextValue
   }
 
+  function mergeBooleanTrueWins(
+    existingValue: boolean | null | undefined,
+    nextValue: boolean | null | undefined
+  ): boolean | undefined {
+    if (existingValue === true || nextValue === true) {
+      return true
+    }
+    if (typeof nextValue === 'boolean') {
+      return nextValue
+    }
+    if (typeof existingValue === 'boolean') {
+      return existingValue
+    }
+    return undefined
+  }
+
   function mergeBooleanSnapshot(
     existingValue: boolean | null | undefined,
     nextValue: boolean | null | undefined,

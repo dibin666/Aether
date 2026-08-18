@@ -12,38 +12,40 @@ use aether_data_contracts::repository::usage::StoredRequestUsageAudit;
 use axum::body::{to_bytes, Body, Bytes};
 use axum::routing::{any, get, post};
 use axum::{extract::Request, Router};
-use http::{HeaderMap, StatusCode};
+use http::{HeaderMap, HeaderValue, StatusCode};
 use serde_json::json;
 
 use super::super::{
-    build_router_with_state, issue_test_admin_access_token, sample_endpoint, sample_key,
-    sample_provider, start_server, AppState,
+    build_router_with_state, sample_endpoint, sample_key, sample_provider, start_server, AppState,
 };
 use crate::admin_api::{maybe_build_local_admin_pool_response, AdminAppState, AdminRequestContext};
 use crate::ai_serving::{provider_key_pool_score_id, provider_key_pool_score_scope};
 use crate::audit::AdminAuditEvent;
 use crate::constants::{
-    GATEWAY_HEADER, TRUSTED_ADMIN_SESSION_ID_HEADER, TRUSTED_ADMIN_USER_ID_HEADER,
-    TRUSTED_ADMIN_USER_ROLE_HEADER,
+    GATEWAY_HEADER, TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER, TRUSTED_ADMIN_SESSION_ID_HEADER,
+    TRUSTED_ADMIN_USER_ID_HEADER, TRUSTED_ADMIN_USER_ROLE_HEADER,
 };
 use crate::control::resolve_public_request_context;
 use crate::data::GatewayDataState;
 
-async fn authenticated_admin_headers(state: &AppState) -> HeaderMap {
-    let client_device_id = "device-admin-pool-local";
-    let access_token = issue_test_admin_access_token(state, client_device_id).await;
+fn trusted_admin_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
+    headers.insert(GATEWAY_HEADER, HeaderValue::from_static("rust-phase3b"));
     headers.insert(
-        http::header::AUTHORIZATION,
-        format!("Bearer {access_token}")
-            .parse()
-            .expect("authorization header should build"),
+        TRUSTED_ADMIN_USER_ID_HEADER,
+        HeaderValue::from_static("admin-user-123"),
     );
     headers.insert(
-        "x-client-device-id",
-        client_device_id
-            .parse()
-            .expect("device header should build"),
+        TRUSTED_ADMIN_USER_ROLE_HEADER,
+        HeaderValue::from_static("admin"),
+    );
+    headers.insert(
+        TRUSTED_ADMIN_SESSION_ID_HEADER,
+        HeaderValue::from_static("session-123"),
+    );
+    headers.insert(
+        TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER,
+        HeaderValue::from_static("management-token-123"),
     );
     headers
 }
@@ -54,7 +56,7 @@ async fn local_admin_pool_response(
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> axum::response::Response<Body> {
-    let headers = authenticated_admin_headers(state).await;
+    let headers = trusted_admin_headers();
     let request_context = resolve_public_request_context(
         state,
         &method,

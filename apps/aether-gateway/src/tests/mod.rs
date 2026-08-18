@@ -25,89 +25,9 @@ pub(super) use super::async_task::VideoTaskTruthSourceMode;
 pub(super) use super::constants::*;
 pub(super) use super::fallback_metrics::{GatewayFallbackMetricKind, GatewayFallbackReason};
 pub(super) use super::rate_limit::FrontdoorUserRpmConfig;
-pub(super) use super::router::{
-    attach_static_frontend, build_router,
-    build_router_with_state as build_production_router_with_state,
-};
+pub(super) use super::router::{attach_static_frontend, build_router, build_router_with_state};
 pub(super) use super::state::{AppState, FrontdoorCorsConfig};
 pub(super) use super::usage::UsageRuntimeConfig;
-
-#[derive(Clone)]
-struct LegacyAdminAuthenticationState {
-    app_state: AppState,
-    access_token: std::sync::Arc<tokio::sync::OnceCell<String>>,
-}
-
-const LEGACY_ADMIN_TEST_DEVICE_ID: &str = "legacy-admin-test-device";
-
-/// Translate legacy admin test fixtures to the real JWT/session authentication path.
-///
-/// The production router no longer accepts `x-aether-admin-*` identity headers.
-/// A large set of existing endpoint tests still sends those headers, so this
-/// test-only adapter keeps those fixtures useful without reintroducing a
-/// production authentication bypass. Security regression tests use the
-/// production router re-export directly.
-pub(super) fn build_router_with_state(state: AppState) -> Router {
-    let legacy_authentication_state = LegacyAdminAuthenticationState {
-        app_state: state.clone(),
-        access_token: std::sync::Arc::new(tokio::sync::OnceCell::const_new()),
-    };
-    build_production_router_with_state(state).layer(axum::middleware::from_fn_with_state(
-        legacy_authentication_state,
-        translate_legacy_admin_headers_middleware,
-    ))
-}
-
-async fn translate_legacy_admin_headers_middleware(
-    axum::extract::State(authentication_state): axum::extract::State<
-        LegacyAdminAuthenticationState,
-    >,
-    mut request: Request,
-    next: axum::middleware::Next,
-) -> Response {
-    let has_legacy_admin_headers = request
-        .headers()
-        .keys()
-        .any(|name| name.as_str().starts_with("x-aether-admin-"));
-    if has_legacy_admin_headers {
-        if !request.headers().contains_key(http::header::AUTHORIZATION) {
-            let app_state = authentication_state.app_state.clone();
-            let access_token = authentication_state
-                .access_token
-                .get_or_init(|| async move {
-                    control::helpers::issue_test_admin_access_token(
-                        &app_state,
-                        LEGACY_ADMIN_TEST_DEVICE_ID,
-                    )
-                    .await
-                })
-                .await;
-            request.headers_mut().insert(
-                http::header::AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {access_token}"))
-                    .expect("test authorization header should build"),
-            );
-        }
-        if !request.headers().contains_key("x-client-device-id") {
-            request.headers_mut().insert(
-                HeaderName::from_static("x-client-device-id"),
-                HeaderValue::from_static(LEGACY_ADMIN_TEST_DEVICE_ID),
-            );
-        }
-
-        let headers_to_remove = request
-            .headers()
-            .keys()
-            .filter(|name| name.as_str().starts_with("x-aether-admin-"))
-            .cloned()
-            .collect::<Vec<_>>();
-        for name in headers_to_remove {
-            request.headers_mut().remove(name);
-        }
-    }
-
-    next.run(request).await
-}
 
 pub(super) async fn start_server(app: Router) -> (String, tokio::task::JoinHandle<()>) {
     let listener = crate::test_support::bind_loopback_listener()

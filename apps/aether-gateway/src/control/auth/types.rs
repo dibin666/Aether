@@ -36,6 +36,14 @@ pub(super) struct GatewayTrustedAuthHeaders {
     pub(super) access_allowed: Option<bool>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct GatewayTrustedAdminHeaders {
+    pub(super) user_id: String,
+    pub(super) user_role: String,
+    pub(super) session_id: Option<String>,
+    pub(super) management_token_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct GatewayCredentialBundle {
     pub(super) authorization_bearer: Option<String>,
@@ -65,6 +73,7 @@ pub(super) enum GatewayPrimaryCredential {
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct GatewayExtractedCredentials {
     pub(super) trusted_headers: Option<GatewayTrustedAuthHeaders>,
+    pub(super) trusted_admin_headers: Option<GatewayTrustedAdminHeaders>,
     pub(super) bundle: GatewayCredentialBundle,
     pub(super) primary: Option<GatewayPrimaryCredential>,
 }

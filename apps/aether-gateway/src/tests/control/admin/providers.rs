@@ -18,7 +18,7 @@ use aether_data_contracts::repository::provider_catalog::{
 use axum::body::{Body, Bytes};
 use axum::routing::any;
 use axum::{extract::Request, Router};
-use http::{HeaderMap, StatusCode};
+use http::{HeaderMap, HeaderValue, StatusCode};
 use serde_json::json;
 
 use super::super::{
@@ -32,28 +32,32 @@ use crate::admin_api::{
 };
 use crate::audit::AdminAuditEvent;
 use crate::constants::{
-    TRUSTED_ADMIN_SESSION_ID_HEADER, TRUSTED_ADMIN_USER_ID_HEADER, TRUSTED_ADMIN_USER_ROLE_HEADER,
+    GATEWAY_HEADER, TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER, TRUSTED_ADMIN_SESSION_ID_HEADER,
+    TRUSTED_ADMIN_USER_ID_HEADER, TRUSTED_ADMIN_USER_ROLE_HEADER,
 };
 use crate::control::resolve_public_request_context;
 use crate::data::GatewayDataState;
 
 const ADMIN_PROVIDERS_DATA_UNAVAILABLE_DETAIL: &str = "Admin provider catalog data unavailable";
 
-async fn authenticated_admin_headers(state: &AppState) -> HeaderMap {
-    let client_device_id = "device-admin-providers-local";
-    let access_token = issue_test_admin_access_token(state, client_device_id).await;
+fn trusted_admin_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
+    headers.insert(GATEWAY_HEADER, HeaderValue::from_static("rust-phase3b"));
     headers.insert(
-        http::header::AUTHORIZATION,
-        format!("Bearer {access_token}")
-            .parse()
-            .expect("authorization header should build"),
+        TRUSTED_ADMIN_USER_ID_HEADER,
+        HeaderValue::from_static("admin-user-123"),
     );
     headers.insert(
-        "x-client-device-id",
-        client_device_id
-            .parse()
-            .expect("device header should build"),
+        TRUSTED_ADMIN_USER_ROLE_HEADER,
+        HeaderValue::from_static("admin"),
+    );
+    headers.insert(
+        TRUSTED_ADMIN_SESSION_ID_HEADER,
+        HeaderValue::from_static("session-123"),
+    );
+    headers.insert(
+        TRUSTED_ADMIN_MANAGEMENT_TOKEN_ID_HEADER,
+        HeaderValue::from_static("management-token-123"),
     );
     headers
 }
@@ -64,7 +68,7 @@ async fn local_admin_providers_response(
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> axum::response::Response<Body> {
-    let headers = authenticated_admin_headers(state).await;
+    let headers = trusted_admin_headers();
     let request_context = resolve_public_request_context(
         state,
         &method,
@@ -122,24 +126,25 @@ async fn gateway_handles_admin_providers_locally_with_trusted_admin_principal() 
     ));
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
-    let state = AppState::new()
-        .expect("gateway should build")
-        .with_data_state_for_tests(
-            GatewayDataState::with_provider_catalog_repository_for_tests(
-                provider_catalog_repository.clone(),
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(
+                    provider_catalog_repository.clone(),
+                ),
             ),
-        );
-    let client_device_id = "device-admin-providers-summary";
-    let access_token = issue_test_admin_access_token(&state, client_device_id).await;
-    let gateway = build_router_with_state(state);
+    );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
     let response = reqwest::Client::new()
         .get(format!(
             "{gateway_url}/api/admin/providers/?skip=0&limit=50"
         ))
-        .header("authorization", format!("Bearer {access_token}"))
-        .header("x-client-device-id", client_device_id)
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
         .send()
         .await
         .expect("request should succeed");
@@ -182,18 +187,17 @@ async fn gateway_handles_admin_providers_locally_with_local_503_when_catalog_rea
     );
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
-    let state = AppState::new().expect("gateway should build");
-    let client_device_id = "device-admin-providers-unavailable";
-    let access_token = issue_test_admin_access_token(&state, client_device_id).await;
-    let gateway = build_router_with_state(state);
+    let gateway = build_router_with_state(AppState::new().expect("gateway should build"));
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
     let response = reqwest::Client::new()
         .get(format!(
             "{gateway_url}/api/admin/providers/?skip=0&limit=50"
         ))
-        .header("authorization", format!("Bearer {access_token}"))
-        .header("x-client-device-id", client_device_id)
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
         .send()
         .await
         .expect("request should succeed");
@@ -303,26 +307,27 @@ async fn gateway_handles_admin_provider_summary_locally_with_trusted_admin_princ
     ]));
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
-    let state = AppState::new()
-        .expect("gateway should build")
-        .with_data_state_for_tests(
-            GatewayDataState::with_provider_catalog_global_model_and_quota_readers_for_tests(
-                provider_catalog_repository,
-                global_model_repository,
-                quota_repository,
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_global_model_and_quota_readers_for_tests(
+                    provider_catalog_repository,
+                    global_model_repository,
+                    quota_repository,
+                ),
             ),
-        );
-    let client_device_id = "device-admin-provider-summary";
-    let access_token = issue_test_admin_access_token(&state, client_device_id).await;
-    let gateway = build_router_with_state(state);
+    );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
     let response = reqwest::Client::new()
         .get(format!(
             "{gateway_url}/api/admin/providers/provider-openai/summary"
         ))
-        .header("authorization", format!("Bearer {access_token}"))
-        .header("x-client-device-id", client_device_id)
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
         .send()
         .await
         .expect("request should succeed");
@@ -615,26 +620,27 @@ async fn gateway_handles_admin_providers_summary_list_locally_with_trusted_admin
     ]));
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
-    let state = AppState::new()
-        .expect("gateway should build")
-        .with_data_state_for_tests(
-            GatewayDataState::with_provider_catalog_global_model_and_quota_readers_for_tests(
-                provider_catalog_repository,
-                global_model_repository,
-                quota_repository,
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_global_model_and_quota_readers_for_tests(
+                    provider_catalog_repository,
+                    global_model_repository,
+                    quota_repository,
+                ),
             ),
-        );
-    let client_device_id = "device-admin-providers-filtered-summary";
-    let access_token = issue_test_admin_access_token(&state, client_device_id).await;
-    let gateway = build_router_with_state(state);
+    );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
     let response = reqwest::Client::new()
         .get(format!(
             "{gateway_url}/api/admin/providers/summary?page=1&page_size=20&search=open&status=active&api_format=openai:chat&model_id=gpt-5"
         ))
-        .header("authorization", format!("Bearer {access_token}"))
-        .header("x-client-device-id", client_device_id)
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
         .send()
         .await
         .expect("request should succeed");
@@ -676,18 +682,17 @@ async fn gateway_returns_service_unavailable_for_admin_providers_summary_without
     );
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
-    let state = AppState::new().expect("gateway should build");
-    let client_device_id = "device-admin-providers-no-reader";
-    let access_token = issue_test_admin_access_token(&state, client_device_id).await;
-    let gateway = build_router_with_state(state);
+    let gateway = build_router_with_state(AppState::new().expect("gateway should build"));
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
     let response = reqwest::Client::new()
         .get(format!(
             "{gateway_url}/api/admin/providers/summary?page=1&page_size=20"
         ))
-        .header("authorization", format!("Bearer {access_token}"))
-        .header("x-client-device-id", client_device_id)
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
         .send()
         .await
         .expect("request should succeed");
@@ -724,20 +729,21 @@ async fn gateway_returns_service_unavailable_for_admin_provider_create_without_p
     ));
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
-    let state = AppState::new()
-        .expect("gateway should build")
-        .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
-            provider_catalog_repository,
-        ));
-    let client_device_id = "device-admin-provider-create";
-    let access_token = issue_test_admin_access_token(&state, client_device_id).await;
-    let gateway = build_router_with_state(state);
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
+                provider_catalog_repository,
+            )),
+    );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/api/admin/providers"))
-        .header("authorization", format!("Bearer {access_token}"))
-        .header("x-client-device-id", client_device_id)
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
         .json(&json!({
             "name": "openai",
             "provider_type": "openai",
@@ -801,22 +807,23 @@ async fn gateway_updates_admin_provider_locally_with_trusted_admin_principal() {
     ));
 
     let (upstream_url, upstream_handle) = start_server(upstream).await;
-    let state = AppState::new()
-        .expect("gateway should build")
-        .with_data_state_for_tests(
-            GatewayDataState::with_provider_catalog_repository_for_tests(
-                provider_catalog_repository.clone(),
+    let gateway = build_router_with_state(
+        AppState::new()
+            .expect("gateway should build")
+            .with_data_state_for_tests(
+                GatewayDataState::with_provider_catalog_repository_for_tests(
+                    provider_catalog_repository.clone(),
+                ),
             ),
-        );
-    let client_device_id = "device-admin-provider-update";
-    let access_token = issue_test_admin_access_token(&state, client_device_id).await;
-    let gateway = build_router_with_state(state);
+    );
     let (gateway_url, gateway_handle) = start_server(gateway).await;
 
     let response = reqwest::Client::new()
         .patch(format!("{gateway_url}/api/admin/providers/provider-openai"))
-        .header("authorization", format!("Bearer {access_token}"))
-        .header("x-client-device-id", client_device_id)
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
         .json(&json!({
             "name": "openai-renamed",
             "provider_type": "claude_code",
@@ -874,8 +881,10 @@ async fn gateway_updates_admin_provider_locally_with_trusted_admin_principal() {
 
     let invalid_timeout_response = reqwest::Client::new()
         .patch(format!("{gateway_url}/api/admin/providers/provider-openai"))
-        .header("authorization", format!("Bearer {access_token}"))
-        .header("x-client-device-id", client_device_id)
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
         .json(&json!({
             "request_timeout":
                 aether_contracts::MAX_EXECUTION_REQUEST_TIMEOUT_SECS + 1
@@ -891,8 +900,10 @@ async fn gateway_updates_admin_provider_locally_with_trusted_admin_principal() {
     ] {
         let invalid_transfer_response = reqwest::Client::new()
             .patch(format!("{gateway_url}/api/admin/providers/provider-openai"))
-            .header("authorization", format!("Bearer {access_token}"))
-            .header("x-client-device-id", client_device_id)
+            .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+            .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+            .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+            .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
             .json(&json!({ (field_name): value }))
             .send()
             .await
@@ -908,8 +919,10 @@ async fn gateway_updates_admin_provider_locally_with_trusted_admin_principal() {
 
     let disable_response = reqwest::Client::new()
         .patch(format!("{gateway_url}/api/admin/providers/provider-openai"))
-        .header("authorization", format!("Bearer {access_token}"))
-        .header("x-client-device-id", client_device_id)
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
         .json(&json!({
             "max_transfer_count": null,
             "config": {
