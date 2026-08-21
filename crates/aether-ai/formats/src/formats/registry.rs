@@ -38,9 +38,11 @@ pub fn parse_request(
         FormatId::GeminiEmbedding => gemini::embedding::request::from(body, ctx),
         FormatId::DoubaoEmbedding => doubao::embedding::request::from(body, ctx),
         FormatId::AliyunMultimodalEmbedding => aliyun::embedding::request::from(body, ctx),
-        FormatId::OpenAiSearch | FormatId::OpenAiTranscription | FormatId::GeminiInteractions => {
-            None
-        }
+        FormatId::OpenAiRealtime
+        | FormatId::OpenAiSearch
+        | FormatId::OpenAiTranscription
+        | FormatId::CodexLive
+        | FormatId::GeminiInteractions => None,
     }
     .ok_or_else(|| FormatError::RequestParseFailed {
         format: source.as_str().to_string(),
@@ -74,9 +76,11 @@ fn emit_request_inner(
         FormatId::GeminiEmbedding => gemini::embedding::request::to(request, ctx),
         FormatId::DoubaoEmbedding => doubao::embedding::request::to(request, ctx),
         FormatId::AliyunMultimodalEmbedding => aliyun::embedding::request::to(request, ctx),
-        FormatId::OpenAiSearch | FormatId::OpenAiTranscription | FormatId::GeminiInteractions => {
-            None
-        }
+        FormatId::OpenAiRealtime
+        | FormatId::OpenAiSearch
+        | FormatId::OpenAiTranscription
+        | FormatId::CodexLive
+        | FormatId::GeminiInteractions => None,
     }
     .ok_or_else(|| FormatError::RequestEmitFailed {
         format: target.as_str().to_string(),
@@ -300,6 +304,7 @@ pub fn parse_response(
         FormatId::ClaudeMessages => claude_messages::response::from(body, ctx),
         FormatId::GeminiGenerateContent => gemini_generate_content::response::from(body, ctx),
         FormatId::OpenAiEmbedding
+        | FormatId::OpenAiRealtime
         | FormatId::OpenAiSearch
         | FormatId::OpenAiTranscription
         | FormatId::JinaEmbedding
@@ -308,6 +313,7 @@ pub fn parse_response(
         | FormatId::GeminiEmbedding
         | FormatId::DoubaoEmbedding
         | FormatId::AliyunMultimodalEmbedding
+        | FormatId::CodexLive
         | FormatId::GeminiInteractions => None,
     }
     .ok_or_else(|| FormatError::ResponseParseFailed {
@@ -340,6 +346,7 @@ fn emit_response_inner(
         FormatId::ClaudeMessages => claude_messages::response::to(response, ctx),
         FormatId::GeminiGenerateContent => gemini_generate_content::response::to(response, ctx),
         FormatId::OpenAiEmbedding
+        | FormatId::OpenAiRealtime
         | FormatId::OpenAiSearch
         | FormatId::OpenAiTranscription
         | FormatId::JinaEmbedding
@@ -348,6 +355,7 @@ fn emit_response_inner(
         | FormatId::GeminiEmbedding
         | FormatId::DoubaoEmbedding
         | FormatId::AliyunMultimodalEmbedding
+        | FormatId::CodexLive
         | FormatId::GeminiInteractions => None,
     }
     .ok_or_else(|| FormatError::ResponseEmitFailed {
@@ -1092,6 +1100,7 @@ fn standard_request_root_field_is_audited(source: FormatId, key: &str) -> bool {
                 | "tools"
         ),
         FormatId::OpenAiEmbedding
+        | FormatId::OpenAiRealtime
         | FormatId::OpenAiSearch
         | FormatId::OpenAiRerank
         | FormatId::OpenAiTranscription
@@ -1099,7 +1108,8 @@ fn standard_request_root_field_is_audited(source: FormatId, key: &str) -> bool {
         | FormatId::JinaEmbedding
         | FormatId::JinaRerank
         | FormatId::DoubaoEmbedding
-        | FormatId::AliyunMultimodalEmbedding => true,
+        | FormatId::AliyunMultimodalEmbedding
+        | FormatId::CodexLive => true,
     }
 }
 
@@ -1582,6 +1592,7 @@ fn validate_source_response_stop_enums(
         FormatId::GeminiGenerateContent => validate_gemini_response_finish_reasons(body, target),
         FormatId::GeminiInteractions => Ok(()),
         FormatId::OpenAiEmbedding
+        | FormatId::OpenAiRealtime
         | FormatId::OpenAiSearch
         | FormatId::OpenAiRerank
         | FormatId::OpenAiTranscription
@@ -1589,7 +1600,8 @@ fn validate_source_response_stop_enums(
         | FormatId::JinaEmbedding
         | FormatId::JinaRerank
         | FormatId::DoubaoEmbedding
-        | FormatId::AliyunMultimodalEmbedding => Ok(()),
+        | FormatId::AliyunMultimodalEmbedding
+        | FormatId::CodexLive => Ok(()),
     }
 }
 

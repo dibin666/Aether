@@ -336,6 +336,8 @@ describe('buildExactModelMappingTestRequest', () => {
 
 describe('isModelTestableApiFormat', () => {
   it.each([
+    'openai:realtime',
+    'codex:live',
     'openai:video',
     'gemini:video',
     'gemini:files',

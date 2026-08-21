@@ -8,8 +8,10 @@ use wreq::ws::message::Message as WreqWsMessage;
 use super::adapter::ResponsesWebSocketProtocolAdapter;
 use super::binding::{UpstreamBindingIdentity, UpstreamBindingIdentityError};
 use super::redaction::ResponsesWebSocketRedactionRestorer;
-use super::request::planned_response_create_event;
-use super::state::{BoundResponsesConnection, ExhaustedResponsesWebSocketExclusions};
+use super::request::{planned_request_uses_codex_responses_lite, planned_response_create_event};
+use super::state::{
+    BoundResponsesConnection, ContinuationResponseIds, ExhaustedResponsesWebSocketExclusions,
+};
 use super::turn_state::ResponsesTurnState;
 use crate::ai_serving::{AiExecutionDecision, ResponsesWebSocketBodyNormalization};
 use crate::handlers::proxy::websocket::session::RESPONSES_WEBSOCKET_SESSION_LIMITS;
@@ -79,7 +81,7 @@ async fn bind_responses_upstream_inner(
         adapter.upstream_errors(),
     )
     .await?;
-    let first_event = planned_response_create_event(decision, initial_event)?;
+    let first_event = planned_response_create_event(decision, &normalization, initial_event)?;
     send_upstream_message(&mut upstream.socket, WreqWsMessage::text(first_event))
         .await
         .map_err(|_| "responses_websocket_initial_send_failed")?;
@@ -108,6 +110,11 @@ async fn bind_responses_upstream_inner(
         .ok_or("responses_websocket_mapped_model_missing")?
         .to_string();
 
+    let responses_lite_static_config =
+        planned_request_uses_codex_responses_lite(decision, &normalization).then(|| {
+            super::request::ResponsesLiteStaticConfig::from_response_create(initial_event)
+        });
+
     Ok(BoundResponsesConnection {
         upstream: Some(upstream.socket),
         adapter,
@@ -115,7 +122,9 @@ async fn bind_responses_upstream_inner(
         provider_model,
         decision_template: decision.clone(),
         body_normalization: normalization,
+        responses_lite_static_config,
         binding_identity,
+        continuation_response_ids: ContinuationResponseIds::default(),
         // 首条 response.create 已经发出，但这一轮的 logical turn 和 attempt 由调用方
         // 通过 `ResponsesTurnState::begin` 装上：绑定本身不持有记账状态。
         turn_state: ResponsesTurnState::Idle,
@@ -154,6 +163,20 @@ pub(super) fn decision_reuses_bound_upstream(
         && UpstreamBindingIdentity::from_decision(adapter, decision)
             .map(|identity| bound.binding_identity == identity)
             .unwrap_or(false)
+}
+
+pub(super) fn decision_bound_upstream_change_fields(
+    bound: &BoundResponsesConnection,
+    adapter: &'static dyn ResponsesWebSocketProtocolAdapter,
+    decision: &AiExecutionDecision,
+) -> Vec<String> {
+    if bound.upstream.is_none() {
+        return vec!["upstream_socket".to_string()];
+    }
+    match UpstreamBindingIdentity::from_decision(adapter, decision) {
+        Ok(identity) => bound.binding_identity.changed_field_names(&identity),
+        Err(_) => vec!["binding_identity_invalid".to_string()],
+    }
 }
 
 #[cfg(test)]

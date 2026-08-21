@@ -310,6 +310,11 @@ fn usage_matches_list_query(item: &StoredRequestUsageAudit, query: &UsageAuditLi
             return false;
         }
     }
+    if let Some(is_websocket) = query.is_websocket {
+        if item.is_websocket() != is_websocket {
+            return false;
+        }
+    }
     if query.error_only
         && item.status != "failed"
         && item.status_code.unwrap_or_default() < 400
@@ -388,6 +393,11 @@ fn usage_matches_keyword_search_query(
     }
     if let Some(is_stream) = query.is_stream {
         if item.is_stream != is_stream {
+            return false;
+        }
+    }
+    if let Some(is_websocket) = query.is_websocket {
+        if item.is_websocket() != is_websocket {
             return false;
         }
     }
@@ -2417,7 +2427,9 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                 continue;
             }
             let entry = totals.entry(api_key_id.to_string()).or_insert(0);
-            *entry = (*entry).saturating_add(item.total_tokens);
+            if item.usage_available() {
+                *entry = (*entry).saturating_add(item.total_tokens);
+            }
         }
         Ok(totals)
     }
@@ -2457,7 +2469,9 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                         ..Default::default()
                     });
             entry.request_count = entry.request_count.saturating_add(1);
-            entry.total_tokens = entry.total_tokens.saturating_add(item.total_tokens);
+            if item.usage_available() {
+                entry.total_tokens = entry.total_tokens.saturating_add(item.total_tokens);
+            }
         }
         Ok(totals.into_values().collect())
     }
@@ -2490,8 +2504,10 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                     ..StoredProviderApiKeyUsageSummary::default()
                 });
             entry.request_count = entry.request_count.saturating_add(1);
-            entry.total_tokens = entry.total_tokens.saturating_add(item.total_tokens);
-            entry.total_cost_usd += item.total_cost_usd;
+            if item.usage_available() {
+                entry.total_tokens = entry.total_tokens.saturating_add(item.total_tokens);
+                entry.total_cost_usd += item.total_cost_usd;
+            }
             entry.last_used_at_unix_secs = Some(
                 entry
                     .last_used_at_unix_secs
@@ -2579,21 +2595,24 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
                     .entry(if model.is_empty() { "unknown" } else { model }.to_string())
                     .or_default();
                 *count = count.saturating_add(1);
-                summary.input_tokens = summary.input_tokens.saturating_add(item.input_tokens);
-                summary.output_tokens = summary.output_tokens.saturating_add(item.output_tokens);
-                summary.cache_creation_tokens = summary
-                    .cache_creation_tokens
-                    .saturating_add(item.cache_creation_input_tokens);
-                summary.cache_read_tokens = summary
-                    .cache_read_tokens
-                    .saturating_add(item.cache_read_input_tokens);
-                if item.cache_read_input_tokens > 0 {
-                    summary.cache_hit_request_count =
-                        summary.cache_hit_request_count.saturating_add(1);
+                if item.usage_available() {
+                    summary.input_tokens = summary.input_tokens.saturating_add(item.input_tokens);
+                    summary.output_tokens =
+                        summary.output_tokens.saturating_add(item.output_tokens);
+                    summary.cache_creation_tokens = summary
+                        .cache_creation_tokens
+                        .saturating_add(item.cache_creation_input_tokens);
+                    summary.cache_read_tokens = summary
+                        .cache_read_tokens
+                        .saturating_add(item.cache_read_input_tokens);
+                    if item.cache_read_input_tokens > 0 {
+                        summary.cache_hit_request_count =
+                            summary.cache_hit_request_count.saturating_add(1);
+                    }
+                    summary.total_tokens = summary.total_tokens.saturating_add(item.total_tokens);
+                    summary.total_cost_usd += item.total_cost_usd;
+                    summary.actual_total_cost_usd += item.actual_total_cost_usd;
                 }
-                summary.total_tokens = summary.total_tokens.saturating_add(item.total_tokens);
-                summary.total_cost_usd += item.total_cost_usd;
-                summary.actual_total_cost_usd += item.actual_total_cost_usd;
                 if let Some(value) = item.first_byte_time_ms {
                     first_byte_times.push(value);
                 }
@@ -2689,6 +2708,9 @@ impl UsageReadRepository for InMemoryUsageReadRepository {
             let date_key = dt.date_naive().to_string();
             let entry = daily.entry(date_key).or_insert((0, 0, 0.0, 0.0));
             entry.0 += 1;
+            if !item.usage_available() {
+                continue;
+            }
             let cache_creation = if item.cache_creation_input_tokens == 0
                 && (item.cache_creation_ephemeral_5m_input_tokens
                     + item.cache_creation_ephemeral_1h_input_tokens)
