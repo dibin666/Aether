@@ -2,6 +2,16 @@
 
 本文件记录 `dibin666/Aether` 的 `rust` 分支相对 `fawney19/Aether` `main` 的持有行为。合并上游时先读本文件；它描述的是必须显式复核的功能契约，不代表冲突中可以整文件选择 `ours`。
 
+## 本轮合并前快照（2026-08-21）
+
+- 当前分支：`rust`，代码基线 `5073a7904`。
+- 上游基线：`upstream/main`，提交 `16f96d73e`。
+- merge-base：`b45df89ce`。
+- 分叉计数：fork-only 171 个提交，upstream-only 11 个提交。
+- 路径计数：fork 侧 279 个路径，upstream 侧 160 个路径，双方重叠 57 个路径。
+- 当前待合入上游功能：Codex Live、OpenAI Realtime、Responses continuation 状态/DeepSeek reasoning 修复、Codex continuation binding 修复，以及上游 `v0.7.13` 的认证加固。
+- 本轮文本冲突：14 个路径，涉及 AI 格式导出与传输、额度/消费聚合、管理端格式清单和 Usage 前端刷新行为；最终采用 `1C, 2C, 3C, 4C` 手工混合策略。
+
 ## 强制更新纪律
 
 每次上游合并都必须执行两次复核：合并前用于规划冲突，合并完成并通过验证后用于更新本文件。后一次不能省略，即使结论是“特有功能没有变化”。
@@ -15,7 +25,7 @@
 5. 将本文件和 `SKILL.md` 的必要调整放进独立的文档 commit，不 amend merge commit。这样本文件可以稳定引用不会因文档修改而变化的 merge commit。
 6. 最终交付必须同时报告 merge commit、文档更新 commit 和复核结论；两者完成前不得推送或宣布合并完成。
 
-## 本次合并后复核（2026-08-14）
+## 历史合并后复核（2026-08-14）
 
 - 合并基线：merge commit `596e1830f`，上游 `b7fca851b8c8c357d17d664433f061efaa37b0c9`。
 - 冲突策略：`1C`；21 个合并前重叠路径中，只有 `apps/aether-gateway/src/ai_serving/pure/mod.rs` 产生文本冲突，手工同时保留 Audio Transcriptions 的 multipart/转写导出和上游动态 Codex catalog 导出；其余路径由 Git 自动合并后进行 P0 语义复核，未使用整文件 `ours`/`theirs`。
@@ -25,33 +35,37 @@
 - P0 复核：`pure/mod.rs` 同时导出转写解析、multipart 保真、动态 Codex catalog 投影和 `CODEX_CLIENT_VERSION`；provider catalog、OAuth/quota、routing state 和 fork 的 usage/billing、pool scheduler、self-scope 权限边界均未丢失或改变。
 - 验证：`cd frontend && npm run build` 通过；`cargo check --workspace` 通过；合并树和文档更新的 `git diff --check` 通过。非阻塞警告：`caniuse-lite` 数据已 11 个月未更新；`npm install` 报告 11 个依赖漏洞（2 个 critical），未在本次合并中擅自升级依赖。
 
-## 最近一次合并后复核
+## 最近一次合并后复核（2026-08-21）
 
-- 合并基线：merge commit `596e1830f`，上游 `b7fca851b8c8c357d17d664433f061efaa37b0c9`；采用冲突策略 `1C`，无未解决冲突。
-- 功能结论：无功能差异变化。本轮上游功能已接入，fork 特有的转写、额度/消费统计、OAuth 自动刷新、永不熔断、self-scope 请求详情、chunk 恢复、Responses history 与 Usage 诊断等行为继续保留。
-- 组合语义：routing 的 model override/allowlist 状态和 Codex quota 更新采用上游修复；AI export 同时保留 transcription 与动态 catalog；既有 cache affinity、动态 quota、OAuth 限流/代理、usage/billing 跨数据库契约和 Pool header 兼容行为继续生效。
-- 验证：前端生产构建、`cargo check --workspace`、合并差异与文档 `git diff --check` 均通过；未扩展执行专项行为测试，浏览器烟测仍需人工完成。
+- 合并基线：merge commit `eb159a090`，上游 `16f96d73ecc72c0b75d59b36e9c54fba7924db9f`，merge-base 同为该上游提交；`git rev-list --left-right --count HEAD...upstream/main` 为 fork-only 172、upstream-only 0。
+- 冲突策略：`1C, 2C, 3C, 4C`。14 个文本冲突均采用手工混合：AI 导出/传输同时保留 Audio Transcriptions 与 Codex Live/OpenAI Realtime；管理端同时保留三类格式测试；usage 保留详细窗口统计并采用 `usage_available()` token/cost 语义；Usage 前端同时保留刷新快照保护和 WebSocket 筛选测试。
+- 功能结论：fork 特有功能无删除或改变。Audio Transcriptions、OAuth 自动刷新、额度/消费统计、self-scope usage detail、永不熔断、chunk 恢复、Responses history 与 Usage 诊断继续保留；上游新增的 Codex Live、OpenAI Realtime、Responses continuation/DeepSeek reasoning 修复、Codex continuation binding 修复和认证加固已接入。
+- 合并回归修复：将 fork 的 multipart `body_base64` 沿 pinned stream planner 传递，并让 Codex Live 的 JSON planner 调用显式传 `None`。
+- 路径级复核：相对 `upstream/main` 的 fork-only 代码路径为 279 个；upstream-only 提交和路径均为 0；两棵最终代码树相差 279 个 fork 特有路径；合并后双方重叠路径为 0。
+- P0 复核：格式导出同时保留 transcription 与 Realtime/Codex Live；provider URL/鉴权同时覆盖三类协议；Responses continuation、动态 quota、OAuth 限流/代理、usage/billing 跨数据库契约、cache affinity、Pool scheduler 与 self-scope 权限边界均未丢失或改变。
+- 验证：`cargo fmt --all -- --check`、`cd frontend && npm run build`、`cargo check --workspace` 均通过；前端 `useUsageData.spec.ts` 18 项、管理端 API 格式测试 3 项、usage `usage_available` 定向测试 1 项均通过；合并树和文档更新的 `git diff --check` 通过。
+- 非阻塞警告：Browserslist 的 `caniuse-lite` 数据已 11 个月未更新；`npm install` 报告 11 个依赖漏洞（1 moderate、8 high、2 critical）；管理端测试有既存的 pool quick-selector 未使用导入警告，均未在本次合并中擅自修复或升级依赖。
 
 ## 基线快照
 
-快照日期：2026-08-14（已执行 `git fetch upstream`，完成合并、验证和合并后复核）。
+快照日期：2026-08-21（已执行 `git fetch upstream`，完成合并、验证和合并后复核）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline（已验证的不可变 merge commit） | `596e1830f` |
-| upstream HEAD | `b7fca851b8c8c357d17d664433f061efaa37b0c9` |
-| merge-base | `b7fca851b8c8c357d17d664433f061efaa37b0c9` |
-| 分叉计数 | fork-only 155，upstream-only 0 |
-| fork 侧净改动 | 272 个路径（合并后相对 upstream/main） |
+| fork code baseline（已验证的不可变 merge commit） | `eb159a090` |
+| upstream HEAD | `16f96d73ecc72c0b75d59b36e9c54fba7924db9f` |
+| merge-base | `16f96d73ecc72c0b75d59b36e9c54fba7924db9f` |
+| 分叉计数 | fork-only 172，upstream-only 0 |
+| fork 侧净改动 | 279 个路径（合并后相对 upstream/main） |
 | upstream 侧净改动 | 0 个路径，`+0/-0` |
-| 双边同时改动 | 0 个路径（合并前 21 个路径已复核，其中 1 个文本冲突按 `1C` 手工混合） |
+| 双边同时改动 | 0 个路径（合并前 57 个重叠路径已复核，其中 14 个文本冲突按 `1C, 2C, 3C, 4C` 手工混合） |
 
 ## 当前待合入上游功能
 
-- 无。`upstream/main` 已完整合入 merge commit `596e1830f`；`git rev-list HEAD..upstream/main` 为 0。
+- 无。`upstream/main` 已完整合入 merge commit `eb159a090`；`git rev-list HEAD..upstream/main` 为 0。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -89,6 +103,8 @@ git diff --name-status HEAD..upstream/main
 10. `704a16fcf` 接入的 Responses routing、SSE event-only normalization 与 reasoning effort 校验边界现已属于 upstream baseline。后续冲突应在格式转换中保留显式 effort，只在最终同格式 provider 的实际映射模型上校验；transcription 的 multipart/二进制路径不得误入 JSON effort 校验。routed policy 必须继续继承全局 `keep_priority_on_conversion`，同时保留 fork 的 cache-affinity pool group 优先级提升。
 
 ## Fork 特有功能清单
+
+本轮合并后复核（2026-08-21）确认：以下 fork 特有功能清单无增删，均继续由 `eb159a090` 提供；上游新增能力已在合并后复核中单独记录。
 
 ### P0：OpenAI Audio Transcriptions 端到端支持
 
