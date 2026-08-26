@@ -2,15 +2,15 @@
 
 本文件记录 `dibin666/Aether` 的 `rust` 分支相对 `fawney19/Aether` `main` 的持有行为。合并上游时先读本文件；它描述的是必须显式复核的功能契约，不代表冲突中可以整文件选择 `ours`。
 
-## 本轮合并前快照（2026-08-21）
+## 本轮合并前快照（2026-08-26）
 
-- 当前分支：`rust`，代码基线 `5073a7904`。
-- 上游基线：`upstream/main`，提交 `16f96d73e`。
-- merge-base：`b45df89ce`。
-- 分叉计数：fork-only 171 个提交，upstream-only 11 个提交。
-- 路径计数：fork 侧 279 个路径，upstream 侧 160 个路径，双方重叠 57 个路径。
-- 当前待合入上游功能：Codex Live、OpenAI Realtime、Responses continuation 状态/DeepSeek reasoning 修复、Codex continuation binding 修复，以及上游 `v0.7.13` 的认证加固。
-- 本轮文本冲突：14 个路径，涉及 AI 格式导出与传输、额度/消费聚合、管理端格式清单和 Usage 前端刷新行为；最终采用 `1C, 2C, 3C, 4C` 手工混合策略。
+- 当前分支：`rust`，代码基线 `e1a2ad732b41d5cb87f3325fa1b658a76c577631`。
+- 上游基线：`upstream/main`，提交 `7892aa94853461c1e634f7a5babbb1280128720f`。
+- merge-base：`16f96d73ecc72c0b75d59b36e9c54fba7924db9f`。
+- 分叉计数：fork-only 173 个提交，upstream-only 15 个提交。
+- 路径计数：fork 侧 279 个路径，upstream 侧 68 个路径，双方重叠 28 个路径。
+- 当前待合入上游功能：OpenAI Live/WebSocket usage 记录统一与审计查询补齐、当前 Codex Realtime live 路由、模型级 429 quota 隔离与 Spark 污染额度自愈、legacy backfill 升级保留、Responses namespace tools 跨 Chat 保真、跨格式同步 JSON 响应收尾，以及数据库迁移 cutoff 对齐。
+- 本轮文本冲突：待 `git merge --no-commit --no-ff` 后按行为分组检查；不预先选择 `ours` 或 `theirs`。
 
 ## 强制更新纪律
 
@@ -48,24 +48,32 @@
 
 ## 基线快照
 
-快照日期：2026-08-21（已执行 `git fetch upstream`，完成合并、验证和合并后复核）。
+快照日期：2026-08-26（已执行 `git fetch upstream`，本轮合并前快照）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline（已验证的不可变 merge commit） | `eb159a090` |
-| upstream HEAD | `16f96d73ecc72c0b75d59b36e9c54fba7924db9f` |
+| fork code baseline（本轮合并前 HEAD） | `e1a2ad732b41d5cb87f3325fa1b658a76c577631` |
+| upstream HEAD | `7892aa94853461c1e634f7a5babbb1280128720f` |
 | merge-base | `16f96d73ecc72c0b75d59b36e9c54fba7924db9f` |
-| 分叉计数 | fork-only 172，upstream-only 0 |
-| fork 侧净改动 | 279 个路径（合并后相对 upstream/main） |
-| upstream 侧净改动 | 0 个路径，`+0/-0` |
-| 双边同时改动 | 0 个路径（合并前 57 个重叠路径已复核，其中 14 个文本冲突按 `1C, 2C, 3C, 4C` 手工混合） |
+| 分叉计数 | fork-only 173，upstream-only 15 |
+| fork 侧净改动 | 279 个路径（相对 merge-base） |
+| upstream 侧净改动 | 68 个路径（相对 merge-base） |
+| 双边同时改动 | 28 个路径 |
 
 ## 当前待合入上游功能
 
-- 无。`upstream/main` 已完整合入 merge commit `eb159a090`；`git rev-list HEAD..upstream/main` 为 0。
+- `9996e75a3`：对齐数据库 snapshot migration cutoff 与生命周期测试。
+- `acde38b8e`：统一 OpenAI Live/WebSocket usage 记录、用户自助详情和 Postgres 审计查询。
+- `2cd20da1e`、`6a9eea34a`：支持当前 Codex Realtime live 路由并修正路由测试夹具。
+- `1b1be918a`、`42deab67b`：将 Codex 模型级 rate-limit header/reset 与账号 quota slot 隔离。
+- `2f2d444f9`：自愈 Spark 污染的 Codex 账号额度，并同步 orchestration breaker 行为。
+- `ec6ddb43a`：保留已应用的 legacy enabled/is_active backfill，避免升级重复处理。
+- `e2b003af2`：跨 Chat 保留 Responses namespace tools、格式注册和流转换语义。
+- `9d9892be6`：收尾跨格式同步 JSON 响应执行路径。
+- 上述提交之间的 5 个上游合并提交同步其父分支集成结果。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -303,24 +311,35 @@ Provider 级覆盖位于 `provider.config.oauth_token_refresh`：`enabled`、`lo
 - `.gitignore` 中 `.cursor`、`.trellis`、`AGENTS.md`、`.agents` 是本地工具忽略规则。
 - `.skills/upstream-merge/**` 本身只存在于 fork，合并时保留。
 
-## 当前 0 个双边改动路径
+## 本轮双边改动路径（合并前）
 
-合并后 `merge-base` 为 `b7fca851b8c8c357d17d664433f061efaa37b0c9`，等于 `upstream/main`；upstream-only 为 0 个提交、0 个路径，当前双边重叠为 0 个路径。下一次 `git fetch upstream` 后必须重新计算，不能沿用本次的 0。
+本轮 `merge-base` 为 `16f96d73ecc72c0b75d59b36e9c54fba7924db9f`；fork-only 为 173 个提交、279 个路径，upstream-only 为 15 个提交、68 个路径，双方重叠 28 个路径。冲突解决前只记录事实，不预设选择：
 
-本轮合并前共有 21 个双边路径，其中 1 个产生文本冲突；已按用户选择 `1C` 完成组合行为复核如下：
+```text
+apps/aether-gateway/src/{api/ai/registry.rs,constants.rs,control/route/ai.rs,
+  frontdoor_loop_guard.rs,handlers/proxy/websocket/live/planner.rs,
+  handlers/public/support/user_me_usage.rs,orchestration/mod.rs}
+crates/aether-admin/src/{observability/usage.rs,system.rs}
+crates/aether-ai/formats/src/formats/{openai/mod.rs,registry.rs,shared/routing.rs,
+  shared/stream_core/format_matrix.rs}
+crates/aether-data/adapters/postgres/src/usage/tests.rs
+crates/aether-data/runtime/{backfills/postgres/20260722140744_sync_legacy_enabled_from_is_active.sql,
+  src/lifecycle/backfill/tests.rs}
+crates/aether-scheduler-core/src/candidate/mod.rs
+frontend/src/{api/dashboard.ts,api/endpoints/types/__tests__/api-format.spec.ts,
+  api/endpoints/types/api-format.ts,api/me.ts,
+  features/usage/components/RequestDetailDrawer.vue,
+  features/usage/components/UsageRecordsTable.vue,
+  features/usage/components/__tests__/UsageRecordsTable.spec.ts,
+  features/usage/composables/__tests__/useUsageData.spec.ts,
+  features/usage/composables/useUsageData.ts,i18n/messages.ts,views/shared/Usage.vue}
+```
 
-| 组 | 选择 | 合并后行为 |
-|---|---|---|
-| AI export / Codex catalog | `1C` manual hybrid | `pure/mod.rs` 同时保留 `parse_multipart_fields`、`parse_openai_transcription_request`、`project_codex_catalog_model_card` 和 `CODEX_CLIENT_VERSION`，转写与动态模型目录均可继续使用 |
-| routing model overrides / allowlist | Git 自动合并 + P0 复核 | 上游将 model overrides 与 allowed scope 解耦，并保留 allowlist 编辑后的持久化状态；fork 的 routing/cache-affinity 约束继续保留 |
-| Codex quota / provider state | Git 自动合并 + P0 复核 | 上游并发 quota 更新保护、provider catalog cache 和动态模型目录状态进入 merge tree，fork 的动态 quota、消费统计和 OAuth 行为继续保留 |
-| provider catalog adapters / frontend provider types | Git 自动合并 + P0 复核 | MySQL/Postgres/SQLite catalog 契约和前端 provider 类型同时通过编译，未删除 fork 的 provider/API 契约 |
-
-P0 复核结果：无功能差异变化。转写、cache affinity、动态 quota/消费统计、OAuth 自动刷新、usage/billing 跨数据库契约、self-scope 请求详情、`disable_circuit_breaker`、chunk 恢复、Responses continuation history 与 Usage 端到端/候选时序均保留；当前 pool scheduler score phase 与 Pool header 行为未改变。
+冲突分组与行为影响在 `git merge --no-commit --no-ff` 后依据 `git diff --cc`、stage 2/3 内容和 P0 契约补充；用户选择会以 `ours`、`theirs` 或 `manual hybrid` 记录。
 
 ## 当前尚未合入的上游功能
 
-- 无。`upstream/main` 已并入 merge commit `596e1830f`；`git rev-list HEAD..upstream/main` 为 0。
+- 当前有 15 个上游提交待合入；详见“当前待合入上游功能”。
 
 ## 配置与 API 契约速查
 
