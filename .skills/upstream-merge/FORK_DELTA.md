@@ -46,34 +46,39 @@
 - 验证：`cargo fmt --all -- --check`、`cd frontend && npm run build`、`cargo check --workspace` 均通过；前端 `useUsageData.spec.ts` 18 项、管理端 API 格式测试 3 项、usage `usage_available` 定向测试 1 项均通过；合并树和文档更新的 `git diff --check` 通过。
 - 非阻塞警告：Browserslist 的 `caniuse-lite` 数据已 11 个月未更新；`npm install` 报告 11 个依赖漏洞（1 moderate、8 high、2 critical）；管理端测试有既存的 pool quick-selector 未使用导入警告，均未在本次合并中擅自修复或升级依赖。
 
+## 最近一次合并后复核（2026-08-26）
+
+- 合并基线：merge commit `7530d3f2b`；合并回归修复 `73e49c8e2`；上游 `7892aa94853461c1e634f7a5babbb1280128720f`，merge-base 同为该上游提交。
+- 冲突策略：`1C, 2C`。`1C`（详情权限与抽屉数据）手工混合保留 self-scope 权限边界、`detailScope` 和 `summaryRecord`；`2C`（刷新、筛选与分页）手工混合接入服务端 search/API-format/status 分页，同时保留 fork 的刷新快照保护和用户本地 retry/fallback 筛选。
+- 功能结论：无 fork 产品功能被删除或改变。Audio Transcriptions、OAuth 自动刷新、额度/消费统计、self-scope 请求详情、永不熔断、chunk 恢复、Responses history/Usage 诊断、cache affinity、pool scheduler 和 Pool header 行为均保留；legacy backfill 文件及其测试已被上游等价吸收，不再属于 fork-only 路径。
+- 本次上游接入：OpenAI Live/WebSocket usage 记录统一与审计查询、当前 Codex Realtime live 路由、模型级 rate-limit quota 隔离、Spark 污染额度自愈、已应用 legacy backfill 升级保留、Responses namespace tools 跨 Chat 保真、跨格式同步 JSON 响应收尾，以及数据库 snapshot migration cutoff 对齐。
+- 合并回归修复：将 Codex Realtime live 测试中的 `resolve_ai_passthrough_sync_request_body` 更正为 serving crate 实际导出的 `resolve_ai_passthrough_request_body`。
+- 路径级复核：以代码基线 `73e49c8e2` 计算，merge-base 为上游 `7892aa948`；`git rev-list --left-right --count 73e49c8e2...upstream/main` 为 fork-only 176、upstream-only 0；相对上游的 fork-only 路径为 278；两棵代码树相差 278 个 fork 特有路径；合并后双方重叠路径为 0。本次独立文档提交另增加 1 个非代码提交，因此工作分支 HEAD 的提交计数为 fork-only 177。相较合并前，legacy backfill SQL 与 backfill 测试 2 个路径已由上游吸收，回归修复使 live HTTP 测试路径新增为 1 个 fork-only 路径。
+- P0 复核：转写 multipart/二进制保真与 same-format stream、动态 quota/消费统计、OAuth 限流/代理、usage/billing 跨数据库契约、self-scope 请求详情、`disable_circuit_breaker`、Responses continuation history、端到端/候选时序、cache-affinity pool group 提升及全局 `keep_priority_on_conversion` 继承均保留；Realtime 路由和 usage 统一已接入。
+- 验证：`cargo fmt --all -- --check` 通过；`cd frontend && npm run build` 通过；`cargo check --workspace` 通过；前端 6 个定向测试文件共 82 项通过；`cargo test -p aether-ai-formats transcription` 的 10 项转写测试通过；`cargo test -p aether-scheduler-core disable_circuit_breaker` 通过。`users_me_usage` 首次测试编译发现并修复上述单符号命名回归；按内存约束（单个编译进程峰值约 8 GiB）停止了修复后的定向测试编译，未记录该测试的最终执行结果。
+- 非阻塞警告：Browserslist 的 `caniuse-lite` 数据已 11 个月未更新；本轮未执行 `npm install`，未引入依赖升级或审计变更。
+
 ## 基线快照
 
-快照日期：2026-08-26（已执行 `git fetch upstream`，本轮合并前快照）。
+快照日期：2026-08-26（已执行 `git fetch upstream`，完成合并、回归修复、验证和合并后复核）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并前 HEAD） | `e1a2ad732b41d5cb87f3325fa1b658a76c577631` |
+| fork code baseline（已创建的 merge commit） | `7530d3f2b53c6743b8f4c09dc4abd23c26d4434f` |
+| 合并回归修复 | `73e49c8e2` |
 | upstream HEAD | `7892aa94853461c1e634f7a5babbb1280128720f` |
-| merge-base | `16f96d73ecc72c0b75d59b36e9c54fba7924db9f` |
-| 分叉计数 | fork-only 173，upstream-only 15 |
-| fork 侧净改动 | 279 个路径（相对 merge-base） |
-| upstream 侧净改动 | 68 个路径（相对 merge-base） |
-| 双边同时改动 | 28 个路径 |
+| merge-base | `7892aa94853461c1e634f7a5babbb1280128720f` |
+| 分叉计数（以代码基线计） | fork-only 176，upstream-only 0；含本次文档提交的工作分支 HEAD 为 177 |
+| fork 侧净改动 | 278 个路径（合并后相对 upstream/main） |
+| upstream 侧净改动 | 0 个路径，`+0/-0` |
+| 双边同时改动 | 0 个路径（合并前 28 个重叠路径已复核，2 个冲突组按 `1C, 2C` 手工混合） |
 
 ## 当前待合入上游功能
 
-- `9996e75a3`：对齐数据库 snapshot migration cutoff 与生命周期测试。
-- `acde38b8e`：统一 OpenAI Live/WebSocket usage 记录、用户自助详情和 Postgres 审计查询。
-- `2cd20da1e`、`6a9eea34a`：支持当前 Codex Realtime live 路由并修正路由测试夹具。
-- `1b1be918a`、`42deab67b`：将 Codex 模型级 rate-limit header/reset 与账号 quota slot 隔离。
-- `2f2d444f9`：自愈 Spark 污染的 Codex 账号额度，并同步 orchestration breaker 行为。
-- `ec6ddb43a`：保留已应用的 legacy enabled/is_active backfill，避免升级重复处理。
-- `e2b003af2`：跨 Chat 保留 Responses namespace tools、格式注册和流转换语义。
-- `9d9892be6`：收尾跨格式同步 JSON 响应执行路径。
-- 上述提交之间的 5 个上游合并提交同步其父分支集成结果。
+- 无。`upstream/main` 已完整合入 merge commit `7530d3f2b`；`git rev-list HEAD..upstream/main` 为 0。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -112,7 +117,7 @@ git diff --name-status HEAD..upstream/main
 
 ## Fork 特有功能清单
 
-本轮合并后复核（2026-08-21）确认：以下 fork 特有功能清单无增删，均继续由 `eb159a090` 提供；上游新增能力已在合并后复核中单独记录。
+本轮合并后复核（2026-08-26）确认：以下 fork 特有功能清单无增删，均继续由 `7530d3f2b` 与 `73e49c8e2` 提供；legacy backfill 已由上游等价吸收，上游新增能力已在合并后复核中单独记录。
 
 ### P0：OpenAI Audio Transcriptions 端到端支持
 
@@ -337,9 +342,18 @@ frontend/src/{api/dashboard.ts,api/endpoints/types/__tests__/api-format.spec.ts,
 
 冲突分组与行为影响在 `git merge --no-commit --no-ff` 后依据 `git diff --cc`、stage 2/3 内容和 P0 契约补充；用户选择会以 `ours`、`theirs` 或 `manual hybrid` 记录。
 
+本轮实际冲突分组与选择：
+
+| 组 | 选择 | 合并后行为 |
+|---|---|---|
+| Usage detail scope / summary | `1C` manual hybrid | 保留普通用户 self-scope 详情、权限判断和 `detailScope`；同时保留上游 `summaryRecord` 数据连接。 |
+| Usage server filters / refresh | `2C` manual hybrid | 普通用户的 search/API-format/status 使用上游服务端分页；retry/fallback 继续本地筛选；刷新路径保留 fork 的 `preserveOnFailure`/`preserveOnEmpty` 快照保护。 |
+
+P0 复核结果：无 fork 产品功能差异变化；legacy backfill 及测试路径被上游等价吸收。转写、cache affinity、动态 quota/消费统计、OAuth 自动刷新、usage/billing 跨数据库契约、self-scope 请求详情、`disable_circuit_breaker`、chunk 恢复、Responses continuation history 与 Usage 端到端/候选时序均保留；当前 pool scheduler score phase 与 Pool header 行为未改变。新增上游 Live/WebSocket usage、Codex Realtime live 路由、quota 隔离/自愈、namespace tools 和跨格式同步 JSON 响应已进入最终树。
+
 ## 当前尚未合入的上游功能
 
-- 当前有 15 个上游提交待合入；详见“当前待合入上游功能”。
+- 无。`upstream/main` 已并入 merge commit `7530d3f2b`；`git rev-list HEAD..upstream/main` 为 0。
 
 ## 配置与 API 契约速查
 
@@ -416,7 +430,7 @@ npm run test:run -- \
   src/views/admin/__tests__/PoolManagement.codex-cycle-stats.spec.ts
 ```
 
-本次 `596e1830f` 验证结果：
+历史 `596e1830f` 验证结果（2026-08-14）：
 
 - `cd frontend && npm run build`：通过，耗时约 20 秒；非阻塞警告为 `caniuse-lite` 数据已 11 个月未更新。
 - `cargo check --workspace`：通过，耗时 3 分 26 秒。
@@ -424,6 +438,18 @@ npm run test:run -- \
 - 本轮仅 `pure/mod.rs` 发生实际文本冲突，已按 `1C` 完成手工混合；没有 merge-regression 修复，按技能的最小验证规则未扩展执行专项行为测试，文档列出的命令保留为后续回归清单。
 - `npm install` 审计报告 11 个依赖漏洞（2 个 critical）；未执行自动修复，避免把依赖升级混入上游合并。
 - 浏览器烟测未自动执行；当前会话未授权浏览器自动化，需人工完成下列检查。
+
+本次 `7530d3f2b` / `73e49c8e2` 验证结果：
+
+- `cargo fmt --all -- --check`：通过。
+- `cd frontend && npm run build`：通过；警告为 `caniuse-lite` 数据已 11 个月未更新。
+- `cargo check --workspace`：通过。
+- 前端定向测试：6 个测试文件、82 项通过。
+- `cargo test -p aether-ai-formats transcription`：10 项通过。
+- `cargo test -p aether-scheduler-core disable_circuit_breaker`：1 项通过。
+- `users_me_usage` 定向测试首次编译发现并修复了 `resolve_ai_passthrough_sync_request_body` 命名回归；修复后按内存约束停止了单进程测试编译，未记录最终执行结果。
+- 合并树、回归修复和文档的 `git diff --check`：通过。
+- 未执行 `npm install`、依赖升级或浏览器人工烟测。
 
 还必须做六个烟测：
 
