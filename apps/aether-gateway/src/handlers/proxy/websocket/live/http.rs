@@ -863,7 +863,7 @@ mod tests {
                 .to_string()
                 .contains("opaque private instructions"));
 
-            let plan_body = aether_ai_serving::resolve_ai_passthrough_sync_request_body(
+            let plan_body = aether_ai_serving::resolve_ai_passthrough_request_body(
                 Some(provider_body_marker.clone()),
                 Some(encoded.clone()),
             );
