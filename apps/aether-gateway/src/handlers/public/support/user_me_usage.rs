@@ -75,6 +75,7 @@ fn parse_users_me_usage_offset(query: Option<&str>) -> Result<usize, String> {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct UsersMeUsageRecordFilter {
+    api_format: Option<String>,
     statuses: Option<Vec<String>>,
     is_stream: Option<bool>,
     is_websocket: Option<bool>,
@@ -82,14 +83,19 @@ struct UsersMeUsageRecordFilter {
 }
 
 fn parse_users_me_usage_record_filter(query: Option<&str>) -> UsersMeUsageRecordFilter {
+    let mut filter = UsersMeUsageRecordFilter {
+        api_format: query_param_value(query, "api_format")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        ..UsersMeUsageRecordFilter::default()
+    };
     let Some(status) = query_param_value(query, "status")
         .map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
     else {
-        return UsersMeUsageRecordFilter::default();
+        return filter;
     };
 
-    let mut filter = UsersMeUsageRecordFilter::default();
     match status.as_str() {
         "stream" => {
             filter.is_stream = Some(true);
@@ -1401,7 +1407,7 @@ pub(super) async fn handle_users_me_usage_get(
                 user_id: Some(auth.user.id.clone()),
                 provider_name: None,
                 model: None,
-                api_format: None,
+                api_format: record_filter.api_format.clone(),
                 client_family: None,
                 exclude_unknown_model_or_provider: false,
                 statuses: record_filter.statuses.clone(),
@@ -1458,7 +1464,7 @@ pub(super) async fn handle_users_me_usage_get(
                     user_id: Some(auth.user.id.clone()),
                     provider_name: None,
                     model: None,
-                    api_format: None,
+                    api_format: record_filter.api_format.clone(),
                     client_family: None,
                     exclude_unknown_model_or_provider: false,
                     statuses: record_filter.statuses.clone(),
@@ -1488,7 +1494,7 @@ pub(super) async fn handle_users_me_usage_get(
                     user_id: Some(auth.user.id.clone()),
                     provider_name: None,
                     model: None,
-                    api_format: None,
+                    api_format: record_filter.api_format.clone(),
                     client_family: None,
                     exclude_unknown_model_or_provider: false,
                     statuses: record_filter.statuses.clone(),
@@ -2022,6 +2028,20 @@ mod tests {
 
     #[test]
     fn users_me_usage_transport_statuses_are_disjoint_server_side_filters() {
+        let live_websocket = parse_users_me_usage_record_filter(Some(
+            "limit=20&api_format=codex%3Alive&status=websocket",
+        ));
+        assert_eq!(live_websocket.api_format.as_deref(), Some("codex:live"));
+        assert_eq!(live_websocket.is_websocket, Some(true));
+
+        let live_without_status =
+            parse_users_me_usage_record_filter(Some("api_format=codex%3Alive"));
+        assert_eq!(
+            live_without_status.api_format.as_deref(),
+            Some("codex:live")
+        );
+        assert_eq!(live_without_status.is_websocket, None);
+
         for status in ["websocket", "ws", "WS"] {
             let filter = parse_users_me_usage_record_filter(Some(
                 format!("limit=20&status={status}").as_str(),
