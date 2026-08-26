@@ -2,6 +2,7 @@ name: Publish Aether M image
 
 on:
   push:
+  workflow_dispatch:
 
 concurrency:
   group: publish-image-${{ github.ref }}
