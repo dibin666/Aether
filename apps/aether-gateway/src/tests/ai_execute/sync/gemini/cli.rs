@@ -2334,13 +2334,14 @@ async fn gateway_executes_antigravity_gemini_cli_sync_via_local_decision_gate_af
         seen_execution_runtime_request.project,
         "project-antigravity-local-1"
     );
-    assert!(seen_execution_runtime_request
-        .request_id
-        .starts_with("agent/"));
+    assert_eq!(
+        seen_execution_runtime_request.request_id,
+        "trace-antigravity-cli-oauth-local-sync-123"
+    );
     assert_eq!(seen_execution_runtime_request.model, "claude-sonnet-4-5");
     assert_eq!(
         seen_execution_runtime_request.user_agent,
-        aether_provider_transport::antigravity::ANTIGRAVITY_ENVELOPE_USER_AGENT
+        aether_provider_transport::antigravity::ANTIGRAVITY_REQUEST_USER_AGENT
     );
     assert_eq!(seen_execution_runtime_request.request_type, "agent");
     assert_eq!(seen_execution_runtime_request.contents_len, 0);

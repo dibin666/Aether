@@ -8,7 +8,7 @@ use url::{form_urlencoded, Url};
 
 use crate::antigravity::{
     build_antigravity_v1internal_url, is_antigravity_provider_transport,
-    resolve_antigravity_api_base_url, AntigravityRequestUrlAction,
+    AntigravityRequestUrlAction,
 };
 use crate::claude_code::build_claude_code_messages_url;
 use crate::gemini_cli::{
@@ -471,7 +471,7 @@ fn build_transport_hook_url(
                 .collect::<BTreeMap<String, String>>()
         });
         return build_antigravity_v1internal_url(
-            resolve_antigravity_api_base_url(transport),
+            &transport.endpoint.base_url,
             if params.upstream_is_stream {
                 AntigravityRequestUrlAction::StreamGenerateContent
             } else {
@@ -1987,35 +1987,6 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_generate_content_honors_configured_api_url_override() {
-        let mut transport = sample_transport(
-            "antigravity",
-            "gemini:generate_content",
-            "https://daily-cloudcode-pa.googleapis.com",
-            None,
-        );
-        transport.endpoint.config = Some(serde_json::json!({
-            "antigravity_api_url": "https://cloudcode-pa.googleapis.com"
-        }));
-
-        assert_eq!(
-            build_transport_request_url(
-                &transport,
-                TransportRequestUrlParams {
-                    provider_api_format: "gemini:generate_content",
-                    mapped_model: Some("gemini-3-flash-agent"),
-                    upstream_is_stream: false,
-                    request_query: None,
-                    kiro_api_region: None,
-                    api_operation: None,
-                },
-            )
-            .as_deref(),
-            Some("https://cloudcode-pa.googleapis.com/v1internal:generateContent")
-        );
-    }
-
-    #[test]
     fn embedding_request_url_preserves_google_openai_compat_roots() {
         let developer_api_openai = sample_transport(
             "custom",
@@ -2166,7 +2137,6 @@ mod tests {
                     upstream_is_stream: false,
                     request_query: None,
                     kiro_api_region: None,
-                    api_operation: None,
                 },
             )
             .as_deref(),
@@ -2181,7 +2151,6 @@ mod tests {
                     upstream_is_stream: true,
                     request_query: Some("tenant=demo"),
                     kiro_api_region: None,
-                    api_operation: None,
                 },
             )
             .as_deref(),

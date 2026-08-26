@@ -2137,16 +2137,17 @@ async fn gateway_executes_antigravity_gemini_cli_sync_upstream_stream_via_local_
         seen_remote_execution_runtime_request.project,
         "project-antigravity-local-1"
     );
-    assert!(seen_remote_execution_runtime_request
-        .request_id
-        .starts_with("agent/"));
+    assert_eq!(
+        seen_remote_execution_runtime_request.request_id,
+        "trace-antigravity-cli-stream-sync-direct-123"
+    );
     assert_eq!(
         seen_remote_execution_runtime_request.model,
         "claude-sonnet-4-5"
     );
     assert_eq!(
         seen_remote_execution_runtime_request.user_agent,
-        aether_provider_transport::antigravity::ANTIGRAVITY_ENVELOPE_USER_AGENT
+        aether_provider_transport::antigravity::ANTIGRAVITY_REQUEST_USER_AGENT
     );
     assert_eq!(seen_remote_execution_runtime_request.request_type, "agent");
     assert_eq!(seen_remote_execution_runtime_request.contents_len, 0);

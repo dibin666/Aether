@@ -3,9 +3,10 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use super::super::snapshot::GatewayProviderTransportSnapshot;
-pub use super::profile::ANTIGRAVITY_REQUEST_USER_AGENT;
 
 pub const ANTIGRAVITY_PROVIDER_TYPE: &str = "antigravity";
+pub const ANTIGRAVITY_REQUEST_USER_AGENT: &str =
+    "antigravity/cli/1.0.16 (aidev_client; os_type=linux; arch=arm64; auth_method=consumer)";
 const ANTIGRAVITY_CLIENT_NAME: &str = "antigravity";
 const ANTIGRAVITY_GOOG_API_CLIENT: &str = "gl-node/18.18.2 fire/0.8.6 grpc/1.10.x";
 
@@ -14,7 +15,6 @@ pub struct AntigravityRequestAuth {
     pub project_id: String,
     pub client_version: Option<String>,
     pub session_id: Option<String>,
-    pub enable_google_one_ai_credit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,18 +91,11 @@ pub fn resolve_local_antigravity_request_auth(
         &auth_config,
         ANTIGRAVITY_SESSION_ID_PATHS,
     );
-    let enable_google_one_ai_credit = find_antigravity_bool(
-        upstream_metadata,
-        &auth_config,
-        ANTIGRAVITY_GOOGLE_ONE_AI_CREDIT_PATHS,
-    )
-    .unwrap_or(false);
 
     AntigravityRequestAuthSupport::Supported(AntigravityRequestAuth {
         project_id,
         client_version,
         session_id,
-        enable_google_one_ai_credit,
     })
 }
 
@@ -147,46 +140,6 @@ pub fn build_antigravity_static_client_headers(
     headers
 }
 
-pub fn finalize_antigravity_request_headers(
-    headers: &mut BTreeMap<String, String>,
-    upstream_is_stream: bool,
-) {
-    headers.retain(|name, _| antigravity_header_is_allowed(name));
-    headers.insert(
-        "accept".to_string(),
-        if upstream_is_stream {
-            "text/event-stream"
-        } else {
-            "application/json"
-        }
-        .to_string(),
-    );
-}
-
-fn antigravity_header_is_allowed(name: &str) -> bool {
-    let normalized = name.trim().to_ascii_lowercase();
-    normalized.starts_with("x-b3-")
-        || matches!(
-            normalized.as_str(),
-            "authorization"
-                | "content-type"
-                | "accept"
-                | "accept-encoding"
-                | "accept-language"
-                | "user-agent"
-                | "traceparent"
-                | "tracestate"
-                | "x-client-name"
-                | "x-client-version"
-                | "x-vscode-sessionid"
-                | "x-cloud-trace-context"
-                | "x-goog-api-client"
-                | "x-goog-request-params"
-                | "x-goog-user-project"
-                | "x-request-id"
-        )
-}
-
 const ANTIGRAVITY_PROJECT_ID_PATHS: &[&[&str]] = &[
     &["project_id"],
     &["projectId"],
@@ -228,17 +181,6 @@ const ANTIGRAVITY_SESSION_ID_PATHS: &[&[&str]] = &[
     &["antigravity", "sessionId"],
     &["metadata", "session_id"],
     &["metadata", "sessionId"],
-];
-
-const ANTIGRAVITY_GOOGLE_ONE_AI_CREDIT_PATHS: &[&[&str]] = &[
-    &["enable_credit"],
-    &["enableCredit"],
-    &["enable_google_one_ai_credit"],
-    &["enableGoogleOneAiCredit"],
-    &["antigravity", "enable_credit"],
-    &["antigravity", "enableCredit"],
-    &["metadata", "enable_credit"],
-    &["metadata", "enableCredit"],
 ];
 
 fn find_antigravity_string(
@@ -291,44 +233,6 @@ fn find_string_by_paths(value: &Value, paths: &[&[&str]]) -> Option<String> {
     None
 }
 
-fn find_antigravity_bool(
-    upstream_metadata: Option<&Value>,
-    auth_config: &Value,
-    paths: &[&[&str]],
-) -> Option<bool> {
-    upstream_metadata
-        .and_then(|metadata| find_bool_by_paths(metadata, paths))
-        .or_else(|| find_bool_by_paths(auth_config, paths))
-}
-
-fn find_bool_by_paths(value: &Value, paths: &[&[&str]]) -> Option<bool> {
-    for path in paths {
-        let mut current = value;
-        let mut matched = true;
-        for segment in *path {
-            let Some(next) = current.get(*segment) else {
-                matched = false;
-                break;
-            };
-            current = next;
-        }
-        if !matched {
-            continue;
-        }
-        if let Some(value) = current.as_bool() {
-            return Some(value);
-        }
-        if let Some(value) = current.as_str().map(str::trim) {
-            match value.to_ascii_lowercase().as_str() {
-                "true" | "1" | "yes" | "on" => return Some(true),
-                "false" | "0" | "no" | "off" => return Some(false),
-                _ => {}
-            }
-        }
-    }
-    None
-}
-
 fn contains_blocked_auth_fields(value: &Value) -> bool {
     match value {
         Value::Object(map) => map.iter().any(|(key, inner)| {
@@ -365,14 +269,11 @@ fn is_blocked_auth_key(key: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use serde_json::json;
 
     use super::{
-        build_antigravity_static_client_headers, finalize_antigravity_request_headers,
-        resolve_local_antigravity_request_auth, AntigravityRequestAuth,
-        AntigravityRequestAuthSupport, ANTIGRAVITY_REQUEST_USER_AGENT,
+        build_antigravity_static_client_headers, resolve_local_antigravity_request_auth,
+        AntigravityRequestAuth, AntigravityRequestAuthSupport, ANTIGRAVITY_REQUEST_USER_AGENT,
     };
     use crate::snapshot::{
         GatewayProviderTransportEndpoint, GatewayProviderTransportKey,
@@ -451,7 +352,6 @@ mod tests {
                 project_id: "project-from-auth-config".to_string(),
                 client_version: None,
                 session_id: None,
-                enable_google_one_ai_credit: false,
             })
         );
     }
@@ -478,33 +378,13 @@ mod tests {
                 project_id: "project-from-metadata".to_string(),
                 client_version: Some("1.99.0".to_string()),
                 session_id: Some("session-from-metadata".to_string()),
-                enable_google_one_ai_credit: false,
             })
         );
     }
 
     #[test]
-    fn resolves_google_one_ai_credit_as_explicit_opt_in() {
-        let transport = sample_transport(
-            r#"{
-                "provider_type":"antigravity",
-                "refresh_token":"rt",
-                "project_id":"project-with-credit",
-                "enable_credit":true
-            }"#,
-        );
-
-        let AntigravityRequestAuthSupport::Supported(auth) =
-            resolve_local_antigravity_request_auth(&transport)
-        else {
-            panic!("auth should resolve")
-        };
-        assert!(auth.enable_google_one_ai_credit);
-    }
-
-    #[test]
     fn static_client_headers_use_native_antigravity_cli_user_agent() {
-        let headers = build_antigravity_static_client_headers(Some("1.1.9"), Some("session-abc"));
+        let headers = build_antigravity_static_client_headers(Some("1.0.16"), Some("session-abc"));
 
         assert_eq!(
             headers.get("user-agent").map(String::as_str),
@@ -516,44 +396,11 @@ mod tests {
         );
         assert_eq!(
             headers.get("x-client-version").map(String::as_str),
-            Some("1.1.9")
+            Some("1.0.16")
         );
         assert_eq!(
             headers.get("x-vscode-sessionid").map(String::as_str),
             Some("session-abc")
-        );
-    }
-
-    #[test]
-    fn final_headers_drop_client_credentials_and_separate_sync_from_stream() {
-        let base = BTreeMap::from([
-            ("authorization".to_string(), "Bearer upstream".to_string()),
-            ("content-type".to_string(), "application/json".to_string()),
-            ("cookie".to_string(), "client-cookie".to_string()),
-            ("x-client-name".to_string(), "antigravity".to_string()),
-            ("traceparent".to_string(), "00-trace".to_string()),
-            ("x-b3-traceid".to_string(), "trace-id".to_string()),
-        ]);
-
-        let mut sync = base.clone();
-        finalize_antigravity_request_headers(&mut sync, false);
-        assert_eq!(
-            sync.get("accept").map(String::as_str),
-            Some("application/json")
-        );
-        assert!(!sync.contains_key("cookie"));
-        assert_eq!(
-            sync.get("authorization").map(String::as_str),
-            Some("Bearer upstream")
-        );
-        assert!(sync.contains_key("traceparent"));
-        assert!(sync.contains_key("x-b3-traceid"));
-
-        let mut stream = base;
-        finalize_antigravity_request_headers(&mut stream, true);
-        assert_eq!(
-            stream.get("accept").map(String::as_str),
-            Some("text/event-stream")
         );
     }
 }
