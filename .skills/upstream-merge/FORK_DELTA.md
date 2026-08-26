@@ -4,13 +4,13 @@
 
 ## 本轮合并前快照（2026-08-26）
 
-- 当前分支：`rust`，代码基线 `e1a2ad732b41d5cb87f3325fa1b658a76c577631`。
+- 当前分支：`rust`，代码基线 `73e49c8e2f51d1bbd406e0ee668d7fd57298eec1`；工作分支随后只有文档提交 `36d4660af`。
 - 上游基线：`upstream/main`，提交 `7892aa94853461c1e634f7a5babbb1280128720f`。
-- merge-base：`16f96d73ecc72c0b75d59b36e9c54fba7924db9f`。
-- 分叉计数：fork-only 173 个提交，upstream-only 15 个提交。
-- 路径计数：fork 侧 279 个路径，upstream 侧 68 个路径，双方重叠 28 个路径。
-- 当前待合入上游功能：OpenAI Live/WebSocket usage 记录统一与审计查询补齐、当前 Codex Realtime live 路由、模型级 429 quota 隔离与 Spark 污染额度自愈、legacy backfill 升级保留、Responses namespace tools 跨 Chat 保真、跨格式同步 JSON 响应收尾，以及数据库迁移 cutoff 对齐。
-- 本轮文本冲突：待 `git merge --no-commit --no-ff` 后按行为分组检查；不预先选择 `ours` 或 `theirs`。
+- merge-base：`7892aa94853461c1e634f7a5babbb1280128720f`。
+- 分叉计数：以代码基线计 fork-only 176 个提交、upstream-only 0 个提交；含当前文档提交的工作分支为 177/0。
+- 路径计数：相对上游 fork 侧 278 个路径，upstream 侧 0 个路径，双方重叠 0 个路径；净改动为 `+25476/-1787`。
+- 当前待合入上游功能：无；`upstream/main` 已经是当前代码基线的祖先。
+- 本轮文本冲突：预计无上游新增文本冲突；仍按 `git merge --no-commit --no-ff` 检查并保留行为复核记录。
 
 ## 强制更新纪律
 
