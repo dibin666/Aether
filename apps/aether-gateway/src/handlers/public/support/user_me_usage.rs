@@ -384,26 +384,15 @@ fn users_me_usage_infer_client_stream_from_captured_bodies(
 fn users_me_usage_infer_upstream_stream_from_captured_bodies(
     item: &StoredRequestUsageAudit,
 ) -> Option<bool> {
-    let provider_stream = users_me_usage_captured_body_stream_mode(item.response_body.as_ref());
+    let provider_stream = users_me_usage_body_is_sse_capture(item.response_body.as_ref());
     let client_stream = users_me_usage_body_is_sse_capture(item.client_response_body.as_ref());
-    provider_stream.or_else(|| (client_stream && item.response_body.is_some()).then_some(false))
-}
-
-fn users_me_usage_captured_body_stream_mode(value: Option<&serde_json::Value>) -> Option<bool> {
-    let object = value.and_then(serde_json::Value::as_object)?;
-    let chunks = object.get("chunks").and_then(serde_json::Value::as_array);
-    if chunks.is_some() {
-        return object
-            .get("metadata")
-            .and_then(serde_json::Value::as_object)
-            .and_then(|metadata| metadata.get("stream"))
-            .and_then(serde_json::Value::as_bool)
-            .or(Some(false));
+    if provider_stream {
+        Some(true)
+    } else if client_stream && item.response_body.is_some() {
+        Some(false)
+    } else {
+        None
     }
-
-    // A loaded ordinary JSON body is evidence that the upstream response was
-    // buffered, unless the response headers already identified a stream.
-    Some(false)
 }
 
 fn users_me_usage_client_is_stream(item: &StoredRequestUsageAudit) -> bool {
@@ -420,27 +409,13 @@ fn users_me_usage_client_is_stream(item: &StoredRequestUsageAudit) -> bool {
 }
 
 fn users_me_usage_upstream_is_stream(item: &StoredRequestUsageAudit) -> bool {
-    let planned_upstream_stream = item
-        .request_metadata
+    item.request_metadata
         .as_ref()
         .and_then(serde_json::Value::as_object)
         .and_then(|metadata| metadata.get(UPSTREAM_IS_STREAM_KEY))
-        .and_then(serde_json::Value::as_bool);
-    let is_kiro_stream_envelope = item
-        .request_metadata
-        .as_ref()
-        .and_then(serde_json::Value::as_object)
-        .and_then(|metadata| metadata.get("envelope_name"))
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|value| value.eq_ignore_ascii_case("kiro:generateAssistantResponse"));
-
-    if is_kiro_stream_envelope && planned_upstream_stream == Some(true) {
-        return true;
-    }
-
-    users_me_usage_headers_stream_flag(item.response_headers.as_ref())
+        .and_then(serde_json::Value::as_bool)
+        .or_else(|| users_me_usage_headers_stream_flag(item.response_headers.as_ref()))
         .or_else(|| users_me_usage_infer_upstream_stream_from_captured_bodies(item))
-        .or(planned_upstream_stream)
         .unwrap_or(item.is_stream)
 }
 

@@ -38,7 +38,7 @@ describe('usage performance metrics', () => {
     })).toBe(100)
   })
 
-  it('uses total response time for buffered non-stream responses', () => {
+  it('calculates every output rate from the generation time after first byte', () => {
     const timing = {
       output_tokens: 50,
       response_time_ms: 1000,
@@ -46,9 +46,9 @@ describe('usage performance metrics', () => {
       upstream_is_stream: false,
     }
 
-    expect(getOutputRateDurationMs(timing)).toBe(1000)
-    expect(calculateOutputRate(timing)).toBe(50)
-    expect(getDisplayOutputRate(timing)).toBe(50)
+    expect(getOutputRateDurationMs(timing)).toBe(500)
+    expect(calculateOutputRate(timing)).toBe(100)
+    expect(getDisplayOutputRate(timing)).toBe(100)
   })
 
   it('uses generation time for streamed OpenAI Responses requests too', () => {

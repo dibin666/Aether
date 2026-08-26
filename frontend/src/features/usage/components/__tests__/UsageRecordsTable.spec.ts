@@ -261,18 +261,6 @@ describe('UsageRecordsTable', () => {
     ].join('\n'))
   })
 
-  it('uses total response time when a buffered body arrives after its first chunk', () => {
-    const root = mountUsageRecordsTable([buildRecord({
-      output_tokens: 155,
-      response_time_ms: 3450,
-      first_byte_time_ms: 3270,
-      upstream_is_stream: false,
-    })])
-
-    expect(root.textContent).toContain('44.9 tps')
-    expect(root.textContent).not.toContain('861 tps')
-  })
-
   it('shows end-to-end latency while keeping output TPS scoped to the successful candidate', () => {
     const root = mountUsageRecordsTable([buildRecord({
       output_tokens: 50,

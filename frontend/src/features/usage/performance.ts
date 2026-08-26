@@ -10,8 +10,6 @@ export interface UsagePerformanceTiming {
 }
 
 export function getGenerationTimeMs(timing: UsagePerformanceTiming): number | null {
-  if ((timing.upstream_is_stream ?? timing.is_stream) === false) return null
-
   const responseTimeMs = timing.response_time_ms
   const firstByteTimeMs = timing.first_byte_time_ms
 
@@ -23,22 +21,20 @@ export function getGenerationTimeMs(timing: UsagePerformanceTiming): number | nu
 }
 
 export function getOutputRateDurationMs(timing: UsagePerformanceTiming): number | null {
+  const generationTimeMs = getGenerationTimeMs(timing)
+  if (generationTimeMs != null) return generationTimeMs
+
   const responseTimeMs = timing.response_time_ms
   const firstByteTimeMs = timing.first_byte_time_ms
 
   if (responseTimeMs == null || firstByteTimeMs == null) return null
   if (!Number.isFinite(responseTimeMs) || !Number.isFinite(firstByteTimeMs)) return null
   if (responseTimeMs <= 0 || firstByteTimeMs < 0) return null
+  if ((timing.upstream_is_stream ?? timing.is_stream) !== false) return null
 
-  if ((timing.upstream_is_stream ?? timing.is_stream) === false) {
-    // A complete JSON response has no generation tail after TTFB. Its body may
-    // arrive in several chunks, so the first chunk is not a token-generation
-    // boundary and the complete response duration is the stable denominator.
-    return responseTimeMs
-  }
-
-  if (firstByteTimeMs >= responseTimeMs) return null
-  return responseTimeMs - firstByteTimeMs
+  // Buffered non-SSE responses report the first byte when the complete body is
+  // available, so there is no separately measurable generation tail.
+  return firstByteTimeMs >= responseTimeMs ? responseTimeMs : null
 }
 
 export function getVisibleOutputTokens(timing: UsagePerformanceTiming): number | null {
@@ -67,8 +63,6 @@ export function shouldHideOutputRate(
   outputRate: number | null,
   timing: UsagePerformanceTiming,
 ): boolean {
-  if ((timing.upstream_is_stream ?? timing.is_stream) !== true) return false
-
   const responseTimeMs = timing.response_time_ms
   const generationTimeMs = getGenerationTimeMs(timing)
 

@@ -126,9 +126,7 @@ pub async fn prewarm_direct_h2c_sender_cache_from_env_for_startup(
 pub(crate) use stream::{
     execute_execution_runtime_stream, execute_execution_runtime_stream_with_retry_scope,
 };
-pub(crate) use stream_pump::{
-    build_direct_execution_frame_stream, mark_buffered_non_stream_response,
-};
+pub(crate) use stream_pump::build_direct_execution_frame_stream;
 pub(crate) use sync::{
     execute_execution_runtime_sync, execute_execution_runtime_sync_with_retry_scope,
     maybe_build_local_sync_finalize_response, maybe_build_local_video_error_response,

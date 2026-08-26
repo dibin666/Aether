@@ -533,47 +533,6 @@ describe('useUsageData', () => {
     })
   })
 
-  it('accepts a resolved non-stream provider snapshot over stale stream details', async () => {
-    const isAdminPage = ref(true)
-    const { loadRecords, currentRecords } = useUsageData({ isAdminPage })
-    const dateRange = { preset: 'today', tz_offset_minutes: 0 }
-
-    getAllUsageRecordsMock.mockResolvedValueOnce({
-      records: [buildUsageRecord({
-        status: 'completed',
-        response_time_ms: 3450,
-        first_byte_time_ms: 3270,
-        is_stream: true,
-        upstream_is_stream: true,
-      })],
-      total: 1,
-      limit: 20,
-      offset: 0,
-    })
-    await loadRecords({ page: 1, pageSize: 20 }, undefined, dateRange)
-
-    getAllUsageRecordsMock.mockResolvedValueOnce({
-      records: [buildUsageRecord({
-        status: 'completed',
-        response_time_ms: 3450,
-        first_byte_time_ms: 3270,
-        is_stream: false,
-        upstream_is_stream: false,
-      })],
-      total: 1,
-      limit: 20,
-      offset: 0,
-    })
-    await loadRecords({ page: 1, pageSize: 20 }, undefined, dateRange)
-
-    expect(currentRecords.value[0]).toMatchObject({
-      response_time_ms: 3450,
-      first_byte_time_ms: 3270,
-      is_stream: false,
-      upstream_is_stream: false,
-    })
-  })
-
   it('allows finalized list metrics to replace larger detail estimates', async () => {
     const isAdminPage = ref(true)
     const { loadRecords, currentRecords } = useUsageData({ isAdminPage })

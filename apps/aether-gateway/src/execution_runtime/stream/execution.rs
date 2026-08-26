@@ -106,7 +106,7 @@ use crate::execution_runtime::windsurf::maybe_execute_windsurf_stream;
 use crate::execution_runtime::{
     ai_attempt_retry_scope_from_failure_disposition, apply_endpoint_response_header_rules,
     attach_provider_response_headers_to_report_context, local_failover_response_text,
-    mark_buffered_non_stream_response, resolve_core_stream_direct_finalize_report_kind,
+    resolve_core_stream_direct_finalize_report_kind,
     resolve_core_stream_error_finalize_report_kind,
     resolve_local_candidate_failover_analysis_stream, should_fallback_to_control_stream,
     should_retry_next_local_candidate_stream, LocalFailoverDecision,
@@ -2850,7 +2850,6 @@ async fn execute_stream_from_direct_passthrough(
         response_observation.response_headers_observed_at_unix_ms,
         &response_observation.request_order_id,
     );
-    report_context = mark_buffered_non_stream_response(report_context, &headers);
     spawn_local_oauth_success_effect(
         state.clone(),
         &plan,
