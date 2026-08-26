@@ -43,11 +43,12 @@ Record the user's choices in a compact mapping such as `1C, 2B, 3C` before resol
 ```sh
 cd frontend && npm install   # only when dependencies are absent
 cd frontend && npm run build
-cargo check --workspace
+CARGO_BUILD_JOBS=1 cargo check --workspace
 ```
 - The frontend build and `cargo check --workspace` are the mandatory compile baseline. Do not expand them into the full `FORK_DELTA.md` behavior-test checklist by default.
 - Run behavior tests only for the files and contracts that actually conflicted or required a merge-regression fix. Choose the smallest focused command; a frontend-only conflict should not trigger unrelated Rust suites.
 - Never run multiple Cargo build/check/test processes concurrently. Cargo shares package-cache and artifact locks, and parallel invocations can serialize behind expensive duplicate compilation. Run at most one targeted Cargo command at a time.
+- “只允许一个rust编译进程”：全程禁止并行 Rust 编译；所有 Cargo build/check/test 命令必须串行执行，并设置 `CARGO_BUILD_JOBS=1`，确认上一条命令已退出后才能启动下一条。
 - Treat the behavior commands in `FORK_DELTA.md` as a reference menu, not an automatic batch. Record any command not run as unverified; if the user stops jobs, cancel them immediately and continue only with evidence already obtained.
 
 - If either build fails, classify whether it is a merge-resolution regression or an environment/dependency issue. Fix merge regressions in scope; do not claim completion until both compile successfully.
