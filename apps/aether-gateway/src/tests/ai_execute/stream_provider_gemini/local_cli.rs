@@ -2011,15 +2011,21 @@ async fn gateway_executes_antigravity_gemini_cli_stream_via_local_decision_gate_
         seen_execution_runtime_request.url,
         "https://antigravity.googleapis.com/v1internal:streamGenerateContent?alt=sse"
     );
-    assert_eq!(seen_execution_runtime_request.accept, "*/*");
+    assert_eq!(seen_execution_runtime_request.accept, "text/event-stream");
     assert_eq!(
         seen_execution_runtime_request.authorization,
         "Bearer refreshed-antigravity-cli-stream-access-token"
     );
-    assert!(seen_execution_runtime_request.x_client_name.is_empty());
-    assert!(seen_execution_runtime_request.x_client_version.is_empty());
-    assert!(seen_execution_runtime_request.x_vscode_sessionid.is_empty());
-    assert!(seen_execution_runtime_request.x_goog_api_client.is_empty());
+    assert_eq!(seen_execution_runtime_request.x_client_name, "antigravity");
+    assert_eq!(seen_execution_runtime_request.x_client_version, "1.2.3");
+    assert_eq!(
+        seen_execution_runtime_request.x_vscode_sessionid,
+        "sess-antigravity-stream-local-123"
+    );
+    assert_eq!(
+        seen_execution_runtime_request.x_goog_api_client,
+        "gl-node/18.18.2 fire/0.8.6 grpc/1.10.x"
+    );
     assert_eq!(
         seen_execution_runtime_request.project,
         "project-antigravity-stream-local-1"
@@ -2027,7 +2033,7 @@ async fn gateway_executes_antigravity_gemini_cli_stream_via_local_decision_gate_
     assert!(seen_execution_runtime_request
         .request_id
         .starts_with("agent/"));
-    assert_eq!(seen_execution_runtime_request.model, "claude-sonnet-4-6");
+    assert_eq!(seen_execution_runtime_request.model, "claude-sonnet-4-5");
     assert_eq!(
         seen_execution_runtime_request.user_agent,
         aether_provider_transport::antigravity::ANTIGRAVITY_ENVELOPE_USER_AGENT
@@ -2141,7 +2147,7 @@ async fn gateway_executes_antigravity_gemini_cli_stream_via_local_decision_gate_
     );
     assert_eq!(
         seen_inbound_execution_runtime_request.model,
-        "claude-sonnet-4-6"
+        "claude-sonnet-4-5"
     );
     assert_eq!(
         seen_inbound_execution_runtime_request.user_agent,
@@ -2345,7 +2351,7 @@ async fn gateway_executes_antigravity_gemini_cli_stream_via_local_decision_gate_
     );
     assert_eq!(
         seen_native_model_execution_runtime_request.model,
-        "claude-sonnet-4-6"
+        "claude-sonnet-4-5"
     );
     assert!(seen_native_model_execution_runtime_request
         .request_id

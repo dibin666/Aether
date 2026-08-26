@@ -9,55 +9,25 @@ const SKIP_THOUGHT_SIGNATURE_VALIDATOR: &str = "skip_thought_signature_validator
 pub(crate) fn normalize_antigravity_cli_inner_request(
     inner_request: &mut Map<String, Value>,
     request_id: &str,
-    request_model: &str,
-    upstream_model: &str,
+    model: &str,
     is_agent_request: bool,
 ) {
     inner_request.remove("model");
     inner_request.remove("safetySettings");
     inner_request.remove("safety_settings");
 
-    let image_request = normalize_image_generation_request(inner_request, request_model);
-    if !image_request {
-        normalize_generation_config(inner_request, request_model, upstream_model);
-        normalize_tools(inner_request);
-    }
-    normalize_contents(inner_request, upstream_model);
+    normalize_generation_config(inner_request, model);
+    normalize_tools(inner_request);
+    normalize_contents(inner_request, request_id, model);
 
     if is_agent_request {
         let session_id = ensure_session_id(inner_request, request_id);
-        ensure_agent_labels(inner_request, upstream_model, session_id.as_str());
+        ensure_agent_labels(inner_request, model, session_id.as_str());
         force_validated_tool_mode(inner_request);
     }
 }
 
-pub(crate) fn resolve_antigravity_upstream_model(model: &str) -> String {
-    let model = model
-        .trim()
-        .strip_prefix("假流式/")
-        .or_else(|| model.trim().strip_prefix("流式抗截断/"))
-        .unwrap_or_else(|| model.trim());
-    let normalized = model.to_ascii_lowercase();
-    if normalized.contains("image") {
-        "gemini-3.1-flash-image".to_string()
-    } else if normalized.contains("claude") {
-        if normalized.contains("opus") {
-            "claude-opus-4-6-thinking".to_string()
-        } else if normalized.contains("haiku") {
-            "gemini-2.5-flash".to_string()
-        } else {
-            "claude-sonnet-4-6".to_string()
-        }
-    } else {
-        model.to_string()
-    }
-}
-
-fn normalize_generation_config(
-    inner_request: &mut Map<String, Value>,
-    request_model: &str,
-    upstream_model: &str,
-) {
+fn normalize_generation_config(inner_request: &mut Map<String, Value>, model: &str) {
     let contains_tool_exchange = request_contains_tool_exchange(inner_request);
     let generation_key = if inner_request.contains_key("generation_config")
         && !inner_request.contains_key("generationConfig")
@@ -84,141 +54,14 @@ fn normalize_generation_config(
         generation_config.remove(unsupported);
     }
 
-    let normalized_model = upstream_model.trim().to_ascii_lowercase();
+    let normalized_model = model.trim().to_ascii_lowercase();
     if normalized_model.contains("gemini-3") {
         generation_config.remove("thinkingConfig");
         generation_config.remove("thinking_config");
     } else if normalized_model.contains("claude") && contains_tool_exchange {
         generation_config.remove("thinkingConfig");
         generation_config.remove("thinking_config");
-    } else if request_model.trim().to_ascii_lowercase().contains("think") {
-        generation_config.insert(
-            "thinkingConfig".to_string(),
-            json!({
-                "thinkingBudget": 1024,
-                "includeThoughts": true,
-            }),
-        );
-        generation_config.remove("thinking_config");
     }
-
-    generation_config.insert("maxOutputTokens".to_string(), Value::from(64_000));
-    generation_config.insert("topK".to_string(), Value::from(64));
-}
-
-fn normalize_image_generation_request(
-    inner_request: &mut Map<String, Value>,
-    request_model: &str,
-) -> bool {
-    let normalized_model = request_model.trim().to_ascii_lowercase();
-    if !normalized_model.contains("image") {
-        return false;
-    }
-
-    let mut image_config = inner_request
-        .remove("size")
-        .and_then(|value| value.as_str().map(parse_image_size))
-        .unwrap_or_default();
-    if image_config.is_empty() {
-        for (suffix, ratio) in [
-            ("-21x9", "21:9"),
-            ("-16x9", "16:9"),
-            ("-9x16", "9:16"),
-            ("-4x3", "4:3"),
-            ("-3x4", "3:4"),
-            ("-1x1", "1:1"),
-        ] {
-            if normalized_model.contains(suffix) {
-                image_config.insert("aspectRatio".to_string(), Value::String(ratio.to_string()));
-                break;
-            }
-        }
-        let image_size = if normalized_model.contains("-4k") {
-            Some("4K")
-        } else if normalized_model.contains("-2k") {
-            Some("2K")
-        } else {
-            None
-        };
-        if let Some(image_size) = image_size {
-            image_config.insert(
-                "imageSize".to_string(),
-                Value::String(image_size.to_string()),
-            );
-        }
-    }
-
-    inner_request.insert(
-        "generationConfig".to_string(),
-        json!({
-            "candidateCount": 1,
-            "imageConfig": image_config,
-        }),
-    );
-    for key in [
-        "generation_config",
-        "systemInstruction",
-        "system_instruction",
-        "tools",
-        "toolConfig",
-        "tool_config",
-    ] {
-        inner_request.remove(key);
-    }
-    true
-}
-
-fn parse_image_size(size: &str) -> Map<String, Value> {
-    let normalized = size.trim().replace(['X', '*', '×'], "x");
-    let Some((width, height)) = normalized.split_once('x') else {
-        return Map::new();
-    };
-    let (Ok(width), Ok(height)) = (width.trim().parse::<u64>(), height.trim().parse::<u64>())
-    else {
-        return Map::new();
-    };
-    if width == 0 || height == 0 {
-        return Map::new();
-    }
-
-    let target = width as f64 / height as f64;
-    let (ratio_width, ratio_height) = [
-        (1_u64, 1_u64),
-        (2, 3),
-        (3, 2),
-        (3, 4),
-        (4, 3),
-        (4, 5),
-        (5, 4),
-        (9, 16),
-        (16, 9),
-        (21, 9),
-    ]
-    .into_iter()
-    .min_by(|left, right| {
-        let left_diff = (target - left.0 as f64 / left.1 as f64).abs();
-        let right_diff = (target - right.0 as f64 / right.1 as f64).abs();
-        left_diff.total_cmp(&right_diff)
-    })
-    .expect("supported image ratios are non-empty");
-    let max_dimension = width.max(height);
-    let image_size = if max_dimension <= 1280 {
-        "1K"
-    } else if max_dimension <= 2560 {
-        "2K"
-    } else {
-        "4K"
-    };
-    Map::from_iter([
-        (
-            "aspectRatio".to_string(),
-            Value::String(format!("{ratio_width}:{ratio_height}")),
-        ),
-        (
-            "imageSize".to_string(),
-            Value::String(image_size.to_string()),
-        ),
-    ])
 }
 
 fn normalize_tools(inner_request: &mut Map<String, Value>) {
@@ -473,39 +316,15 @@ fn retain_known_required_properties(object: &mut Map<String, Value>) {
     }
 }
 
-fn normalize_contents(inner_request: &mut Map<String, Value>, model: &str) {
+fn normalize_contents(inner_request: &mut Map<String, Value>, request_id: &str, model: &str) {
     let normalized_model = model.trim().to_ascii_lowercase();
     let claude_model = normalized_model.contains("claude");
-    let contains_tool_exchange = request_contains_tool_exchange(inner_request);
     let Some(contents) = inner_request
         .get_mut("contents")
         .and_then(Value::as_array_mut)
     else {
         return;
     };
-
-    if claude_model && !contains_tool_exchange {
-        if let Some(parts) = contents.iter_mut().rev().find_map(|content| {
-            (content.get("role").and_then(Value::as_str) == Some("model"))
-                .then(|| content.get_mut("parts").and_then(Value::as_array_mut))
-                .flatten()
-        }) {
-            let already_has_thinking = parts.first().is_some_and(|part| {
-                part.get("thought").is_some()
-                    || part.get("thoughtSignature").is_some()
-                    || part.get("thought_signature").is_some()
-            });
-            if !already_has_thinking {
-                parts.insert(
-                    0,
-                    json!({
-                        "text": "...",
-                        "thoughtSignature": SKIP_THOUGHT_SIGNATURE_VALIDATOR,
-                    }),
-                );
-            }
-        }
-    }
 
     if claude_model {
         while contents
@@ -517,6 +336,7 @@ fn normalize_contents(inner_request: &mut Map<String, Value>, model: &str) {
     }
 
     let mut pending_ids_by_name: BTreeMap<String, VecDeque<String>> = BTreeMap::new();
+    let mut call_index = 0usize;
     for content in contents {
         let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) else {
             continue;
@@ -558,12 +378,13 @@ fn normalize_contents(inner_request: &mut Map<String, Value>, model: &str) {
                     .and_then(Value::as_str)
                     .filter(|value| !value.trim().is_empty())
                     .map(ToOwned::to_owned)
-                    .unwrap_or_else(new_tool_call_id);
+                    .unwrap_or_else(|| stable_tool_call_id(request_id, name.as_str(), call_index));
                 function_call.insert("id".to_string(), Value::String(call_id.clone()));
                 pending_ids_by_name
                     .entry(name)
                     .or_default()
                     .push_back(call_id);
+                call_index += 1;
                 continue;
             }
             let function_response_key = if part_object.contains_key("functionResponse") {
@@ -589,8 +410,9 @@ fn normalize_contents(inner_request: &mut Map<String, Value>, model: &str) {
                 let response_id = pending_ids_by_name
                     .get_mut(name)
                     .and_then(VecDeque::pop_front)
-                    .unwrap_or_else(new_tool_call_id);
+                    .unwrap_or_else(|| stable_tool_call_id(request_id, name, call_index));
                 function_response.insert("id".to_string(), Value::String(response_id));
+                call_index += 1;
             }
         }
     }
@@ -763,8 +585,12 @@ fn force_validated_tool_mode(inner_request: &mut Map<String, Value>) {
         .insert("mode".to_string(), Value::String("VALIDATED".to_string()));
 }
 
-fn new_tool_call_id() -> String {
-    format!("toolu_{}", Uuid::new_v4().simple())
+fn stable_tool_call_id(request_id: &str, name: &str, index: usize) -> String {
+    let seed = format!("{request_id}:{name}:{index}");
+    format!(
+        "toolu_{}",
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, seed.as_bytes()).simple()
+    )
 }
 
 fn empty_object_schema() -> Value {
@@ -775,23 +601,7 @@ fn empty_object_schema() -> Value {
 mod tests {
     use serde_json::json;
 
-    use super::{normalize_antigravity_cli_inner_request, resolve_antigravity_upstream_model};
-
-    #[test]
-    fn resolves_gcli_model_aliases_and_feature_prefixes() {
-        assert_eq!(
-            resolve_antigravity_upstream_model("假流式/claude-opus-4-6"),
-            "claude-opus-4-6-thinking"
-        );
-        assert_eq!(
-            resolve_antigravity_upstream_model("流式抗截断/claude-haiku-4-5"),
-            "gemini-2.5-flash"
-        );
-        assert_eq!(
-            resolve_antigravity_upstream_model("gemini-3-pro-image-preview"),
-            "gemini-3.1-flash-image"
-        );
-    }
+    use super::normalize_antigravity_cli_inner_request;
 
     #[test]
     fn normalizes_agent_identity_and_tool_schema() {
@@ -813,13 +623,7 @@ mod tests {
         });
         let object = body.as_object_mut().expect("body is object");
 
-        normalize_antigravity_cli_inner_request(
-            object,
-            "trace-1",
-            "gemini-3-flash-agent",
-            "gemini-3-flash-agent",
-            true,
-        );
+        normalize_antigravity_cli_inner_request(object, "trace-1", "gemini-3-flash-agent", true);
 
         assert!(object["sessionId"].as_str().is_some());
         assert_eq!(object["labels"]["model_enum"], "gemini-3-flash-agent");
@@ -850,13 +654,7 @@ mod tests {
         });
         let object = body.as_object_mut().expect("body is object");
 
-        normalize_antigravity_cli_inner_request(
-            object,
-            "trace-2",
-            "claude-sonnet-4-6",
-            "claude-sonnet-4-6",
-            true,
-        );
+        normalize_antigravity_cli_inner_request(object, "trace-2", "claude-sonnet-4-6", true);
 
         let call_id = object["contents"][0]["parts"][0]["functionCall"]["id"]
             .as_str()

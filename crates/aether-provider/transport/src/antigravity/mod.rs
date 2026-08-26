@@ -1,5 +1,4 @@
 mod auth;
-mod convert;
 mod normalize;
 mod policy;
 mod profile;
@@ -12,7 +11,6 @@ pub use auth::{
     AntigravityRequestAuth, AntigravityRequestAuthSupport, AntigravityRequestAuthUnsupportedReason,
     ANTIGRAVITY_PROVIDER_TYPE, ANTIGRAVITY_REQUEST_USER_AGENT,
 };
-pub use convert::convert_antigravity_entry_request_to_gemini;
 pub use policy::{
     classify_local_antigravity_request_support, is_antigravity_provider_transport,
     AntigravityRequestSideSpec, AntigravityRequestSideSupport,

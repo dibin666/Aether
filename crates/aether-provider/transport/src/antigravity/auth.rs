@@ -6,6 +6,8 @@ use super::super::snapshot::GatewayProviderTransportSnapshot;
 pub use super::profile::ANTIGRAVITY_REQUEST_USER_AGENT;
 
 pub const ANTIGRAVITY_PROVIDER_TYPE: &str = "antigravity";
+const ANTIGRAVITY_CLIENT_NAME: &str = "antigravity";
+const ANTIGRAVITY_GOOG_API_CLIENT: &str = "gl-node/18.18.2 fire/0.8.6 grpc/1.10.x";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AntigravityRequestAuth {
@@ -94,7 +96,7 @@ pub fn resolve_local_antigravity_request_auth(
         &auth_config,
         ANTIGRAVITY_GOOGLE_ONE_AI_CREDIT_PATHS,
     )
-    .unwrap_or(true);
+    .unwrap_or(false);
 
     AntigravityRequestAuthSupport::Supported(AntigravityRequestAuth {
         project_id,
@@ -114,28 +116,51 @@ pub fn build_antigravity_static_identity_headers(
 }
 
 pub fn build_antigravity_static_client_headers(
-    _client_version: Option<&str>,
-    _session_id: Option<&str>,
+    client_version: Option<&str>,
+    session_id: Option<&str>,
 ) -> BTreeMap<String, String> {
-    BTreeMap::from([(
-        String::from("user-agent"),
-        String::from(ANTIGRAVITY_REQUEST_USER_AGENT),
-    )])
+    let mut headers = BTreeMap::from([
+        (
+            String::from("x-client-name"),
+            String::from(ANTIGRAVITY_CLIENT_NAME),
+        ),
+        (
+            String::from("x-goog-api-client"),
+            String::from(ANTIGRAVITY_GOOG_API_CLIENT),
+        ),
+        (
+            String::from("user-agent"),
+            String::from(ANTIGRAVITY_REQUEST_USER_AGENT),
+        ),
+    ]);
+
+    if let Some(client_version) = client_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headers.insert(String::from("x-client-version"), client_version.to_string());
+    }
+    if let Some(session_id) = session_id.map(str::trim).filter(|value| !value.is_empty()) {
+        headers.insert(String::from("x-vscode-sessionid"), session_id.to_string());
+    }
+
+    headers
 }
 
 pub fn finalize_antigravity_request_headers(
     headers: &mut BTreeMap<String, String>,
-    _upstream_is_stream: bool,
+    upstream_is_stream: bool,
 ) {
     headers.retain(|name, _| antigravity_header_is_allowed(name));
     headers.insert(
-        "user-agent".to_string(),
-        ANTIGRAVITY_REQUEST_USER_AGENT.to_string(),
+        "accept".to_string(),
+        if upstream_is_stream {
+            "text/event-stream"
+        } else {
+            "application/json"
+        }
+        .to_string(),
     );
-    headers.insert("content-type".to_string(), "application/json".to_string());
-    headers.insert("accept".to_string(), "*/*".to_string());
-    headers.insert("accept-encoding".to_string(), "gzip".to_string());
-    headers.insert("connection".to_string(), "close".to_string());
 }
 
 fn antigravity_header_is_allowed(name: &str) -> bool {
@@ -148,10 +173,12 @@ fn antigravity_header_is_allowed(name: &str) -> bool {
                 | "accept"
                 | "accept-encoding"
                 | "accept-language"
-                | "connection"
                 | "user-agent"
                 | "traceparent"
                 | "tracestate"
+                | "x-client-name"
+                | "x-client-version"
+                | "x-vscode-sessionid"
                 | "x-cloud-trace-context"
                 | "x-goog-api-client"
                 | "x-goog-request-params"
@@ -424,7 +451,7 @@ mod tests {
                 project_id: "project-from-auth-config".to_string(),
                 client_version: None,
                 session_id: None,
-                enable_google_one_ai_credit: true,
+                enable_google_one_ai_credit: false,
             })
         );
     }
@@ -451,13 +478,13 @@ mod tests {
                 project_id: "project-from-metadata".to_string(),
                 client_version: Some("1.99.0".to_string()),
                 session_id: Some("session-from-metadata".to_string()),
-                enable_google_one_ai_credit: true,
+                enable_google_one_ai_credit: false,
             })
         );
     }
 
     #[test]
-    fn resolves_google_one_ai_credit_enabled_by_default() {
+    fn resolves_google_one_ai_credit_as_explicit_opt_in() {
         let transport = sample_transport(
             r#"{
                 "provider_type":"antigravity",
@@ -476,25 +503,6 @@ mod tests {
     }
 
     #[test]
-    fn allows_google_one_ai_credit_to_be_disabled_explicitly() {
-        let transport = sample_transport(
-            r#"{
-                "provider_type":"antigravity",
-                "refresh_token":"rt",
-                "project_id":"project-without-credit",
-                "enable_credit":false
-            }"#,
-        );
-
-        let AntigravityRequestAuthSupport::Supported(auth) =
-            resolve_local_antigravity_request_auth(&transport)
-        else {
-            panic!("auth should resolve")
-        };
-        assert!(!auth.enable_google_one_ai_credit);
-    }
-
-    #[test]
     fn static_client_headers_use_native_antigravity_cli_user_agent() {
         let headers = build_antigravity_static_client_headers(Some("1.1.9"), Some("session-abc"));
 
@@ -502,13 +510,22 @@ mod tests {
             headers.get("user-agent").map(String::as_str),
             Some(ANTIGRAVITY_REQUEST_USER_AGENT)
         );
-        assert!(!headers.contains_key("x-client-name"));
-        assert!(!headers.contains_key("x-client-version"));
-        assert!(!headers.contains_key("x-vscode-sessionid"));
+        assert_eq!(
+            headers.get("x-client-name").map(String::as_str),
+            Some("antigravity")
+        );
+        assert_eq!(
+            headers.get("x-client-version").map(String::as_str),
+            Some("1.1.9")
+        );
+        assert_eq!(
+            headers.get("x-vscode-sessionid").map(String::as_str),
+            Some("session-abc")
+        );
     }
 
     #[test]
-    fn final_headers_match_antigravity_cli_transport_identity() {
+    fn final_headers_drop_client_credentials_and_separate_sync_from_stream() {
         let base = BTreeMap::from([
             ("authorization".to_string(), "Bearer upstream".to_string()),
             ("content-type".to_string(), "application/json".to_string()),
@@ -521,19 +538,9 @@ mod tests {
         let mut sync = base.clone();
         finalize_antigravity_request_headers(&mut sync, false);
         assert_eq!(
-            sync.get("user-agent").map(String::as_str),
-            Some(ANTIGRAVITY_REQUEST_USER_AGENT)
-        );
-        assert_eq!(
-            sync.get("content-type").map(String::as_str),
+            sync.get("accept").map(String::as_str),
             Some("application/json")
         );
-        assert_eq!(sync.get("accept").map(String::as_str), Some("*/*"));
-        assert_eq!(
-            sync.get("accept-encoding").map(String::as_str),
-            Some("gzip")
-        );
-        assert_eq!(sync.get("connection").map(String::as_str), Some("close"));
         assert!(!sync.contains_key("cookie"));
         assert_eq!(
             sync.get("authorization").map(String::as_str),
@@ -544,6 +551,9 @@ mod tests {
 
         let mut stream = base;
         finalize_antigravity_request_headers(&mut stream, true);
-        assert_eq!(stream.get("accept").map(String::as_str), Some("*/*"));
+        assert_eq!(
+            stream.get("accept").map(String::as_str),
+            Some("text/event-stream")
+        );
     }
 }

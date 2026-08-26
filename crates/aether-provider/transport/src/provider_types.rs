@@ -390,28 +390,14 @@ const VERTEX_AI_FIXED_PROVIDER_TEMPLATE: FixedProviderTemplate = FixedProviderTe
 
 const ANTIGRAVITY_FIXED_PROVIDER_TEMPLATE: FixedProviderTemplate = FixedProviderTemplate {
     provider_type: "antigravity",
-    version: 3,
+    version: 2,
     base_url: "https://daily-cloudcode-pa.googleapis.com",
-    endpoints: &[
-        FixedProviderEndpointTemplate {
-            item_key: "openai:chat",
-            api_format: "openai:chat",
-            custom_path: None,
-            config_defaults: EMPTY_ENDPOINT_CONFIG_DEFAULTS,
-        },
-        FixedProviderEndpointTemplate {
-            item_key: "claude:messages",
-            api_format: "claude:messages",
-            custom_path: None,
-            config_defaults: EMPTY_ENDPOINT_CONFIG_DEFAULTS,
-        },
-        FixedProviderEndpointTemplate {
-            item_key: "gemini:generate_content",
-            api_format: "gemini:generate_content",
-            custom_path: None,
-            config_defaults: EMPTY_ENDPOINT_CONFIG_DEFAULTS,
-        },
-    ],
+    endpoints: &[FixedProviderEndpointTemplate {
+        item_key: "gemini:generate_content",
+        api_format: "gemini:generate_content",
+        custom_path: None,
+        config_defaults: EMPTY_ENDPOINT_CONFIG_DEFAULTS,
+    }],
     runtime_policy: ANTIGRAVITY_RUNTIME_POLICY,
 };
 
@@ -795,15 +781,7 @@ mod tests {
             template.base_url,
             "https://daily-cloudcode-pa.googleapis.com"
         );
-        assert_eq!(template.version, 3);
-        assert_eq!(
-            template
-                .endpoints
-                .iter()
-                .map(|endpoint| endpoint.api_format)
-                .collect::<Vec<_>>(),
-            vec!["openai:chat", "claude:messages", "gemini:generate_content"]
-        );
+        assert_eq!(template.version, 2);
 
         let endpoint = fixed_provider_endpoint_template_by_api_format(
             "antigravity",
@@ -811,13 +789,6 @@ mod tests {
         )
         .expect("antigravity generateContent endpoint should exist");
         assert_eq!(endpoint.custom_path, None);
-        assert!(
-            fixed_provider_endpoint_template_by_api_format("antigravity", "openai:chat").is_some()
-        );
-        assert!(
-            fixed_provider_endpoint_template_by_api_format("antigravity", "claude:messages")
-                .is_some()
-        );
     }
 
     #[test]

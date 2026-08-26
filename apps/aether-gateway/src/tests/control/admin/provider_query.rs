@@ -4538,11 +4538,10 @@ async fn gateway_handles_antigravity_endpoint_test_model_locally_impl() {
                 Some("Say hello")
             );
             assert_eq!(
-                plan.headers.get("user-agent").map(String::as_str),
-                Some(aether_provider_transport::antigravity::ANTIGRAVITY_REQUEST_USER_AGENT)
+                plan.headers.get("x-client-name").map(String::as_str),
+                Some("antigravity")
             );
-            assert!(!plan.headers.contains_key("x-client-name"));
-            assert!(!plan.headers.contains_key("x-goog-api-client"));
+            assert!(plan.headers.contains_key("x-goog-api-client"));
             Json(json!({
                 "request_id": plan.request_id,
                 "candidate_id": plan.candidate_id,

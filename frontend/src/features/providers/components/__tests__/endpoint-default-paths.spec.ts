@@ -70,17 +70,6 @@ describe('endpoint default paths', () => {
     })).toBe('/v1internal:{action}')
   })
 
-  it.each(['openai:chat', 'claude:messages', 'gemini:generate_content'])(
-    'uses the private v1internal path for Antigravity %s endpoints',
-    (apiFormat) => {
-      expect(getDefaultEndpointPath({
-        apiFormat,
-        providerType: 'antigravity',
-        apiFormats,
-      })).toBe('/v1internal:{action}')
-    },
-  )
-
   it('keeps Codex Responses root path without duplicating /v1', () => {
     expect(getDefaultEndpointPath({
       apiFormat: 'openai:responses',
