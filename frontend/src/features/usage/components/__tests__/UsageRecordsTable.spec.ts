@@ -209,34 +209,10 @@ describe('UsageRecordsTable', () => {
       '成功候选首字: 0.50s',
       '成功候选耗时: 1.00s',
       '生成耗时: 0.50s',
-      '计速耗时: 0.50s',
       '输出速度: 100 tokens/s',
     ].join('\n'))
     expect(titles.join('\n')).not.toContain('500ms')
     expect(titles.join('\n')).not.toContain('首字后生成耗时')
-  })
-
-  it('uses total response time for OpenAI Responses TPS', () => {
-    const root = mountUsageRecordsTable([buildRecord({
-      output_tokens: 1320,
-      response_time_ms: 33_000,
-      first_byte_time_ms: 27_600,
-      api_format: 'openai:responses',
-      endpoint_api_format: 'openai:responses',
-    })])
-
-    expect(root.textContent).toContain('40.0 tps')
-    const titles = [...root.querySelectorAll<HTMLElement>('[title]')]
-      .map((element) => element.getAttribute('title'))
-    expect(titles).toContain([
-      '端到端首字: 27.60s',
-      '端到端总耗时: 33.00s',
-      '成功候选首字: 27.60s',
-      '成功候选耗时: 33.00s',
-      '生成耗时: 5.40s',
-      '计速耗时: 33.00s',
-      '输出速度: 40.0 tokens/s',
-    ].join('\n'))
   })
 
   it('shows end-to-end latency while keeping output TPS scoped to the successful candidate', () => {
@@ -261,7 +237,6 @@ describe('UsageRecordsTable', () => {
       '成功候选首字: 0.10s',
       '成功候选耗时: 0.63s',
       '生成耗时: 0.53s',
-      '计速耗时: 0.53s',
       '输出速度: 95.1 tokens/s',
     ].join('\n'))
   })
@@ -285,7 +260,6 @@ describe('UsageRecordsTable', () => {
       '成功候选首字: -',
       '成功候选耗时: -',
       '生成耗时: -',
-      '计速耗时: -',
       '输出速度: -',
     ].join('\n'))
   })
@@ -309,7 +283,6 @@ describe('UsageRecordsTable', () => {
       '成功候选首字: 0.50s',
       '成功候选耗时: 1.00s',
       '生成耗时: 0.50s',
-      '计速耗时: 0.50s',
       '输出速度: -',
     ].join('\n'))
   })

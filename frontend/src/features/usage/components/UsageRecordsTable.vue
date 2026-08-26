@@ -1101,7 +1101,6 @@ import {
   formatOutputRateValue,
   getDisplayOutputRate,
   getGenerationTimeMs,
-  getOutputRateDurationMs,
 } from '../performance'
 import {
   formatUsageStreamLabel,
@@ -1557,14 +1556,10 @@ function hasRecordDisplayLatency(record: UsageRecord): boolean {
 function getRecordDisplayOutputRate(record: UsageRecord): number | null {
   return getDisplayOutputRate({
     output_tokens: record.output_tokens,
-    reasoning_tokens: record.reasoning_tokens,
-
     response_time_ms: record.response_time_ms,
     first_byte_time_ms: record.first_byte_time_ms,
     is_stream: record.is_stream,
     upstream_is_stream: record.upstream_is_stream,
-    api_format: record.api_format,
-    endpoint_api_format: record.endpoint_api_format,
   })
 }
 
@@ -1576,7 +1571,6 @@ function getRecordPerformanceTitle(record: UsageRecord): string {
     `成功候选首字: ${formatRecordDurationSeconds(record.first_byte_time_ms)}`,
     `成功候选耗时: ${formatRecordDurationSeconds(record.response_time_ms)}`,
     `生成耗时: ${formatRecordDurationSeconds(getGenerationTimeMs(record))}`,
-    `计速耗时: ${formatRecordDurationSeconds(getOutputRateDurationMs(record))}`,
     `输出速度: ${formatOutputRateTokensPerSecond(outputRate)}`,
   ].join('\n')
 }

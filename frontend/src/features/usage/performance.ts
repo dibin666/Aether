@@ -1,12 +1,9 @@
 export interface UsagePerformanceTiming {
   output_tokens?: number | null
-  reasoning_tokens?: number | null
   response_time_ms?: number | null
   first_byte_time_ms?: number | null
   is_stream?: boolean | null
   upstream_is_stream?: boolean | null
-  api_format?: string | null
-  endpoint_api_format?: string | null
 }
 
 export function getGenerationTimeMs(timing: UsagePerformanceTiming): number | null {
@@ -20,14 +17,7 @@ export function getGenerationTimeMs(timing: UsagePerformanceTiming): number | nu
   return responseTimeMs - firstByteTimeMs
 }
 
-function isOpenAIResponsesFormat(value: string | null | undefined): boolean {
-  const normalized = value?.trim().toLowerCase().replaceAll('_', ':')
-  return normalized === 'openai:responses' || normalized?.startsWith('openai:responses:') === true
-}
-
 export function isOutputRateUsingGenerationTime(timing: UsagePerformanceTiming): boolean {
-  const upstreamFormat = timing.endpoint_api_format ?? timing.api_format
-  if (isOpenAIResponsesFormat(upstreamFormat)) return false
   return timing.upstream_is_stream ?? timing.is_stream ?? false
 }
 
@@ -41,21 +31,11 @@ export function getOutputRateDurationMs(timing: UsagePerformanceTiming): number 
   return responseTimeMs
 }
 
-export function getVisibleOutputTokens(timing: UsagePerformanceTiming): number | null {
-  const outputTokens = timing.output_tokens ?? 0
-  const reasoningTokens = timing.reasoning_tokens ?? 0
-
-  if (!Number.isFinite(outputTokens) || outputTokens <= 0) return null
-  if (!Number.isFinite(reasoningTokens) || reasoningTokens < 0) return null
-
-  return Math.max(0, outputTokens - reasoningTokens)
-}
-
 export function calculateOutputRate(timing: UsagePerformanceTiming): number | null {
-  const outputTokens = getVisibleOutputTokens(timing)
+  const outputTokens = timing.output_tokens ?? 0
   const outputRateDurationMs = getOutputRateDurationMs(timing)
 
-  if (outputTokens == null || outputTokens <= 0 || outputRateDurationMs == null) return null
+  if (!Number.isFinite(outputTokens) || outputTokens <= 0 || outputRateDurationMs == null) return null
 
   const outputRateSeconds = outputRateDurationMs / 1000
   if (outputRateSeconds <= 0) return null

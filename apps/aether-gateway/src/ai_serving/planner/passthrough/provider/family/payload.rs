@@ -176,6 +176,10 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         }
     }
     let provider_api_format = resolved.provider_api_format.clone();
+    let (execution_strategy, conversion_mode) = ai_local_execution_contract_for_formats(
+        spec_metadata.api_format,
+        provider_api_format.as_str(),
+    );
     let effective_headers = input.effective_headers(&parts.headers);
     let report_context = append_local_failover_policy_to_value(
         append_execution_contract_fields_to_value(
