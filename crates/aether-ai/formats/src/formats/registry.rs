@@ -122,12 +122,15 @@ pub fn convert_request_pure_with_context(
     ctx: &FormatContext,
 ) -> Result<Converted<Value>, FormatError> {
     let pure_ctx = ctx.without_runtime_request_edits();
-    let request = parse_request(source_format, body, &pure_ctx)?;
-    validate_openai_responses_target_contract(target_format, body)?;
+    let source = parse_format(source_format)?;
+    let target = parse_format(target_format)?;
+    let normalized_body = normalize_openai_responses_to_chat_body(source, target, body)?;
+    let request = parse_request(source_format, &normalized_body, &pure_ctx)?;
+    validate_openai_responses_target_contract(target_format, &normalized_body)?;
     validate_request_conversion(
         source_format,
         target_format,
-        body,
+        &normalized_body,
         &request,
         ctx.mapped_model.as_deref(),
     )?;
@@ -160,12 +163,13 @@ pub fn convert_request(
         None
     };
     let body = expanded_body.as_ref().unwrap_or(body);
-    validate_openai_responses_target_contract(target_format, body)?;
-    let mut request = parse_request(source_format, body, ctx)?;
+    let normalized_body = normalize_openai_responses_to_chat_body(source, target, body)?;
+    validate_openai_responses_target_contract(target_format, &normalized_body)?;
+    let mut request = parse_request(source_format, &normalized_body, ctx)?;
     validate_runtime_request_conversion(
         source,
         target,
-        body,
+        &normalized_body,
         &request,
         ctx.mapped_model.as_deref(),
     )?;
@@ -179,6 +183,81 @@ pub fn convert_request(
     emit_request_inner(target_format, &request, ctx)
 }
 
+fn normalize_openai_responses_to_chat_body(
+    source: FormatId,
+    target: FormatId,
+    body: &Value,
+) -> Result<Value, FormatError> {
+    if !matches!(
+        source,
+        FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact
+    ) || target != FormatId::OpenAiChat
+    {
+        return Ok(body.clone());
+    }
+
+    let Some(body_object) = body.as_object() else {
+        return Ok(body.clone());
+    };
+    let Some(input) = body_object.get("input").and_then(Value::as_array) else {
+        return Ok(body.clone());
+    };
+    let additional_tools_count = input
+        .iter()
+        .take_while(|item| is_openai_responses_additional_tools_item(item))
+        .count();
+    if additional_tools_count == 0 {
+        return Ok(body.clone());
+    }
+    if body_object
+        .get("tools")
+        .is_some_and(|tools| !tools.is_array())
+    {
+        return Ok(body.clone());
+    }
+
+    let mut normalized = body.clone();
+    let normalized_object = normalized
+        .as_object_mut()
+        .expect("Responses request body object was checked above");
+    let normalized_input = normalized_object
+        .get_mut("input")
+        .and_then(Value::as_array_mut)
+        .expect("Responses request input array was checked above");
+    let additional_tools = normalized_input.drain(..additional_tools_count);
+
+    let mut tools = Vec::new();
+    for additional_tools in additional_tools {
+        tools.extend(
+            additional_tools["tools"]
+                .as_array()
+                .expect("additional_tools item was checked above")
+                .iter()
+                .cloned(),
+        );
+    }
+    if let Some(existing_tools) = normalized_object.get("tools").and_then(Value::as_array) {
+        tools.extend(existing_tools.iter().cloned());
+    }
+    normalized_object.insert("tools".to_string(), Value::Array(tools));
+    Ok(normalized)
+}
+
+fn is_openai_responses_additional_tools_item(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    object
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|item_type| item_type.eq_ignore_ascii_case("additional_tools"))
+        && object.get("role").and_then(Value::as_str) == Some("developer")
+        && object.get("tools").is_some_and(Value::is_array)
+        && object
+            .keys()
+            .all(|key| matches!(key.as_str(), "type" | "role" | "tools"))
+}
+
 fn validate_runtime_request_conversion(
     source: FormatId,
     target: FormatId,
@@ -186,6 +265,7 @@ fn validate_runtime_request_conversion(
     request: &CanonicalRequest,
     mapped_model: Option<&str>,
 ) -> Result<(), FormatError> {
+    validate_gemini_mixed_tool_model(source, target, request, mapped_model)?;
     validate_openai_cross_format_store(source, target, body)?;
     validate_openai_prompt_cache_contract(source, body, mapped_model)?;
     validate_openai_reasoning_effort(source, target, body, mapped_model)?;
@@ -441,6 +521,7 @@ fn validate_request_conversion(
 ) -> Result<(), FormatError> {
     let source = parse_format(source_format)?;
     let target = parse_format(target_format)?;
+    validate_gemini_mixed_tool_model(source, target, request, mapped_model)?;
     validate_openai_prompt_cache_contract(source, body, mapped_model)?;
     validate_openai_reasoning_effort(source, target, body, mapped_model)?;
     if source == target {
@@ -472,6 +553,34 @@ fn validate_request_conversion(
         _ => {}
     }
     validate_cross_format_request_extensions(source, target, request)
+}
+
+fn validate_gemini_mixed_tool_model(
+    source: FormatId,
+    target: FormatId,
+    request: &CanonicalRequest,
+    mapped_model: Option<&str>,
+) -> Result<(), FormatError> {
+    if source == target
+        || target != FormatId::GeminiGenerateContent
+        || !gemini_generate_content::request::canonical_has_mixed_gemini_tools(request)
+    {
+        return Ok(());
+    }
+    let target_model = mapped_model
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .unwrap_or(request.model.trim());
+    if crate::formats::shared::model_directives::gemini_model_supports_mixed_tools(target_model) {
+        return Ok(());
+    }
+    Err(FormatError::InvalidTargetField {
+        format: target.as_str().to_string(),
+        field: "tools".to_string(),
+        reason: format!(
+            "model {target_model:?} does not support combining built-in tools with custom function declarations; use a Gemini 3 model"
+        ),
+    })
 }
 
 fn validate_openai_responses_cross_format_input(
@@ -1372,19 +1481,21 @@ fn mapped_namespace_request_extensions(
         source,
         FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact
     ) || target != FormatId::OpenAiChat
-        || !openai_chat::request::raw_tool_choice_extension_is_representable_for_openai_chat(
-            request,
-        )
     {
         return mapped;
     }
 
+    let remove_tool_choice =
+        openai_chat::request::raw_tool_choice_extension_is_representable_for_openai_chat(request);
     for provider_namespace in ["openai_responses", "openai_cli"] {
         let should_remove_namespace = mapped
             .get_mut(provider_namespace)
             .and_then(Value::as_object_mut)
             .is_some_and(|fields| {
-                fields.remove("tool_choice");
+                fields.remove("include");
+                if remove_tool_choice {
+                    fields.remove("tool_choice");
+                }
                 fields.is_empty()
             });
         if should_remove_namespace {
@@ -1404,8 +1515,10 @@ fn mapped_namespace_tool_use_extensions(
     if !matches!(
         source,
         FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact
-    ) || target != FormatId::OpenAiChat
-    {
+    ) || !matches!(
+        target,
+        FormatId::OpenAiChat | FormatId::GeminiGenerateContent
+    ) {
         return Ok(extensions.clone());
     }
 
@@ -1417,36 +1530,37 @@ fn mapped_namespace_tool_use_extensions(
         else {
             continue;
         };
-        let Some(namespace) = provider_fields.get("namespace") else {
-            continue;
-        };
-        let Some(namespace) = namespace
-            .as_str()
-            .map(str::trim)
-            .filter(|namespace| !namespace.is_empty())
-        else {
-            return Err(FormatError::LossyConversionBlocked {
-                source_format: source.as_str().to_string(),
-                target_format: target.as_str().to_string(),
-                field: format!("messages[].content[].{provider_namespace}.namespace"),
-                reason: "Responses namespace tool call has an invalid namespace identity"
-                    .to_string(),
-            });
-        };
-        if aliases.chat_name(namespace, name).is_none() {
-            return Err(FormatError::LossyConversionBlocked {
-                source_format: source.as_str().to_string(),
-                target_format: target.as_str().to_string(),
-                field: format!("messages[].content[].{provider_namespace}.namespace"),
-                reason: "Responses namespace tool call does not match an expanded namespace child"
-                    .to_string(),
-            });
+        if target == FormatId::OpenAiChat {
+            if let Some(namespace) = provider_fields.get("namespace") {
+                let Some(namespace) = namespace
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|namespace| !namespace.is_empty())
+                else {
+                    return Err(FormatError::LossyConversionBlocked {
+                        source_format: source.as_str().to_string(),
+                        target_format: target.as_str().to_string(),
+                        field: format!("messages[].content[].{provider_namespace}.namespace"),
+                        reason: "Responses namespace tool call has an invalid namespace identity"
+                            .to_string(),
+                    });
+                };
+                if aliases.chat_name(namespace, name).is_none() {
+                    return Err(FormatError::LossyConversionBlocked {
+                        source_format: source.as_str().to_string(),
+                        target_format: target.as_str().to_string(),
+                        field: format!("messages[].content[].{provider_namespace}.namespace"),
+                        reason: "Responses namespace tool call does not match an expanded namespace child"
+                            .to_string(),
+                    });
+                }
+                provider_fields.remove("namespace");
+            }
         }
-        provider_fields.remove("namespace");
         // Responses item IDs are distinct from executable call IDs, but Chat
-        // has only the latter. A completed history item is fully represented
-        // by the assistant tool call itself, so these transport/completion
-        // sidecars can be discarded after the namespace identity is proven.
+        // and Gemini pair tools by the latter. A completed history item is
+        // fully represented by the model function call, so these transport
+        // sidecars can be discarded after any namespace identity is proven.
         provider_fields.remove("item_id");
         if provider_fields.get("status").and_then(Value::as_str) == Some("completed") {
             provider_fields.remove("status");
@@ -1498,8 +1612,11 @@ fn validate_request_extension_namespace(
             });
         };
         for key in object.keys() {
-            if request_extension_key_is_cross_format_safe(source, target, location, namespace, key)
-            {
+            if openai_responses_custom_tool_key_is_cross_format_safe(
+                source, target, location, namespace, object, key,
+            ) || request_extension_key_is_cross_format_safe(
+                source, target, location, namespace, key,
+            ) {
                 continue;
             }
             return Err(FormatError::LossyConversionBlocked {
@@ -1512,6 +1629,29 @@ fn validate_request_extension_namespace(
         }
     }
     Ok(())
+}
+
+fn openai_responses_custom_tool_key_is_cross_format_safe(
+    source: FormatId,
+    target: FormatId,
+    location: &str,
+    namespace: &str,
+    extension: &Map<String, Value>,
+    key: &str,
+) -> bool {
+    matches!(
+        (source, target, location, namespace),
+        (
+            FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact,
+            FormatId::OpenAiChat,
+            "tools[]",
+            "openai_responses" | "openai_cli"
+        )
+    ) && extension
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|tool_type| tool_type.eq_ignore_ascii_case("custom"))
+        && matches!(key, "type" | "name" | "description" | "format" | "custom")
 }
 
 fn request_extension_key_is_cross_format_safe(
@@ -1541,6 +1681,19 @@ fn request_extension_key_is_cross_format_safe(
                 FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact,
                 FormatId::OpenAiChat,
                 "openai_responses" | "openai_cli",
+            )
+        )
+    {
+        return true;
+    }
+    if location == "messages[].content[]"
+        && matches!(
+            (source, target, namespace, key),
+            (
+                FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact,
+                FormatId::GeminiGenerateContent,
+                "gemini",
+                "thoughtSignature",
             )
         )
     {
@@ -1667,6 +1820,11 @@ fn thinking_extension_key_is_cross_format_safe(
             FormatId::OpenAiChat | FormatId::ClaudeMessages | FormatId::GeminiGenerateContent,
             "openai_responses" | "openai_cli",
             "effort",
+        ) | (
+            FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact,
+            FormatId::OpenAiChat,
+            "openai_responses" | "openai_cli",
+            "summary",
         ) | (
             FormatId::ClaudeMessages,
             _,
@@ -2523,7 +2681,6 @@ fn validate_openai_responses_to_chat(
         return Ok(());
     };
     for field in [
-        "include",
         "previous_response_id",
         "truncation",
         "prompt",
@@ -2542,19 +2699,18 @@ fn validate_openai_responses_to_chat(
             });
         }
     }
-    if let Some(reasoning) = object.get("reasoning").and_then(Value::as_object) {
-        for field in ["summary", "budget_tokens"] {
-            if reasoning.contains_key(field) {
-                return Err(FormatError::LossyConversionBlocked {
-                    source_format: FormatId::OpenAiResponses.as_str().to_string(),
-                    target_format: FormatId::OpenAiChat.as_str().to_string(),
-                    field: format!("reasoning.{field}"),
-                    reason:
-                        "OpenAI Chat reasoning_effort cannot carry this Responses reasoning field"
-                            .to_string(),
-                });
-            }
-        }
+    if object
+        .get("reasoning")
+        .and_then(Value::as_object)
+        .is_some_and(|reasoning| reasoning.contains_key("budget_tokens"))
+    {
+        return Err(FormatError::LossyConversionBlocked {
+            source_format: FormatId::OpenAiResponses.as_str().to_string(),
+            target_format: FormatId::OpenAiChat.as_str().to_string(),
+            field: "reasoning.budget_tokens".to_string(),
+            reason: "OpenAI Chat reasoning_effort cannot carry this Responses reasoning field"
+                .to_string(),
+        });
     }
     if let Some(tools) = object.get("tools").and_then(Value::as_array) {
         for tool in tools {
@@ -2564,7 +2720,7 @@ fn validate_openai_responses_to_chat(
                 .unwrap_or("function")
                 .trim()
                 .to_ascii_lowercase();
-            if !matches!(tool_type.as_str(), "function" | "namespace") {
+            if !matches!(tool_type.as_str(), "function" | "custom" | "namespace") {
                 return Err(FormatError::LossyConversionBlocked {
                     source_format: FormatId::OpenAiResponses.as_str().to_string(),
                     target_format: FormatId::OpenAiChat.as_str().to_string(),
@@ -3445,6 +3601,37 @@ mod tests {
     }
 
     #[test]
+    fn runtime_responses_to_gemini_rejects_mixed_tools_for_gemini_two() {
+        let body = json!({
+            "model": "gpt-5",
+            "input": "Search, then save the result.",
+            "tools": [
+                {"type": "web_search_preview"},
+                {
+                    "type": "function",
+                    "name": "save_result",
+                    "parameters": {"type": "object"}
+                }
+            ]
+        });
+        let context = FormatContext::default().with_mapped_model("gemini-2.5-pro");
+
+        let error = convert_request(
+            "openai:responses",
+            "gemini:generate_content",
+            &body,
+            &context,
+        )
+        .expect_err("Gemini 2.5 mixed tools should fail before reaching the provider");
+
+        assert!(matches!(
+            error,
+            FormatError::InvalidTargetField { ref field, ref reason, .. }
+                if field == "tools" && reason.contains("Gemini 3")
+        ));
+    }
+
+    #[test]
     fn pure_openai_chat_to_responses_preserves_explicit_tool_strict() {
         let body = json!({
             "model": "gpt-source",
@@ -4055,6 +4242,86 @@ mod tests {
     }
 
     #[test]
+    fn pure_gemini_idless_parallel_tool_history_stays_paired_for_standard_targets() {
+        let body = json!({
+            "model": "gemini-source",
+            "contents": [{
+                "role": "model",
+                "parts": [
+                    {"functionCall": {"name": "lookup", "args": {"q": "first"}}},
+                    {"functionCall": {"name": "lookup", "args": {"q": "second"}}}
+                ]
+            }, {
+                "role": "user",
+                "parts": [
+                    {"functionResponse": {"name": "lookup", "response": {"result": "one"}}},
+                    {"functionResponse": {"name": "lookup", "response": {"result": "two"}}}
+                ]
+            }]
+        });
+
+        let chat = convert_request_pure("gemini:generate_content", "openai:chat", &body)
+            .expect("Gemini history should convert to Chat")
+            .value;
+        let chat_call_ids = chat["messages"][0]["tool_calls"]
+            .as_array()
+            .expect("Chat tool calls")
+            .iter()
+            .map(|call| call["id"].as_str().expect("Chat call ID"))
+            .collect::<Vec<_>>();
+        let chat_result_ids = chat["messages"]
+            .as_array()
+            .expect("Chat messages")
+            .iter()
+            .filter(|message| message["role"] == "tool")
+            .map(|message| {
+                message["tool_call_id"]
+                    .as_str()
+                    .expect("Chat result call ID")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(chat_result_ids, chat_call_ids);
+
+        let responses = convert_request_pure("gemini:generate_content", "openai:responses", &body)
+            .expect("Gemini history should convert to Responses")
+            .value;
+        let response_items = responses["input"].as_array().expect("Responses input");
+        let response_call_ids = response_items
+            .iter()
+            .filter(|item| item["type"] == "function_call")
+            .map(|item| item["call_id"].as_str().expect("Responses call ID"))
+            .collect::<Vec<_>>();
+        let response_result_ids = response_items
+            .iter()
+            .filter(|item| item["type"] == "function_call_output")
+            .map(|item| item["call_id"].as_str().expect("Responses result call ID"))
+            .collect::<Vec<_>>();
+        assert_eq!(response_result_ids, response_call_ids);
+
+        let claude = convert_request_pure("gemini:generate_content", "claude:messages", &body)
+            .expect("Gemini history should convert to Claude Messages")
+            .value;
+        let claude_messages = claude["messages"].as_array().expect("Claude messages");
+        let claude_call_ids = claude_messages
+            .iter()
+            .flat_map(|message| message["content"].as_array().into_iter().flatten())
+            .filter(|block| block["type"] == "tool_use")
+            .map(|block| block["id"].as_str().expect("Claude tool use ID"))
+            .collect::<Vec<_>>();
+        let claude_result_ids = claude_messages
+            .iter()
+            .flat_map(|message| message["content"].as_array().into_iter().flatten())
+            .filter(|block| block["type"] == "tool_result")
+            .map(|block| {
+                block["tool_use_id"]
+                    .as_str()
+                    .expect("Claude tool result ID")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(claude_result_ids, claude_call_ids);
+    }
+
+    #[test]
     fn pure_claude_to_openai_chat_maps_disable_parallel_tool_use() {
         let body = json!({
             "model": "claude-sonnet",
@@ -4244,6 +4511,252 @@ mod tests {
         assert_eq!(
             converted["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"][0],
             "lookup"
+        );
+    }
+
+    #[test]
+    fn pure_openai_chat_to_gemini_preserves_json_tool_output_as_string() {
+        let body = json!({
+            "model": "gpt-source",
+            "messages": [{
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"}
+                }]
+            }, {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "{\"key\":\"value\",\"items\":[1,2,3]}"
+            }]
+        });
+
+        let converted = convert_request_pure("openai:chat", "gemini:generate_content", &body)
+            .expect("pure conversion should succeed")
+            .value;
+
+        assert_eq!(
+            converted["contents"][1]["parts"][0]["functionResponse"]["response"]["result"],
+            "{\"key\":\"value\",\"items\":[1,2,3]}"
+        );
+    }
+
+    #[test]
+    fn pure_openai_responses_to_gemini_aligns_parallel_tool_outputs() {
+        let body = json!({
+            "model": "gpt-source",
+            "input": [{
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "read_file",
+                "arguments": "{\"path\":\"one\"}"
+            }, {
+                "type": "function_call",
+                "call_id": "call_2",
+                "name": "read_file",
+                "arguments": "{\"path\":\"two\"}"
+            }, {
+                "type": "function_call_output",
+                "call_id": "call_2",
+                "output": "two"
+            }, {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "one"
+            }]
+        });
+
+        let converted = convert_request_pure("openai:responses", "gemini:generate_content", &body)
+            .expect("pure conversion should succeed")
+            .value;
+        let parts = converted["contents"][1]["parts"]
+            .as_array()
+            .expect("tool response parts");
+        let calls = converted["contents"][0]["parts"]
+            .as_array()
+            .expect("parallel function call parts");
+
+        assert_eq!(
+            calls[0]["thoughtSignature"],
+            "skip_thought_signature_validator"
+        );
+        assert!(calls[1].get("thoughtSignature").is_none());
+        assert_eq!(parts[0]["functionResponse"]["id"], "call_1");
+        assert_eq!(parts[0]["functionResponse"]["response"]["result"], "one");
+        assert_eq!(parts[1]["functionResponse"]["id"], "call_2");
+        assert_eq!(parts[1]["functionResponse"]["response"]["result"], "two");
+    }
+
+    #[test]
+    fn pure_claude_to_gemini_aligns_parallel_tool_results_before_text() {
+        let body = json!({
+            "model": "claude-source",
+            "max_tokens": 64,
+            "messages": [{
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "read_file",
+                    "input": {"path": "one"}
+                }, {
+                    "type": "tool_use",
+                    "id": "call_2",
+                    "name": "read_file",
+                    "input": {"path": "two"}
+                }]
+            }, {
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": "Results follow."
+                }, {
+                    "type": "tool_result",
+                    "tool_use_id": "call_2",
+                    "content": "two"
+                }, {
+                    "type": "tool_result",
+                    "tool_use_id": "call_1",
+                    "content": "one"
+                }, {
+                    "type": "text",
+                    "text": "Continue."
+                }]
+            }]
+        });
+
+        let converted = convert_request_pure("claude:messages", "gemini:generate_content", &body)
+            .expect("pure conversion should succeed")
+            .value;
+        let parts = converted["contents"][1]["parts"]
+            .as_array()
+            .expect("tool response parts");
+
+        assert_eq!(parts[0]["functionResponse"]["id"], "call_1");
+        assert_eq!(parts[1]["functionResponse"]["id"], "call_2");
+        assert_eq!(parts[2]["text"], "Results follow.");
+        assert_eq!(parts[3]["text"], "Continue.");
+    }
+
+    #[test]
+    fn pure_openai_responses_to_gemini_signs_synthetic_tool_history() {
+        let body = json!({
+            "model": "gemini-3-flash-preview",
+            "input": [{
+                "type": "function_call",
+                "call_id": "call_weather",
+                "name": "get_weather",
+                "arguments": "{\"city\":\"Shanghai\"}"
+            }, {
+                "type": "function_call_output",
+                "call_id": "call_weather",
+                "output": "sunny"
+            }]
+        });
+
+        let converted = convert_request_pure("openai:responses", "gemini:generate_content", &body)
+            .expect("synthetic Responses tool history should be compatible with Gemini")
+            .value;
+
+        assert_eq!(
+            converted["contents"][0]["parts"][0]["thoughtSignature"],
+            "skip_thought_signature_validator"
+        );
+    }
+
+    #[test]
+    fn gemini_tool_signature_roundtrips_through_openai_responses_history() {
+        let signature = "opaque-gemini-tool-signature";
+        let gemini_response = json!({
+            "responseId": "resp_gemini_tool",
+            "modelVersion": "gemini-3-flash-preview",
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{
+                        "functionCall": {
+                            "id": "call_weather",
+                            "name": "get_weather",
+                            "args": {"city": "Shanghai"}
+                        },
+                        "thoughtSignature": signature
+                    }]
+                },
+                "finishReason": "STOP"
+            }]
+        });
+
+        let responses = convert_response_pure(
+            "gemini:generate_content",
+            "openai:responses",
+            &gemini_response,
+        )
+        .expect("Gemini tool response should convert to Responses")
+        .value;
+        let mut input = responses["output"]
+            .as_array()
+            .expect("Responses output items")
+            .clone();
+        input.push(json!({
+            "type": "function_call_output",
+            "call_id": "call_weather",
+            "output": "sunny"
+        }));
+
+        let converted = convert_request_pure(
+            "openai:responses",
+            "gemini:generate_content",
+            &json!({
+                "model": "gemini-3-flash-preview",
+                "input": input
+            }),
+        )
+        .expect("Responses tool history should convert back to Gemini")
+        .value;
+
+        assert_eq!(
+            converted["contents"][0]["parts"][0]["thoughtSignature"],
+            signature
+        );
+    }
+
+    #[test]
+    fn post_call_gemini_signature_carrier_replays_to_previous_function_call() {
+        let signature = "opaque-late-tool-signature";
+        let carrier =
+            crate::formats::openai::responses::encode_gemini_tool_signature_carrier_with_direction(
+                signature,
+                crate::formats::openai::responses::GeminiToolSignatureCarrierDirection::Previous,
+            )
+            .expect("signature carrier");
+        let body = json!({
+            "model": "gemini-3-flash-preview",
+            "input": [{
+                "type": "function_call",
+                "call_id": "call_weather",
+                "name": "get_weather",
+                "arguments": "{\"city\":\"Shanghai\"}"
+            }, {
+                "type": "reasoning",
+                "id": "rs_aether_late_signature",
+                "status": "completed",
+                "encrypted_content": carrier,
+                "summary": []
+            }, {
+                "type": "function_call_output",
+                "call_id": "call_weather",
+                "output": "sunny"
+            }]
+        });
+
+        let converted = convert_request_pure("openai:responses", "gemini:generate_content", &body)
+            .expect("post-call signature carrier should replay")
+            .value;
+
+        assert_eq!(
+            converted["contents"][0]["parts"][0]["thoughtSignature"],
+            signature
         );
     }
 
@@ -4443,20 +4956,23 @@ mod tests {
     }
 
     #[test]
-    fn pure_openai_responses_to_chat_blocks_responses_only_fields() {
+    fn pure_openai_responses_to_chat_drops_include() {
         let body = json!({
             "model": "gpt-source",
             "input": [{"role": "user", "content": "hello"}],
-            "include": ["reasoning.encrypted_content"]
+            "include": [
+                "reasoning.encrypted_content",
+                "file_search_call.results"
+            ]
         });
 
-        let error = convert_request_pure("openai:responses", "openai:chat", &body)
-            .expect_err("lossy field should fail closed");
+        let converted = convert_request_pure("openai:responses", "openai:chat", &body)
+            .expect("Responses include should be safely omitted for Chat")
+            .value;
 
-        assert!(matches!(
-            error,
-            super::FormatError::LossyConversionBlocked { ref field, .. } if field == "include"
-        ));
+        assert_eq!(converted["model"], "gpt-source");
+        assert_eq!(converted["messages"][0]["content"], "hello");
+        assert!(converted.get("include").is_none());
     }
 
     #[test]
@@ -4771,6 +5287,130 @@ mod tests {
     }
 
     #[test]
+    fn openai_responses_additional_tools_prefix_maps_to_chat_tools() {
+        let body = json!({
+            "model": "gpt-5.6-sol",
+            "input": [
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [{
+                        "type": "function",
+                        "name": "lookup",
+                        "description": "Look up a value",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"query": {"type": "string"}},
+                            "required": ["query"]
+                        },
+                        "strict": true
+                    }, {
+                        "type": "custom",
+                        "name": "shell_command",
+                        "description": "Run a shell command",
+                        "format": {"type": "text"}
+                    }]
+                },
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]}
+            ],
+            "tools": [{
+                "type": "function",
+                "name": "existing",
+                "parameters": {"type": "object"}
+            }]
+        });
+
+        for converted in [
+            convert_request_pure("openai:responses", "openai:chat", &body)
+                .expect("pure conversion should map additional tools")
+                .value,
+            convert_request(
+                "openai:responses",
+                "openai:chat",
+                &body,
+                &FormatContext::default(),
+            )
+            .expect("runtime conversion should map additional tools"),
+        ] {
+            assert_eq!(converted["tools"][0]["type"], "function");
+            assert_eq!(converted["tools"][0]["function"]["name"], "lookup");
+            assert_eq!(converted["tools"][0]["function"]["strict"], true);
+            assert_eq!(converted["tools"][1]["type"], "custom");
+            assert_eq!(converted["tools"][1]["custom"]["name"], "shell_command");
+            assert_eq!(converted["tools"][2]["function"]["name"], "existing");
+            assert_eq!(converted["messages"][0]["role"], "user");
+            assert_eq!(converted["messages"].as_array().map(Vec::len), Some(1));
+        }
+    }
+
+    #[test]
+    fn openai_responses_additional_tools_prefix_rejects_unmapped_tool() {
+        let body = json!({
+            "model": "gpt-5.6-sol",
+            "input": [{
+                "type": "additional_tools",
+                "role": "developer",
+                "tools": [{"type": "tool_search", "execution": "client"}]
+            }]
+        });
+
+        let error = convert_request_pure("openai:responses", "openai:chat", &body)
+            .expect_err("Chat cannot represent client tool_search");
+
+        assert!(matches!(
+            error,
+            super::FormatError::LossyConversionBlocked { ref field, .. }
+                if field == "tools"
+        ));
+    }
+
+    #[test]
+    fn openai_responses_additional_tools_prefix_rejects_unknown_fields() {
+        let body = json!({
+            "model": "gpt-5.6-sol",
+            "input": [{
+                "type": "additional_tools",
+                "role": "developer",
+                "tools": [],
+                "future_field": true
+            }]
+        });
+
+        let error = convert_request_pure("openai:responses", "openai:chat", &body)
+            .expect_err("unknown additional_tools fields must not be dropped");
+
+        assert!(matches!(
+            error,
+            super::FormatError::LossyConversionBlocked { ref field, .. }
+                if field == "input[0]"
+        ));
+    }
+
+    #[test]
+    fn openai_responses_additional_tools_is_only_consumed_as_a_leading_prefix() {
+        let body = json!({
+            "model": "gpt-5.6-sol",
+            "input": [
+                {"type": "message", "role": "user", "content": "hello"},
+                {
+                    "type": "additional_tools",
+                    "role": "developer",
+                    "tools": [{"type": "function", "name": "lookup", "parameters": {}}]
+                }
+            ]
+        });
+
+        let error = convert_request_pure("openai:responses", "openai:chat", &body)
+            .expect_err("additional_tools after conversation history must remain unsupported");
+
+        assert!(matches!(
+            error,
+            super::FormatError::LossyConversionBlocked { ref field, .. }
+                if field == "input[1]"
+        ));
+    }
+
+    #[test]
     fn runtime_openai_responses_cross_format_rejects_unknown_content_block() {
         let body = json!({
             "model": "gpt-5.6-sol",
@@ -4796,6 +5436,26 @@ mod tests {
             error,
             super::FormatError::LossyConversionBlocked { ref field, .. }
                 if field == "input[0].content[1]"
+        ));
+    }
+
+    #[test]
+    fn openai_responses_compaction_trigger_is_not_converted_to_gemini() {
+        let body = json!({
+            "model": "gemini-3.7-flash",
+            "input": [
+                {"type": "message", "role": "user", "content": "hello"},
+                {"type": "compaction_trigger"}
+            ]
+        });
+
+        let error = convert_request_pure("openai:responses", "gemini:generate_content", &body)
+            .expect_err("Gemini cannot represent the Responses compaction control item");
+
+        assert!(matches!(
+            error,
+            super::FormatError::LossyConversionBlocked { ref field, .. }
+                if field == "input[1]"
         ));
     }
 
@@ -5392,6 +6052,84 @@ mod tests {
                 .value;
             assert_eq!(chat["reasoning_effort"], effort);
         }
+    }
+
+    #[test]
+    fn pure_openai_responses_to_chat_drops_reasoning_summary() {
+        for summary in ["auto", "concise", "detailed"] {
+            let body = json!({
+                "model": "gpt-5.6-sol",
+                "input": [{"role": "user", "content": "hello"}],
+                "reasoning": {
+                    "effort": "high",
+                    "summary": summary
+                }
+            });
+
+            let converted = convert_request_pure("openai:responses", "openai:chat", &body)
+                .expect("Responses reasoning summary should be safely omitted for Chat")
+                .value;
+
+            assert_eq!(converted["reasoning_effort"], "high");
+            assert!(converted.get("reasoning").is_none());
+        }
+
+        let summary_only = json!({
+            "model": "gpt-5.6-sol",
+            "input": "hello",
+            "reasoning": {"summary": "auto"}
+        });
+        let converted = convert_request_pure("openai:responses", "openai:chat", &summary_only)
+            .expect("Responses summary alone should be safely omitted for Chat")
+            .value;
+
+        assert!(converted.get("reasoning_effort").is_none());
+        assert!(converted.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn runtime_openai_responses_to_chat_drops_reasoning_summary() {
+        let body = json!({
+            "model": "deployment-alias",
+            "input": "hello",
+            "reasoning": {
+                "effort": "high",
+                "summary": "auto"
+            }
+        });
+
+        let converted = convert_request(
+            "openai:responses",
+            "openai:chat",
+            &body,
+            &FormatContext::default().with_mapped_model("qwen3.6-upstream-35004"),
+        )
+        .expect("runtime Responses summary should not block Chat provider body construction");
+
+        assert_eq!(converted["model"], "qwen3.6-upstream-35004");
+        assert_eq!(converted["reasoning_effort"], "high");
+        assert!(converted.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn pure_openai_responses_to_chat_rejects_reasoning_budget_tokens() {
+        let body = json!({
+            "model": "gpt-5.6-sol",
+            "input": [{"role": "user", "content": "hello"}],
+            "reasoning": {
+                "effort": "high",
+                "budget_tokens": 4096
+            }
+        });
+
+        let error = convert_request_pure("openai:responses", "openai:chat", &body)
+            .expect_err("Responses reasoning budget must remain fail-closed for Chat");
+
+        assert!(matches!(
+            error,
+            super::FormatError::LossyConversionBlocked { ref field, .. }
+                if field == "reasoning.budget_tokens"
+        ));
     }
 
     #[test]
@@ -6151,6 +6889,29 @@ mod tests {
             FormatError::UnsupportedField { ref field, .. }
                 if field == "previous_response_id"
         ));
+    }
+
+    #[test]
+    fn runtime_openai_responses_to_chat_drops_include() {
+        let body = json!({
+            "model": "gpt-source",
+            "input": [{"role": "user", "content": "hello"}],
+            "include": ["reasoning.encrypted_content"],
+            "stream": true
+        });
+
+        let converted = convert_request(
+            "openai:responses",
+            "openai:chat",
+            &body,
+            &FormatContext::default().with_upstream_stream(true),
+        )
+        .expect("runtime conversion should safely omit Responses include");
+
+        assert_eq!(converted["model"], "gpt-source");
+        assert_eq!(converted["messages"][0]["content"], "hello");
+        assert_eq!(converted["stream"], true);
+        assert!(converted.get("include").is_none());
     }
 
     #[test]
