@@ -2,15 +2,15 @@
 
 本文件记录 `dibin666/Aether` 的 `rust` 分支相对 `fawney19/Aether` `main` 的持有行为。合并上游时先读本文件；它描述的是必须显式复核的功能契约，不代表冲突中可以整文件选择 `ours`。
 
-## 本轮合并前快照（2026-08-26）
+## 本轮合并前快照（2026-08-29）
 
-- 当前分支：`rust`，代码基线 `73e49c8e2f51d1bbd406e0ee668d7fd57298eec1`；工作分支随后只有文档提交 `36d4660af`。
-- 上游基线：`upstream/main`，提交 `7892aa94853461c1e634f7a5babbb1280128720f`。
+- 当前分支：`rust`，当前 `HEAD` 为 `f7759ee07c84ab6270d2c062b7c5e8e7e4000aca`；最近一次已验证的合并代码基线仍为 `ff29894df`，其后有 3 个 CI 提交和 1 个文档提交。
+- 上游基线：`upstream/main`，提交 `6ec0771297dd41c1025f04067a6ee2cfaf658da4`。
 - merge-base：`7892aa94853461c1e634f7a5babbb1280128720f`。
-- 分叉计数：以代码基线计 fork-only 176 个提交、upstream-only 0 个提交；含当前文档提交的工作分支为 177/0。
-- 路径计数：相对上游 fork 侧 278 个路径，upstream 侧 0 个路径，双方重叠 0 个路径；净改动为 `+25476/-1787`。
-- 当前待合入上游功能：无；`upstream/main` 已经是当前代码基线的祖先。
-- 本轮文本冲突：预计无上游新增文本冲突；仍按 `git merge --no-commit --no-ff` 检查并保留行为复核记录。
+- 分叉计数：以当前 `HEAD` 计 fork-only 187 个提交、upstream-only 27 个提交。
+- 路径计数：相对共同祖先 fork 侧 254 个路径、upstream 侧 31 个路径，双方重叠 6 个路径；fork 侧净改动为 `+22282/-1138`，upstream 侧净改动为 `+2804/-215`。
+- 当前待合入上游功能：Gemini/Responses 工具调用与 schema 兼容、Responses reasoning summary/compaction 路由修正、provider 设置与 quota 持久化修正，以及 Antigravity 工具字段兼容修正；详见下方待合入清单。
+- 本轮文本冲突：预计集中在 AI 格式/传输导出和 provider key 编辑行为；实际冲突以 `git merge --no-commit --no-ff` 为准，不能按文件名自动选边。
 
 ## 强制更新纪律
 
@@ -70,27 +70,38 @@
 - 验证：`cargo fmt --all -- --check` 通过；`cd frontend && npm run build` 通过；`CARGO_BUILD_JOBS=1 cargo check --workspace` 通过；前端 `performance.spec.ts` 与 `UsageRecordsTable.spec.ts` 共 45 项通过；`git diff --check` 通过。首次 Rust 检查发现并修复了上述 planner 绑定遗漏，随后单 Rust 编译进程检查通过。
 - 非阻塞警告：Browserslist 的 `caniuse-lite` 数据已 11 个月未更新；本轮未执行 `npm install`，未引入依赖升级或审计变更。
 
+## 最近一次合并后复核（2026-08-29）
+
+- 合并基线：merge commit `1fe868147d6659facf10d144872bc8fa4dab39cc`，第一父提交 `f7759ee07c84ab6270d2c062b7c5e8e7e4000aca`，上游第二父提交 `6ec0771297dd41c1025f04067a6ee2cfaf658da4`；merge-base 为 `6ec077129`。
+- 分叉复核：以代码合并提交计 `git rev-list --left-right --count HEAD...upstream/main` 为 fork-only 188、upstream-only 0；相对上游的 fork-only 路径为 254，upstream-only 路径为 0；最终树差异 `git diff HEAD..upstream/main` 仍为 254 个 fork 持有路径。
+- 冲突策略：预合并的 6 个重叠路径全部由 Git 自动合并，没有文本冲突，因此没有选择 `ours`、`theirs` 或 `manual hybrid`；随后完成了针对各重叠行为的语义复核。
+- 上游功能结论：本轮 27 个上游提交已全部接入。Gemini/Responses 的 additional-tools 前缀、reasoning summary 降级、compaction 路由约束、Gemini mixed tools/server-side invocation、tool schema 清理与 Antigravity wire 字段修正均保留。
+- Fork 功能结论：fork 特有功能清单无功能差异变化。`pure/mod.rs` 仍保留 fork 的转写/运行时导出并补入上游 compact operation 导出；registry 保留转写与既有 Responses history/权限边界，同时接入 additional-tools 和 reasoning-summary 规范化；same-format Gemini transport 保留既有兼容路径并接入 mixed-tool 修正；Key/OAuth key 表单继续保留 `disable_circuit_breaker`、OAuth 配置和其他 fork 字段，仅采用上游返回完整更新 key 的保存事件。
+- P0 复核：OpenAI transcription multipart/body-base64、同步/流式保真、self-scope usage detail、OAuth 自动刷新与限流/代理、额度/消费统计、cache-affinity pool group、`disable_circuit_breaker`、Responses history、usage/billing 跨数据库契约均未见删除或行为回退；上游新增的 Gemini/Responses 兼容行为已进入基线。
+- 验证：前端 `npm run build` 通过（Vite 2978 modules，5 分 11 秒）；`CARGO_BUILD_JOBS=1 cargo check --workspace` 通过（13 分 03 秒）；合并树的 `git diff --cached --check`、工作区 `git diff --check` 通过。因本轮无文本冲突且未发生合并回归修复，未扩展执行专项 Cargo/前端行为测试或六项浏览器烟测，相关命令和烟测保持未验证。
+- 非阻塞警告：Browserslist 的 `caniuse-lite` 数据已 11 个月未更新；本轮未执行 `npm install`，未引入依赖升级或审计变更。
+
 ## 基线快照
 
-快照日期：2026-08-26（已执行 `git fetch upstream`，完成合并、回归修复、验证和合并后复核）。
+快照日期：2026-08-29（已执行 `git fetch upstream`，完成合并、验证和合并后复核；文档将在独立提交中更新）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline（已创建的 merge commit） | `ff29894df45b82fb686e62365bde2e593c85119d` |
-| 合并回归修复 | 已包含在 merge commit：`payload.rs` 恢复 `execution_strategy`/`conversion_mode` 绑定 |
-| upstream HEAD | `7892aa94853461c1e634f7a5babbb1280128720f` |
-| merge-base | `7892aa94853461c1e634f7a5babbb1280128720f` |
-| 分叉计数（以代码基线计） | fork-only 183，upstream-only 0；含本次文档提交的工作分支 HEAD 将为 184 |
-| fork 侧净改动 | 253 个路径（合并后相对 upstream/main），`+22275/-1130` |
+| fork code baseline（已创建的 merge commit） | `1fe868147d6659facf10d144872bc8fa4dab39cc` |
+| 合并回归修复 | 无；6 个重叠路径均由 Git 自动合并，未发生文本冲突 |
+| upstream HEAD | `6ec0771297dd41c1025f04067a6ee2cfaf658da4` |
+| merge-base | `6ec0771297dd41c1025f04067a6ee2cfaf658da4` |
+| 分叉计数（以代码基线计） | fork-only 188，upstream-only 0；含本次文档提交的工作分支 HEAD 为 189/0 |
+| fork 侧净改动 | 254 个路径（合并后相对 upstream/main），`+22282/-1138` |
 | upstream 侧净改动 | 0 个路径，`+0/-0` |
-| 双边同时改动 | 0 个路径（合并前双方重叠 0 个路径；本轮回退补丁的共享 planner 冲突按 `1C, 2B` 处理） |
+| 双边同时改动 | 0 个路径（合并前双方重叠 6 个路径；本轮无文本冲突，全部自动合并） |
 
 ## 当前待合入上游功能
 
-- 无。`upstream/main` 已作为第二父提交纳入 merge commit `ff29894df`；`git rev-list HEAD..upstream/main` 为 0。
+- 无。`upstream/main` 已作为第二父提交纳入 merge commit `1fe868147d`；`git rev-list HEAD..upstream/main` 为 0。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -126,6 +137,7 @@ git diff --name-status HEAD..upstream/main
 8. `68f2636fe` 已显式采用 upstream 的 pool scheduler 与 Pool header 冲突侧；未来不得把 score gate 或已移除的页头快捷入口当成当前不变量静默恢复，恢复前需要新的产品决策。
 9. Responses continuation history 与端到端时序现已属于 upstream baseline。AI export 冲突必须同时保留 history hydrate/record/storage 与 transcription；Usage 冲突必须保留端到端/候选时序和 reasoning metadata，但 TPS 计算严格采用 upstream：流式使用首字后的生成时长，非流式使用总响应时长，分子使用完整 `output_tokens`，不得重新引入格式特判或 reasoning-token 扣减。
 10. `704a16fcf` 接入的 Responses routing、SSE event-only normalization 与 reasoning effort 校验边界现已属于 upstream baseline。后续冲突应在格式转换中保留显式 effort，只在最终同格式 provider 的实际映射模型上校验；transcription 的 multipart/二进制路径不得误入 JSON effort 校验。routed policy 必须继续继承全局 `keep_priority_on_conversion`，同时保留 fork 的 cache-affinity pool group 优先级提升。
+11. 本轮上游 `additional_tools`、Gemini mixed-tool/server-side invocation、Responses reasoning summary 降级和 compaction 路由约束现已属于 upstream baseline。后续格式冲突应采用其规范化与模型门控，再补回 transcription 二进制、Responses history 和 fork 的权限/usage 契约，不得用旧版 registry 或 same-format body builder 整文件覆盖。
 
 ## Fork 特有功能清单
 
@@ -335,20 +347,20 @@ Provider 级覆盖位于 `provider.config.oauth_token_refresh`：`enabled`、`lo
 
 ## 本轮双边改动路径（合并前）
 
-本轮 `merge-base` 为 `7892aa94853461c1e634f7a5babbb1280128720f`；以合并前代码基线计 fork-only 为 176 个提交、278 个路径，upstream-only 为 0 个提交、0 个路径，双方重叠 0 个路径。上游已经完整位于 fork 历史中，`git merge --no-commit --no-ff upstream/main` 仅完成祖先关系检查。
+本轮 `merge-base` 为 `7892aa94853461c1e634f7a5babbb1280128720f`；以当前 `HEAD` 计 fork-only 为 187 个提交、254 个路径，upstream-only 为 27 个提交、31 个路径，双方重叠 6 个路径：
 
-本轮实际冲突分组与选择：
+- `apps/aether-gateway/src/ai_serving/pure/mod.rs`
+- `apps/aether-gateway/src/execution_runtime/transport.rs`
+- `crates/aether-ai/formats/src/formats/registry.rs`
+- `crates/aether-provider/transport/src/same_format_provider/mod.rs`
+- `frontend/src/features/providers/components/KeyFormDialog.vue`
+- `frontend/src/features/providers/components/OAuthKeyEditDialog.vue`
 
-| 组 | 选择 | 合并后行为 |
-|---|---|---|
-| Antigravity reverse proxy | `1C` manual hybrid | 采用 upstream 的 Antigravity transport/auth/url/policy/request；保留转写 multipart/body-base64 和其他共享 planner 功能。 |
-| Usage TPS calculation | `2B` upstream | calculator、stream-mode inference 和 buffered-response 处理采用 upstream；保留 self-scope、usage metadata、转写计费等独立 fork 功能。 |
-
-P0 复核结果：本轮没有新增上游功能；legacy backfill 及测试路径继续由上游等价吸收。转写、cache affinity、动态 quota/消费统计、OAuth 自动刷新、usage/billing 跨数据库契约、self-scope 请求详情、`disable_circuit_breaker`、chunk 恢复、Responses continuation history 与 Usage 端到端/候选时序均保留；Antigravity 自定义反代和 fork TPS 修正按请求移除。
+本轮实际结果：6 个重叠路径均无文本冲突并由 Git 自动合并；没有整文件选择 `ours`/`theirs`，也没有需要记录的手工 hybrid 解析。合并后已按转写、格式转换、同格式 Gemini transport、Key/OAuth 表单和 P0 fork 契约完成语义复核。
 
 ## 当前尚未合入的上游功能
 
-- 无。`upstream/main` 已作为第二父提交纳入 merge commit `ff29894df`；`git rev-list HEAD..upstream/main` 为 0。
+- 无。上游 27 个提交已纳入 merge commit `1fe868147d`；`git rev-list HEAD..upstream/main` 为 0。上面的“本轮双边改动路径（合并前）”保留了本次合并前的待合入摘要与实际自动合并结果。
 
 ## 配置与 API 契约速查
 
