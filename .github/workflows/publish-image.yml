@@ -60,14 +60,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            aether-vscodex/web/package-lock.json
 
       - name: Cache frontend dependencies
         id: frontend-dependencies
         uses: actions/cache@v5
         with:
-          path: frontend/node_modules
-          key: ${{ env.CACHE_VERSION }}-frontend-node22-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/package-lock.json') }}
+          path: |
+            frontend/node_modules
+            aether-vscodex/web/node_modules
+          key: ${{ env.CACHE_VERSION }}-frontend-node22-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/package-lock.json', 'aether-vscodex/web/package-lock.json') }}
 
       - name: Install and build
         working-directory: frontend
@@ -76,6 +80,7 @@ jobs:
           AETHER_VERSION: ${{ needs.version.outputs.build_version }}
         run: |
           if [[ "${{ steps.frontend-dependencies.outputs.cache-hit }}" != "true" ]]; then
+            npm --prefix ../aether-vscodex/web ci --prefer-offline --no-audit
             npm ci --prefer-offline --no-audit
           fi
           npm run build
