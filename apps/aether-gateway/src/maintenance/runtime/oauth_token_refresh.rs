@@ -860,12 +860,16 @@ fn auth_config_has_refresh_token(auth_config: Option<&str>) -> bool {
     let Ok(value) = serde_json::from_str::<Value>(auth_config) else {
         return false;
     };
-    value
-        .as_object()
-        .and_then(|object| object.get("refresh_token"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    ["refresh_token", "refreshToken"].iter().any(|field| {
+        object
+            .get(*field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+    })
 }
 
 fn now_unix_secs() -> u64 {
@@ -893,10 +897,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        agent_identity_needs_task_recovery, now_unix_secs, oauth_refresh_candidate,
-        oauth_refresh_due_for_cutoff, oauth_token_refresh_scan_is_due, OAuthTokenRefreshInvocation,
-        StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
-        TASK_KEY_OAUTH_TOKEN_REFRESH,
+        agent_identity_needs_task_recovery, auth_config_has_refresh_token, now_unix_secs,
+        oauth_refresh_candidate, oauth_refresh_due_for_cutoff, oauth_token_refresh_scan_is_due,
+        OAuthTokenRefreshInvocation, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
+        StoredProviderCatalogProvider, TASK_KEY_OAUTH_TOKEN_REFRESH,
     };
 
     fn sample_provider() -> StoredProviderCatalogProvider {
@@ -1001,6 +1005,37 @@ mod tests {
         let auth_config = r#"{"refresh_token":"refresh-token","expires_at":100}"#;
 
         assert!(!oauth_refresh_due_for_cutoff(&key, Some(auth_config), 120));
+    }
+
+    #[test]
+    fn legacy_antigravity_refresh_token_is_refreshable() {
+        assert!(auth_config_has_refresh_token(Some(
+            r#"{"refreshToken":"legacy-refresh-token"}"#,
+        )));
+    }
+
+    #[test]
+    fn expiring_antigravity_oauth_key_is_refresh_candidate() {
+        let provider = StoredProviderCatalogProvider::new(
+            "provider-antigravity".to_string(),
+            "Antigravity".to_string(),
+            None,
+            "antigravity".to_string(),
+        )
+        .expect("provider should build");
+        let mut key = StoredProviderCatalogKey::new(
+            "key-antigravity".to_string(),
+            provider.id.clone(),
+            "Antigravity OAuth".to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .expect("key should build");
+        key.encrypted_auth_config = Some("encrypted-auth-config".to_string());
+        key.expires_at_unix_secs = Some(120);
+
+        assert!(oauth_refresh_candidate(&provider, &key));
     }
 
     #[test]

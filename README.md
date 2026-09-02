@@ -159,7 +159,7 @@ cd Aether
 curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | sudo bash
 ```
 
-运行后按提示输入语言、版本和部署方式。固定安装某个 tag 时，版本选择选 `2`，再输入类似 `v0.7.0-rc23` 的 tag。默认会安装最新预发布版本；Docker Compose 模式默认使用 `pre` 镜像通道。
+默认交互安装会选择最新正式版和 Docker Compose 多节点部署；没有交互终端时也会使用 Compose 多节点。可通过 `--mode compose-single-node`、`--mode cluster` 或 `--mode single-node` 显式选择其他部署方式。版本也可以用 `--channel stable|rc|beta|nightly` 或 `--version <tag>` 固定。
 二进制安装在下载 Release 压缩包前会询问是否使用下载加速源；选择使用时会先打印原始 GitHub URL，再要求输入新的压缩包下载 URL。非交互式安装可用 `AETHER_RELEASE_ARCHIVE_URL` 指定压缩包 URL。
 如果安装目录里已经有配置，脚本会优先复用：Docker Compose 保留已有 `.env`，二进制服务模式保留已有 `/etc/aether/aether-gateway.env`。只有首次生成新配置时才会提示输入管理员密码。
 
@@ -171,8 +171,11 @@ curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | s
 请输入选项 / Enter choice [1]:
 
 请选择 Aether 版本:
-  1) 最新预发布版本
-  2) 指定 tag，例如 v0.7.0-rc23
+  1) 最新正式版
+  2) 最新 RC 预发布版
+  3) 最新 Beta 预发布版
+  4) 最新 nightly 构建版
+  5) 指定 tag，例如 v0.7.0-rc.1
 
 请输入选项 [1]:
 
@@ -226,7 +229,19 @@ DATABASE_URL=postgresql://...
 REDIS_URL=redis://...
 ```
 
-### 本地开发
+### Nightly（每日 main 构建）
+
+Nightly workflow 每天从 `main` 的固定 commit 构建并发布滚动的 GitHub Release `nightly`，同时推送多架构 GHCR 镜像 `ghcr.io/fawney19/aether:nightly`。Nightly 是预发布版本，适合验证最新代码，不保证与正式版相同的稳定性。滚动 Release 需要仓库保持关闭 GitHub Release immutability。
+
+安装最新 nightly（Linux systemd / macOS launchd + SQLite）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | sudo bash -s -- --channel nightly --mode single-node
+```
+
+Docker Compose 用户可在部署目录的 `.env` 中设置 `APP_IMAGE=ghcr.io/fawney19/aether:nightly`，然后运行 `./update.sh` 获取下一次 nightly。二进制方式可重新执行上述安装命令升级；当前管理后台的在线更新列表只跟踪正式版/RC/Beta，不会自动提示下一次 nightly。
+
+## 本地开发
 
 依赖 Docker、Rust toolchain、Node.js 和 make。
 
@@ -278,6 +293,12 @@ client -> rust gateway (aether-gateway) -> execution_runtime/provider transport
 - `aether-gateway` 默认启动不会自动应用后续 schema migration；如果数据库版本落后，服务会拒绝启动，并提示先执行 `aether-gateway --migrate`。
 - 仓库自带的 `docker-compose.yml` 和 `docker-compose.build.yml` 都已把 `AETHER_GATEWAY_AUTO_PREPARE_DATABASE` 设为默认开启，因此无论是预构建镜像部署，还是先 `./deploy.sh` 构建本地镜像再执行 `docker compose -f docker-compose.build.yml up -d --no-build`，常规启动都会在监听端口前自动执行挂起的 migration 和 backfill。
 - `./deploy.sh --tag <tag>` 会在保留 `aether-app:latest` 的同时额外打一个 `aether-app:<tag>`，方便手工发布或留档；`docker-compose.build.yml` 默认仍使用 `aether-app:latest`。
+
+## Codex 远程协同
+
+`aether-vscodex/` 是独立的 VS Code Codex 协同模块：同步模式跟随 VS Code 官方 Codex 面板当前会话且不另起进程；异步模式使用独立 app-server，让浏览器自行列出、恢复、新建和切换会话。两种模式都能从本机 URL 或 Aether 云端查看输出、发送消息和处理授权，模块内的 Vue 前端提供中英文界面。
+
+安装、云端配对和安全边界请参阅 [`aether-vscodex/README.md`](aether-vscodex/README.md)。
 
 ## Aether Tunnel (可选)
 

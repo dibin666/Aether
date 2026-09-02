@@ -22,6 +22,7 @@ import {
   Shield,
   SlidersHorizontal,
   Timer,
+  SquareTerminal,
   Users,
   Wallet,
   Zap,
@@ -89,6 +90,7 @@ export function buildNavigation(options: {
         items: [
           { name: t('nav.modelCatalog'), href: '/dashboard/models', icon: Box },
           { name: t('nav.apiKeys'), href: '/dashboard/api-keys', icon: Key },
+          { name: t('nav.vscodex'), href: '/dashboard/vscodex', icon: SquareTerminal },
         ]
       },
       {
@@ -116,6 +118,7 @@ export function buildNavigation(options: {
       title: t('nav.group.overview'),
       items: [
         { name: t('nav.dashboard'), href: '/admin/dashboard', icon: Home },
+        { name: t('nav.vscodex'), href: '/dashboard/vscodex', icon: SquareTerminal },
         { name: t('nav.operations'), href: '/admin/operations', icon: Activity },
         { name: t('nav.healthMonitor'), href: '/admin/health-monitor', icon: Activity },
         { name: t('nav.userStats'), href: '/admin/user-stats', icon: BarChart3 },
