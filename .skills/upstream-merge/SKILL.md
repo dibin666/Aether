@@ -41,7 +41,8 @@ Record the user's choices in a compact mapping such as `1C, 2B, 3C` before resol
 - Detect build commands from `frontend/package.json` and the workspace manifests. For this repository use:
 
 ```sh
-cd frontend && npm install   # only when dependencies are absent
+cd aether-vscodex/web && npm install   # only when the VSCodex web dependencies are absent
+cd frontend && npm install             # only when the main frontend dependencies are absent
 cd frontend && npm run build
 CARGO_BUILD_JOBS=1 cargo check --workspace
 ```

@@ -2,15 +2,15 @@
 
 本文件记录 `dibin666/Aether` 的 `rust` 分支相对 `fawney19/Aether` `main` 的持有行为。合并上游时先读本文件；它描述的是必须显式复核的功能契约，不代表冲突中可以整文件选择 `ours`。
 
-## 本轮合并前快照（2026-08-29）
+## 本轮合并前快照（2026-09-02）
 
-- 当前分支：`rust`，当前 `HEAD` 为 `f7759ee07c84ab6270d2c062b7c5e8e7e4000aca`；最近一次已验证的合并代码基线仍为 `ff29894df`，其后有 3 个 CI 提交和 1 个文档提交。
-- 上游基线：`upstream/main`，提交 `6ec0771297dd41c1025f04067a6ee2cfaf658da4`。
-- merge-base：`7892aa94853461c1e634f7a5babbb1280128720f`。
-- 分叉计数：以当前 `HEAD` 计 fork-only 187 个提交、upstream-only 27 个提交。
-- 路径计数：相对共同祖先 fork 侧 254 个路径、upstream 侧 31 个路径，双方重叠 6 个路径；fork 侧净改动为 `+22282/-1138`，upstream 侧净改动为 `+2804/-215`。
-- 当前待合入上游功能：Gemini/Responses 工具调用与 schema 兼容、Responses reasoning summary/compaction 路由修正、provider 设置与 quota 持久化修正，以及 Antigravity 工具字段兼容修正；详见下方待合入清单。
-- 本轮文本冲突：预计集中在 AI 格式/传输导出和 provider key 编辑行为；实际冲突以 `git merge --no-commit --no-ff` 为准，不能按文件名自动选边。
+- 当前分支：`rust`，当前 `HEAD` 为 `2bb6b7ee8278ae3bef69b45a1c6fd35f1ff7032d`；最近一次已验证的合并代码基线为 `1fe868147d`，其后有 fork 文档提交。
+- 上游基线：`upstream/main`，提交 `cae9aa4134b6bfd4b21dab0c535186232002ed34`。
+- merge-base：`6ec0771297dd41c1025f04067a6ee2cfaf658da4`。
+- 分叉计数：以当前 `HEAD` 计 fork-only 189 个提交、upstream-only 35 个提交。
+- 路径计数：相对共同祖先 fork 侧 254 个路径、upstream 侧 250 个路径，双方重叠 41 个路径；fork 侧净改动为 `+22294/-1138`，upstream 侧净改动为 `+46344/-1215`。
+- 当前待合入上游功能：routing policy sticky-key lazy retries、provider key concurrency/cache affinity、Codex identity/context 稳定性、VSCodex 远程协同、Nightly 发布、quota/UI 修正、usage API 和 admin entitlement flow；详见合并后复核。
+- 本轮文本冲突：实际集中在 README、AI payload、users-me 路由、OAuth 测试和前端导航；冲突以 `git merge --no-commit --no-ff` 为准，不能按文件名自动选边。
 
 ## 强制更新纪律
 
@@ -81,27 +81,39 @@
 - 验证：前端 `npm run build` 通过（Vite 2978 modules，5 分 11 秒）；`CARGO_BUILD_JOBS=1 cargo check --workspace` 通过（13 分 03 秒）；合并树的 `git diff --cached --check`、工作区 `git diff --check` 通过。因本轮无文本冲突且未发生合并回归修复，未扩展执行专项 Cargo/前端行为测试或六项浏览器烟测，相关命令和烟测保持未验证。
 - 非阻塞警告：Browserslist 的 `caniuse-lite` 数据已 11 个月未更新；本轮未执行 `npm install`，未引入依赖升级或审计变更。
 
+## 最近一次合并后复核（2026-09-02）
+
+- 合并基线：merge commit `1a9453159fc656e9772a271a00ae532dd79948b0`，第一父提交 `2bb6b7ee8278ae3bef69b45a1c6fd35f1ff7032d`，上游第二父提交 `cae9aa4134b6bfd4b21dab0c535186232002ed34`；merge-base 为 `cae9aa413`。
+- 分叉复核：以代码合并提交计 `git rev-list --left-right --count HEAD...upstream/main` 为 fork-only 190、upstream-only 0；相对上游的 fork-only 路径为 254，upstream-only 路径为 0；最终树差异 `git diff HEAD..upstream/main` 为 254 个 fork 持有路径。
+- 冲突策略：`1C, 2C, 3C, 4C`。合并前双方重叠 41 个路径，6 个产生文本冲突：AI payload 同时保留转写二进制保真和 sticky-key budget；users-me 路由同时保留 self-scope usage detail 与 VSCodex；OAuth 测试同时保留调度/加密持久化和 Antigravity camelCase/Agent Identity 覆盖；README 同时保留 fork 部署说明和 Nightly/VSCodex 文档。其余重叠路径由 Git 自动合并；没有整文件选择 `ours` 或 `theirs`。
+- 上游功能结论：本轮 35 个上游提交已全部接入，包括 routing profile 作为 scheduler policy 唯一来源、sticky-key lazy retries、provider key concurrency/cache affinity、Codex fingerprint/context identity 稳定性、pool saturation/Gemini 和 DeepSeek 修正、Responses ping 事件过滤、Antigravity quota 展示修正、generic usage API template、admin plan entitlement revocation、Nightly 发布以及 VSCodex 远程协同模块。
+- Fork 功能结论：fork 特有功能清单无功能差异变化。OpenAI transcription multipart/body-base64 与同步/流式保真、OAuth 自动刷新与代理/限流、额度/消费统计和动态 quota、self-scope usage detail、`disable_circuit_breaker`、Responses history/Usage 诊断、cache-affinity pool group、pool scheduler 和部署脚本行为均保留；VSCodex 新增路由、前端页面和静态资源已接入。
+- P0 复核：`payload.rs` 继续把转写二进制请求体以 base64 写入报告上下文，并按转写规格判定客户端流式请求，同时记录上游 sticky-key attempts；`user_me_routes.rs` 同时分发 usage detail 与 VSCodex 请求；OAuth 保留 provider/global cadence、proxy override、并发/每轮限制、凭据加密持久化和完整 worker 事件，并接入 camelCase refresh token 与 Agent Identity recovery；pool 的动态 quota、消费历史、自助详情权限和永不熔断边界未见删除或回退。
+- 合并回归修复：无功能性回归修复；`cargo fmt` 仅整理了编排 re-export 的换行，已包含在上述 merge commit 中。
+- 验证：`cargo fmt --all -- --check` 通过；`cd frontend && npm run build` 通过（先构建 VSCodex web，再构建主前端，Vite 2981 modules）；`CARGO_BUILD_JOBS=1 cargo check --workspace` 通过；前端导航/VSCodex 定向测试 2 个文件、9 项通过；`CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib orchestration::attempt` 8 项通过；`CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib maintenance::runtime::oauth_token_refresh` 12 项通过；合并树的 `git diff --check` 通过。
+- 依赖与烟测：为新增 `aether-vscodex/web` 安装锁定依赖，新增 139 个包并审计为 0 vulnerabilities；安装过程有既存 `whatwg-encoding` deprecation 提示。Browserslist 的 `caniuse-lite` 数据已 12 个月未更新；未擅自升级依赖。浏览器六项人工烟测未执行，仍记为未验证。
+
 ## 基线快照
 
-快照日期：2026-08-29（已执行 `git fetch upstream`，完成合并、验证和合并后复核；文档将在独立提交中更新）。
+快照日期：2026-09-02（已执行 `git fetch upstream`，完成合并、验证和合并后复核；文档将在独立提交中更新）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline（已创建的 merge commit） | `1fe868147d6659facf10d144872bc8fa4dab39cc` |
-| 合并回归修复 | 无；6 个重叠路径均由 Git 自动合并，未发生文本冲突 |
-| upstream HEAD | `6ec0771297dd41c1025f04067a6ee2cfaf658da4` |
-| merge-base | `6ec0771297dd41c1025f04067a6ee2cfaf658da4` |
-| 分叉计数（以代码基线计） | fork-only 188，upstream-only 0；含本次文档提交的工作分支 HEAD 为 189/0 |
-| fork 侧净改动 | 254 个路径（合并后相对 upstream/main），`+22282/-1138` |
+| fork code baseline（已创建的 merge commit） | `1a9453159fc656e9772a271a00ae532dd79948b0` |
+| 合并回归修复 | 无功能性修复；41 个重叠路径中 6 个产生文本冲突，均按 `1C, 2C, 3C, 4C` 手工混合 |
+| upstream HEAD | `cae9aa4134b6bfd4b21dab0c535186232002ed34` |
+| merge-base | `cae9aa4134b6bfd4b21dab0c535186232002ed34` |
+| 分叉计数（以代码基线计） | fork-only 190，upstream-only 0；含本次文档提交的工作分支 HEAD 为 191/0 |
+| fork 侧净改动 | 254 个路径（合并后相对 upstream/main），`+22295/-1141` |
 | upstream 侧净改动 | 0 个路径，`+0/-0` |
-| 双边同时改动 | 0 个路径（合并前双方重叠 6 个路径；本轮无文本冲突，全部自动合并） |
+| 双边同时改动 | 0 个路径（合并前双方重叠 41 个路径；6 个文本冲突手工混合，35 个自动合并） |
 
 ## 当前待合入上游功能
 
-- 无。`upstream/main` 已作为第二父提交纳入 merge commit `1fe868147d`；`git rev-list HEAD..upstream/main` 为 0。
+- 无。上游 35 个提交已作为第二父提交纳入 merge commit `1a9453159fc6`；`git rev-list HEAD..upstream/main` 为 0。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -347,20 +359,54 @@ Provider 级覆盖位于 `provider.config.oauth_token_refresh`：`enabled`、`lo
 
 ## 本轮双边改动路径（合并前）
 
-本轮 `merge-base` 为 `7892aa94853461c1e634f7a5babbb1280128720f`；以当前 `HEAD` 计 fork-only 为 187 个提交、254 个路径，upstream-only 为 27 个提交、31 个路径，双方重叠 6 个路径：
+本轮 `merge-base` 为 `6ec0771297dd41c1025f04067a6ee2cfaf658da4`；以合并前 `HEAD` 计 fork-only 为 189 个提交、254 个路径，upstream-only 为 35 个提交、250 个路径，双方重叠 41 个路径：
 
-- `apps/aether-gateway/src/ai_serving/pure/mod.rs`
-- `apps/aether-gateway/src/execution_runtime/transport.rs`
-- `crates/aether-ai/formats/src/formats/registry.rs`
-- `crates/aether-provider/transport/src/same_format_provider/mod.rs`
-- `frontend/src/features/providers/components/KeyFormDialog.vue`
-- `frontend/src/features/providers/components/OAuthKeyEditDialog.vue`
+- `.dockerignore`
+- `.env.example`
+- `.gitignore`
+- `Dockerfile.app.local`
+- `README.md`
+- `apps/aether-gateway/src/ai_serving/mod.rs`
+- `apps/aether-gateway/src/ai_serving/planner/candidate_materialization.rs`
+- `apps/aether-gateway/src/ai_serving/planner/candidate_ranking.rs`
+- `apps/aether-gateway/src/ai_serving/planner/candidate_resolution.rs`
+- `apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/candidates.rs`
+- `apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/payload.rs`
+- `apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/request.rs`
+- `apps/aether-gateway/src/ai_serving/planner/standard/family/payload.rs`
+- `apps/aether-gateway/src/ai_serving/planner/standard/openai/chat/decision/request.rs`
+- `apps/aether-gateway/src/control/route/public_support.rs`
+- `apps/aether-gateway/src/control/tests/public_support.rs`
+- `apps/aether-gateway/src/data/state/runtime.rs`
+- `apps/aether-gateway/src/dispatch/pool_scheduler.rs`
+- `apps/aether-gateway/src/dispatch/refs.rs`
+- `apps/aether-gateway/src/executor/orchestration.rs`
+- `apps/aether-gateway/src/handlers/admin/provider/pool/config.rs`
+- `apps/aether-gateway/src/handlers/admin/provider/pool_admin/payloads.rs`
+- `apps/aether-gateway/src/handlers/admin/provider/query/models/model_test.rs`
+- `apps/aether-gateway/src/handlers/proxy/websocket/live/planner.rs`
+- `apps/aether-gateway/src/handlers/public/support/user_me_routes.rs`
+- `apps/aether-gateway/src/handlers/shared/catalog.rs`
+- `apps/aether-gateway/src/main.rs`
+- `apps/aether-gateway/src/maintenance/runtime/oauth_token_refresh.rs`
+- `apps/aether-gateway/src/orchestration/mod.rs`
+- `apps/aether-gateway/src/state/oauth.rs`
+- `apps/aether-gateway/src/tests/control/admin/pool.rs`
+- `crates/aether-ai/formats/src/formats/shared/stream_core/format_matrix.rs`
+- `crates/aether-ai/serving/src/lib.rs`
+- `frontend/src/api/endpoints/pool.ts`
+- `frontend/src/features/pool/components/__tests__/PoolKeyDisplayPanels.spec.ts`
+- `frontend/src/i18n/messages.ts`
+- `frontend/src/layouts/main-layout/navigation.ts`
+- `frontend/src/views/admin/PoolManagement.vue`
+- `.github/workflows/release.yml`（同一路径在两侧均有修改）
+- `install.sh`
 
-本轮实际结果：6 个重叠路径均无文本冲突并由 Git 自动合并；没有整文件选择 `ours`/`theirs`，也没有需要记录的手工 hybrid 解析。合并后已按转写、格式转换、同格式 Gemini transport、Key/OAuth 表单和 P0 fork 契约完成语义复核。
+本轮实际结果：41 个重叠路径中 6 个产生文本冲突并按 `1C, 2C, 3C, 4C` 手工混合，35 个由 Git 自动合并；没有整文件选择 `ours`/`theirs`。合并后已按转写、sticky-key 调度、VSCodex、OAuth/Agent Identity、动态 quota、usage detail 和 P0 fork 契约完成语义复核。
 
 ## 当前尚未合入的上游功能
 
-- 无。上游 27 个提交已纳入 merge commit `1fe868147d`；`git rev-list HEAD..upstream/main` 为 0。上面的“本轮双边改动路径（合并前）”保留了本次合并前的待合入摘要与实际自动合并结果。
+- 无。上游 35 个提交已纳入 merge commit `1a9453159fc6`；`git rev-list HEAD..upstream/main` 为 0。上面的“本轮双边改动路径（合并前）”保留了本次合并前的待合入摘要与实际合并结果。
 
 ## 配置与 API 契约速查
 
@@ -391,6 +437,8 @@ Task keys:
 先跑编译基线：
 
 ```sh
+# 主前端构建会先构建并同步 aether-vscodex/web；两处依赖缺失时分别安装
+cd aether-vscodex/web && npm install
 cd frontend && npm run build
 CARGO_BUILD_JOBS=1 cargo check --workspace
 ```
