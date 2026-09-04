@@ -68,7 +68,6 @@ use crate::scheduler::candidate::{
     is_auth_api_key_concurrency_limit_skip_reason, AUTH_API_KEY_CONCURRENCY_LIMIT_SKIP_REASON,
     LEGACY_API_KEY_CONCURRENCY_LIMIT_SKIP_REASON,
 };
-use crate::scheduler::config::{read_scheduler_ordering_config, SchedulerSchedulingMode};
 use crate::stage_metrics::observe_gateway_stage_ms;
 use crate::{
     AppState, FrontdoorUserRpmOutcome, GatewayError, GatewayFallbackMetricKind,
@@ -411,27 +410,7 @@ async fn maybe_forward_public_request_to_tunnel_owner(
             policy_context,
         )
     } else {
-        let cache_affinity_enabled = match read_scheduler_ordering_config(state).await {
-            Ok(config) => config.scheduling_mode == SchedulerSchedulingMode::CacheAffinity,
-            Err(err) => {
-                warn!(
-                    trace_id = %request_context.trace_id,
-                    error = ?err,
-                    "gateway failed to load scheduler config while checking tunnel affinity forwarding mode"
-                );
-                SchedulerSchedulingMode::default() == SchedulerSchedulingMode::CacheAffinity
-            }
-        };
-        if !cache_affinity_enabled {
-            return Ok(None);
-        }
-        crate::scheduler::affinity::read_cached_scheduler_affinity_target(
-            state,
-            &auth_context.api_key_id,
-            affinity_context.client_session_affinity.as_ref(),
-            api_format,
-            &affinity_context.requested_model,
-        )
+        return Ok(None);
     };
     let Some(target) = target else {
         return Ok(None);
@@ -999,6 +978,7 @@ async fn proxy_request_inner(
                 response,
                 &trace_id,
                 &remote_addr,
+                client_ip,
                 request.method(),
                 request
                     .uri()
@@ -1035,6 +1015,7 @@ async fn proxy_request_inner(
                 response,
                 &trace_id,
                 &remote_addr,
+                client_ip,
                 request.method(),
                 request
                     .uri()
@@ -1075,6 +1056,7 @@ async fn proxy_request_inner(
                 response,
                 &trace_id,
                 &remote_addr,
+                client_ip,
                 request.method(),
                 request
                     .uri()
@@ -1135,6 +1117,7 @@ async fn proxy_request_inner(
             response,
             &trace_id,
             &remote_addr,
+            client_ip,
             &parts.method,
             parts
                 .uri
@@ -1156,6 +1139,7 @@ async fn proxy_request_inner(
         &trace_id,
     )
     .await?;
+    request_context.client_ip = Some(client_ip.to_string());
     maybe_promote_management_token_admin_principal(
         &state,
         client_ip,

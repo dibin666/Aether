@@ -1157,7 +1157,7 @@ AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=single-node
 AETHER_GATEWAY_NODE_ROLE=all
 AETHER_GATEWAY_STATIC_DIR=${INSTALL_ROOT}/current/frontend
 AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE=rust-authoritative
-AETHER_GATEWAY_AUTO_PREPARE_DATABASE=true
+AETHER_GATEWAY_DATABASE_MODE=auto
 AETHER_RUNTIME_BACKEND=memory
 API_KEY_PREFIX=sk
 
@@ -1200,7 +1200,7 @@ AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=multi-node
 AETHER_GATEWAY_NODE_ROLE=${role}
 AETHER_GATEWAY_STATIC_DIR=${INSTALL_ROOT}/current/frontend
 AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE=rust-authoritative
-AETHER_GATEWAY_AUTO_PREPARE_DATABASE=true
+AETHER_GATEWAY_DATABASE_MODE=auto
 AETHER_RUNTIME_BACKEND=redis
 API_KEY_PREFIX=sk
 
@@ -1287,7 +1287,7 @@ generate_compose_env() {
     replace_or_append_env "${output}" "AETHER_UPDATE_STRATEGY" "docker"
     replace_or_append_env "${output}" "AETHER_DOCKER_UPDATE_COMMAND" "./update.sh"
     append_compose_log_env_defaults "${output}"
-    replace_or_append_env "${output}" "AETHER_GATEWAY_AUTO_PREPARE_DATABASE" "true"
+    replace_or_append_env "${output}" "AETHER_GATEWAY_DATABASE_MODE" "auto"
 }
 
 generate_compose_single_node_env() {
@@ -1311,7 +1311,7 @@ AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=single-node
 AETHER_GATEWAY_NODE_ROLE=all
 AETHER_GATEWAY_STATIC_DIR=/srv/frontend
 AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE=rust-authoritative
-AETHER_GATEWAY_AUTO_PREPARE_DATABASE=true
+AETHER_GATEWAY_DATABASE_MODE=auto
 AETHER_RUNTIME_BACKEND=memory
 API_KEY_PREFIX=sk
 
@@ -1961,8 +1961,7 @@ EOF
 
     cat <<EOF
 Database:
-  empty database: first service start auto-bootstraps to the current baseline
-  later schema upgrades: ${INSTALL_ROOT}/current/bin/aether-gateway --migrate
+  schema migrations and data backfills are prepared automatically before startup
 
 Current release:
   ${INSTALL_ROOT}/current
@@ -2145,8 +2144,7 @@ EOF
 
     cat <<EOF
 Database:
-  empty database: first service start auto-bootstraps to the current baseline
-  later schema upgrades: ${INSTALL_ROOT}/current/bin/aether-gateway --migrate
+  schema migrations and data backfills are prepared automatically before startup
 
 Current release:
   ${INSTALL_ROOT}/current
