@@ -2,15 +2,16 @@
 
 本文件记录 `dibin666/Aether` 的 `rust` 分支相对 `fawney19/Aether` `main` 的持有行为。合并上游时先读本文件；它描述的是必须显式复核的功能契约，不代表冲突中可以整文件选择 `ours`。
 
-## 本轮合并前快照（2026-09-02）
+## 本轮合并前快照（2026-09-04）
 
-- 当前分支：`rust`，当前 `HEAD` 为 `2bb6b7ee8278ae3bef69b45a1c6fd35f1ff7032d`；最近一次已验证的合并代码基线为 `1fe868147d`，其后有 fork 文档提交。
-- 上游基线：`upstream/main`，提交 `cae9aa4134b6bfd4b21dab0c535186232002ed34`。
-- merge-base：`6ec0771297dd41c1025f04067a6ee2cfaf658da4`。
-- 分叉计数：以当前 `HEAD` 计 fork-only 189 个提交、upstream-only 35 个提交。
-- 路径计数：相对共同祖先 fork 侧 254 个路径、upstream 侧 250 个路径，双方重叠 41 个路径；fork 侧净改动为 `+22294/-1138`，upstream 侧净改动为 `+46344/-1215`。
-- 当前待合入上游功能：routing policy sticky-key lazy retries、provider key concurrency/cache affinity、Codex identity/context 稳定性、VSCodex 远程协同、Nightly 发布、quota/UI 修正、usage API 和 admin entitlement flow；详见合并后复核。
-- 本轮文本冲突：实际集中在 README、AI payload、users-me 路由、OAuth 测试和前端导航；冲突以 `git merge --no-commit --no-ff` 为准，不能按文件名自动选边。
+- 当前分支：`rust`，合并前 `HEAD` 为 `fab05bbbec4f79d4f861cf3b437dc6027f69cc62`；上一轮已验证的合并代码基线为 `1a9453159f`，其后有 fork 文档提交和 CI 修复。
+- 上游基线：`upstream/main`，提交 `27b0381a9add065ed24d3df75c98cd6a1ef45afa`。
+- merge-base：`cae9aa4134b6bfd4b21dab0c535186232002ed34`。
+- 分叉计数：以合并前 `HEAD` 计 fork-only 192 个提交、upstream-only 59 个提交。
+- 路径计数：相对共同祖先 fork 侧 254 个路径、upstream 侧 191 个路径，双方重叠 32 个路径；fork 侧净改动为 `+22349/-1141`，upstream 侧净改动为 `+9237/-4615`。
+- 当前待合入上游功能：routing scheduling strategy 归一、动态模型 quota bucket 隔离与 429 调度、Antigravity quota 分组/导入邮箱/发现模型同步、OAuth identity 与 Codex reset credits、Gemini reasoning 与 Responses replay 修正、跨格式同步收尾加固、流首字 deadline 共享、模型定价来源持久化、`AETHER_GATEWAY_DATABASE_MODE` 数据库准备模式；详见合并后复核。
+- 本轮文本冲突：实际集中在 pool 冷却写入、pool quota probe、admin 系统配置键和 `deploy.sh`；冲突以 `git merge --no-commit --no-ff` 为准，不能按文件名自动选边。
+- `origin` 抓取在本轮失败（SSH 连接被拒），不影响 upstream 合并；未推送任何提交。
 
 ## 强制更新纪律
 
@@ -35,7 +36,7 @@
 - P0 复核：`pure/mod.rs` 同时导出转写解析、multipart 保真、动态 Codex catalog 投影和 `CODEX_CLIENT_VERSION`；provider catalog、OAuth/quota、routing state 和 fork 的 usage/billing、pool scheduler、self-scope 权限边界均未丢失或改变。
 - 验证：`cd frontend && npm run build` 通过；`cargo check --workspace` 通过；合并树和文档更新的 `git diff --check` 通过。非阻塞警告：`caniuse-lite` 数据已 11 个月未更新；`npm install` 报告 11 个依赖漏洞（2 个 critical），未在本次合并中擅自升级依赖。
 
-## 最近一次合并后复核（2026-08-21）
+## 历史合并后复核（2026-08-21）
 
 - 合并基线：merge commit `eb159a090`，上游 `16f96d73ecc72c0b75d59b36e9c54fba7924db9f`，merge-base 同为该上游提交；`git rev-list --left-right --count HEAD...upstream/main` 为 fork-only 172、upstream-only 0。
 - 冲突策略：`1C, 2C, 3C, 4C`。14 个文本冲突均采用手工混合：AI 导出/传输同时保留 Audio Transcriptions 与 Codex Live/OpenAI Realtime；管理端同时保留三类格式测试；usage 保留详细窗口统计并采用 `usage_available()` token/cost 语义；Usage 前端同时保留刷新快照保护和 WebSocket 筛选测试。
@@ -46,7 +47,7 @@
 - 验证：`cargo fmt --all -- --check`、`cd frontend && npm run build`、`cargo check --workspace` 均通过；前端 `useUsageData.spec.ts` 18 项、管理端 API 格式测试 3 项、usage `usage_available` 定向测试 1 项均通过；合并树和文档更新的 `git diff --check` 通过。
 - 非阻塞警告：Browserslist 的 `caniuse-lite` 数据已 11 个月未更新；`npm install` 报告 11 个依赖漏洞（1 moderate、8 high、2 critical）；管理端测试有既存的 pool quick-selector 未使用导入警告，均未在本次合并中擅自修复或升级依赖。
 
-## 上一轮合并后复核（2026-08-26）
+## 历史合并后复核（2026-08-26）
 
 - 合并基线：merge commit `7530d3f2b`；合并回归修复 `73e49c8e2`；上游 `7892aa94853461c1e634f7a5babbb1280128720f`，merge-base 同为该上游提交。
 - 冲突策略：`1C, 2C`。`1C`（详情权限与抽屉数据）手工混合保留 self-scope 权限边界、`detailScope` 和 `summaryRecord`；`2C`（刷新、筛选与分页）手工混合接入服务端 search/API-format/status 分页，同时保留 fork 的刷新快照保护和用户本地 retry/fallback 筛选。
@@ -58,7 +59,7 @@
 - 验证：`cargo fmt --all -- --check` 通过；`cd frontend && npm run build` 通过；`cargo check --workspace` 通过；前端 6 个定向测试文件共 82 项通过；`cargo test -p aether-ai-formats transcription` 的 10 项转写测试通过；`cargo test -p aether-scheduler-core disable_circuit_breaker` 通过。`users_me_usage` 首次测试编译发现并修复上述单符号命名回归；按内存约束（单个编译进程峰值约 8 GiB）停止了修复后的定向测试编译，未记录该测试的最终执行结果。
 - 非阻塞警告：Browserslist 的 `caniuse-lite` 数据已 11 个月未更新；本轮未执行 `npm install`，未引入依赖升级或审计变更。
 
-## 最近一次合并后复核（2026-08-26，本轮）
+## 历史合并后复核（2026-08-26，回退轮）
 
 - 合并基线：merge commit `ff29894df45b82fb686e62365bde2e593c85119d`；上游 `7892aa94853461c1e634f7a5babbb1280128720f`，merge-base 同为该上游提交；上游在合并前已是代码基线的祖先，因此 `git merge --no-commit --no-ff upstream/main` 检查无新增上游文本冲突。
 - 选择策略：`1C, 2B`。`1C`（反重力反代）采用手工混合，将 Antigravity transport/request 路径恢复为 upstream，同时保留转写 multipart/body-base64 与其他 fork planner 行为；`2B`（TPS）采用 upstream 计算方式，保留与计速无关的 self-scope、usage metadata 和转写功能。
@@ -70,7 +71,7 @@
 - 验证：`cargo fmt --all -- --check` 通过；`cd frontend && npm run build` 通过；`CARGO_BUILD_JOBS=1 cargo check --workspace` 通过；前端 `performance.spec.ts` 与 `UsageRecordsTable.spec.ts` 共 45 项通过；`git diff --check` 通过。首次 Rust 检查发现并修复了上述 planner 绑定遗漏，随后单 Rust 编译进程检查通过。
 - 非阻塞警告：Browserslist 的 `caniuse-lite` 数据已 11 个月未更新；本轮未执行 `npm install`，未引入依赖升级或审计变更。
 
-## 最近一次合并后复核（2026-08-29）
+## 历史合并后复核（2026-08-29）
 
 - 合并基线：merge commit `1fe868147d6659facf10d144872bc8fa4dab39cc`，第一父提交 `f7759ee07c84ab6270d2c062b7c5e8e7e4000aca`，上游第二父提交 `6ec0771297dd41c1025f04067a6ee2cfaf658da4`；merge-base 为 `6ec077129`。
 - 分叉复核：以代码合并提交计 `git rev-list --left-right --count HEAD...upstream/main` 为 fork-only 188、upstream-only 0；相对上游的 fork-only 路径为 254，upstream-only 路径为 0；最终树差异 `git diff HEAD..upstream/main` 仍为 254 个 fork 持有路径。
@@ -81,7 +82,7 @@
 - 验证：前端 `npm run build` 通过（Vite 2978 modules，5 分 11 秒）；`CARGO_BUILD_JOBS=1 cargo check --workspace` 通过（13 分 03 秒）；合并树的 `git diff --cached --check`、工作区 `git diff --check` 通过。因本轮无文本冲突且未发生合并回归修复，未扩展执行专项 Cargo/前端行为测试或六项浏览器烟测，相关命令和烟测保持未验证。
 - 非阻塞警告：Browserslist 的 `caniuse-lite` 数据已 11 个月未更新；本轮未执行 `npm install`，未引入依赖升级或审计变更。
 
-## 最近一次合并后复核（2026-09-02）
+## 上一轮合并后复核（2026-09-02）
 
 - 合并基线：merge commit `1a9453159fc656e9772a271a00ae532dd79948b0`，第一父提交 `2bb6b7ee8278ae3bef69b45a1c6fd35f1ff7032d`，上游第二父提交 `cae9aa4134b6bfd4b21dab0c535186232002ed34`；merge-base 为 `cae9aa413`。
 - 分叉复核：以代码合并提交计 `git rev-list --left-right --count HEAD...upstream/main` 为 fork-only 190、upstream-only 0；相对上游的 fork-only 路径为 254，upstream-only 路径为 0；最终树差异 `git diff HEAD..upstream/main` 为 254 个 fork 持有路径。
@@ -93,27 +94,44 @@
 - 验证：`cargo fmt --all -- --check` 通过；`cd frontend && npm run build` 通过（先构建 VSCodex web，再构建主前端，Vite 2981 modules）；`CARGO_BUILD_JOBS=1 cargo check --workspace` 通过；前端导航/VSCodex 定向测试 2 个文件、9 项通过；`CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib orchestration::attempt` 8 项通过；`CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib maintenance::runtime::oauth_token_refresh` 12 项通过；合并树的 `git diff --check` 通过。
 - 依赖与烟测：为新增 `aether-vscodex/web` 安装锁定依赖，新增 139 个包并审计为 0 vulnerabilities；安装过程有既存 `whatwg-encoding` deprecation 提示。Browserslist 的 `caniuse-lite` 数据已 12 个月未更新；未擅自升级依赖。浏览器六项人工烟测未执行，仍记为未验证。
 
+## 最近一次合并后复核（2026-09-04）
+
+- 合并基线：merge commit `a169ba25d3085d1a1cec4d1aa219ada879de64c2`，第一父提交 `fab05bbbec4f79d4f861cf3b437dc6027f69cc62`，上游第二父提交 `27b0381a9add065ed24d3df75c98cd6a1ef45afa`；merge-base 为 `27b0381a9`。
+- 分叉复核：以代码合并提交计 `git rev-list --left-right --count HEAD...upstream/main` 为 fork-only 193、upstream-only 0；相对上游的 fork-only 路径为 254，upstream-only 路径为 0；最终树差异 `git diff HEAD..upstream/main` 为 254 个 fork 持有路径，净改动 `+22350/-1140`；`git rev-list HEAD..upstream/main` 为 0。
+- 冲突策略：`1C, 2A, 3C, 4C`。合并前双方重叠 32 个路径，4 个产生文本冲突：`1C` 手工混合保留 fork 的 `ignore_pool_cooldown` 开关并在开关内采用上游的 `quota_exhausted_429`/`rate_limited_429` 原因区分；`2A` 保持 `deploy.sh` 的 P1 纯构建契约（上游本轮改动仅为 fork 已删除的重启尾块内的提示文案）；`3C`、`4C` 为双方在同一位置各自新增，`pool_quota_probe.rs` 同时保留 fork 的账号/汇总事件函数与上游的 `contains_quota_exhaustion_marker`，`system.rs` 同时保留 fork 的 `cyber_continue_failover`/`enable_oauth_token_refresh` 与上游的 `enable_model_directives`。其余 28 个重叠路径由 Git 自动合并；没有整文件选择 `ours` 或 `theirs`。
+- 上游功能结论：本轮 59 个上游提交已全部接入，包括 routing scheduling strategy 配置归一与 routing group sort order 迁移、动态模型 quota bucket 隔离与 429 调度、pool 通用 quota window 保留、Antigravity quota 分组去重/grouped quota 刷新/导入邮箱保留/发现模型同步、OAuth identity 与 Codex reset credits 修正、Gemini signature-only 与 thought-only reasoning 修正、Responses replay 跨 Gemini/Codex、跨格式同步收尾加固、流首字 deadline 跨重试共享与首字前丢弃尝试的结算、JSON 精度与 jsonb metadata CAS 修正、模型定价来源持久化、provider 表单账单字段隐藏、`AETHER_GATEWAY_DATABASE_MODE` 数据库准备模式和 Nightly 镜像 owner 推导。
+- Fork 功能结论：**无功能差异变化**。合并前后的 fork-only 路径集合逐路径一致（254 个，无新增、无被上游吸收）。OpenAI transcription multipart/body-base64 与同步/流式保真、OAuth 自动刷新与代理/限流、额度/消费统计和动态 quota、self-scope usage detail、`disable_circuit_breaker`、Responses history/Usage 诊断、cache-affinity pool group、pool scheduler、`ignore_pool_cooldown`、VSCodex 模块和部署脚本行为均保留。
+- 合并回归修复：`apps/aether-gateway/src/handlers/proxy/finalize.rs` 中 fork 独有的转写 multipart 测试补上上游新增的 `GatewayPublicRequestContext.client_ip` 字段（同文件上游侧测试已由自动合并带上该字段）。该回归只存在于 `#[cfg(test)]` 代码，`cargo check --workspace` 不编译测试目标因而未暴露，需用 `--all-targets` 才能发现。修复已包含在上述 merge commit 中。
+- P0 复核：`pure/mod.rs` 与 `formats/src/api.rs` 的导出列表同时保留 fork 的 `parse_openai_transcription_request`/`rewrite_openai_transcription_model` 和上游新增的 `normalize_openai_responses_message_item_ids`/`openai_responses_message_item_id`；`audio_duration_seconds` 在 billing/usage mapper 中未丢失；consumption-stats 路由、额度倒计时与消费统计前端入口、`quota_available` 筛选、导入账号入口、`disable_circuit_breaker` 与 OAuth 自动刷新 worker 均在位；routed policy 的 `keep_priority_on_conversion` 继承与 cache-affinity 提升未被 routing strategy 归一改动破坏。
+- 新增兼容性变化：上游 `crates/aether-pool-core/src/scheduler.rs` 现在把活跃 quota 耗尽一律作为准入阻断，`skip_exhausted_accounts` 降级为“仅配置/API 兼容”字段（注释明确保留原因），与此前 `pool_advanced.score_ranking_enabled` 的处理方式相同。后续文档和测试不得再把该键描述为运行时门禁；fork 的 `ignore_pool_cooldown` 仍是同一结构体中的有效运行时字段。
+- 验证：`cd frontend && npm run build` 通过（先构建 VSCodex web，再构建主前端，1 分 02 秒）；`CARGO_BUILD_JOBS=1 cargo check --workspace` 通过（5 分 29 秒，0 warning）；`cargo fmt --all -- --check` 通过；`bash -n deploy.sh` 通过；`CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets` 发现并修复上述 `client_ip` 回归后，仅余下方记录的既存失败。定向测试：`cargo test -p aether-gateway --lib handlers::proxy::finalize` 3 项、`handlers::admin::provider::pool::runtime::writes` 19 项、`maintenance::runtime::pool_quota_probe` 16 项、`cargo test -p aether-admin --lib system_config` 10 项、`enable_model_directives_update_requires_a_boolean` 1 项全部通过；前端 `PoolKeyDisplayPanels`、`PoolConsumptionStats`、`PoolSchedulingDialog.cache-affinity`、`antigravityQuotaGroupLabel` 4 个文件 10 项通过。合并树与文档的 `git diff --check` 通过。
+- 既存失败（非本轮回归，未修复）：
+  - `frontend/src/views/admin/__tests__/PoolManagement.codex-cycle-stats.spec.ts` 15 项失败，原因是该 spec 的 `lucide-vue-next` mock 白名单缺少 fork 于 `a1dbc172e`（2026-08-08）在 `PoolRefreshWorkerDialog.vue` 引入的 `Gauge` 图标。已在合并前提交 `fab05bbbe` 的独立工作树上复现同样的 15 项失败，确认与本轮合并无关。
+  - `cargo check -p aether-provider-transport --all-targets` 有 7 个测试编译错误（`TransportRequestUrlParams.api_operation`、`SameFormatProviderHeadersInput.content_type`/已移除的 `key_fingerprint`、`SameFormatProviderRequestBehavior` 的 `anthropic_compatibility_profile`/`is_claude_code_transport`）。相关结构体与失败测试同处 `request_url/mod.rs` 和 `same_format_provider/mod.rs`，这两个文件本轮合并逐字节未变（整个 transport crate 本轮只改了无关的 `antigravity/auth.rs`），字段变化来自更早的 `49cc64748`、`2c8920200`，因此判定为既存问题。
+  - 两项均建议作为独立的 fork 维护任务修复，不要混入上游合并提交。
+- 非阻塞警告：Browserslist 的 `caniuse-lite` 数据已 12 个月未更新；本轮未执行 `npm install`，未引入依赖升级或审计变更。浏览器六项人工烟测未执行，仍记为未验证。
+
 ## 基线快照
 
-快照日期：2026-09-02（已执行 `git fetch upstream`，完成合并、验证和合并后复核；文档将在独立提交中更新）。
+快照日期：2026-09-04（已执行 `git fetch upstream`，完成合并、验证和合并后复核；文档在独立提交中更新）。
 
 | 项目 | 值 |
 |---|---|
 | fork | `origin` → `git@github.com:dibin666/Aether.git` |
 | upstream | `upstream` → `https://github.com/fawney19/Aether.git` |
 | fork 分支 | `rust` |
-| fork code baseline（已创建的 merge commit） | `1a9453159fc656e9772a271a00ae532dd79948b0` |
-| 合并回归修复 | 无功能性修复；41 个重叠路径中 6 个产生文本冲突，均按 `1C, 2C, 3C, 4C` 手工混合 |
-| upstream HEAD | `cae9aa4134b6bfd4b21dab0c535186232002ed34` |
-| merge-base | `cae9aa4134b6bfd4b21dab0c535186232002ed34` |
-| 分叉计数（以代码基线计） | fork-only 190，upstream-only 0；含本次文档提交的工作分支 HEAD 为 191/0 |
-| fork 侧净改动 | 254 个路径（合并后相对 upstream/main），`+22295/-1141` |
+| fork code baseline（已创建的 merge commit） | `a169ba25d3085d1a1cec4d1aa219ada879de64c2` |
+| 合并回归修复 | `finalize.rs` 转写测试补 `client_ip` 字段（已含在 merge commit 内）；32 个重叠路径中 4 个产生文本冲突，按 `1C, 2A, 3C, 4C` 解决 |
+| upstream HEAD | `27b0381a9add065ed24d3df75c98cd6a1ef45afa` |
+| merge-base | `27b0381a9add065ed24d3df75c98cd6a1ef45afa` |
+| 分叉计数（以代码基线计） | fork-only 193，upstream-only 0；含本次文档提交的工作分支 HEAD 为 194/0 |
+| fork 侧净改动 | 254 个路径（合并后相对 upstream/main），`+22350/-1140` |
 | upstream 侧净改动 | 0 个路径，`+0/-0` |
-| 双边同时改动 | 0 个路径（合并前双方重叠 41 个路径；6 个文本冲突手工混合，35 个自动合并） |
+| 双边同时改动 | 0 个路径（合并前双方重叠 32 个路径；4 个文本冲突手工解决，28 个自动合并） |
 
 ## 当前待合入上游功能
 
-- 无。上游 35 个提交已作为第二父提交纳入 merge commit `1a9453159fc6`；`git rev-list HEAD..upstream/main` 为 0。
+- 无。上游 59 个提交已作为第二父提交纳入 merge commit `a169ba25d308`；`git rev-list HEAD..upstream/main` 为 0。
 
 合并前必须刷新这组数据；合并后再以已创建的 merge commit 重跑同一组比较并更新本文件：
 
@@ -150,10 +168,13 @@ git diff --name-status HEAD..upstream/main
 9. Responses continuation history 与端到端时序现已属于 upstream baseline。AI export 冲突必须同时保留 history hydrate/record/storage 与 transcription；Usage 冲突必须保留端到端/候选时序和 reasoning metadata，但 TPS 计算严格采用 upstream：流式使用首字后的生成时长，非流式使用总响应时长，分子使用完整 `output_tokens`，不得重新引入格式特判或 reasoning-token 扣减。
 10. `704a16fcf` 接入的 Responses routing、SSE event-only normalization 与 reasoning effort 校验边界现已属于 upstream baseline。后续冲突应在格式转换中保留显式 effort，只在最终同格式 provider 的实际映射模型上校验；transcription 的 multipart/二进制路径不得误入 JSON effort 校验。routed policy 必须继续继承全局 `keep_priority_on_conversion`，同时保留 fork 的 cache-affinity pool group 优先级提升。
 11. 本轮上游 `additional_tools`、Gemini mixed-tool/server-side invocation、Responses reasoning summary 降级和 compaction 路由约束现已属于 upstream baseline。后续格式冲突应采用其规范化与模型门控，再补回 transcription 二进制、Responses history 和 fork 的权限/usage 契约，不得用旧版 registry 或 same-format body builder 整文件覆盖。
+12. pool 冷却写入（`pool/runtime/writes.rs`）再次冲突时，`ignore_pool_cooldown` 是 fork 的运行时开关，必须包住所有 `set_pool_cooldown` 调用；上游对冷却原因的细分（例如 `quota_exhausted_429` 与 `rate_limited_429`）应放进开关内部，不得为接入原因细分而删除开关。
+13. `deploy.sh` 的“只构建镜像、不做 compose restart”属于 P1 契约。上游在其重启尾块内的改动（提示文案、compose 参数）不构成恢复该尾块的理由；只有新的产品决策才能改变这一点。上游把 `AETHER_GATEWAY_AUTO_PREPARE_DATABASE` 迁移为 `AETHER_GATEWAY_DATABASE_MODE` 时仍保留了旧键的兼容解析（`resolve_database_mode`），fork 的 compose 文件因此无需同步改写。
+14. `cargo check --workspace` 不编译 `#[cfg(test)]` 目标，无法发现 fork 独有测试与上游结构体字段的漂移。凡是上游改动了被 fork 测试构造的公共结构体（本轮 `PublicRequestContext.client_ip`），必须补跑 `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets` 或对应 crate 的定向 `cargo test`。
 
 ## Fork 特有功能清单
 
-本轮合并后复核（2026-08-26）确认：以下 fork 特有功能清单仍保留，均继续由 `ff29894df` 及其第一父提交提供；legacy backfill 已由上游等价吸收。Antigravity 自定义反代和 fork TPS 修正已按本轮要求回到 upstream baseline，不再作为 fork 特有功能维护。
+最近一次合并后复核（2026-09-04，merge commit `a169ba25d`）确认：以下 fork 特有功能清单**无功能差异变化**，合并前后 fork-only 路径集合逐路径一致（254 个）。legacy backfill 早已由上游等价吸收；Antigravity 自定义反代和 fork TPS 修正已按 2026-08-26 的要求回到 upstream baseline，不再作为 fork 特有功能维护。清单外另有 `ignore_pool_cooldown`（`7260555b7` 引入的号池冷却忽略开关），其合并规则见“总体冲突策略”第 12 条。
 
 ### 本轮回到 upstream baseline 的行为
 
@@ -204,6 +225,7 @@ git diff --name-status HEAD..upstream/main
 已改变的兼容行为：
 
 - merge `68f2636fe` 的冲突选择 `2B` 采用上游 scheduler。`pool_advanced.score_ranking_enabled` 及旧别名仍被配置解析器和高级设置 UI 接受/保存，但 `PoolKeyCursor` 不再读取该值；关闭开关不会跳过 score phase。后续文档和测试不得继续把该键描述为运行时门禁。
+- merge `a169ba25d` 接入上游“动态模型 quota bucket 隔离与 429 调度”后，`crates/aether-pool-core/src/scheduler.rs` 把活跃 quota 耗尽一律作为准入阻断：`skip_exhausted_accounts` 仅保留配置/API 兼容，关闭它不再让耗尽账号参与调度，何时解除由 reset-aware provider adapter 决定。`quota_hard_blocked` 仍用于可区分的永久封禁。fork 的 `ignore_pool_cooldown` 位于同一结构体且仍是有效运行时字段，不要连带当成兼容字段。
 - `free_first`、`team_first` 等策略仍存在于后端配置和调度 UI；本次只采用了上游测试 fixture 的 applicable 模型，没有删除生产策略。
 
 关键文件：
@@ -359,54 +381,46 @@ Provider 级覆盖位于 `provider.config.oauth_token_refresh`：`enabled`、`lo
 
 ## 本轮双边改动路径（合并前）
 
-本轮 `merge-base` 为 `6ec0771297dd41c1025f04067a6ee2cfaf658da4`；以合并前 `HEAD` 计 fork-only 为 189 个提交、254 个路径，upstream-only 为 35 个提交、250 个路径，双方重叠 41 个路径：
+本轮 `merge-base` 为 `cae9aa4134b6bfd4b21dab0c535186232002ed34`；以合并前 `HEAD` 计 fork-only 为 192 个提交、254 个路径，upstream-only 为 59 个提交、191 个路径，双方重叠 32 个路径：
 
-- `.dockerignore`
 - `.env.example`
-- `.gitignore`
-- `Dockerfile.app.local`
 - `README.md`
-- `apps/aether-gateway/src/ai_serving/mod.rs`
 - `apps/aether-gateway/src/ai_serving/planner/candidate_materialization.rs`
 - `apps/aether-gateway/src/ai_serving/planner/candidate_ranking.rs`
 - `apps/aether-gateway/src/ai_serving/planner/candidate_resolution.rs`
 - `apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/candidates.rs`
-- `apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/payload.rs`
-- `apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/request.rs`
-- `apps/aether-gateway/src/ai_serving/planner/standard/family/payload.rs`
+- `apps/aether-gateway/src/ai_serving/planner/passthrough/provider/plans.rs`
 - `apps/aether-gateway/src/ai_serving/planner/standard/openai/chat/decision/request.rs`
-- `apps/aether-gateway/src/control/route/public_support.rs`
-- `apps/aether-gateway/src/control/tests/public_support.rs`
-- `apps/aether-gateway/src/data/state/runtime.rs`
+- `apps/aether-gateway/src/ai_serving/pure/mod.rs`
 - `apps/aether-gateway/src/dispatch/pool_scheduler.rs`
-- `apps/aether-gateway/src/dispatch/refs.rs`
 - `apps/aether-gateway/src/executor/orchestration.rs`
-- `apps/aether-gateway/src/handlers/admin/provider/pool/config.rs`
-- `apps/aether-gateway/src/handlers/admin/provider/pool_admin/payloads.rs`
-- `apps/aether-gateway/src/handlers/admin/provider/query/models/model_test.rs`
-- `apps/aether-gateway/src/handlers/proxy/websocket/live/planner.rs`
-- `apps/aether-gateway/src/handlers/public/support/user_me_routes.rs`
+- `apps/aether-gateway/src/handlers/admin/provider/pool/runtime/writes.rs`（文本冲突 `1C`）
+- `apps/aether-gateway/src/handlers/proxy/finalize.rs`
+- `apps/aether-gateway/src/handlers/proxy/websocket/live/http.rs`
 - `apps/aether-gateway/src/handlers/shared/catalog.rs`
 - `apps/aether-gateway/src/main.rs`
-- `apps/aether-gateway/src/maintenance/runtime/oauth_token_refresh.rs`
+- `apps/aether-gateway/src/maintenance/runtime/pool_quota_probe.rs`（文本冲突 `3C`）
+- `apps/aether-gateway/src/orchestration/effects.rs`
 - `apps/aether-gateway/src/orchestration/mod.rs`
-- `apps/aether-gateway/src/state/oauth.rs`
-- `apps/aether-gateway/src/tests/control/admin/pool.rs`
+- `apps/aether-gateway/src/state/core.rs`
+- `crates/aether-admin/src/provider/pool.rs`
+- `crates/aether-admin/src/system.rs`（文本冲突 `4C`）
+- `crates/aether-ai/formats/src/api.rs`
 - `crates/aether-ai/formats/src/formats/shared/stream_core/format_matrix.rs`
-- `crates/aether-ai/serving/src/lib.rs`
-- `frontend/src/api/endpoints/pool.ts`
+- `crates/aether-data/adapters/postgres/src/provider_catalog.rs`
+- `crates/aether-pool-core/src/scheduler.rs`
+- `crates/aether-usage/runtime/src/write.rs`
+- `deploy.sh`（文本冲突 `2A`）
 - `frontend/src/features/pool/components/__tests__/PoolKeyDisplayPanels.spec.ts`
 - `frontend/src/i18n/messages.ts`
-- `frontend/src/layouts/main-layout/navigation.ts`
 - `frontend/src/views/admin/PoolManagement.vue`
-- `.github/workflows/release.yml`（同一路径在两侧均有修改）
 - `install.sh`
 
-本轮实际结果：41 个重叠路径中 6 个产生文本冲突并按 `1C, 2C, 3C, 4C` 手工混合，35 个由 Git 自动合并；没有整文件选择 `ours`/`theirs`。合并后已按转写、sticky-key 调度、VSCodex、OAuth/Agent Identity、动态 quota、usage detail 和 P0 fork 契约完成语义复核。
+本轮实际结果：32 个重叠路径中 4 个产生文本冲突并按 `1C, 2A, 3C, 4C` 解决，28 个由 Git 自动合并；除 `deploy.sh` 的尾块按已记录的 P1 构建脚本契约保留 fork 侧外，没有整文件选择 `ours`/`theirs`。合并后已按转写、pool 冷却/quota 调度、OAuth、动态 quota、usage detail 和 P0 fork 契约完成语义复核。
 
 ## 当前尚未合入的上游功能
 
-- 无。上游 35 个提交已纳入 merge commit `1a9453159fc6`；`git rev-list HEAD..upstream/main` 为 0。上面的“本轮双边改动路径（合并前）”保留了本次合并前的待合入摘要与实际合并结果。
+- 无。上游 59 个提交已纳入 merge commit `a169ba25d308`；`git rev-list HEAD..upstream/main` 为 0。上面的“本轮双边改动路径（合并前）”保留了本次合并前的待合入摘要与实际合并结果。
 
 ## 配置与 API 契约速查
 
@@ -418,6 +432,8 @@ Self detail: GET /api/users/me/usage/{usage_id}?include_bodies=true|false
 
 Provider config:
   pool_advanced.score_ranking_enabled (兼容读写；merge 68f2636fe 后 scheduler 不读取)
+  pool_advanced.skip_exhausted_accounts (兼容读写；merge a169ba25d 后耗尽一律阻断)
+  pool_advanced.ignore_pool_cooldown (fork 运行时开关；关闭全部 set_pool_cooldown 写入)
   oauth_token_refresh.{enabled,lookahead_seconds,interval_seconds,concurrency,max_per_run,proxy_node_id}
 
 Key capability:
@@ -445,9 +461,23 @@ CARGO_BUILD_JOBS=1 cargo check --workspace
 
 Rust 验证纪律：**只允许一个rust编译进程**。所有 Cargo build/check/test 命令必须串行执行，统一使用 `CARGO_BUILD_JOBS=1`，确认上一条命令退出后才能启动下一条。
 
+上游若改动了 fork 测试会构造的公共结构体，再补一次含测试目标的检查（`cargo check --workspace` 不编译 `#[cfg(test)]`）：
+
+```sh
+CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets
+```
+
+注意 2026-09-04 起该命令在 `aether-provider-transport` 有 7 个既存测试编译错误（详见“最近一次合并后复核”），与上游合并无关；判断新回归时以错误所在 crate/文件是否被本轮合并改动为准。
+
 再按冲突面串行执行行为验证，避免多个 Cargo 进程争用 package/artifact lock：
 
 ```sh
+# pool 冷却写入与 quota probe（fork ignore_pool_cooldown 与上游 429 原因细分）
+CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib handlers::admin::provider::pool::runtime::writes
+CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib maintenance::runtime::pool_quota_probe
+CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib handlers::proxy::finalize
+CARGO_BUILD_JOBS=1 cargo test -p aether-admin --lib system_config
+
 # Responses routing、reasoning effort 校验边界与 event-only SSE
 CARGO_BUILD_JOBS=1 cargo test -p aether-gateway routing_policy_inherits_global_conversion_priority_override
 CARGO_BUILD_JOBS=1 cargo test -p aether-ai-formats runtime_reasoning_effort_is_preserved_across_concrete_model_mapping
@@ -485,6 +515,17 @@ npm run test:run -- \
   src/features/usage/conversation/__tests__/openai.spec.ts \
   src/features/usage/components/__tests__/UsageRecordsTable.spec.ts \
   src/views/admin/__tests__/PoolManagement.codex-cycle-stats.spec.ts
+```
+
+`PoolManagement.codex-cycle-stats.spec.ts` 自 2026-09-04 起有 15 项既存失败（spec 的 `lucide-vue-next` mock 白名单缺 `Gauge`），与上游合并无关；把它当作 fork 侧待修任务，不要在合并中顺手改。涉及 pool/额度的其余定向文件：
+
+```sh
+cd frontend
+npm run test:run -- \
+  src/features/pool/components/__tests__/PoolKeyDisplayPanels.spec.ts \
+  src/views/admin/__tests__/PoolConsumptionStats.spec.ts \
+  src/features/pool/components/__tests__/PoolSchedulingDialog.cache-affinity.spec.ts \
+  src/features/providers/utils/__tests__/antigravityQuotaGroupLabel.spec.ts
 ```
 
 历史 `596e1830f` 验证结果（2026-08-14）：
