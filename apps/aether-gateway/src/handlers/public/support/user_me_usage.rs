@@ -32,7 +32,7 @@ use super::{
 
 const USERS_ME_USAGE_DATA_UNAVAILABLE_DETAIL: &str = "用户用量数据暂不可用";
 // The active-usage endpoint accepts an explicit list of request IDs.  Keep
-// this list bounded before it reaches the repository layer: SQLite/MySQL
+// this list bounded before it reaches the repository layer: the database
 // expand every value into a bind parameter, while PostgreSQL still has to
 // materialize the complete array.  Request IDs are normally UUIDs, but a
 // generous per-item bound preserves compatibility with provider-generated

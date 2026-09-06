@@ -1,6 +1,4 @@
 mod memory;
-#[cfg(feature = "mysql")]
-mod mysql;
 
 #[allow(unused_imports)]
 pub(crate) use aether_data_contracts::repository::usage::{
@@ -43,11 +41,7 @@ pub mod cleanup {
 }
 #[cfg(feature = "postgres")]
 pub use aether_data_postgres::SqlxUsageReadRepository;
-#[cfg(feature = "sqlite")]
-pub use aether_data_sqlite::{SqliteUsageReadRepository, SqliteUsageWriteRepository};
 pub use memory::InMemoryUsageReadRepository;
-#[cfg(feature = "mysql")]
-pub use mysql::{MysqlUsageReadRepository, MysqlUsageWriteRepository};
 
 #[cfg(test)]
 mod tests {

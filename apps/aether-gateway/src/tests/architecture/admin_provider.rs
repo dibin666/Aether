@@ -137,11 +137,7 @@ fn postgres_provider_cleanup_preserves_usage_history() {
 
 #[test]
 fn provider_cleanup_keeps_common_backends_in_sync() {
-    for path in [
-        "crates/aether-data/adapters/postgres/src/provider_catalog.rs",
-        "crates/aether-data/adapters/mysql/src/provider_catalog.rs",
-        "crates/aether-data/adapters/sqlite/src/provider_catalog.rs",
-    ] {
+    for path in ["crates/aether-data/adapters/postgres/src/provider_catalog.rs"] {
         let source = read_workspace_file(path);
         for required in [
             "UPDATE user_preferences SET default_provider_id = NULL WHERE default_provider_id =",

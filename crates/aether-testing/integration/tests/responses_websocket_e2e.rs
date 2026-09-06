@@ -1,6 +1,6 @@
 //! Responses WebSocket end-to-end coverage.
 //!
-//! Every test starts a protocol-aware mock upstream, seeds a throwaway SQLite
+//! Every test starts a protocol-aware mock upstream, seeds a throwaway PostgreSQL
 //! store, mounts the real gateway router, and drives the public
 //! `/v1/responses` WebSocket the way a client would.
 //!
@@ -9,7 +9,6 @@
 //! `response.completed` is not evidence that the turn was ever accounted for —
 //! only the row is.
 
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,7 +27,7 @@ use aether_data_contracts::repository::provider_catalog::{
 };
 use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UsageAuditListQuery};
 use aether_gateway::{build_router_with_state, AppState, GatewayDataConfig, UsageRuntimeConfig};
-use aether_testkit::SpawnedServer;
+use aether_testkit::{ManagedPostgresServer, SpawnedServer};
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::http::{HeaderMap, Uri};
@@ -749,9 +748,9 @@ fn is_billed(audit: &StoredRequestUsageAudit) -> bool {
 // ---------------------------------------------------------------------------
 
 /// A live gateway wired to a mock Responses WebSocket upstream over a throwaway
-/// SQLite store.
+/// PostgreSQL store.
 struct Harness {
-    database: TemporarySqlite,
+    database: TemporaryPostgres,
     upstream: Arc<MockUpstreamState>,
     websocket_url: String,
     _upstream_server: SpawnedServer,
@@ -856,7 +855,7 @@ impl Harness {
         let upstream_server =
             SpawnedServer::start(mock_upstream_router(Arc::clone(&upstream))).await?;
 
-        let database = TemporarySqlite::new();
+        let database = TemporaryPostgres::new().await?;
         prepare_and_seed_database(
             &database.config,
             upstream_server.base_url(),
@@ -961,7 +960,7 @@ impl Harness {
     /// Reads the persisted audit rows, oldest first.
     ///
     /// Opens its own handle per call rather than holding one for the lifetime of
-    /// the harness: the gateway keeps its own pool on the same SQLite file for
+    /// the harness: the gateway keeps its own pool on the same database for
     /// the whole test, and an idle second pool only adds contention.
     async fn usage_audits(&self) -> Result<Vec<StoredRequestUsageAudit>, BoxError> {
         let backends = DataBackends::from_config(DataLayerConfig::from_database(
@@ -1359,24 +1358,20 @@ async fn send_mock_event(socket: &mut WebSocket, event: Value) -> Result<(), axu
 // Seeded data store
 // ---------------------------------------------------------------------------
 
-struct TemporarySqlite {
-    directory: PathBuf,
+struct TemporaryPostgres {
+    _server: ManagedPostgresServer,
     config: SqlDatabaseConfig,
 }
 
-impl TemporarySqlite {
-    fn new() -> Self {
-        let directory = std::env::temp_dir().join(format!(
-            "aether-responses-ws-e2e-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4()
-        ));
-        let database_path = directory.join("aether.db");
-        Self {
-            directory,
+impl TemporaryPostgres {
+    async fn new() -> Result<Self, BoxError> {
+        let server = ManagedPostgresServer::start().await?;
+        let database_url = server.database_url().to_string();
+        Ok(Self {
+            _server: server,
             config: SqlDatabaseConfig {
-                driver: DatabaseDriver::Sqlite,
-                url: format!("sqlite://{}", database_path.display()),
+                driver: DatabaseDriver::Postgres,
+                url: database_url,
                 pool: SqlPoolConfig {
                     min_connections: 1,
                     max_connections: 4,
@@ -1387,13 +1382,7 @@ impl TemporarySqlite {
                     require_ssl: false,
                 },
             },
-        }
-    }
-}
-
-impl Drop for TemporarySqlite {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.directory);
+        })
     }
 }
 
@@ -1727,8 +1716,8 @@ async fn seed_weekly_request_limit(
         .id;
 
     let pool = backends
-        .sqlite()
-        .ok_or("SQLite backend unavailable")?
+        .postgres()
+        .ok_or("PostgreSQL backend unavailable")?
         .pool();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -1740,8 +1729,9 @@ INSERT INTO billing_plans (
   id, title, description, price_amount, price_currency, duration_unit,
   duration_value, enabled, sort_order, max_active_per_user,
   purchase_limit_scope, entitlements_json, created_at, updated_at
-) VALUES (?, 'WS weekly policy', NULL, 0, 'USD', 'month', 1, 1, 0, 1,
-          'active_period', ?, ?, ?)
+) VALUES ($1, 'WS weekly policy', NULL, 0, 'USD', 'month', 1, true, 0, 1,
+          'active_period', $2::text::jsonb,
+          TO_TIMESTAMP($3::bigint::double precision), TO_TIMESTAMP($4::bigint::double precision))
 "#,
     )
     .bind("plan-responses-ws-weekly")
@@ -1765,7 +1755,9 @@ INSERT INTO billing_plans (
 INSERT INTO payment_orders (
   id, order_no, wallet_id, user_id, amount_usd, pay_currency, status,
   payment_method, created_at, paid_at, credited_at, expires_at
-) VALUES (?, ?, ?, ?, 0, 'USD', 'paid', 'test', ?, ?, ?, ?)
+) VALUES ($1, $2, $3, $4, 0, 'USD', 'paid', 'test',
+          TO_TIMESTAMP($5::bigint::double precision), TO_TIMESTAMP($6::bigint::double precision),
+          TO_TIMESTAMP($7::bigint::double precision), TO_TIMESTAMP($8::bigint::double precision))
 "#,
     )
     .bind("order-responses-ws-weekly")
@@ -1783,7 +1775,9 @@ INSERT INTO payment_orders (
 INSERT INTO user_plan_entitlements (
   id, user_id, plan_id, payment_order_id, status, starts_at, expires_at,
   entitlements_snapshot, created_at, updated_at
-) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
+) VALUES ($1, $2, $3, $4, 'active',
+          TO_TIMESTAMP($5::bigint::double precision), TO_TIMESTAMP($6::bigint::double precision),
+          $7::text::jsonb, TO_TIMESTAMP($8::bigint::double precision), TO_TIMESTAMP($9::bigint::double precision))
 "#,
     )
     .bind("entitlement-responses-ws-weekly")

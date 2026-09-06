@@ -9,8 +9,6 @@ jwt_key=$(urlsafe_rand 32)
 encryption_key=$(urlsafe_rand 32)
 db_password=$(urlsafe_rand 32)
 redis_password=$(urlsafe_rand 32)
-mysql_password=$(urlsafe_rand 32)
-mysql_root_password=$(urlsafe_rand 32)
 
 cat <<EOF
 
@@ -20,8 +18,6 @@ JWT_SECRET_KEY=${jwt_key}
 ENCRYPTION_KEY=${encryption_key}
 DB_PASSWORD=${db_password}
 REDIS_PASSWORD=${redis_password}
-MYSQL_PASSWORD=${mysql_password}
-MYSQL_ROOT_PASSWORD=${mysql_root_password}
 
 注意:
   - JWT_SECRET_KEY 用于用户登录 token 签名
