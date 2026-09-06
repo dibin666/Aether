@@ -109,7 +109,7 @@
               {{ formatApiFormatShort(endpoint.api_format) }}
             </span>
             <span class="font-medium text-muted-foreground/80">
-              {{ isEndpointAvailable(endpoint) ? `${(endpoint.health_score * 100).toFixed(0)}%` : '-' }}
+              {{ getEndpointHealthLabel(endpoint) }}
             </span>
           </div>
 
@@ -118,7 +118,7 @@
             <div
               class="h-full rounded-full transition-all duration-300"
               :class="getEndpointDotColor(endpoint)"
-              :style="{ width: isEndpointAvailable(endpoint) ? `${Math.max(endpoint.health_score * 100, 5)}%` : '100%' }"
+              :style="{ width: getEndpointHealthBarWidth(endpoint) }"
             />
           </div>
         </div>
@@ -210,7 +210,13 @@ import TableRow from '@/components/ui/table-row.vue'
 import TableCell from '@/components/ui/table-cell.vue'
 import ProviderBalanceCell from './ProviderBalanceCell.vue'
 import { type ProviderWithEndpointsSummary, formatApiFormatShort } from '@/api/endpoints'
-import { sortEndpoints, isEndpointAvailable, getEndpointDotColor, getEndpointTooltip } from '@/features/providers/composables/useEndpointStatus'
+import {
+  sortEndpoints,
+  getEndpointHealthLabel,
+  getEndpointHealthBarWidth,
+  getEndpointDotColor,
+  getEndpointTooltip,
+} from '@/features/providers/composables/useEndpointStatus'
 import type { BalanceExtraItem } from '@/features/providers/auth-templates'
 import { useI18n } from '@/i18n'
 import { safeExternalWebUrl } from '@/utils/navigationSecurity'

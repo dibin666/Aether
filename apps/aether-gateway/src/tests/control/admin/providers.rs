@@ -40,6 +40,198 @@ use crate::data::GatewayDataState;
 
 const ADMIN_PROVIDERS_DATA_UNAVAILABLE_DETAIL: &str = "Admin provider catalog data unavailable";
 
+async fn provider_health_summary(
+    endpoints: &[StoredProviderCatalogEndpoint],
+    keys: &[StoredProviderCatalogKey],
+) -> serde_json::Value {
+    let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![sample_provider("provider-openai", "openai", 10)],
+        endpoints.to_vec(),
+        keys.to_vec(),
+    ));
+    let state = AppState::new()
+        .expect("gateway should build")
+        .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
+            repository,
+        ));
+    let response = local_admin_providers_response(
+        &state,
+        http::Method::GET,
+        "/api/admin/providers/summary",
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("summary body should read");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("summary should parse");
+    assert_eq!(payload["items"].as_array().map(Vec::len), Some(1));
+    payload["items"][0].clone()
+}
+
+#[tokio::test]
+async fn admin_provider_summary_health_ignores_disabled_keys() {
+    let endpoint = sample_endpoint(
+        "endpoint-chat",
+        "provider-openai",
+        "openai:chat",
+        "https://api.openai.example",
+    );
+    for (active_score, disabled_score) in [(0.2, 1.0), (1.0, 0.2), (0.0, 1.0)] {
+        let active_key = sample_key("key-active", "provider-openai", "openai:chat", "test")
+            .with_health_fields(
+                Some(json!({"openai:chat": {"health_score": active_score}})),
+                None,
+            );
+        let mut disabled_key = sample_key("key-disabled", "provider-openai", "openai:chat", "test")
+            .with_health_fields(
+                Some(json!({"openai:chat": {"health_score": disabled_score}})),
+                None,
+            );
+        disabled_key.is_active = false;
+
+        let payload =
+            provider_health_summary(std::slice::from_ref(&endpoint), &[active_key, disabled_key])
+                .await;
+
+        assert_eq!(
+            payload["endpoint_health_details"][0]["health_score"],
+            active_score
+        );
+        assert_eq!(payload["endpoint_health_details"][0]["total_keys"], 2);
+        assert_eq!(payload["endpoint_health_details"][0]["active_keys"], 1);
+        assert_eq!(payload["avg_health_score"], active_score);
+        assert_eq!(
+            payload["unhealthy_endpoints"],
+            usize::from(active_score < 0.5)
+        );
+    }
+}
+
+#[tokio::test]
+async fn admin_provider_summary_health_does_not_inflate_observed_scores_with_missing_data() {
+    let endpoint = sample_endpoint(
+        "endpoint-chat",
+        "provider-openai",
+        "openai:chat",
+        "https://api.openai.example",
+    );
+    let keys = [
+        sample_key("key-observed", "provider-openai", "openai:chat", "test")
+            .with_health_fields(Some(json!({"openai:chat": {"health_score": 0.2}})), None),
+        sample_key("key-unobserved", "provider-openai", "openai:chat", "test"),
+        sample_key("key-other-format", "provider-openai", "openai:chat", "test")
+            .with_health_fields(
+                Some(json!({"openai:responses": {"health_score": 1.0}})),
+                None,
+            ),
+    ];
+
+    let payload = provider_health_summary(&[endpoint], &keys).await;
+
+    assert_eq!(payload["endpoint_health_details"][0]["health_score"], 0.2);
+    assert_eq!(payload["endpoint_health_details"][0]["active_keys"], 3);
+    assert_eq!(payload["avg_health_score"], 0.2);
+    assert_eq!(payload["unhealthy_endpoints"], 1);
+}
+
+#[tokio::test]
+async fn admin_provider_summary_health_is_unknown_without_active_observations() {
+    let endpoint = sample_endpoint(
+        "endpoint-chat",
+        "provider-openai",
+        "openai:chat",
+        "https://api.openai.example",
+    );
+    let mut disabled_key = sample_key("key-disabled", "provider-openai", "openai:chat", "test")
+        .with_health_fields(Some(json!({"openai:chat": {"health_score": 0.2}})), None);
+    disabled_key.is_active = false;
+    for keys in [
+        Vec::new(),
+        vec![sample_key(
+            "key-unobserved",
+            "provider-openai",
+            "openai:chat",
+            "test",
+        )],
+        vec![disabled_key],
+    ] {
+        let payload = provider_health_summary(std::slice::from_ref(&endpoint), &keys).await;
+
+        assert_eq!(
+            payload["endpoint_health_details"][0]["health_score"],
+            json!(null)
+        );
+        assert_eq!(payload["avg_health_score"], json!(null));
+        assert_eq!(payload["unhealthy_endpoints"], 0);
+    }
+
+    let payload = provider_health_summary(&[], &[]).await;
+    assert_eq!(payload["avg_health_score"], json!(null));
+    assert_eq!(payload["unhealthy_endpoints"], 0);
+}
+
+#[tokio::test]
+async fn admin_provider_summary_health_excludes_disabled_and_unobserved_endpoints() {
+    let mut disabled_endpoint = sample_endpoint(
+        "endpoint-disabled",
+        "provider-openai",
+        "openai:responses",
+        "https://api.openai.example",
+    );
+    disabled_endpoint.is_active = false;
+    let endpoints = [
+        sample_endpoint(
+            "endpoint-chat",
+            "provider-openai",
+            "openai:chat",
+            "https://api.openai.example",
+        ),
+        disabled_endpoint,
+        sample_endpoint(
+            "endpoint-unobserved",
+            "provider-openai",
+            "openai:embedding",
+            "https://api.openai.example",
+        ),
+    ];
+    let keys = [
+        sample_key("key-chat", "provider-openai", "openai:chat", "test")
+            .with_health_fields(Some(json!({"openai:chat": {"health_score": 0.8}})), None),
+        sample_key(
+            "key-responses",
+            "provider-openai",
+            "openai:responses",
+            "test",
+        )
+        .with_health_fields(
+            Some(json!({"openai:responses": {"health_score": 0.2}})),
+            None,
+        ),
+        sample_key(
+            "key-unobserved",
+            "provider-openai",
+            "openai:embedding",
+            "test",
+        ),
+    ];
+
+    let payload = provider_health_summary(&endpoints, &keys).await;
+
+    assert_eq!(payload["endpoint_health_details"][0]["health_score"], 0.8);
+    assert_eq!(
+        payload["endpoint_health_details"][1]["health_score"],
+        json!(null)
+    );
+    assert_eq!(
+        payload["endpoint_health_details"][2]["health_score"],
+        json!(null)
+    );
+    assert_eq!(payload["avg_health_score"], 0.8);
+    assert_eq!(payload["unhealthy_endpoints"], 0);
+}
+
 fn trusted_admin_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(GATEWAY_HEADER, HeaderValue::from_static("rust-phase3b"));

@@ -13,6 +13,7 @@ use aether_data_contracts::repository::candidates::{
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
+use aether_scheduler_core::provider_key_health_score;
 use serde_json::json;
 use std::collections::BTreeMap;
 
@@ -91,23 +92,17 @@ pub(crate) fn build_admin_provider_summary_value(
                 .get(&endpoint.id)
                 .cloned()
                 .unwrap_or_default();
-            let health_score = if endpoint_keys.is_empty() {
-                1.0
-            } else {
-                let mut scores = Vec::new();
-                for key in &endpoint_keys {
-                    let score = key
-                        .health_by_format
-                        .as_ref()
-                        .and_then(|value| value.get(&endpoint.api_format))
-                        .and_then(|value| value.get("health_score"))
-                        .and_then(serde_json::Value::as_f64)
-                        .unwrap_or(1.0);
-                    scores.push(score);
-                }
-                scores.iter().sum::<f64>() / scores.len() as f64
-            };
-            endpoint_health_scores.push(health_score);
+            let scores = endpoint_keys
+                .iter()
+                .filter(|key| endpoint.is_active && key.is_active)
+                .filter_map(|key| provider_key_health_score(key, &endpoint.api_format))
+                .filter(|score| score.is_finite())
+                .collect::<Vec<_>>();
+            let health_score =
+                (!scores.is_empty()).then(|| scores.iter().sum::<f64>() / scores.len() as f64);
+            if let Some(score) = health_score {
+                endpoint_health_scores.push(score);
+            }
             json!({
                 "api_format": endpoint.api_format,
                 "health_score": health_score,
@@ -117,11 +112,8 @@ pub(crate) fn build_admin_provider_summary_value(
             })
         })
         .collect::<Vec<_>>();
-    let avg_health_score = if endpoint_health_scores.is_empty() {
-        1.0
-    } else {
-        endpoint_health_scores.iter().sum::<f64>() / endpoint_health_scores.len() as f64
-    };
+    let avg_health_score = (!endpoint_health_scores.is_empty())
+        .then(|| endpoint_health_scores.iter().sum::<f64>() / endpoint_health_scores.len() as f64);
     let unhealthy_endpoints = endpoint_health_scores
         .iter()
         .filter(|score| **score < 0.5)

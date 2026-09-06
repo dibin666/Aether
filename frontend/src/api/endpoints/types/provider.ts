@@ -581,7 +581,7 @@ export interface EndpointAPIKeyUpdate {
 
 export interface EndpointHealthDetail {
   api_format: string
-  health_score: number
+  health_score: number | null
   is_active: boolean
   total_keys?: number
   active_keys?: number
@@ -914,7 +914,7 @@ export interface ProviderWithEndpointsSummary {
   total_models: number
   active_models: number
   global_model_ids: string[]
-  avg_health_score: number
+  avg_health_score: number | null
   unhealthy_endpoints: number
   api_formats: string[]
   endpoint_health_details: EndpointHealthDetail[]
