@@ -991,7 +991,10 @@ mod tests {
 
         assert_eq!(
             plan.url,
-            "https://chatgpt.com/backend-api/codex/models?client_version=0.153.3"
+            format!(
+                "https://chatgpt.com/backend-api/codex/models?client_version={}",
+                aether_ai_formats::CODEX_CLIENT_VERSION
+            )
         );
         assert_eq!(
             plan.headers.get("authorization").map(String::as_str),

@@ -1345,7 +1345,10 @@ mod tests {
                 "https://chatgpt.com/backend-api/codex"
             ),
             Some((
-                "https://chatgpt.com/backend-api/codex/models?client_version=0.153.3".to_string(),
+                format!(
+                    "https://chatgpt.com/backend-api/codex/models?client_version={}",
+                    aether_ai_formats::CODEX_CLIENT_VERSION
+                ),
                 "openai:responses".to_string()
             ))
         );

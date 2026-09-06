@@ -558,7 +558,10 @@ async fn gateway_recovers_codex_slug_only_models_from_a_stale_legacy_cache_impl(
                     .expect("mutex should lock") += 1;
                 assert_eq!(
                     plan.url,
-                    "https://chatgpt.com/backend-api/codex/models?client_version=0.153.3"
+                    format!(
+                        "https://chatgpt.com/backend-api/codex/models?client_version={}",
+                        aether_ai_formats::CODEX_CLIENT_VERSION
+                    )
                 );
                 assert_eq!(
                     plan.headers.get("user-agent").map(String::as_str),
@@ -759,7 +762,10 @@ async fn gateway_handles_admin_provider_query_models_falls_back_to_codex_preset_
                     .expect("mutex should lock") += 1;
                 assert_eq!(
                     plan.url,
-                    "https://chatgpt.com/backend-api/codex/models?client_version=0.153.3"
+                    format!(
+                        "https://chatgpt.com/backend-api/codex/models?client_version={}",
+                        aether_ai_formats::CODEX_CLIENT_VERSION
+                    )
                 );
                 Json(json!({
                     "request_id": "req-provider-query-codex-invalidated",
