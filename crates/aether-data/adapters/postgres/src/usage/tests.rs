@@ -4274,6 +4274,38 @@ fn prepare_usage_body_storage_detaches_small_payloads_into_blob_storage() {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn usage_body_decode_does_not_block_the_async_runtime_thread() {
+    let runtime_thread = std::thread::current().id();
+    let payload = json!({"message": "background decoding"});
+    let compressed = prepare_usage_body_storage(Some(&payload))
+        .expect("body should compress")
+        .detached_blob_bytes
+        .expect("body should be detached");
+
+    let decoded = super::decode_usage_body_in_background(move || {
+        assert_ne!(std::thread::current().id(), runtime_thread);
+        inflate_usage_json_value(&compressed).map(Some)
+    })
+    .await
+    .expect("body should decode");
+
+    assert_eq!(decoded, Some(payload));
+}
+
+#[tokio::test]
+async fn usage_body_decode_preserves_storage_decode_errors() {
+    let error = super::decode_usage_body_in_background(|| {
+        inflate_usage_json_value(b"invalid gzip").map(Some)
+    })
+    .await
+    .expect_err("corrupt bodies should fail");
+
+    assert!(error
+        .to_string()
+        .contains("failed to decompress usage json:"));
+}
+
 #[test]
 fn prepare_usage_body_storage_compresses_large_payloads() {
     let payload = json!({
