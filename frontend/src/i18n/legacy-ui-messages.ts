@@ -422,8 +422,6 @@ export const legacyUiEnglishMessages: Record<string, string> = {
   '至少选择一个清理范围': 'Select at least one cleanup scope',
   '等待后台返回结果': 'Waiting for the server to return results',
   '默认代理节点': 'Default proxy node',
-  '额外可信 Fake-IP 域名': 'Additional trusted Fake-IP domains',
-  '每行填写一个精确 hostname；不支持通配符、后缀、端口、路径或 IP。仅允许这些域名返回 198.18.0.0/15 Fake-IP，内置提供商域名不受影响。': 'Enter one exact hostname per line. Wildcards, suffixes, ports, paths, and IP addresses are not supported. Only these domains may return Fake-IP addresses in 198.18.0.0/15. Built-in provider domains are unaffected.',
   '配置系统后台定时任务': 'Configure scheduled background tasks',
   '显示在导航栏、登录页标题和邮件中': 'Shown in the navigation bar, sign-in page title, and emails',
   '显示在导航栏品牌名称下方': 'Shown below the brand name in the navigation bar',

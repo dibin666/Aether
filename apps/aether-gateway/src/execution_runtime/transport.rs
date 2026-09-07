@@ -22,8 +22,8 @@ use aether_contracts::{
 };
 use aether_data::repository::proxy_nodes::ProxyNodeTrafficMutation;
 use aether_http::{
-    apply_http_client_config, is_https_or_loopback_http_url, is_ipv4_benchmarking_fake_ip,
-    is_private_or_reserved_ip, HttpClientConfig,
+    apply_http_client_config, is_https_or_loopback_http_url, is_private_or_reserved_ip,
+    HttpClientConfig,
 };
 use aether_runtime::{MetricKind, MetricSample};
 use axum::body::Bytes;
@@ -63,8 +63,6 @@ use crate::upstream_admission::UpstreamTargetAdmissionPermit;
 use crate::{AppState, GatewayError};
 
 const HUB_RELAY_CONTENT_TYPE: &str = "application/vnd.aether.tunnel-envelope";
-pub(crate) const EXECUTION_EXTRA_TRUSTED_DNS_HOSTS_CONFIG_KEY: &str =
-    aether_admin::system::EXECUTION_EXTRA_TRUSTED_DNS_HOSTS_CONFIG_KEY;
 const HUB_RELAY_ERROR_HEADER: &str = "x-aether-tunnel-error";
 const MAX_SAFE_REDIRECTS: usize = 10;
 const MAX_UPSTREAM_ERROR_DETAIL_BYTES: usize = 2_048;
@@ -448,199 +446,6 @@ struct ExecutionSafeDnsResolver;
 #[derive(Debug, Clone, Copy, Default)]
 struct ExecutionSafeHyperDnsResolver;
 
-static PROVIDER_DNS_ADDRESS_FILTER_ENABLED: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var("AETHER_PROVIDER_DNS_ADDRESS_FILTER_ENABLED")
-        .ok()
-        .is_some_and(|value| matches_truthy_env_value(&value))
-});
-
-// Local DNS interception tools may use RFC 2544's 198.18.0.0/15 range for
-// synthetic answers. This exception is deliberately an allowlist rather
-// than a property of the address range itself: a custom provider hostname
-// must not be able to turn a local synthetic mapping into an SSRF primitive.
-// Keep this list limited to origins that Aether constructs as built-in
-// provider/model-fetch targets. In particular, do not use a
-// suffix match for ordinary hosts (for example, `evil.chatgpt.com`).
-const TRUSTED_EXECUTION_BENCHMARKING_DNS_EXACT_HOSTS: &[&str] = &[
-    "aiplatform.googleapis.com",
-    "antigravity.googleapis.com",
-    "api.openai.com",
-    "api.anthropic.com",
-    "api.deepseek.com",
-    "chatgpt.com",
-    "cloudcode-pa.googleapis.com",
-    "daily-cloudcode-pa.googleapis.com",
-    "daily-cloudcode-pa.sandbox.googleapis.com",
-    "dashscope.aliyuncs.com",
-    "generativelanguage.googleapis.com",
-    "grok.com",
-    "oauth2.googleapis.com",
-    "open.bigmodel.cn",
-    "q.us-iso-east-1.c2s.ic.gov",
-    "q.us-isob-east-1.sc2s.sgov.gov",
-    "q.us-isof-east-1.csp.hci.ic.gov",
-    "q.us-isof-south-1.csp.hci.ic.gov",
-    "server.codeium.com",
-    "www.googleapis.com",
-];
-
-const TRUSTED_EXECUTION_VERTEX_DNS_REGIONS: &[&str] = &[
-    "africa-south1",
-    "asia-east1",
-    "asia-east2",
-    "asia-northeast1",
-    "asia-northeast2",
-    "asia-northeast3",
-    "asia-south1",
-    "asia-south2",
-    "asia-southeast1",
-    "asia-southeast2",
-    "australia-southeast1",
-    "australia-southeast2",
-    "europe-central2",
-    "europe-north1",
-    "europe-southwest1",
-    "europe-west1",
-    "europe-west2",
-    "europe-west3",
-    "europe-west4",
-    "europe-west6",
-    "europe-west8",
-    "europe-west9",
-    "europe-west10",
-    "europe-west12",
-    "me-central1",
-    "me-central2",
-    "me-west1",
-    "northamerica-northeast1",
-    "northamerica-northeast2",
-    "southamerica-east1",
-    "southamerica-west1",
-    "us-central1",
-    "us-east1",
-    "us-east4",
-    "us-east5",
-    "us-south1",
-    "us-west1",
-    "us-west2",
-    "us-west3",
-    "us-west4",
-];
-
-const TRUSTED_EXECUTION_AWS_DNS_REGIONS: &[&str] = &[
-    "af-south-1",
-    "ap-east-1",
-    "ap-northeast-1",
-    "ap-northeast-2",
-    "ap-northeast-3",
-    "ap-south-1",
-    "ap-south-2",
-    "ap-southeast-1",
-    "ap-southeast-2",
-    "ap-southeast-3",
-    "ap-southeast-4",
-    "ca-central-1",
-    "ca-west-1",
-    "eu-central-1",
-    "eu-central-2",
-    "eu-north-1",
-    "eu-south-1",
-    "eu-south-2",
-    "eu-west-1",
-    "eu-west-2",
-    "eu-west-3",
-    "il-central-1",
-    "me-central-1",
-    "me-south-1",
-    "mx-central-1",
-    "sa-east-1",
-    "us-east-1",
-    "us-east-2",
-    "us-gov-east-1",
-    "us-gov-west-1",
-    "us-west-1",
-    "us-west-2",
-];
-
-static EXECUTION_EXTRA_TRUSTED_DNS_HOSTS: LazyLock<StdRwLock<BTreeSet<String>>> =
-    LazyLock::new(|| StdRwLock::new(BTreeSet::new()));
-
-pub(crate) fn refresh_execution_extra_trusted_dns_hosts(value: Option<&Value>) {
-    let hosts = value
-        .cloned()
-        .and_then(|value| {
-            aether_admin::system::normalize_execution_extra_trusted_dns_hosts_config_value(value)
-                .ok()
-        })
-        .and_then(|value| {
-            value.as_array().map(|hosts| {
-                hosts
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(ToOwned::to_owned)
-                    .collect::<BTreeSet<_>>()
-            })
-        })
-        .unwrap_or_default();
-
-    if let Ok(mut current) = EXECUTION_EXTRA_TRUSTED_DNS_HOSTS.write() {
-        *current = hosts;
-    }
-}
-
-/// Return whether `host` is one of the fixed provider origins for which a
-/// local RFC-2544 synthetic answer can be accepted. The resolver receives only
-/// a hostname (not the URL scheme/path), so all policy that can be expressed
-/// here is intentionally host based.  URL validation still requires HTTPS for
-/// non-loopback upstreams before this resolver is used.
-fn execution_host_allows_benchmarking_dns_answer(host: &str) -> bool {
-    let extra_hosts = EXECUTION_EXTRA_TRUSTED_DNS_HOSTS
-        .read()
-        .map(|hosts| hosts.clone())
-        .unwrap_or_default();
-    execution_host_allows_benchmarking_dns_answer_with_extra_hosts(host, &extra_hosts)
-}
-
-fn execution_host_allows_benchmarking_dns_answer_with_extra_hosts(
-    host: &str,
-    extra_hosts: &BTreeSet<String>,
-) -> bool {
-    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
-    if extra_hosts.contains(&host)
-        || TRUSTED_EXECUTION_BENCHMARKING_DNS_EXACT_HOSTS
-            .iter()
-            .any(|trusted| *trusted == host)
-    {
-        return true;
-    }
-
-    // Vertex service-account requests use `<region>-aiplatform.googleapis.com`.
-    // Keep this compatibility exception limited to known provider regions.
-    if let Some(region) = host.strip_suffix("-aiplatform.googleapis.com") {
-        return TRUSTED_EXECUTION_VERTEX_DNS_REGIONS.contains(&region);
-    }
-
-    // Kiro uses a small, fixed set of regional service origins. Match each
-    // supported AWS partition explicitly; never use a broad suffix check that
-    // could accept an attacker-controlled subdomain.
-    matches_regional_service_host(&host, "q", ".amazonaws.com")
-        || matches_regional_service_host(&host, "q-fips", ".amazonaws.com")
-        || matches_regional_service_host(&host, "codewhisperer", ".amazonaws.com")
-        || matches_regional_service_host(&host, "oidc", ".amazonaws.com")
-        || matches_regional_service_host(&host, "prod", ".auth.desktop.kiro.dev")
-}
-
-fn matches_regional_service_host(host: &str, service: &str, suffix: &str) -> bool {
-    let Some(region) = host
-        .strip_prefix(service)
-        .and_then(|value| value.strip_prefix('.'))
-        .and_then(|value| value.strip_suffix(suffix))
-    else {
-        return false;
-    };
-    TRUSTED_EXECUTION_AWS_DNS_REGIONS.contains(&region)
-}
-
 fn dns_host_explicitly_allows_loopback(host: &str) -> bool {
     let host = host.trim_end_matches('.');
     host.eq_ignore_ascii_case("localhost")
@@ -650,17 +455,10 @@ fn dns_host_explicitly_allows_loopback(host: &str) -> bool {
             .unwrap_or(false)
 }
 
-fn validate_execution_dns_answers(
+fn validate_resolved_execution_addresses(
     host: &str,
     addresses: Vec<SocketAddr>,
-) -> Result<Vec<SocketAddr>, std::io::Error> {
-    validate_execution_dns_answers_with_policy(host, addresses, true)
-}
-
-fn validate_execution_dns_answers_with_policy(
-    host: &str,
-    addresses: Vec<SocketAddr>,
-    allow_trusted_benchmarking_dns_answer: bool,
+    provider_execution: bool,
 ) -> Result<Vec<SocketAddr>, std::io::Error> {
     if addresses.is_empty() {
         return Err(std::io::Error::new(
@@ -668,25 +466,22 @@ fn validate_execution_dns_answers_with_policy(
             "upstream DNS resolution returned no addresses",
         ));
     }
-
+    if provider_execution {
+        return Ok(addresses);
+    }
     let allows_loopback = dns_host_explicitly_allows_loopback(host);
-    let allows_benchmarking_dns_answer = allow_trusted_benchmarking_dns_answer
-        && execution_host_allows_benchmarking_dns_answer(host);
-    let unsafe_answer = addresses.iter().any(|address| {
+    if addresses.iter().any(|address| {
         if allows_loopback {
             !address.ip().is_loopback()
         } else {
             is_private_or_reserved_ip(address.ip())
-                && !(allows_benchmarking_dns_answer && is_ipv4_benchmarking_fake_ip(address.ip()))
         }
-    });
-    if unsafe_answer {
+    }) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
-            "upstream DNS resolution returned a private or reserved address",
+            "tunnel relay DNS resolution returned a private or reserved address",
         ));
     }
-
     Ok(addresses)
 }
 
@@ -697,7 +492,7 @@ async fn resolve_execution_dns_addresses(host: &str) -> Result<Vec<SocketAddr>, 
 async fn resolve_execution_target_addresses_with_policy(
     host: &str,
     port: u16,
-    allow_trusted_benchmarking_dns_answer: bool,
+    provider_execution: bool,
 ) -> Result<Vec<SocketAddr>, std::io::Error> {
     let addresses = if let Ok(ip) = host.parse::<IpAddr>() {
         vec![SocketAddr::new(ip, port)]
@@ -705,24 +500,7 @@ async fn resolve_execution_target_addresses_with_policy(
         aether_http::lookup_host_with_limits(host, port, aether_http::DEFAULT_DNS_LOOKUP_TIMEOUT)
             .await?
     };
-    validate_resolved_execution_addresses(
-        host,
-        addresses,
-        allow_trusted_benchmarking_dns_answer,
-        *PROVIDER_DNS_ADDRESS_FILTER_ENABLED,
-    )
-}
-
-fn validate_resolved_execution_addresses(
-    host: &str,
-    addresses: Vec<SocketAddr>,
-    provider_execution: bool,
-    provider_dns_address_filter_enabled: bool,
-) -> Result<Vec<SocketAddr>, std::io::Error> {
-    if provider_execution && !provider_dns_address_filter_enabled && !addresses.is_empty() {
-        return Ok(addresses);
-    }
-    validate_execution_dns_answers_with_policy(host, addresses, provider_execution)
+    validate_resolved_execution_addresses(host, addresses, provider_execution)
 }
 
 impl reqwest::dns::Resolve for ExecutionSafeDnsResolver {
@@ -3448,10 +3226,6 @@ async fn resolve_relay_target_addresses(
     let port = url.port_or_known_default().ok_or_else(|| {
         ExecutionRuntimeTransportError::RelayError("tunnel relay URL has no port".to_string())
     })?;
-    // Relay destinations remain strict even when their hostname happens to be
-    // an official provider origin. The RFC-2544 compatibility exception is
-    // only for direct provider execution; allowing it here would weaken the
-    // relay SSRF guard.
     let addresses = resolve_execution_target_addresses_with_policy(host, port, false)
         .await
         .map_err(|error| match error.kind() {
@@ -5659,115 +5433,14 @@ mod tests {
     }
 
     #[test]
-    fn execution_dns_answers_reject_private_addresses_and_allow_explicit_loopback() {
-        let public = "93.184.216.34:443".parse().unwrap();
-        let private = "10.0.0.8:443".parse().unwrap();
-        let loopback_v4 = "127.0.0.1:8080".parse().unwrap();
-        let loopback_v6 = "[::1]:8080".parse().unwrap();
-
-        assert!(super::validate_execution_dns_answers("api.example.test", vec![public]).is_ok());
-        assert!(super::validate_execution_dns_answers("api.example.test", vec![private]).is_err());
-        assert!(
-            super::validate_execution_dns_answers("localhost", vec![loopback_v4, loopback_v6])
-                .is_ok()
-        );
-        assert!(super::validate_execution_dns_answers("localhost", vec![private]).is_err());
-        assert!(super::validate_execution_dns_answers("api.example.test", Vec::new()).is_err());
-    }
-
-    #[test]
-    fn execution_dns_answers_allow_benchmarking_range_only_for_fixed_provider_hosts() {
-        let fake = "198.18.75.234:443".parse().unwrap();
-        for host in [
-            "api.openai.com",
-            "CHATGPT.COM.",
-            "us-central1-aiplatform.googleapis.com",
-            "me-central2-aiplatform.googleapis.com",
-            "q.us-east-1.amazonaws.com",
-            "q-fips.us-gov-west-1.amazonaws.com",
-            "codewhisperer.us-west-2.amazonaws.com",
-            "oidc.us-east-1.amazonaws.com",
-            "prod.us-east-1.auth.desktop.kiro.dev",
-            "q.us-iso-east-1.c2s.ic.gov",
-            "q.us-isob-east-1.sc2s.sgov.gov",
-            "q.us-isof-east-1.csp.hci.ic.gov",
-        ] {
-            assert!(
-                super::validate_execution_dns_answers(host, vec![fake]).is_ok(),
-                "fixed provider host should accept a benchmarking DNS answer: {host}"
-            );
-        }
-
-        for host in [
-            "api.example.test",
-            "evil.chatgpt.com",
-            "api.openai.com.evil.test",
-            "q.us-east-1.evil.amazonaws.com",
-            "q.us-east-1.amazonaws.com.attacker.test",
-            "q.localhost.amazonaws.com",
-            "evil-1-aiplatform.googleapis.com",
-            "q.evil-1.amazonaws.com",
-            "q-fips.evil-1.amazonaws.com",
-            "codewhisperer.evil-1.amazonaws.com",
-            "prod.evil-1.auth.desktop.kiro.dev",
-            "oidc.evil-1.amazonaws.com",
-            "q.us-central1.amazonaws.com",
-            "us-east-1-aiplatform.googleapis.com",
-            "q.us-east-1.c2s.ic.gov",
-            "q.us-iso-east-1.sc2s.sgov.gov",
-            "q-fips.us-gov-west-1.evil.amazonaws.com",
-            "codewhisperer.us-west-2.evil.amazonaws.com",
-            "oidc.us-east-1.evil.amazonaws.com",
-            "prod.us-east-1.auth.desktop.kiro.dev.attacker.test",
-            "prod.us-east-1.evil.auth.desktop.kiro.dev",
-            "q.us-iso-east-1.evil.c2s.ic.gov",
-            "q.us-iso-east-1.c2s.ic.gov.attacker.test",
-            "q.us-iso-east-1.c2s.ic.gov.evil",
-            "198.18.75.234",
-        ] {
-            assert!(
-                super::validate_execution_dns_answers(host, vec![fake]).is_err(),
-                "untrusted or lookalike host must reject a benchmarking DNS answer: {host}"
-            );
-        }
-    }
-
-    #[test]
-    fn google_oauth_execution_dns_allows_only_exact_hosts_and_fake_ip_answers() {
-        let fake = "198.18.78.41:443".parse().unwrap();
-        for host in ["oauth2.googleapis.com", "www.googleapis.com"] {
-            assert!(super::validate_execution_dns_answers(host, vec![fake]).is_ok());
-            assert!(
-                super::validate_execution_dns_answers_with_policy(host, vec![fake], false).is_err()
-            );
-            for private in [
-                "127.0.0.1:443",
-                "10.0.0.1:443",
-                "169.254.169.254:443",
-                "[::1]:443",
-            ] {
-                let private = private.parse().unwrap();
-                assert!(super::validate_execution_dns_answers(host, vec![private]).is_err());
-                assert!(super::validate_execution_dns_answers(host, vec![fake, private]).is_err());
-            }
-        }
-        for host in [
-            "oauth2.googleapis.com.attacker.test",
-            "www.googleapis.com.attacker.test",
-            "evil.oauth2.googleapis.com",
-            "evil.googleapis.com",
-        ] {
-            assert!(super::validate_execution_dns_answers(host, vec![fake]).is_err());
-        }
-    }
-
-    #[test]
-    fn execution_dns_address_filter_is_optional_only_for_provider_connections() {
+    fn execution_dns_answers_allow_all_provider_hosts_without_address_filtering() {
         let addresses = vec![
             "198.18.78.41:443".parse().unwrap(),
             "10.0.0.8:443".parse().unwrap(),
             "127.0.0.1:443".parse().unwrap(),
+            "169.254.169.254:443".parse().unwrap(),
             "[fd00::1]:443".parse().unwrap(),
+            "93.184.216.34:443".parse().unwrap(),
         ];
         for host in [
             "oauth2.googleapis.com",
@@ -5775,72 +5448,60 @@ mod tests {
             "custom.example.test",
         ] {
             assert_eq!(
-                super::validate_resolved_execution_addresses(host, addresses.clone(), true, false)
-                    .expect("provider DNS answers should pass through without filtering"),
-                addresses,
+                super::validate_resolved_execution_addresses(host, addresses.clone(), true)
+                    .expect("provider DNS answers should pass through"),
+                addresses
             );
-            assert!(super::validate_resolved_execution_addresses(
-                host,
-                addresses.clone(),
-                true,
-                true
-            )
-            .is_err());
-            for filter_enabled in [false, true] {
-                assert!(super::validate_resolved_execution_addresses(
-                    host,
-                    addresses.clone(),
-                    false,
-                    filter_enabled
-                )
-                .is_err());
-                assert!(super::validate_resolved_execution_addresses(
-                    host,
-                    Vec::new(),
-                    true,
-                    filter_enabled
-                )
-                .is_err());
-            }
         }
     }
 
     #[test]
-    fn execution_dns_answers_allow_benchmarking_range_for_configured_exact_hosts() {
-        let fake = "198.18.75.234:443".parse().unwrap();
-        super::refresh_execution_extra_trusted_dns_hosts(Some(&json!(["custom.example.com",])));
-
-        assert!(super::validate_execution_dns_answers("custom.example.com", vec![fake]).is_ok());
-        assert!(
-            super::validate_execution_dns_answers("api.custom.example.com", vec![fake]).is_err()
-        );
-
-        super::refresh_execution_extra_trusted_dns_hosts(None);
-        assert!(super::validate_execution_dns_answers("custom.example.com", vec![fake]).is_err());
-    }
-
-    #[test]
-    fn execution_dns_answers_reject_mixed_private_results_and_strict_relay_policy() {
-        let fake = "198.18.75.234:443".parse().unwrap();
+    fn execution_dns_answers_keep_relay_address_filtering() {
         let public = "93.184.216.34:443".parse().unwrap();
-        let private = "10.0.0.8:443".parse().unwrap();
-
-        // A trusted host may have a synthetic answer alongside a genuine public
-        // answer, but any real private answer still fails closed.
+        for host in ["oauth2.googleapis.com", "custom.example.test"] {
+            assert!(
+                super::validate_resolved_execution_addresses(host, vec![public], false).is_ok()
+            );
+            for blocked in [
+                "198.18.78.41:443",
+                "10.0.0.8:443",
+                "127.0.0.1:443",
+                "169.254.169.254:443",
+                "[fd00::1]:443",
+            ] {
+                let blocked = blocked.parse().unwrap();
+                assert!(
+                    super::validate_resolved_execution_addresses(host, vec![blocked], false)
+                        .is_err()
+                );
+                assert!(super::validate_resolved_execution_addresses(
+                    host,
+                    vec![public, blocked],
+                    false
+                )
+                .is_err());
+            }
+        }
+        let loopback = vec![
+            "127.0.0.1:443".parse().unwrap(),
+            "[::1]:443".parse().unwrap(),
+        ];
+        assert!(super::validate_resolved_execution_addresses("localhost", loopback, false).is_ok());
         assert!(
-            super::validate_execution_dns_answers("api.openai.com", vec![fake, public]).is_ok()
+            super::validate_resolved_execution_addresses("localhost", vec![public], false).is_err()
         );
-        assert!(
-            super::validate_execution_dns_answers("api.openai.com", vec![fake, private]).is_err()
-        );
-
-        // Tunnel relay resolution opts out of the compatibility exception.
-        assert!(super::validate_execution_dns_answers_with_policy(
-            "api.openai.com",
-            vec![fake],
-            false,
-        )
-        .is_err());
+        for provider_execution in [false, true] {
+            assert_eq!(
+                super::validate_resolved_execution_addresses(
+                    "custom.example.test",
+                    Vec::new(),
+                    provider_execution
+                )
+                .expect_err("empty DNS answers must fail")
+                .kind(),
+                std::io::ErrorKind::NotFound
+            );
+        }
     }
 
     #[test]
