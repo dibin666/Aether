@@ -238,7 +238,22 @@ impl GenericProviderOAuthAdapter {
             return required_client_secret(env_name, non_empty_owned(value)).map(Some);
         }
 
-        required_client_secret(env_name, non_empty_environment_value(env_name)).map(Some)
+        let configured = non_empty_environment_value(env_name);
+        self.resolve_client_secret(configured).map(Some)
+    }
+
+    fn resolve_client_secret(&self, configured: Option<String>) -> Result<String, OAuthError> {
+        let configured = configured.or_else(|| {
+            (self.template.provider_type == "antigravity"
+                && self.client_id() == self.template.client_id)
+                .then(|| "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".to_string())
+        });
+        required_client_secret(
+            self.template
+                .client_secret_env
+                .unwrap_or(ANTIGRAVITY_OAUTH_CLIENT_SECRET_ENV),
+            configured,
+        )
     }
 
     async fn exchange_grant(
@@ -954,6 +969,57 @@ mod tests {
         assert_eq!(
             antigravity.client_secret_env,
             Some(ANTIGRAVITY_OAUTH_CLIENT_SECRET_ENV)
+        );
+    }
+
+    #[tokio::test]
+    async fn antigravity_default_credentials_support_authorization_and_refresh() {
+        let mut template = template_for_provider_type("antigravity").expect("template");
+        template.client_id_env = None;
+        template.client_secret_env = Some("AETHER_TEST_UNUSED_ANTIGRAVITY_SECRET");
+        let adapter = GenericProviderOAuthAdapter::new(template);
+        let ctx = transport_context("antigravity");
+        adapter
+            .build_authorize_url(&ctx, "state", None)
+            .expect("authorize");
+        let seen_request = Arc::new(Mutex::new(None));
+        let executor = StaticExecutor {
+            seen_request: Arc::clone(&seen_request),
+            response_payload: json!({"access_token": "new-token", "expires_in": 3600}),
+        };
+        adapter
+            .refresh(&executor, &ctx, &oauth_account("antigravity"))
+            .await
+            .expect("refresh");
+        let seen = seen_request.lock().expect("lock").clone().expect("request");
+        let body = seen.body_bytes.expect("body");
+        let fields = url::form_urlencoded::parse(&body)
+            .into_owned()
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(fields["client_id"], template.client_id);
+        assert_eq!(
+            fields["client_secret"],
+            adapter.resolve_client_secret(None).expect("default")
+        );
+        assert_eq!(fields["refresh_token"], "old-refresh-token");
+        assert!(!format!("{adapter:?}").contains(&fields["client_secret"]));
+    }
+
+    #[test]
+    fn antigravity_custom_client_requires_its_own_secret() {
+        let adapter = GenericProviderOAuthAdapter::for_provider_type("antigravity")
+            .expect("adapter")
+            .with_oauth_credentials_for_tests("custom-client", "custom-secret");
+        assert!(adapter.resolve_client_secret(None).is_err());
+        assert_eq!(
+            adapter
+                .resolve_client_secret(Some("custom-secret".to_string()))
+                .expect("configured secret"),
+            "custom-secret"
+        );
+        assert_eq!(
+            adapter.client_secret().expect("override"),
+            Some("custom-secret".to_string())
         );
     }
 
