@@ -14682,9 +14682,10 @@ mod tests {
             candidate_extra["upstream_response"]["status_code"],
             json!(302)
         );
-        assert!(candidate_extra["upstream_response"]
-            .get("headers")
-            .is_none());
+        assert_eq!(
+            candidate_extra["upstream_response"]["headers"]["location"],
+            "/"
+        );
         assert!(candidate_extra["upstream_response"].get("body").is_none());
         assert!(candidate_extra.get("client_response").is_none());
 

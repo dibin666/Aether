@@ -85,10 +85,7 @@ async fn admin_provider_summary_health_preserves_redacted_key_summaries() {
     .into_iter()
     .map(|(key_id, auth_type, auth_config, score)| {
         let mut key = sample_key(key_id, "provider-openai", "openai:chat", "test")
-            .with_health_fields(
-                Some(json!({"openai:chat": {"health_score": score}})),
-                None,
-            );
+            .with_health_fields(Some(json!({"openai:chat": {"health_score": score}})), None);
         key.auth_type = auth_type.to_string();
         key.encrypted_api_key = Some("summary".to_string());
         key.encrypted_auth_config = auth_config.map(ToOwned::to_owned);
@@ -115,7 +112,8 @@ async fn admin_provider_summary_health_preserves_redacted_key_summaries() {
         let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
             .await
             .expect("summary body should read");
-        let payload: serde_json::Value = serde_json::from_slice(&body).expect("summary should parse");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&body).expect("summary should parse");
         let summary = if uri == "/api/admin/providers/summary" {
             &payload["items"][0]
         } else {
