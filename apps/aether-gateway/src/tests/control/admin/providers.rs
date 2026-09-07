@@ -71,6 +71,68 @@ async fn provider_health_summary(
 }
 
 #[tokio::test]
+async fn admin_provider_summary_health_preserves_redacted_key_summaries() {
+    let endpoint = sample_endpoint(
+        "endpoint-chat",
+        "provider-openai",
+        "openai:chat",
+        "https://api.openai.example",
+    );
+    let keys = [
+        ("key-api", "api_key", None, 0.25),
+        ("key-oauth", "oauth", Some("{}"), 0.75),
+    ]
+    .into_iter()
+    .map(|(key_id, auth_type, auth_config, score)| {
+        let mut key = sample_key(key_id, "provider-openai", "openai:chat", "test")
+            .with_health_fields(
+                Some(json!({"openai:chat": {"health_score": score}})),
+                None,
+            );
+        key.auth_type = auth_type.to_string();
+        key.encrypted_api_key = Some("summary".to_string());
+        key.encrypted_auth_config = auth_config.map(ToOwned::to_owned);
+        key
+    })
+    .collect();
+    let repository = Arc::new(InMemoryProviderCatalogReadRepository::seed(
+        vec![sample_provider("provider-openai", "openai", 10)],
+        vec![endpoint],
+        keys,
+    ));
+    let state = AppState::new()
+        .expect("gateway should build")
+        .with_data_state_for_tests(GatewayDataState::with_provider_catalog_reader_for_tests(
+            repository,
+        ));
+
+    for uri in [
+        "/api/admin/providers/summary",
+        "/api/admin/providers/provider-openai/summary",
+    ] {
+        let response = local_admin_providers_response(&state, http::Method::GET, uri, None).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("summary body should read");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("summary should parse");
+        let summary = if uri == "/api/admin/providers/summary" {
+            &payload["items"][0]
+        } else {
+            &payload
+        };
+
+        assert_eq!(summary["total_keys"], 2);
+        assert_eq!(summary["active_keys"], 2);
+        assert_eq!(summary["endpoint_health_details"][0]["total_keys"], 2);
+        assert_eq!(summary["endpoint_health_details"][0]["active_keys"], 2);
+        assert_eq!(summary["endpoint_health_details"][0]["health_score"], 0.5);
+        assert_eq!(summary["avg_health_score"], 0.5);
+        assert_eq!(summary["unhealthy_endpoints"], 0);
+    }
+}
+
+#[tokio::test]
 async fn admin_provider_summary_health_ignores_disabled_keys() {
     let endpoint = sample_endpoint(
         "endpoint-chat",
