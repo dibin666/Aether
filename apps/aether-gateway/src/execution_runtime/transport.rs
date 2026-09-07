@@ -442,23 +442,17 @@ struct DirectHyperH2cSenderCacheMetrics {
 static DIRECT_H2C_SENDER_CACHE_METRICS: LazyLock<DirectHyperH2cSenderCacheMetrics> =
     LazyLock::new(DirectHyperH2cSenderCacheMetrics::default);
 
-/// DNS resolver used for direct provider connections.
-///
-/// Provider endpoint URLs are frequently user/configuration supplied.  The
-/// platform resolver may return a different answer on every lookup, so merely
-/// checking a URL's host (or resolving it once before constructing a client)
-/// is not sufficient to prevent DNS rebinding.  This resolver validates every
-/// answer at the point reqwest/wreq asks for it.  Explicit loopback targets are
-/// retained for the supported local-provider workflow, but a hostname that is
-/// not itself `localhost` can never resolve to a loopback/private address.
 #[derive(Debug, Clone, Copy, Default)]
 struct ExecutionSafeDnsResolver;
 
-/// Resolver adapter for the legacy Hyper client retained for compatibility
-/// with the non-fast-path H2C cache.  Keep this path subject to the same
-/// private-address and rebinding checks as reqwest/wreq clients.
 #[derive(Debug, Clone, Copy, Default)]
 struct ExecutionSafeHyperDnsResolver;
+
+static PROVIDER_DNS_ADDRESS_FILTER_ENABLED: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var("AETHER_PROVIDER_DNS_ADDRESS_FILTER_ENABLED")
+        .ok()
+        .is_some_and(|value| matches_truthy_env_value(&value))
+});
 
 // Local DNS interception tools may use RFC 2544's 198.18.0.0/15 range for
 // synthetic answers. This exception is deliberately an allowlist rather
@@ -480,12 +474,14 @@ const TRUSTED_EXECUTION_BENCHMARKING_DNS_EXACT_HOSTS: &[&str] = &[
     "dashscope.aliyuncs.com",
     "generativelanguage.googleapis.com",
     "grok.com",
+    "oauth2.googleapis.com",
     "open.bigmodel.cn",
     "q.us-iso-east-1.c2s.ic.gov",
     "q.us-isob-east-1.sc2s.sgov.gov",
     "q.us-isof-east-1.csp.hci.ic.gov",
     "q.us-isof-south-1.csp.hci.ic.gov",
     "server.codeium.com",
+    "www.googleapis.com",
 ];
 
 const TRUSTED_EXECUTION_VERTEX_DNS_REGIONS: &[&str] = &[
@@ -709,11 +705,24 @@ async fn resolve_execution_target_addresses_with_policy(
         aether_http::lookup_host_with_limits(host, port, aether_http::DEFAULT_DNS_LOOKUP_TIMEOUT)
             .await?
     };
-    validate_execution_dns_answers_with_policy(
+    validate_resolved_execution_addresses(
         host,
         addresses,
         allow_trusted_benchmarking_dns_answer,
+        *PROVIDER_DNS_ADDRESS_FILTER_ENABLED,
     )
+}
+
+fn validate_resolved_execution_addresses(
+    host: &str,
+    addresses: Vec<SocketAddr>,
+    provider_execution: bool,
+    provider_dns_address_filter_enabled: bool,
+) -> Result<Vec<SocketAddr>, std::io::Error> {
+    if provider_execution && !provider_dns_address_filter_enabled && !addresses.is_empty() {
+        return Ok(addresses);
+    }
+    validate_execution_dns_answers_with_policy(host, addresses, provider_execution)
 }
 
 impl reqwest::dns::Resolve for ExecutionSafeDnsResolver {
@@ -5720,6 +5729,79 @@ mod tests {
                 super::validate_execution_dns_answers(host, vec![fake]).is_err(),
                 "untrusted or lookalike host must reject a benchmarking DNS answer: {host}"
             );
+        }
+    }
+
+    #[test]
+    fn google_oauth_execution_dns_allows_only_exact_hosts_and_fake_ip_answers() {
+        let fake = "198.18.78.41:443".parse().unwrap();
+        for host in ["oauth2.googleapis.com", "www.googleapis.com"] {
+            assert!(super::validate_execution_dns_answers(host, vec![fake]).is_ok());
+            assert!(
+                super::validate_execution_dns_answers_with_policy(host, vec![fake], false).is_err()
+            );
+            for private in [
+                "127.0.0.1:443",
+                "10.0.0.1:443",
+                "169.254.169.254:443",
+                "[::1]:443",
+            ] {
+                let private = private.parse().unwrap();
+                assert!(super::validate_execution_dns_answers(host, vec![private]).is_err());
+                assert!(super::validate_execution_dns_answers(host, vec![fake, private]).is_err());
+            }
+        }
+        for host in [
+            "oauth2.googleapis.com.attacker.test",
+            "www.googleapis.com.attacker.test",
+            "evil.oauth2.googleapis.com",
+            "evil.googleapis.com",
+        ] {
+            assert!(super::validate_execution_dns_answers(host, vec![fake]).is_err());
+        }
+    }
+
+    #[test]
+    fn execution_dns_address_filter_is_optional_only_for_provider_connections() {
+        let addresses = vec![
+            "198.18.78.41:443".parse().unwrap(),
+            "10.0.0.8:443".parse().unwrap(),
+            "127.0.0.1:443".parse().unwrap(),
+            "[fd00::1]:443".parse().unwrap(),
+        ];
+        for host in [
+            "oauth2.googleapis.com",
+            "www.googleapis.com",
+            "custom.example.test",
+        ] {
+            assert_eq!(
+                super::validate_resolved_execution_addresses(host, addresses.clone(), true, false)
+                    .expect("provider DNS answers should pass through without filtering"),
+                addresses,
+            );
+            assert!(super::validate_resolved_execution_addresses(
+                host,
+                addresses.clone(),
+                true,
+                true
+            )
+            .is_err());
+            for filter_enabled in [false, true] {
+                assert!(super::validate_resolved_execution_addresses(
+                    host,
+                    addresses.clone(),
+                    false,
+                    filter_enabled
+                )
+                .is_err());
+                assert!(super::validate_resolved_execution_addresses(
+                    host,
+                    Vec::new(),
+                    true,
+                    filter_enabled
+                )
+                .is_err());
+            }
         }
     }
 
