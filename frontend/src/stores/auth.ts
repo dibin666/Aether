@@ -60,8 +60,7 @@ export const useAuthStore = defineStore('auth', () => {
     sessionRestoreAttempted = true
     const requestAuthStateVersion = authStateVersion
     const requestToken = token.value
-    let request!: Promise<boolean>
-    request = (async () => {
+    const request = (async () => {
       try {
         const accessToken = await apiClient.restoreSession(notifyOtherTabs)
         if (requestAuthStateVersion !== authStateVersion) {
