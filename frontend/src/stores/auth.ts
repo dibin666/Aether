@@ -81,12 +81,12 @@ export const useAuthStore = defineStore('auth', () => {
           }
         }
         return false
-      } finally {
-        if (sessionRestorePromise === request) {
-          sessionRestorePromise = null
-        }
       }
-    })()
+    })().finally(() => {
+      if (sessionRestorePromise === request) {
+        sessionRestorePromise = null
+      }
+    })
 
     sessionRestorePromise = request
     return request

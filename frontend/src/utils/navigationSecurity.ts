@@ -1,5 +1,5 @@
 const INTERNAL_NAVIGATION_BASE = 'https://aether.invalid'
-const UNSAFE_EXTERNAL_URL_CHARACTERS = /[\\\p{C}]/u
+const UNSAFE_EXTERNAL_URL_CHARACTERS = /[\\\p{Cc}]/u
 
 function safeAbsoluteExternalUrl(
   value: string | null | undefined,
@@ -38,7 +38,7 @@ export function safeInternalNavigationPath(value: string | null | undefined): st
     !candidate.startsWith('/')
     || candidate.startsWith('//')
     || candidate.includes('\\')
-    || /\p{C}/u.test(candidate)
+    || /\p{Cc}/u.test(candidate)
   ) {
     return null
   }

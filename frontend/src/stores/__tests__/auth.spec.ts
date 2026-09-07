@@ -100,6 +100,51 @@ describe('auth store logout', () => {
     expect(clearAuthMock).toHaveBeenCalledWith(false, false)
   })
 
+  it.each(['synchronous', 'asynchronous'] as const)(
+    'allows a forced retry after a %s restore failure',
+    async (failureMode) => {
+      const failure = new Error('temporary refresh failure')
+      if (failureMode === 'synchronous') {
+        restoreSessionMock.mockImplementationOnce(() => {
+          throw failure
+        })
+      } else {
+        restoreSessionMock.mockRejectedValueOnce(failure)
+      }
+      restoreSessionMock.mockResolvedValueOnce('retry-access-token')
+      const store = useAuthStore()
+
+      await expect(store.restoreSession()).resolves.toBe(false)
+      expect(clearAuthMock).toHaveBeenCalledWith(false, false)
+
+      await expect(store.restoreSession(true)).resolves.toBe(true)
+      expect(store.token).toBe('retry-access-token')
+      expect(restoreSessionMock).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it('deduplicates in-flight restores and allows a refresh after completion', async () => {
+    let resolveRestore!: (token: string) => void
+    const pendingRestore = new Promise<string>((resolve) => {
+      resolveRestore = resolve
+    })
+    restoreSessionMock.mockReturnValueOnce(pendingRestore)
+    const store = useAuthStore()
+
+    const firstRestore = store.restoreSession()
+    const secondRestore = store.restoreSession()
+    expect(restoreSessionMock).toHaveBeenCalledTimes(1)
+
+    resolveRestore('restored-access-token')
+    await expect(Promise.all([firstRestore, secondRestore])).resolves.toEqual([true, true])
+    expect(store.token).toBe('restored-access-token')
+
+    restoreSessionMock.mockResolvedValueOnce('refreshed-access-token')
+    await expect(store.restoreSession(true)).resolves.toBe(true)
+    expect(store.token).toBe('refreshed-access-token')
+    expect(restoreSessionMock).toHaveBeenCalledTimes(2)
+  })
+
   it('preserves an existing access token when a forced restore fails', async () => {
     getTokenMock.mockReturnValue('still-valid-access-token')
     restoreSessionMock.mockRejectedValue(new Error('temporary refresh conflict'))
