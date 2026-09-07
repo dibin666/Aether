@@ -544,6 +544,7 @@
 </template>
 
 <script setup lang="ts">
+import { getI18nLocale } from '@/i18n'
 import { ref, watch, computed, onBeforeUnmount } from 'vue'
 import { isAxiosError } from 'axios'
 import Card from '@/components/ui/card.vue'
@@ -2294,7 +2295,7 @@ const resolveAttemptTimeRange = (attempt: CandidateRecord | null | undefined): A
 // 格式化时间（详细）
 const formatTime = (dateStr: string) => {
   const date = new Date(dateStr)
-  const timeStr = date.toLocaleTimeString('zh-CN', {
+  const timeStr = date.toLocaleTimeString(getI18nLocale(), {
     hour12: false,
     hour: '2-digit',
     minute: '2-digit',

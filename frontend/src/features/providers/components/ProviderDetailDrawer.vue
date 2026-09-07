@@ -940,7 +940,7 @@ import {
 } from 'lucide-vue-next'
 import { parseApiError } from '@/utils/errorParser'
 import { useEscapeKey } from '@/composables/useEscapeKey'
-import { useI18n } from '@/i18n'
+import { getI18nLocale, useI18n } from '@/i18n'
 import Button from '@/components/ui/button.vue'
 import Card from '@/components/ui/card.vue'
 import { useToast } from '@/composables/useToast'
@@ -2476,7 +2476,7 @@ function isKiroBannedKey(key: EndpointAPIKey): boolean {
 function formatBanTimestamp(timestamp: number | undefined): string {
   if (!timestamp) return ''
   const date = new Date(timestamp * 1000)
-  return date.toLocaleString('zh-CN', {
+  return date.toLocaleString(getI18nLocale(), {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
