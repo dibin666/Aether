@@ -106,7 +106,7 @@ fn forwarded_proto(headers: &HeaderMap) -> Option<&'static str> {
     let value = headers
         .get_all("x-forwarded-proto")
         .iter()
-        .last()?
+        .next_back()?
         .to_str()
         .ok()?
         .rsplit(',')
