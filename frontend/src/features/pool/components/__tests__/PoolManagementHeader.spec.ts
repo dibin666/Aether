@@ -77,13 +77,15 @@ describe('PoolManagementHeader', () => {
     await nextTick()
     root.querySelector<HTMLButtonElement>('[title="刷新"]')?.click()
 
-    // merge 68f2636fe 的 5B 选择移除了页头的「账号批量操作」和「刷新工作台」快捷入口，
-    // 底层对话框和 handler 仍在，但 header 不再发出这两个事件。恢复入口属于新的产品决策。
+    // fork 保留了账号批量操作和刷新工作台两个页头入口；上游删按钮时连 handler 一起删了，
+    // 自动合并曾让按钮留下而 handler 丢失，点击直接抛错。这条断言就是那次回归的护栏。
     expect(events).toEqual([
       'prefetchProvider',
       'viewProvider',
       'import',
+      'accountBatch',
       'scheduling',
+      'refreshWorker',
       'demandMetrics',
       'advanced',
       'toggleSelectAll',

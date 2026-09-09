@@ -471,13 +471,19 @@ const emit = defineEmits<{
   clearProviderProxy: []
 }>()
 
+// 每个 HeaderActionEvent 都必须在这里有条目：上游删按钮时同步删了 handler，而 fork
+// 保留了这些按钮，自动合并只取了上游的 handler，导致按钮点了直接抛错。用 Record 标注
+// 让类型检查在漏项时报错，别再靠运行时发现。
 function triggerAction(event: HeaderActionEvent) {
-  const handlers = {
+  const handlers: Record<HeaderActionEvent, () => void> = {
     import: () => emit('import'),
+    accountBatch: () => emit('accountBatch'),
     scheduling: () => emit('scheduling'),
     viewProvider: () => emit('viewProvider'),
+    refreshWorker: () => emit('refreshWorker'),
     demandMetrics: () => emit('demandMetrics'),
     advanced: () => emit('advanced'),
+    toggleProvider: () => emit('toggleProvider'),
   }
   handlers[event]()
 }
