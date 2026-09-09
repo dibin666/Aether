@@ -5,6 +5,7 @@ use crate::handlers::admin::provider::shared::support::{
     PROVIDER_MAX_TRANSFER_COUNT_CONFIG_KEY, PROVIDER_MAX_TRANSFER_TIMEOUT_SECONDS_CONFIG_KEY,
 };
 use crate::handlers::admin::provider::write::normalize::normalize_chat_pii_redaction_config;
+use crate::handlers::admin::provider::write::normalize::normalize_oauth_token_refresh_config;
 use crate::handlers::admin::provider::write::normalize::normalize_pool_advanced_config;
 use crate::handlers::admin::provider::write::normalize::normalize_provider_type_input;
 use crate::handlers::admin::provider::write::normalize::set_responses_websocket_enabled;
@@ -341,6 +342,23 @@ pub(crate) async fn build_admin_update_provider_record(
         }
     }
 
+    if fields.contains("oauth_token_refresh") {
+        if fields.is_null("oauth_token_refresh") {
+            config_map.remove("oauth_token_refresh");
+        } else {
+            let value = normalize_oauth_token_refresh_config(payload.oauth_token_refresh)?
+                .ok_or_else(|| "oauth_token_refresh 必须是 JSON 对象".to_string())?;
+            let value = admin_restore_secret_safe_json(
+                existing
+                    .config
+                    .as_ref()
+                    .and_then(|config| config.get("oauth_token_refresh")),
+                &value,
+            );
+            config_map.insert("oauth_token_refresh".to_string(), value);
+        }
+    }
+
     if fields.contains("failover_rules") {
         if fields.is_null("failover_rules") {
             config_map.remove("failover_rules");
@@ -425,5 +443,159 @@ mod tests {
             json!({"pass_through_cyber_flag_interrupt": true})
         );
         assert_eq!(config["other"], json!({"kept": true}));
+    }
+
+    #[tokio::test]
+    async fn update_provider_omitted_oauth_token_refresh_preserves_existing_config() {
+        let app = crate::AppState::new().expect("state should build");
+        let admin_state = crate::handlers::admin::request::AdminAppState::new(&app);
+
+        let mut existing = aether_data_contracts::repository::provider_catalog::StoredProviderCatalogProvider::new(
+            "p-test".to_string(),
+            "Codex Test".to_string(),
+            None,
+            "codex".to_string(),
+        )
+        .unwrap();
+        existing.config = Some(json!({
+            "oauth_token_refresh": {
+                "enabled": true,
+                "interval_seconds": 30
+            }
+        }));
+
+        let raw_patch = serde_json::from_value(json!({
+            "is_active": false
+        }))
+        .unwrap();
+        let patch = super::AdminProviderUpdatePatch::from_object(raw_patch).unwrap();
+
+        let updated = super::build_admin_update_provider_record(&admin_state, &existing, patch)
+            .await
+            .expect("update should succeed");
+
+        assert_eq!(
+            updated
+                .config
+                .as_ref()
+                .and_then(|c| c.get("oauth_token_refresh")),
+            Some(&json!({
+                "enabled": true,
+                "interval_seconds": 30
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn update_provider_oauth_token_refresh_updates_effective_state() {
+        let app = crate::AppState::new().expect("state should build");
+        let admin_state = crate::handlers::admin::request::AdminAppState::new(&app);
+
+        // 1. Codex provider with no config: effective is true (type_default)
+        let existing_codex = aether_data_contracts::repository::provider_catalog::StoredProviderCatalogProvider::new(
+            "p-codex".to_string(),
+            "Codex".to_string(),
+            None,
+            "codex".to_string(),
+        )
+        .unwrap();
+        let (eff, src) = crate::maintenance::provider_oauth_token_refresh_effective_state(
+            &existing_codex.provider_type,
+            existing_codex.config.as_ref(),
+        );
+        assert!(eff);
+        assert_eq!(
+            src,
+            crate::maintenance::OAuthTokenRefreshEnabledSource::TypeDefault
+        );
+
+        // Update Codex to explicit false
+        let raw_patch = serde_json::from_value(json!({
+            "oauth_token_refresh": {
+                "enabled": false
+            }
+        }))
+        .unwrap();
+        let patch = super::AdminProviderUpdatePatch::from_object(raw_patch).unwrap();
+        let updated_codex =
+            super::build_admin_update_provider_record(&admin_state, &existing_codex, patch)
+                .await
+                .expect("update should succeed");
+
+        let (eff, src) = crate::maintenance::provider_oauth_token_refresh_effective_state(
+            &updated_codex.provider_type,
+            updated_codex.config.as_ref(),
+        );
+        assert!(!eff);
+        assert_eq!(
+            src,
+            crate::maintenance::OAuthTokenRefreshEnabledSource::Explicit
+        );
+
+        // 2. OpenAI provider with no config: effective is false (type_default)
+        let existing_openai = aether_data_contracts::repository::provider_catalog::StoredProviderCatalogProvider::new(
+            "p-openai".to_string(),
+            "OpenAI".to_string(),
+            None,
+            "openai".to_string(),
+        )
+        .unwrap();
+        let (eff, src) = crate::maintenance::provider_oauth_token_refresh_effective_state(
+            &existing_openai.provider_type,
+            existing_openai.config.as_ref(),
+        );
+        assert!(!eff);
+        assert_eq!(
+            src,
+            crate::maintenance::OAuthTokenRefreshEnabledSource::TypeDefault
+        );
+
+        // Update OpenAI to explicit true
+        let raw_patch = serde_json::from_value(json!({
+            "oauth_token_refresh": {
+                "enabled": true
+            }
+        }))
+        .unwrap();
+        let patch = super::AdminProviderUpdatePatch::from_object(raw_patch).unwrap();
+        let updated_openai =
+            super::build_admin_update_provider_record(&admin_state, &existing_openai, patch)
+                .await
+                .expect("update should succeed");
+
+        let (eff, src) = crate::maintenance::provider_oauth_token_refresh_effective_state(
+            &updated_openai.provider_type,
+            updated_openai.config.as_ref(),
+        );
+        assert!(eff);
+        assert_eq!(
+            src,
+            crate::maintenance::OAuthTokenRefreshEnabledSource::Explicit
+        );
+
+        // 3. Clear oauth_token_refresh with null resets to type default
+        let raw_patch = serde_json::from_value(json!({
+            "oauth_token_refresh": null
+        }))
+        .unwrap();
+        let patch = super::AdminProviderUpdatePatch::from_object(raw_patch).unwrap();
+        let reset_codex =
+            super::build_admin_update_provider_record(&admin_state, &updated_codex, patch)
+                .await
+                .expect("update should succeed");
+        assert!(reset_codex
+            .config
+            .as_ref()
+            .and_then(|c| c.get("oauth_token_refresh"))
+            .is_none());
+        let (eff, src) = crate::maintenance::provider_oauth_token_refresh_effective_state(
+            &reset_codex.provider_type,
+            reset_codex.config.as_ref(),
+        );
+        assert!(eff);
+        assert_eq!(
+            src,
+            crate::maintenance::OAuthTokenRefreshEnabledSource::TypeDefault
+        );
     }
 }

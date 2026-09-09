@@ -234,6 +234,8 @@ pub(crate) struct AdminProviderCreateRequest {
     #[serde(default)]
     pub(crate) pool_advanced: Option<serde_json::Value>,
     #[serde(default)]
+    pub(crate) oauth_token_refresh: Option<serde_json::Value>,
+    #[serde(default)]
     pub(crate) claude_code_advanced: Option<serde_json::Value>,
     #[serde(default)]
     pub(crate) failover_rules: Option<serde_json::Value>,
@@ -296,6 +298,8 @@ pub(crate) struct AdminProviderUpdateRequest {
     pub(crate) request_timeout: Option<f64>,
     #[serde(default)]
     pub(crate) pool_advanced: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) oauth_token_refresh: Option<serde_json::Value>,
     #[serde(default)]
     pub(crate) claude_code_advanced: Option<serde_json::Value>,
     #[serde(default)]

@@ -247,6 +247,7 @@ mod tests {
         .unwrap();
         let val =
             build_admin_provider_summary_value(&codex_provider, &[], &[], None, None, vec![], 1000);
+        assert_eq!(val["oauth_token_refresh"], serde_json::Value::Null);
         assert_eq!(val["oauth_token_refresh_effective_enabled"], true);
         assert_eq!(val["oauth_token_refresh_enabled_source"], "type_default");
 
@@ -267,6 +268,7 @@ mod tests {
             vec![],
             1000,
         );
+        assert_eq!(val["oauth_token_refresh"], serde_json::Value::Null);
         assert_eq!(val["oauth_token_refresh_effective_enabled"], false);
         assert_eq!(val["oauth_token_refresh_enabled_source"], "type_default");
 
@@ -288,6 +290,7 @@ mod tests {
             vec![],
             1000,
         );
+        assert_eq!(val["oauth_token_refresh"], json!({"enabled": true}));
         assert_eq!(val["oauth_token_refresh_effective_enabled"], true);
         assert_eq!(val["oauth_token_refresh_enabled_source"], "explicit");
 
@@ -302,6 +305,7 @@ mod tests {
         disabled_codex.config = Some(json!({"oauth_token_refresh": {"enabled": false}}));
         let val =
             build_admin_provider_summary_value(&disabled_codex, &[], &[], None, None, vec![], 1000);
+        assert_eq!(val["oauth_token_refresh"], json!({"enabled": false}));
         assert_eq!(val["oauth_token_refresh_effective_enabled"], false);
         assert_eq!(val["oauth_token_refresh_enabled_source"], "explicit");
     }

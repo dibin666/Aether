@@ -5,6 +5,7 @@ use crate::handlers::admin::provider::shared::support::{
     PROVIDER_MAX_TRANSFER_COUNT_CONFIG_KEY, PROVIDER_MAX_TRANSFER_TIMEOUT_SECONDS_CONFIG_KEY,
 };
 use crate::handlers::admin::provider::write::normalize::normalize_chat_pii_redaction_config;
+use crate::handlers::admin::provider::write::normalize::normalize_oauth_token_refresh_config;
 use crate::handlers::admin::provider::write::normalize::normalize_pool_advanced_config;
 use crate::handlers::admin::provider::write::normalize::normalize_provider_type_input;
 use crate::handlers::admin::provider::write::normalize::set_responses_websocket_enabled;
@@ -142,6 +143,9 @@ pub(crate) async fn build_admin_create_provider_record(
     if let Some(value) = normalize_pool_advanced_config(payload.pool_advanced)? {
         config_map.insert("pool_advanced".to_string(), value);
     }
+    if let Some(value) = normalize_oauth_token_refresh_config(payload.oauth_token_refresh)? {
+        config_map.insert("oauth_token_refresh".to_string(), value);
+    }
     if let Some(enabled) = payload.codex_fingerprint_convergence_enabled {
         if provider_type != "codex" && enabled {
             return Err(
@@ -273,5 +277,40 @@ mod tests {
             json!({"pass_through_cyber_flag_interrupt": true})
         );
         assert_eq!(config["other"], json!({"kept": true}));
+    }
+
+    #[tokio::test]
+    async fn create_provider_with_oauth_token_refresh_persists_normalized_config() {
+        let app = crate::AppState::new().expect("state should build");
+        let admin_state = crate::handlers::admin::request::AdminAppState::new(&app);
+
+        let raw_payload = json!({
+            "name": "New Provider",
+            "provider_type": "custom",
+            "oauth_token_refresh": {
+                "enabled": true,
+                "interval_seconds": 10,
+                "max_per_run": 50000,
+                "proxy_node_id": null
+            }
+        });
+        let payload = serde_json::from_value(raw_payload).unwrap();
+
+        let (provider, _) = super::build_admin_create_provider_record(&admin_state, payload)
+            .await
+            .expect("create should succeed");
+
+        assert_eq!(
+            provider
+                .config
+                .as_ref()
+                .and_then(|c| c.get("oauth_token_refresh")),
+            Some(&json!({
+                "enabled": true,
+                "interval_seconds": 15,
+                "max_per_run": 10000,
+                "proxy_node_id": null
+            }))
+        );
     }
 }

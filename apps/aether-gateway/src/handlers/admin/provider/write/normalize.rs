@@ -186,6 +186,137 @@ pub(crate) fn normalize_pool_advanced_config(
     }
 }
 
+pub(crate) const OAUTH_TOKEN_REFRESH_MAX_LOOKAHEAD_SECONDS: u64 = 30 * 24 * 60 * 60;
+pub(crate) const OAUTH_TOKEN_REFRESH_MIN_INTERVAL_SECONDS: u64 = 15;
+pub(crate) const OAUTH_TOKEN_REFRESH_MAX_INTERVAL_SECONDS: u64 = 24 * 60 * 60;
+pub(crate) const OAUTH_TOKEN_REFRESH_MIN_CONCURRENCY: usize = 1;
+pub(crate) const OAUTH_TOKEN_REFRESH_MAX_CONCURRENCY: usize = 64;
+pub(crate) const OAUTH_TOKEN_REFRESH_MIN_MAX_PER_RUN: usize = 1;
+pub(crate) const OAUTH_TOKEN_REFRESH_MAX_MAX_PER_RUN: usize = 10_000;
+
+fn parse_oauth_config_u64(value: &serde_json::Value, field_name: &str) -> Result<u64, String> {
+    if let Some(v) = value.as_u64() {
+        return Ok(v);
+    }
+    if let Some(v) = value.as_i64() {
+        if v >= 0 {
+            return Ok(v as u64);
+        } else {
+            return Err(format!("oauth_token_refresh.{field_name} 必须是非负整数"));
+        }
+    }
+    if let Some(v) = value.as_f64().filter(|n| n.is_finite() && *n >= 0.0) {
+        return Ok(v as u64);
+    }
+    if let Some(s) = value.as_str() {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            if let Ok(v) = trimmed.parse::<u64>() {
+                return Ok(v);
+            }
+        }
+    }
+    Err(format!("oauth_token_refresh.{field_name} 必须是非负整数"))
+}
+
+fn parse_oauth_config_usize(value: &serde_json::Value, field_name: &str) -> Result<usize, String> {
+    let v = parse_oauth_config_u64(value, field_name)?;
+    usize::try_from(v).map_err(|_| format!("oauth_token_refresh.{field_name} 超出数值范围"))
+}
+
+pub(crate) fn normalize_oauth_token_refresh_config(
+    value: Option<serde_json::Value>,
+) -> Result<Option<serde_json::Value>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let map = match value {
+        serde_json::Value::Null => return Ok(None),
+        serde_json::Value::Object(map) => map,
+        _ => return Err("oauth_token_refresh 必须是 JSON 对象".to_string()),
+    };
+
+    let mut normalized = serde_json::Map::new();
+
+    for (key, val) in map {
+        match key.as_str() {
+            "enabled" => {
+                if !val.is_null() {
+                    let enabled = val
+                        .as_bool()
+                        .ok_or_else(|| "oauth_token_refresh.enabled 必须是布尔值".to_string())?;
+                    normalized.insert("enabled".to_string(), serde_json::Value::Bool(enabled));
+                }
+            }
+            "lookahead_seconds" => {
+                if !val.is_null() {
+                    let seconds = parse_oauth_config_u64(&val, "lookahead_seconds")?;
+                    let clamped = seconds.min(OAUTH_TOKEN_REFRESH_MAX_LOOKAHEAD_SECONDS);
+                    normalized.insert(
+                        "lookahead_seconds".to_string(),
+                        serde_json::Value::from(clamped),
+                    );
+                }
+            }
+            "interval_seconds" => {
+                if !val.is_null() {
+                    let seconds = parse_oauth_config_u64(&val, "interval_seconds")?;
+                    let clamped = seconds.clamp(
+                        OAUTH_TOKEN_REFRESH_MIN_INTERVAL_SECONDS,
+                        OAUTH_TOKEN_REFRESH_MAX_INTERVAL_SECONDS,
+                    );
+                    normalized.insert(
+                        "interval_seconds".to_string(),
+                        serde_json::Value::from(clamped),
+                    );
+                }
+            }
+            "concurrency" => {
+                if !val.is_null() {
+                    let concurrency = parse_oauth_config_usize(&val, "concurrency")?;
+                    let clamped = concurrency.clamp(
+                        OAUTH_TOKEN_REFRESH_MIN_CONCURRENCY,
+                        OAUTH_TOKEN_REFRESH_MAX_CONCURRENCY,
+                    );
+                    normalized.insert("concurrency".to_string(), serde_json::Value::from(clamped));
+                }
+            }
+            "max_per_run" => {
+                if !val.is_null() {
+                    let max_per_run = parse_oauth_config_usize(&val, "max_per_run")?;
+                    let clamped = max_per_run.clamp(
+                        OAUTH_TOKEN_REFRESH_MIN_MAX_PER_RUN,
+                        OAUTH_TOKEN_REFRESH_MAX_MAX_PER_RUN,
+                    );
+                    normalized.insert("max_per_run".to_string(), serde_json::Value::from(clamped));
+                }
+            }
+            "proxy_node_id" => {
+                if val.is_null() {
+                    normalized.insert("proxy_node_id".to_string(), serde_json::Value::Null);
+                } else if let Some(raw) = val.as_str() {
+                    let trimmed = raw.trim();
+                    if trimmed.is_empty() {
+                        normalized.insert("proxy_node_id".to_string(), serde_json::Value::Null);
+                    } else {
+                        normalized.insert(
+                            "proxy_node_id".to_string(),
+                            serde_json::Value::String(trimmed.to_string()),
+                        );
+                    }
+                } else {
+                    return Err("oauth_token_refresh.proxy_node_id 必须是字符串或 null".to_string());
+                }
+            }
+            _ => {
+                return Err(format!("oauth_token_refresh 包含不支持的配置项: {key}"));
+            }
+        }
+    }
+
+    Ok(Some(serde_json::Value::Object(normalized)))
+}
+
 pub(crate) fn normalize_chat_pii_redaction_config(
     value: Option<serde_json::Value>,
 ) -> Result<Option<serde_json::Value>, String> {
@@ -303,8 +434,8 @@ mod tests {
     use super::{
         normalize_allow_auth_channel_mismatch_formats, normalize_api_format_json_object_keys,
         normalize_api_format_list, normalize_auth_type, normalize_auth_type_by_format,
-        normalize_chat_pii_redaction_config, normalize_pool_advanced_config,
-        normalize_provider_type_input, normalize_rate_multipliers,
+        normalize_chat_pii_redaction_config, normalize_oauth_token_refresh_config,
+        normalize_pool_advanced_config, normalize_provider_type_input, normalize_rate_multipliers,
         reconcile_allow_auth_channel_mismatch_formats, remove_responses_websocket_enabled,
         set_responses_websocket_enabled, validate_responses_websocket_config,
         validate_vertex_api_formats,
@@ -546,5 +677,118 @@ mod tests {
             ],
         )
         .is_ok());
+    }
+
+    #[test]
+    fn normalize_oauth_token_refresh_preserves_empty_object() {
+        assert_eq!(
+            normalize_oauth_token_refresh_config(Some(json!({})))
+                .expect("empty object should normalize"),
+            Some(json!({}))
+        );
+    }
+
+    #[test]
+    fn normalize_oauth_token_refresh_preserves_proxy_node_id_null_and_strips_other_nulls() {
+        let input = json!({
+            "enabled": null,
+            "lookahead_seconds": null,
+            "interval_seconds": null,
+            "concurrency": null,
+            "max_per_run": null,
+            "proxy_node_id": null,
+        });
+        assert_eq!(
+            normalize_oauth_token_refresh_config(Some(input))
+                .expect("nulls should be handled correctly"),
+            Some(json!({"proxy_node_id": null}))
+        );
+    }
+
+    #[test]
+    fn normalize_oauth_token_refresh_rejects_non_objects() {
+        for invalid in [
+            json!(true),
+            json!(false),
+            json!("string"),
+            json!(123),
+            json!([1, 2, 3]),
+        ] {
+            assert_eq!(
+                normalize_oauth_token_refresh_config(Some(invalid)).unwrap_err(),
+                "oauth_token_refresh 必须是 JSON 对象"
+            );
+        }
+        assert_eq!(normalize_oauth_token_refresh_config(None).unwrap(), None);
+        assert_eq!(
+            normalize_oauth_token_refresh_config(Some(json!(null))).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn normalize_oauth_token_refresh_clamps_all_bounded_keys() {
+        // Upper bounds clamped
+        let upper_input = json!({
+            "enabled": true,
+            "lookahead_seconds": 5_000_000,
+            "interval_seconds": 100_000,
+            "concurrency": 100,
+            "max_per_run": 50_000,
+            "proxy_node_id": "  node-alpha  ",
+        });
+        assert_eq!(
+            normalize_oauth_token_refresh_config(Some(upper_input)).expect("upper bound clamped"),
+            Some(json!({
+                "enabled": true,
+                "lookahead_seconds": 2_592_000,
+                "interval_seconds": 86_400,
+                "concurrency": 64,
+                "max_per_run": 10_000,
+                "proxy_node_id": "node-alpha",
+            }))
+        );
+
+        // Lower bounds clamped
+        let lower_input = json!({
+            "enabled": false,
+            "lookahead_seconds": 0,
+            "interval_seconds": 5,
+            "concurrency": 0,
+            "max_per_run": 0,
+            "proxy_node_id": "   ",
+        });
+        assert_eq!(
+            normalize_oauth_token_refresh_config(Some(lower_input)).expect("lower bound clamped"),
+            Some(json!({
+                "enabled": false,
+                "lookahead_seconds": 0,
+                "interval_seconds": 15,
+                "concurrency": 1,
+                "max_per_run": 1,
+                "proxy_node_id": null,
+            }))
+        );
+    }
+
+    #[test]
+    fn normalize_oauth_token_refresh_validates_types_and_rejects_unknown_keys() {
+        assert_eq!(
+            normalize_oauth_token_refresh_config(Some(json!({"enabled": "yes"}))).unwrap_err(),
+            "oauth_token_refresh.enabled 必须是布尔值"
+        );
+        assert_eq!(
+            normalize_oauth_token_refresh_config(Some(json!({"proxy_node_id": 123}))).unwrap_err(),
+            "oauth_token_refresh.proxy_node_id 必须是字符串或 null"
+        );
+        assert_eq!(
+            normalize_oauth_token_refresh_config(Some(json!({"interval_seconds": -5})))
+                .unwrap_err(),
+            "oauth_token_refresh.interval_seconds 必须是非负整数"
+        );
+        assert_eq!(
+            normalize_oauth_token_refresh_config(Some(json!({"unknown_key": 123}))).unwrap_err(),
+            "oauth_token_refresh 包含不支持的配置项: unknown_key"
+        );
     }
 }
