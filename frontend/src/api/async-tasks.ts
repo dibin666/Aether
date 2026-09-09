@@ -73,6 +73,34 @@ export interface AsyncTaskEvent {
   created_at: string
 }
 
+/**
+ * 账号级任务事件。上游加固后的 background_tasks 只保留数字计数，标识符和自由文本
+ * 都会被剥掉，所以这类明细走 fork 自己的 provider_key_task_events 表。
+ */
+export interface PoolAccountTaskEvent {
+  id: string
+  task_key: string
+  task_run_id: string
+  event_type: string
+  provider_id: string
+  provider_name: string | null
+  provider_type: string | null
+  provider_api_key_id: string
+  provider_api_key_name: string | null
+  action: string
+  status: string
+  message: string | null
+  reason: string | null
+  created_at: string
+  created_at_unix_secs: number
+}
+
+export interface PoolAccountTaskEventPage {
+  items: PoolAccountTaskEvent[]
+  total: number
+  run_id: string | null
+}
+
 export interface CandidateKeyInfo {
   index: number
   provider_id: string
@@ -205,6 +233,21 @@ export const asyncTasksApi = {
     const query = searchParams.toString()
     const response = await apiClient.get<{ items: AsyncTaskEvent[] }>(
       `/api/admin/tasks/${taskId}/events${query ? `?${query}` : ''}`
+    )
+    return response.data
+  },
+
+  async getAccountEvents(
+    taskKey: string,
+    params: { limit?: number; order?: 'asc' | 'desc'; run_id?: string } = {},
+  ): Promise<PoolAccountTaskEventPage> {
+    const searchParams = new URLSearchParams()
+    if (params.limit) searchParams.append('limit', params.limit.toString())
+    if (params.order) searchParams.append('order', params.order)
+    if (params.run_id) searchParams.append('run_id', params.run_id)
+    const query = searchParams.toString()
+    const response = await apiClient.get<PoolAccountTaskEventPage>(
+      `/api/admin/tasks/${encodeURIComponent(taskKey)}/account-events${query ? `?${query}` : ''}`
     )
     return response.data
   },

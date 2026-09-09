@@ -8,6 +8,7 @@ const apiMocks = vi.hoisted(() => ({
   updateSystemConfig: vi.fn(),
   list: vi.fn(),
   getEvents: vi.fn(),
+  getAccountEvents: vi.fn(),
   trigger: vi.fn(),
   success: vi.fn(),
   error: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('@/api/async-tasks', () => ({
   asyncTasksApi: {
     list: apiMocks.list,
     getEvents: apiMocks.getEvents,
+    getAccountEvents: apiMocks.getAccountEvents,
     trigger: apiMocks.trigger,
   },
 }))
@@ -150,6 +152,32 @@ beforeEach(() => {
       items: [{ id: 'quota-boot', status: 'running', created_at: '2026-08-08T01:00:00Z' }],
     })
   })
+  apiMocks.getAccountEvents.mockImplementation((taskKey: string) => {
+    if (taskKey !== 'maintenance.oauth.token.refresh') {
+      return Promise.resolve({ items: [], total: 0, run_id: null })
+    }
+    return Promise.resolve({
+      items: [{
+        id: 'oauth-account-1',
+        task_key: taskKey,
+        task_run_id: 'oauth-run',
+        event_type: 'oauth_refresh_account_refreshed',
+        provider_id: 'provider-1',
+        provider_name: 'Codex 池',
+        provider_type: 'codex',
+        provider_api_key_id: 'key-1',
+        provider_api_key_name: '主账号',
+        action: 'oauth_refresh',
+        status: 'refreshed',
+        message: 'Token 已刷新',
+        reason: null,
+        created_at: '2026-08-08T02:05:00Z',
+        created_at_unix_secs: 1786240 * 1000,
+      }],
+      total: 1,
+      run_id: 'oauth-run',
+    })
+  })
   apiMocks.getEvents.mockImplementation((runId: string) => {
     if (runId.endsWith('boot')) {
       return Promise.resolve({
@@ -198,6 +226,29 @@ describe('PoolRefreshWorkerDialog', () => {
     expect(root.textContent).toContain('自动扫描结果')
     expect(root.textContent).toContain('扫描 3 · 待刷新 1 · 已刷新 1 · 失败 0')
     expect(root.textContent).not.toContain('background worker supervisor started')
+  })
+
+  it('renders per-account detail from the fork account-events endpoint', async () => {
+    const root = mountDialog()
+    await settle()
+
+    // 汇总仍走 background_tasks，账号明细走 fork 自己的表；上游加固会剥掉
+    // background_tasks 里的标识符和自由文本，所以这两个字段只能来自新端点。
+    expect(apiMocks.getAccountEvents).toHaveBeenCalledWith(
+      'maintenance.oauth.token.refresh',
+      { limit: 200, order: 'desc' },
+    )
+    expect(root.textContent).toContain('主账号')
+    expect(root.textContent).toContain('Token 已刷新')
+  })
+
+  it('keeps the log panel usable when the account-events endpoint fails', async () => {
+    apiMocks.getAccountEvents.mockRejectedValue(new Error('boom'))
+    const root = mountDialog()
+    await settle()
+
+    expect(root.textContent).toContain('扫描 3 · 待刷新 1 · 已刷新 1 · 失败 0')
+    expect(root.textContent).not.toContain('运行记录加载失败')
   })
 
   it('runs an OAuth scan through the task trigger endpoint', async () => {

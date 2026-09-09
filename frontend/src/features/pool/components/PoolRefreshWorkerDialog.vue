@@ -454,7 +454,12 @@ import {
   RefreshCw,
 } from 'lucide-vue-next'
 import { adminApi } from '@/api/admin'
-import { asyncTasksApi, type AsyncTaskEvent, type AsyncTaskItem } from '@/api/async-tasks'
+import {
+  asyncTasksApi,
+  type AsyncTaskEvent,
+  type AsyncTaskItem,
+  type PoolAccountTaskEvent,
+} from '@/api/async-tasks'
 import { useProxyNodesStore } from '@/stores/proxy-nodes'
 import { useToast } from '@/composables/useToast'
 import { parseApiError } from '@/utils/errorParser'
@@ -823,6 +828,33 @@ function buildRefreshLogItem(
   }
 }
 
+// 账号级明细来自 fork 的 provider_key_task_events 表，字段是平铺的顶层字段，
+// 不像 background_tasks 事件那样裹在 payload 里。
+function buildAccountLogItem(
+  taskKey: RefreshTaskKey,
+  event: PoolAccountTaskEvent,
+): PoolRefreshLogItem {
+  const detail = Array.from(new Set([
+    event.message ?? '',
+    event.reason ?? '',
+  ].filter(Boolean))).join(' · ')
+
+  return {
+    id: `${taskKey}:account:${event.id}`,
+    runId: event.task_run_id,
+    taskKey,
+    eventType: event.event_type,
+    message: event.message ?? event.event_type,
+    createdAt: event.created_at,
+    payload: event,
+    providerName: event.provider_name ?? '',
+    keyId: event.provider_api_key_id,
+    keyName: event.provider_api_key_name ?? '',
+    status: event.status,
+    detail,
+  }
+}
+
 async function loadTaskLogs(taskKey: RefreshTaskKey) {
   const runs = await asyncTasksApi.list({ task_key: taskKey, page_size: 10 })
   taskRuns.value = {
@@ -830,11 +862,26 @@ async function loadTaskLogs(taskKey: RefreshTaskKey) {
     [taskKey]: runs.items,
   }
 
-  const eventGroups = await Promise.all(runs.items.map(async run => {
-    const events = await asyncTasksApi.getEvents(run.id, { page_size: 100, order: 'desc' })
-    return events.items.map(event => buildRefreshLogItem(taskKey, run.id, event))
-  }))
-  return eventGroups.flat()
+  // 账号明细按 task_key 取最新一轮。用 async 函数体包住，让同步抛错也变成 rejection
+  // 被 try 捕获，接口缺失或报错时只是没有明细，不该拖垮整个日志面板。
+  const loadAccountItems = async (): Promise<PoolRefreshLogItem[]> => {
+    try {
+      const page = await asyncTasksApi.getAccountEvents(taskKey, { limit: 200, order: 'desc' })
+      return page.items.map(event => buildAccountLogItem(taskKey, event))
+    } catch {
+      return []
+    }
+  }
+
+  const [eventGroups, accountItems] = await Promise.all([
+    Promise.all(runs.items.map(async run => {
+      const events = await asyncTasksApi.getEvents(run.id, { page_size: 100, order: 'desc' })
+      return events.items.map(event => buildRefreshLogItem(taskKey, run.id, event))
+    })),
+    loadAccountItems(),
+  ])
+
+  return [...eventGroups.flat(), ...accountItems]
 }
 
 async function handleLoadLogs() {
