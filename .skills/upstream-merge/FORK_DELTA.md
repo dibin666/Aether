@@ -5,19 +5,23 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（HEAD） | `1be2c4c3cd16c7050050a681b741d2d42a0fd854` |
-| upstream HEAD | `e58570d79d4fe47c087c97502640f4f788b788a3` |
-| merge-base | `e58570d79`（= upstream HEAD，已完全合入） |
-| 分叉计数 | fork-only 198，upstream-only 0 |
-| fork-only 路径 | 252 个，`+22388/-748` |
+| fork code baseline（HEAD） | `88e673f29251b131cd70c698ce64566d85f0b4bb` |
+| upstream HEAD | `8260a8721569f4f05a8539e45491f9aa216b10a3` |
+| merge-base | `8260a8721`（= upstream HEAD，已完全合入） |
+| 分叉计数 | fork-only 207，upstream-only 0 |
+| fork-only 路径 | 263 个，`+23628/-867` |
 | upstream-only 路径 | 0 |
-| 快照日期 | 2026-09-09 |
+| 快照日期 | 2026-09-09（第二轮） |
 
-本轮 4 个提交：
-- `90db3fe71` merge 第 1 批（`HEAD..b5ed80227`，63 个上游提交，23 个冲突）
-- `e57ff5a7d` merge 第 2 批（`b5ed80227..e58570d79`，30 个上游提交，21 个冲突）
-- `29f5971b7` feat(observability) 账号级任务事件独立存储（后端）
-- `1be2c4c3c` feat(pool) 刷新工作台读取新端点（前端）
+第二轮合并（5 个上游提交，**0 冲突**）：
+- `f23086834` merge（`e58570d79..8260a8721`：strategy failover controls、routing failover/model testing 加固、payment order query 复用、workspace lint 修复、Linux-only release）
+- `88e673f29` fix(ci) 修复 release.yml 里未定义的 `GHCR_IMAGE`/`DOCKERHUB_IMAGE`（既存债务，非本轮引入）
+
+同日第一轮的 7 个提交：
+- `90db3fe71` / `e57ff5a7d` 分两批合入 93 个上游提交（安全加固 + 删 MySQL/SQLite）
+- `29f5971b7` / `1be2c4c3c` 账号级任务事件独立存储（后端 + 前端）
+- `916660359` refactor(oauth) worker 拆分，`9131d9c33` feat(oauth) Codex 默认生效 + 存量迁移
+- `035cec388` / `2249187c4` / `4b47cd357` / `abb930483` 号池页续期状态、页头 handler 修复、per-provider 开关
 
 ## 2. Fork 特有功能清单
 
@@ -94,6 +98,8 @@ Chart.js 类型收窄（`ScatterChart.vue` 等）、`useEscapeKey` (`isContentEd
 4. `cargo check --workspace` 不编译 `#[cfg(test)]`，上游改了 fork 测试构造的公共结构体时必须补跑 `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`。
 5. `deploy.sh` 的纯构建契约是 P1，上游在已删除的 restart 尾块内的改动不构成恢复理由。
 6. fork 的迁移只放 `migrations/` 目录、不进 generated baseline，且必须 `IF NOT EXISTS`。
+7. **零冲突不等于零风险，重叠路径必须逐个语义复核**。上游删除某个符号、而 fork 仍有调用方时，git 会静默取上游侧且不产生任何冲突标记。实例：2026-09-09 第一轮，上游删了 `PoolManagementHeader.vue` 里三个按钮的 `triggerAction` handler、fork 保留了按钮，自动合并后按钮点击直接抛 TypeError，全程无冲突提示。合并后必须对 `comm -12` 得出的重叠路径逐个 `git diff --cached` 复核，重点看「上游删了什么、fork 还在不在用」。前端同类问题靠 `npm run test:run` 全量跑才能兜住。
+8. 前端 handler/事件映射表要用 `Record<UnionType, ...>` 显式标注，让漏项在 `vue-tsc` 阶段暴露，而不是运行时。
 
 ## 5. 运维警告
 
@@ -168,3 +174,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-02 | `1a9453159` | `cae9aa413` | 解决 6 处冲突，接入 VSCodex 模块与 routing policy 统一，保留 transcription 与 self-scope |
 | 2026-09-04 | `a169ba25d` | `27b0381a9` | 解决 4 处冲突，接入 quota 429 调度与数据库准备模式，保持 `deploy.sh` 纯构建与冷却忽略 |
 | 2026-09-09 | `90db3fe71`<br>`e57ff5a7d` | `e58570d79` | 分两批合入 93 提交移除 MySQL/SQLite 并接入信封 v2；新增账号级任务事件独立存储并完全合入 |
+| 2026-09-09 | `f23086834` | `8260a8721` | 5 提交、0 冲突；接入 routing failover controls 与 workspace lint 修复，4 个重叠路径逐项语义复核后无 fork 功能变化 |
