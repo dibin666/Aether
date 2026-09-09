@@ -241,6 +241,17 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
+      # 上游把镜像名硬编码成 fawney19/aether，fork 删掉了那两行以免误推到上游命名空间，
+      # 但引用还留在 tags 和 attestation 里。这里按本仓库推导，registry 要求全小写。
+      - name: Resolve image names
+        run: |
+          set -euo pipefail
+          repository="${GITHUB_REPOSITORY,,}"
+          {
+            echo "GHCR_IMAGE=${repository}"
+            echo "DOCKERHUB_IMAGE=${repository}"
+          } >> "${GITHUB_ENV}"
+
       - name: Download all artifacts
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
