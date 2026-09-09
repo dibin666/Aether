@@ -9,7 +9,8 @@
 #   下载上游 tunnel: AETHER_TUNNEL_MODE=release AETHER_TUNNEL_RELEASE_TAG=tunnel-v0.3.13 ./deploy.sh
 
 set -euo pipefail
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+cd -- "${SCRIPT_DIR}"
 
 IMAGE_NAME="${IMAGE_NAME:-aether-app}"
 DEFAULT_IMAGE_TAG="${DEFAULT_IMAGE_TAG:-latest}"
@@ -43,6 +44,17 @@ export AETHER_BUILD_VERSION
 
 # 缓存文件
 CODE_HASH_FILE=".code-hash"
+
+validate_code_hash_file() {
+    if [ -L "${CODE_HASH_FILE}" ]; then
+        echo "Refusing symbolic-link build state: ${CODE_HASH_FILE}" >&2
+        return 1
+    fi
+    if [ -e "${CODE_HASH_FILE}" ] && [ ! -f "${CODE_HASH_FILE}" ]; then
+        echo "Build state is not a regular file: ${CODE_HASH_FILE}" >&2
+        return 1
+    fi
+}
 
 usage() {
     cat <<'EOF'
@@ -297,9 +309,10 @@ calc_code_hash() {
 check_code_changed() {
     local current_hash
     current_hash=$(calc_code_hash)
+    validate_code_hash_file || exit 1
     if [ -f "$CODE_HASH_FILE" ]; then
         local saved_hash
-        saved_hash=$(cat "$CODE_HASH_FILE")
+        saved_hash=$(<"$CODE_HASH_FILE")
         if [ "$current_hash" = "$saved_hash" ]; then
             return 1
         fi
@@ -307,7 +320,24 @@ check_code_changed() {
     return 0
 }
 
-save_code_hash() { calc_code_hash > "$CODE_HASH_FILE"; }
+save_code_hash() {
+    local staged
+    staged="$(mktemp "./.code-hash.tmp.XXXXXXXX")" \
+        || { echo "Could not create temporary build state" >&2; return 1; }
+    if ! calc_code_hash >"${staged}"; then
+        rm -f -- "${staged}"
+        return 1
+    fi
+    chmod 0600 "${staged}"
+    if ! validate_code_hash_file; then
+        rm -f -- "${staged}"
+        return 1
+    fi
+    if ! mv -f -- "${staged}" "${CODE_HASH_FILE}"; then
+        rm -f -- "${staged}"
+        return 1
+    fi
+}
 
 docker_build_cache_enabled() {
     case "${DOCKER_BUILD_CACHE}" in

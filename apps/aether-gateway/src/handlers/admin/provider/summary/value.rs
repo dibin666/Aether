@@ -6,13 +6,15 @@ use crate::handlers::admin::shared::unix_secs_to_rfc3339;
 use crate::handlers::public::{request_candidate_event_unix_ms, request_candidate_status_label};
 use crate::orchestration::{codex_cyber_flag_passthrough_enabled, responses_websocket_adapter};
 use crate::provider_key_auth::provider_key_effective_api_formats;
+use aether_admin::provider::redaction::{admin_secret_safe_json, admin_secret_safe_proxy};
 use aether_data_contracts::repository::candidates::{
     RequestCandidateStatus, StoredRequestCandidate,
 };
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
-use serde_json::{json, Map};
+use aether_scheduler_core::provider_key_health_score;
+use serde_json::json;
 use std::collections::BTreeMap;
 
 fn json_truthy(value: &serde_json::Value) -> bool {
@@ -90,23 +92,17 @@ pub(crate) fn build_admin_provider_summary_value(
                 .get(&endpoint.id)
                 .cloned()
                 .unwrap_or_default();
-            let health_score = if endpoint_keys.is_empty() {
-                1.0
-            } else {
-                let mut scores = Vec::new();
-                for key in &endpoint_keys {
-                    let score = key
-                        .health_by_format
-                        .as_ref()
-                        .and_then(|value| value.get(&endpoint.api_format))
-                        .and_then(|value| value.get("health_score"))
-                        .and_then(serde_json::Value::as_f64)
-                        .unwrap_or(1.0);
-                    scores.push(score);
-                }
-                scores.iter().sum::<f64>() / scores.len() as f64
-            };
-            endpoint_health_scores.push(health_score);
+            let scores = endpoint_keys
+                .iter()
+                .filter(|key| endpoint.is_active && key.is_active)
+                .filter_map(|key| provider_key_health_score(key, &endpoint.api_format))
+                .filter(|score| score.is_finite())
+                .collect::<Vec<_>>();
+            let health_score =
+                (!scores.is_empty()).then(|| scores.iter().sum::<f64>() / scores.len() as f64);
+            if let Some(score) = health_score {
+                endpoint_health_scores.push(score);
+            }
             json!({
                 "api_format": endpoint.api_format,
                 "health_score": health_score,
@@ -116,11 +112,8 @@ pub(crate) fn build_admin_provider_summary_value(
             })
         })
         .collect::<Vec<_>>();
-    let avg_health_score = if endpoint_health_scores.is_empty() {
-        1.0
-    } else {
-        endpoint_health_scores.iter().sum::<f64>() / endpoint_health_scores.len() as f64
-    };
+    let avg_health_score = (!endpoint_health_scores.is_empty())
+        .then(|| endpoint_health_scores.iter().sum::<f64>() / endpoint_health_scores.len() as f64);
     let unhealthy_endpoints = endpoint_health_scores
         .iter()
         .filter(|score| **score < 0.5)
@@ -177,136 +170,55 @@ pub(crate) fn build_admin_provider_summary_value(
         .or(provider.quota_expires_at_unix_secs)
         .and_then(unix_secs_to_rfc3339);
 
-    let codex_cyber_flag_passthrough =
-        codex_cyber_flag_passthrough_enabled(&provider.provider_type, provider.config.as_ref());
-
-    let mut summary = Map::new();
-    summary.insert("id".to_owned(), json!(provider.id.clone()));
-    summary.insert("name".to_owned(), json!(provider.name.clone()));
-    summary.insert(
-        "provider_type".to_owned(),
-        json!(provider.provider_type.clone()),
-    );
-    summary.insert(
-        "description".to_owned(),
-        json!(provider.description.clone()),
-    );
-    summary.insert("website".to_owned(), json!(provider.website.clone()));
-    summary.insert(
-        "provider_priority".to_owned(),
-        json!(provider.provider_priority),
-    );
-    summary.insert(
-        "keep_priority_on_conversion".to_owned(),
-        json!(provider.keep_priority_on_conversion),
-    );
-    summary.insert(
-        "enable_format_conversion".to_owned(),
-        json!(provider.enable_format_conversion),
-    );
-    summary.insert("is_active".to_owned(), json!(provider.is_active));
-    summary.insert("billing_type".to_owned(), json!(billing_type));
-    summary.insert("monthly_quota_usd".to_owned(), json!(monthly_quota_usd));
-    summary.insert("monthly_used_usd".to_owned(), json!(monthly_used_usd));
-    summary.insert("quota_reset_day".to_owned(), json!(quota_reset_day));
-    summary.insert("quota_last_reset_at".to_owned(), json!(quota_last_reset_at));
-    summary.insert("quota_expires_at".to_owned(), json!(quota_expires_at));
-    summary.insert("max_retries".to_owned(), json!(provider.max_retries));
-    summary.insert("max_transfer_count".to_owned(), json!(max_transfer_count));
-    summary.insert(
-        "max_transfer_timeout_seconds".to_owned(),
-        json!(max_transfer_timeout_seconds),
-    );
-    summary.insert("proxy".to_owned(), json!(provider.proxy.clone()));
-    summary.insert(
-        "stream_first_byte_timeout".to_owned(),
-        json!(provider.stream_first_byte_timeout_secs),
-    );
-    summary.insert(
-        "request_timeout".to_owned(),
-        json!(provider.request_timeout_secs),
-    );
-    summary.insert(
-        "claude_code_advanced".to_owned(),
-        json!(config
-            .and_then(|cfg| cfg.get("claude_code_advanced"))
-            .cloned()),
-    );
-    summary.insert(
-        "pool_advanced".to_owned(),
-        json!(config.and_then(|cfg| cfg.get("pool_advanced")).cloned()),
-    );
-    summary.insert(
-        "failover_rules".to_owned(),
-        json!(config.and_then(|cfg| cfg.get("failover_rules")).cloned()),
-    );
-    summary.insert(
-        "chat_pii_redaction".to_owned(),
-        json!(config
-            .and_then(|cfg| cfg.get("chat_pii_redaction"))
-            .cloned()),
-    );
-    summary.insert(
-        "codex_fingerprint_convergence_enabled".to_owned(),
-        json!(
-            crate::provider_transport::codex_fingerprint_convergence_enabled(
-                &provider.provider_type,
-                provider.config.as_ref(),
-            )
+    json!({
+        "id": provider.id.clone(),
+        "name": provider.name.clone(),
+        "provider_type": provider.provider_type.clone(),
+        "description": provider.description.clone(),
+        "website": provider.website.clone(),
+        "provider_priority": provider.provider_priority,
+        "keep_priority_on_conversion": provider.keep_priority_on_conversion,
+        "enable_format_conversion": provider.enable_format_conversion,
+        "is_active": provider.is_active,
+        "billing_type": billing_type,
+        "monthly_quota_usd": monthly_quota_usd,
+        "monthly_used_usd": monthly_used_usd,
+        "quota_reset_day": quota_reset_day,
+        "quota_last_reset_at": quota_last_reset_at,
+        "quota_expires_at": quota_expires_at,
+        "max_retries": provider.max_retries,
+        "max_transfer_count": max_transfer_count,
+        "max_transfer_timeout_seconds": max_transfer_timeout_seconds,
+        "proxy": admin_secret_safe_proxy(provider.proxy.as_ref()),
+        "stream_first_byte_timeout": provider.stream_first_byte_timeout_secs,
+        "request_timeout": provider.request_timeout_secs,
+        "claude_code_advanced": admin_secret_safe_json(config.and_then(|cfg| cfg.get("claude_code_advanced"))),
+        "pool_advanced": admin_secret_safe_json(config.and_then(|cfg| cfg.get("pool_advanced"))),
+        "failover_rules": admin_secret_safe_json(config.and_then(|cfg| cfg.get("failover_rules"))),
+        "chat_pii_redaction": admin_secret_safe_json(config.and_then(|cfg| cfg.get("chat_pii_redaction"))),
+        "oauth_token_refresh": json!(config.and_then(|cfg| cfg.get("oauth_token_refresh")).cloned()),
+        "total_endpoints": total_endpoints,
+        "active_endpoints": active_endpoints,
+        "total_keys": total_keys,
+        "active_keys": active_keys,
+        "total_models": total_models,
+        "active_models": active_models,
+        "global_model_ids": active_global_model_ids,
+        "avg_health_score": avg_health_score,
+        "unhealthy_endpoints": unhealthy_endpoints,
+        "api_formats": api_formats,
+        "endpoint_health_details": endpoint_health_details,
+        "ops_configured": ops_configured,
+        "ops_architecture_id": ops_architecture_id,
+        "kiro_simulated_cache_enabled": kiro_simulated_cache_enabled,
+        "codex_cyber_flag_passthrough_enabled": codex_cyber_flag_passthrough_enabled(&provider.provider_type, provider.config.as_ref()),
+        "codex_fingerprint_convergence_enabled": crate::provider_transport::codex_fingerprint_convergence_enabled(
+            &provider.provider_type,
+            provider.config.as_ref(),
         ),
-    );
-    summary.insert(
-        "oauth_token_refresh".to_owned(),
-        json!(config
-            .and_then(|cfg| cfg.get("oauth_token_refresh"))
-            .cloned()),
-    );
-    summary.insert("total_endpoints".to_owned(), json!(total_endpoints));
-    summary.insert("active_endpoints".to_owned(), json!(active_endpoints));
-    summary.insert("total_keys".to_owned(), json!(total_keys));
-    summary.insert("active_keys".to_owned(), json!(active_keys));
-    summary.insert("total_models".to_owned(), json!(total_models));
-    summary.insert("active_models".to_owned(), json!(active_models));
-    summary.insert(
-        "global_model_ids".to_owned(),
-        json!(active_global_model_ids),
-    );
-    summary.insert("avg_health_score".to_owned(), json!(avg_health_score));
-    summary.insert("unhealthy_endpoints".to_owned(), json!(unhealthy_endpoints));
-    summary.insert("api_formats".to_owned(), json!(api_formats));
-    summary.insert(
-        "endpoint_health_details".to_owned(),
-        json!(endpoint_health_details),
-    );
-    summary.insert("ops_configured".to_owned(), json!(ops_configured));
-    summary.insert("ops_architecture_id".to_owned(), json!(ops_architecture_id));
-    summary.insert(
-        "kiro_simulated_cache_enabled".to_owned(),
-        json!(kiro_simulated_cache_enabled),
-    );
-    summary.insert(
-        "codex_cyber_flag_passthrough_enabled".to_owned(),
-        json!(codex_cyber_flag_passthrough),
-    );
-    summary.insert(
-        "responses_websocket_enabled".to_owned(),
-        json!(
-            responses_websocket_adapter(&provider.provider_type, provider.config.as_ref(),)
-                .is_some()
-        ),
-    );
-    summary.insert(
-        "ops_quota_alert_enabled".to_owned(),
-        json!(ops_quota_alert_enabled),
-    );
-    summary.insert(
-        "created_at".to_owned(),
-        endpoint_timestamp_or_now(provider.created_at_unix_ms, now_unix_secs),
-    );
-    summary.insert(
-        "updated_at".to_owned(),
-        endpoint_timestamp_or_now(provider.updated_at_unix_secs, now_unix_secs),
-    );
-
-    serde_json::Value::Object(summary)
+        "responses_websocket_enabled": responses_websocket_adapter(&provider.provider_type, provider.config.as_ref()).is_some(),
+        "ops_quota_alert_enabled": ops_quota_alert_enabled,
+        "created_at": endpoint_timestamp_or_now(provider.created_at_unix_ms, now_unix_secs),
+        "updated_at": endpoint_timestamp_or_now(provider.updated_at_unix_secs, now_unix_secs),
+    })
 }

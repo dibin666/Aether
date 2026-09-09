@@ -731,7 +731,7 @@
                     v-if="shouldPaginateKeys"
                     class="px-4 py-2 flex items-center justify-between text-xs text-muted-foreground mt-auto"
                   >
-                    <span>{{ legacyT('共') }} {{ allKeys.length }} {{ legacyT('个') }}{{ legacyT(isKeyManagedProviderType(provider.provider_type) ? '密钥' : '账号') }}</span>
+                    <span>{{ legacyT('共') }} {{ providerKeysTotal }} {{ legacyT('个') }}{{ legacyT(isKeyManagedProviderType(provider.provider_type) ? '密钥' : '账号') }}</span>
                     <div class="flex items-center gap-1.5">
                       <Button
                         variant="ghost"

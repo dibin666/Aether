@@ -1182,6 +1182,17 @@ async fn refresh_provider_probe_keys(
         .await
 }
 
+fn pool_quota_probe_worker_error_score_reason(_error: &GatewayError) -> Value {
+    serde_json::json!({
+        "last_probe": {
+            "source": "pool_quota_probe",
+            "status": "worker_error",
+            "category": "worker_error",
+            "message": "Provider quota probe worker failed"
+        }
+    })
+}
+
 fn update_summary_from_payload(
     summary: &mut PoolQuotaProbeRunSummary,
     selected_count: usize,
@@ -1790,13 +1801,7 @@ async fn perform_pool_quota_probe_for_provider(
                     } else {
                         PoolMemberHardState::Cooldown
                     }),
-                    serde_json::json!({
-                        "last_probe": {
-                            "source": "pool_quota_probe",
-                            "status": "worker_error",
-                            "message": error_detail.clone()
-                        }
-                    }),
+                    pool_quota_probe_worker_error_score_reason(&err),
                 )
                 .await;
                 if *account_events_recorded < POOL_QUOTA_PROBE_ACCOUNT_EVENT_LIMIT {
@@ -1822,7 +1827,7 @@ async fn perform_pool_quota_probe_for_provider(
                     provider_id = %provider_short_id,
                     provider_type,
                     key_id,
-                    error = ?err,
+                    error_category = "provider_quota_probe_failed",
                     "gateway pool quota probe failed"
                 );
             }
@@ -2130,9 +2135,12 @@ pub(crate) fn spawn_pool_quota_probe_worker(
             interval.tick().await;
             loop {
                 interval.tick().await;
-                if let Err(err) = perform_pool_quota_probe_once_with_config(&state, config).await {
+                if perform_pool_quota_probe_once_with_config(&state, config)
+                    .await
+                    .is_err()
+                {
                     warn!(
-                        error = ?err,
+                        error_category = "pool_quota_probe_worker_failed",
                         "gateway pool quota probe worker tick failed"
                     );
                 }
@@ -2145,6 +2153,30 @@ pub(crate) fn spawn_pool_quota_probe_worker(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn worker_error_score_reason_drops_runtime_error_details() {
+        let secret = "postgresql://admin:db-secret@db.internal/aether; Authorization: Bearer quota-secret; https://user:password@upstream.test/quota?q=secret";
+        let patch =
+            pool_quota_probe_worker_error_score_reason(&GatewayError::Internal(secret.to_string()));
+        let serialized = patch.to_string();
+
+        assert_eq!(patch["last_probe"]["status"], "worker_error");
+        assert_eq!(patch["last_probe"]["category"], "worker_error");
+        assert_eq!(
+            patch["last_probe"]["message"],
+            "Provider quota probe worker failed"
+        );
+        for sensitive in [
+            "db-secret",
+            "quota-secret",
+            "user:password",
+            "db.internal",
+            "upstream.test",
+        ] {
+            assert!(!serialized.contains(sensitive));
+        }
+    }
 
     fn key(
         id: &str,

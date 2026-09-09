@@ -1,4 +1,5 @@
 use crate::handlers::public::support::build_unhandled_public_support_response;
+use crate::handlers::public::support::mark_sensitive_response_no_store;
 use axum::{body::Body, http, response::Response};
 
 use super::{
@@ -32,6 +33,7 @@ pub(crate) async fn maybe_build_local_users_me_response(
     state: &AppState,
     request_context: &GatewayPublicRequestContext,
     headers: &http::HeaderMap,
+    remote_addr: &std::net::SocketAddr,
     request_body: Option<&axum::body::Bytes>,
 ) -> Option<Response<Body>> {
     let decision = request_context.control_decision.as_ref()?;
@@ -83,7 +85,9 @@ pub(crate) async fn maybe_build_local_users_me_response(
         Some("management_tokens_list")
             if users_me_management_tokens_root(&request_context.request_path) =>
         {
-            Some(handle_users_me_management_tokens_list(state, request_context, headers).await)
+            Some(mark_sensitive_response_no_store(
+                handle_users_me_management_tokens_list(state, request_context, headers).await,
+            ))
         }
         Some("api_keys_create") if request_context.request_path == "/api/users/me/api-keys" => {
             Some(
@@ -93,7 +97,7 @@ pub(crate) async fn maybe_build_local_users_me_response(
         Some("management_tokens_create")
             if users_me_management_tokens_root(&request_context.request_path) =>
         {
-            Some(
+            Some(mark_sensitive_response_no_store(
                 handle_users_me_management_token_create(
                     state,
                     request_context,
@@ -101,7 +105,7 @@ pub(crate) async fn maybe_build_local_users_me_response(
                     request_body,
                 )
                 .await,
-            )
+            ))
         }
         Some("api_key_detail")
             if users_me_api_key_detail_path_matches(&request_context.request_path) =>
@@ -111,7 +115,9 @@ pub(crate) async fn maybe_build_local_users_me_response(
         Some("management_token_detail")
             if users_me_management_token_detail_path_matches(&request_context.request_path) =>
         {
-            Some(handle_users_me_management_token_detail_get(state, request_context, headers).await)
+            Some(mark_sensitive_response_no_store(
+                handle_users_me_management_token_detail_get(state, request_context, headers).await,
+            ))
         }
         Some("api_key_update")
             if users_me_api_key_detail_path_matches(&request_context.request_path) =>
@@ -123,7 +129,7 @@ pub(crate) async fn maybe_build_local_users_me_response(
         Some("management_token_update")
             if users_me_management_token_detail_path_matches(&request_context.request_path) =>
         {
-            Some(
+            Some(mark_sensitive_response_no_store(
                 handle_users_me_management_token_update(
                     state,
                     request_context,
@@ -131,7 +137,7 @@ pub(crate) async fn maybe_build_local_users_me_response(
                     request_body,
                 )
                 .await,
-            )
+            ))
         }
         Some("api_key_patch")
             if users_me_api_key_detail_path_matches(&request_context.request_path) =>
@@ -141,7 +147,9 @@ pub(crate) async fn maybe_build_local_users_me_response(
         Some("management_token_toggle")
             if users_me_management_token_toggle_path_matches(&request_context.request_path) =>
         {
-            Some(handle_users_me_management_token_toggle(state, request_context, headers).await)
+            Some(mark_sensitive_response_no_store(
+                handle_users_me_management_token_toggle(state, request_context, headers).await,
+            ))
         }
         Some("api_key_delete")
             if users_me_api_key_detail_path_matches(&request_context.request_path) =>
@@ -151,7 +159,9 @@ pub(crate) async fn maybe_build_local_users_me_response(
         Some("management_token_delete")
             if users_me_management_token_detail_path_matches(&request_context.request_path) =>
         {
-            Some(handle_users_me_management_token_delete(state, request_context, headers).await)
+            Some(mark_sensitive_response_no_store(
+                handle_users_me_management_token_delete(state, request_context, headers).await,
+            ))
         }
         Some("api_key_providers_update")
             if users_me_api_key_providers_path_matches(&request_context.request_path) =>
@@ -187,6 +197,7 @@ pub(crate) async fn maybe_build_local_users_me_response(
                     state,
                     request_context,
                     headers,
+                    remote_addr,
                     request_body,
                 )
                 .await,
@@ -195,7 +206,9 @@ pub(crate) async fn maybe_build_local_users_me_response(
         Some("management_token_regenerate")
             if users_me_management_token_regenerate_path_matches(&request_context.request_path) =>
         {
-            Some(handle_users_me_management_token_regenerate(state, request_context, headers).await)
+            Some(mark_sensitive_response_no_store(
+                handle_users_me_management_token_regenerate(state, request_context, headers).await,
+            ))
         }
         Some("usage") if request_context.request_path == "/api/users/me/usage" => {
             Some(handle_users_me_usage_get(state, request_context, headers).await)
@@ -236,7 +249,10 @@ pub(crate) async fn maybe_build_local_users_me_response(
             Some(handle_users_me_available_models(state, request_context, headers).await)
         }
         Some("client_config") if request_context.request_path == "/api/users/me/client-config" => {
-            Some(handle_users_me_client_config_get(state, request_context, headers).await)
+            Some(
+                handle_users_me_client_config_get(state, request_context, headers, remote_addr)
+                    .await,
+            )
         }
         Some("model_capabilities")
             if request_context.request_path == "/api/users/me/model-capabilities" =>

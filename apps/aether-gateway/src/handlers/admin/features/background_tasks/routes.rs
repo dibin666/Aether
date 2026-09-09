@@ -1,6 +1,7 @@
 use crate::handlers::admin::request::{AdminAppState, AdminRequestContext};
 use crate::handlers::admin::shared::{
-    attach_admin_audit_response, query_param_value, unix_secs_to_rfc3339,
+    attach_admin_audit_response, mark_sensitive_admin_response_no_store, query_param_value,
+    unix_secs_to_rfc3339,
 };
 use crate::task_runtime::{
     self, set_cancel_signal, TASK_KEY_OAUTH_TOKEN_REFRESH, TASK_KEY_POOL_QUOTA_PROBE,
@@ -8,7 +9,7 @@ use crate::task_runtime::{
 };
 use crate::GatewayError;
 use aether_data_contracts::repository::background_tasks::{
-    BackgroundTaskKind, BackgroundTaskListQuery, BackgroundTaskStatus,
+    BackgroundTaskKind, BackgroundTaskListQuery, BackgroundTaskStatus, StoredBackgroundTaskRun,
 };
 use axum::{
     body::{Body, Bytes},
@@ -21,6 +22,30 @@ use serde_json::json;
 const DEFAULT_PAGE_SIZE: usize = 20;
 const MAX_PAGE_SIZE: usize = 100;
 const DEFAULT_EVENTS_PAGE_SIZE: usize = 50;
+
+fn build_background_task_list_item(run: &StoredBackgroundTaskRun) -> serde_json::Value {
+    json!({
+        "id": run.id,
+        "task_key": run.task_key,
+        "kind": run.kind.as_database(),
+        "trigger": run.trigger,
+        "status": run.status.as_database(),
+        "attempt": run.attempt,
+        "max_attempts": run.max_attempts,
+        "owner_instance": run.owner_instance,
+        "progress_percent": run.progress_percent,
+        "progress_message": run.progress_message,
+        "has_payload": run.payload_json.is_some(),
+        "has_result": run.result_json.is_some(),
+        "has_error": run.error_message.is_some(),
+        "cancel_requested": run.cancel_requested,
+        "created_by": run.created_by,
+        "created_at": unix_secs_to_rfc3339(run.created_at_unix_secs),
+        "started_at": run.started_at_unix_secs.and_then(unix_secs_to_rfc3339),
+        "finished_at": run.finished_at_unix_secs.and_then(unix_secs_to_rfc3339),
+        "updated_at": unix_secs_to_rfc3339(run.updated_at_unix_secs),
+    })
+}
 
 pub(super) async fn maybe_build_local_admin_background_tasks_response(
     state: &AdminAppState<'_>,
@@ -72,29 +97,7 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
             let items = response
                 .items
                 .iter()
-                .map(|run| {
-                    json!({
-                        "id": run.id,
-                        "task_key": run.task_key,
-                        "kind": run.kind.as_database(),
-                        "trigger": run.trigger,
-                        "status": run.status.as_database(),
-                        "attempt": run.attempt,
-                        "max_attempts": run.max_attempts,
-                        "owner_instance": run.owner_instance,
-                        "progress_percent": run.progress_percent,
-                        "progress_message": run.progress_message,
-                        "payload": run.payload_json,
-                        "result": run.result_json,
-                        "error_message": run.error_message,
-                        "cancel_requested": run.cancel_requested,
-                        "created_by": run.created_by,
-                        "created_at": unix_secs_to_rfc3339(run.created_at_unix_secs),
-                        "started_at": run.started_at_unix_secs.and_then(unix_secs_to_rfc3339),
-                        "finished_at": run.finished_at_unix_secs.and_then(unix_secs_to_rfc3339),
-                        "updated_at": unix_secs_to_rfc3339(run.updated_at_unix_secs),
-                    })
-                })
+                .map(build_background_task_list_item)
                 .collect::<Vec<_>>();
             let definitions = task_runtime::task_definitions()
                 .iter()
@@ -154,8 +157,9 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
                         .into_response(),
                 ));
             };
-            return Ok(Some(attach_admin_audit_response(
-                Json(json!({
+            return Ok(Some(mark_sensitive_admin_response_no_store(
+                attach_admin_audit_response(
+                    Json(json!({
                     "id": run.id,
                     "task_key": run.task_key,
                     "kind": run.kind.as_database(),
@@ -175,12 +179,13 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
                     "started_at": run.started_at_unix_secs.and_then(unix_secs_to_rfc3339),
                     "finished_at": run.finished_at_unix_secs.and_then(unix_secs_to_rfc3339),
                     "updated_at": unix_secs_to_rfc3339(run.updated_at_unix_secs),
-                }))
-                .into_response(),
-                "admin_task_detail_viewed",
-                "view_task_detail",
-                "background_task",
-                run_id,
+                    }))
+                    .into_response(),
+                    "admin_task_detail_viewed",
+                    "view_task_detail",
+                    "background_task",
+                    run_id,
+                ),
             )));
         }
         Some("events") if request_context.method() == http::Method::GET => {
@@ -208,7 +213,7 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
             let events = state
                 .list_background_task_events(run_id, offset, page_size, descending)
                 .await?;
-            return Ok(Some(
+            return Ok(Some(mark_sensitive_admin_response_no_store(
                 Json(json!({
                     "items": events.into_iter().map(|event| {
                         json!({
@@ -224,7 +229,7 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
                     "page_size": page_size,
                 }))
                 .into_response(),
-            ));
+            )));
         }
         Some("cancel") if request_context.method() == http::Method::POST => {
             let Some(run_id) = nested_task_id_from_path(request_context.path(), "/cancel") else {
@@ -517,8 +522,13 @@ fn parse_json_payload(request_body: Option<&Bytes>) -> Result<serde_json::Value,
 
 #[cfg(test)]
 mod tests {
+    use super::build_background_task_list_item;
     use super::manual_refresh_task_key;
     use crate::task_runtime::{TASK_KEY_OAUTH_TOKEN_REFRESH, TASK_KEY_POOL_QUOTA_PROBE};
+    use aether_data_contracts::repository::background_tasks::{
+        BackgroundTaskKind, BackgroundTaskStatus, StoredBackgroundTaskRun,
+    };
+    use serde_json::json;
 
     #[test]
     fn manual_refresh_trigger_supports_oauth_and_quota_workers_only() {
@@ -531,5 +541,48 @@ mod tests {
             Some(TASK_KEY_POOL_QUOTA_PROBE)
         );
         assert_eq!(manual_refresh_task_key("maintenance.database"), None);
+    }
+
+    #[test]
+    fn task_list_item_exposes_only_safe_diagnostic_presence_flags() {
+        let run = StoredBackgroundTaskRun {
+            id: "run-1".to_string(),
+            task_key: "provider.oauth.import".to_string(),
+            kind: BackgroundTaskKind::OnDemand,
+            trigger: "manual".to_string(),
+            status: BackgroundTaskStatus::Failed,
+            attempt: 1,
+            max_attempts: 3,
+            owner_instance: Some("gateway-1".to_string()),
+            progress_percent: 100,
+            progress_message: Some("task failed".to_string()),
+            payload_json: Some(json!({"refresh_token": "secret-refresh-token"})),
+            result_json: Some(json!({"access_token": "secret-access-token"})),
+            error_message: Some("upstream error containing secret-api-key".to_string()),
+            cancel_requested: false,
+            created_by: Some("admin".to_string()),
+            created_at_unix_secs: 1,
+            started_at_unix_secs: Some(2),
+            finished_at_unix_secs: Some(3),
+            updated_at_unix_secs: 3,
+        };
+
+        let item = build_background_task_list_item(&run);
+        assert_eq!(item["status"], "failed");
+        assert_eq!(item["has_payload"], true);
+        assert_eq!(item["has_result"], true);
+        assert_eq!(item["has_error"], true);
+        assert!(item.get("payload").is_none());
+        assert!(item.get("result").is_none());
+        assert!(item.get("error_message").is_none());
+
+        let serialized = item.to_string();
+        for secret in [
+            "secret-refresh-token",
+            "secret-access-token",
+            "secret-api-key",
+        ] {
+            assert!(!serialized.contains(secret));
+        }
     }
 }
