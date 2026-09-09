@@ -7,8 +7,11 @@ import {
 
 describe('poolAdvancedDialog', () => {
   it('returns health toggle cards in the desktop display order', () => {
+    // fork 保留 score_ranking_enabled 作为配置兼容控件：解析器和高级设置 UI 仍
+    // 接受并保存它，只是 merge 68f2636fe 之后 PoolKeyCursor 不再读取该值。
     expect(buildPoolHealthToggleCards().map(item => item.key)).toEqual([
       'probing_enabled',
+      'score_ranking_enabled',
       'account_self_check_enabled',
       'auto_remove_banned_keys',
       'auto_remove_quota_exhausted_keys',
@@ -22,6 +25,11 @@ describe('poolAdvancedDialog', () => {
         key: 'probing_enabled',
         label: '自适应热池',
         description: '自动维护热池，缺口时异步补位。',
+      },
+      {
+        key: 'score_ranking_enabled',
+        label: '分数候选',
+        description: '请求调度前优先读取高分账号；关闭后直接按分配模式和策略调度扫描账号。',
       },
       {
         key: 'account_self_check_enabled',

@@ -320,6 +320,19 @@
                           >
                             {{ keyUiStateMap[key.key_id]?.visibleOAuthState?.text }}
                           </span>
+                          <span
+                            v-if="keyUiStateMap[key.key_id]?.autoRefresh?.show"
+                            class="text-[10px] whitespace-nowrap"
+                            :class="{
+                              'text-destructive': keyUiStateMap[key.key_id]?.autoRefresh?.tone === 'error',
+                              'text-warning': keyUiStateMap[key.key_id]?.autoRefresh?.tone === 'warn',
+                              'text-success': keyUiStateMap[key.key_id]?.autoRefresh?.tone === 'ok',
+                              'text-muted-foreground': keyUiStateMap[key.key_id]?.autoRefresh?.tone === 'muted'
+                            }"
+                            :title="keyUiStateMap[key.key_id]?.autoRefresh?.title || ''"
+                          >
+                            {{ keyUiStateMap[key.key_id]?.autoRefresh?.text }}
+                          </span>
                         </template>
                         <Badge
                           v-if="keyUiStateMap[key.key_id]?.planLabel"
@@ -1189,6 +1202,12 @@ import {
   type PoolStatsDisplay,
   type PoolStatsMetric,
 } from '@/features/pool/utils/poolStatsDisplay'
+import { asyncTasksApi, type PoolAccountTaskEvent } from '@/api/async-tasks'
+import {
+  buildOAuthAutoRefreshDisplay,
+  indexLatestAccountEvents,
+  type OAuthAutoRefreshDisplay,
+} from '@/features/pool/utils/oauthAutoRefresh'
 import { resetCodexCycleUsageWindows } from '@/features/pool/utils/poolCycleStats'
 import { mergePoolKeyQuotaSnapshots } from '@/features/pool/utils/poolQuotaRefresh'
 import { resolveAntigravityQuotaGroupLabel } from '@/features/providers/utils/antigravityQuota'
@@ -1870,6 +1889,8 @@ function createEmptyKeyPage(page = 1, pageSizeValue = 50): PoolKeysPageResponse 
 
 const keyPage = ref<PoolKeysPageResponse>(createEmptyKeyPage())
 const keysLoading = ref(false)
+const OAUTH_REFRESH_TASK_KEY = 'maintenance.oauth.token.refresh'
+const latestRefreshEventMap = ref<Record<string, PoolAccountTaskEvent>>({})
 const poolKeySelectionBusy = computed(() => keysLoading.value || keysSearchPending.value)
 const keysLoadedOnce = ref(false)
 const poolKeyPageItems = computed(() => keyPage.value.keys)
@@ -2119,6 +2140,7 @@ type PoolKeyUiState = {
   quotaTextClass: string
   importedAtRelative: string
   lastUsedRelative: string
+  autoRefresh: OAuthAutoRefreshDisplay
   statsDisplay: PoolStatsDisplay
   mobileTagItems: PoolMobileTagItem[]
   mobileActionIds: PoolMobileActionId[]
@@ -2182,6 +2204,11 @@ const keyUiStateMap = computed<Record<string, PoolKeyUiState>>(() => {
         : '',
       importedAtRelative: formatPoolKeyImportedAt(key),
       lastUsedRelative: key.last_used_at ? formatRelativeTime(key.last_used_at) : '-',
+      autoRefresh: buildOAuthAutoRefreshDisplay({
+        effectiveEnabled: key.oauth_token_refresh_effective_enabled,
+        enabledSource: key.oauth_token_refresh_enabled_source,
+        latestEvent: latestRefreshEventMap.value[key.key_id] ?? null,
+      }),
       statsDisplay: buildPoolStatsDisplay(key, selectedProviderType.value, 'current_cycle'),
       mobileTagItems: getMobileTagItems(key),
       mobileActionIds: splitPoolMobileActions({
@@ -2580,6 +2607,7 @@ async function loadKeys(options: { cacheTtlMs?: number, silent?: boolean } = {})
     }
     keyPage.value = nextPage
     keysLoadedOnce.value = true
+    void loadLatestRefreshEvents()
   } catch (err) {
     if (requestId !== keysRequestId || selectedProviderId.value !== providerId) return
     if (!options.silent) {
@@ -2593,6 +2621,20 @@ async function loadKeys(options: { cacheTtlMs?: number, silent?: boolean } = {})
     if (requestId === keysRequestId) {
       keysLoading.value = false
     }
+  }
+}
+
+// 账号级续期记录不在 background_tasks 里（上游加固会剥掉标识符和自由文本），
+// 走 fork 自己的事件表。取不到时只是行内不显示上次结果，不影响账号列表本身。
+async function loadLatestRefreshEvents() {
+  try {
+    const page = await asyncTasksApi.getAccountEvents(OAUTH_REFRESH_TASK_KEY, {
+      limit: 200,
+      order: 'desc',
+    })
+    latestRefreshEventMap.value = indexLatestAccountEvents(page.items)
+  } catch {
+    latestRefreshEventMap.value = {}
   }
 }
 

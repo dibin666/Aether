@@ -127,6 +127,12 @@ vi.mock('lucide-vue-next', async () => {
     ChevronDown: Icon,
     RefreshCw: Icon,
     History: Icon,
+    // PoolRefreshWorkerDialog 用到的图标；缺一个就会让整个 PoolManagement 渲染失败
+    AlertCircle: Icon,
+    Gauge: Icon,
+    Info: Icon,
+    Loader2: Icon,
+    Play: Icon,
     Activity: Icon,
     Power: Icon,
     Database: Icon,
@@ -664,8 +670,12 @@ describe('PoolManagement Codex cycle stats mode', () => {
 
     expect(root.querySelector('[data-testid="pool-stats-mode-control"]')).toBeNull()
     expect(root.querySelector('[data-testid="pool-stats-cycle-text"]')).not.toBeNull()
-    expect(root.querySelector('[data-testid="pool-stats-cycle-request_count"]')?.textContent?.trim()).toBe('7/12')
-    expect(root.querySelector('[data-testid="pool-stats-cycle-total_tokens"]')?.textContent?.trim()).toBe('2.5K/5K')
+    // fork 按周期分组逐组渲染（b75839518），每组一个带 code 的 testid，
+    // 而不是上游那种把首尾两组挤成 small/large 一行。
+    expect(root.querySelector('[data-testid="pool-stats-cycle-5h-request_count"]')?.textContent?.trim()).toBe('7')
+    expect(root.querySelector('[data-testid="pool-stats-cycle-weekly-request_count"]')?.textContent?.trim()).toBe('12')
+    expect(root.querySelector('[data-testid="pool-stats-cycle-5h-total_tokens"]')?.textContent?.trim()).toBe('2.5K')
+    expect(root.querySelector('[data-testid="pool-stats-cycle-weekly-total_tokens"]')?.textContent?.trim()).toBe('5K')
     expect(root.querySelector('[data-testid="pool-stats-cycle-small-overlay"]')).toBeNull()
     expect(root.querySelector('[data-testid="pool-stats-cycle-large-base"]')).toBeNull()
     expect(endpointMocks.listPoolKeys).toHaveBeenLastCalledWith(
@@ -794,7 +804,7 @@ describe('PoolManagement Codex cycle stats mode', () => {
     expect(periodLabels).toContain('月')
     expect(periodLabels).not.toContain('5H')
     expect(periodLabels).not.toContain('周')
-    expect(root.querySelector('[data-testid="pool-stats-cycle-request_count"]')?.textContent?.trim()).toBe('-/23')
+    expect(root.querySelector('[data-testid="pool-stats-cycle-weekly-request_count"]')?.textContent?.trim()).toBe('23')
     expect(root.querySelector('[data-testid="pool-stats-cycle-small-overlay"]')).toBeNull()
     expect(root.querySelector('[data-testid="pool-stats-cycle-bar-request_count"]')).toBeNull()
     expect(root.querySelector('[data-testid="pool-stats-cycle-single-marker"]')).toBeNull()
@@ -851,7 +861,7 @@ describe('PoolManagement Codex cycle stats mode', () => {
         { label: 'gpt-reserve 周', meter: '40.0%' },
       ]))
     }
-    expect(root.querySelector('[data-testid="pool-stats-cycle-request_count"]')?.textContent?.trim()).toBe('-/12')
+    expect(root.querySelector('[data-testid="pool-stats-cycle-weekly-request_count"]')?.textContent?.trim()).toBe('12')
   })
 
   it('opens only one score popover across desktop and mobile layouts', async () => {
@@ -1015,7 +1025,7 @@ describe('PoolManagement Codex cycle stats mode', () => {
 
     expect(endpointMocks.resetProviderKeyCycleStats).toHaveBeenCalledWith(codexKey.key_id)
     expect(endpointMocks.listPoolKeys).toHaveBeenCalledTimes(2)
-    expect(root.querySelector('[data-testid="pool-stats-cycle-request_count"]')?.textContent?.trim()).toBe('-/0')
+    expect(root.querySelector('[data-testid="pool-stats-cycle-5h-request_count"]')?.textContent?.trim()).toBe('0')
   })
 
   it('toggles a pool account and silently revalidates the current key page', async () => {

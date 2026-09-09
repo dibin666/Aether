@@ -131,6 +131,9 @@ export interface PoolKeyDetail {
   can_refresh_oauth?: boolean
   can_export_oauth?: boolean
   can_edit_oauth?: boolean
+  // 该号池最终是否被自动续期，以及这个结论来自显式配置还是 provider 类型默认
+  oauth_token_refresh_effective_enabled?: boolean
+  oauth_token_refresh_enabled_source?: 'explicit' | 'type_default'
   oauth_expires_at?: number | null
   oauth_invalid_at?: number | null  // 兼容字段；优先使用 status_snapshot.oauth
   oauth_invalid_reason?: string | null  // 兼容字段；优先使用 status_snapshot.oauth
