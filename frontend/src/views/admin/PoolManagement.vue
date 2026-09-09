@@ -988,6 +988,8 @@
       :provider-type="selectedProviderType"
       :current-config="selectedProviderConfig"
       :current-claude-config="selectedProviderClaudeConfig"
+      :current-oauth-refresh="selectedProviderOAuthRefresh"
+      :oauth-refresh-effective-enabled="selectedProviderOAuthRefreshEffective"
       @saved="handleSchedulingSaved"
     />
     <PoolDemandMetricsDialog
@@ -1154,6 +1156,7 @@ import type {
 } from '@/api/endpoints/pool'
 import type {
   ClaudeCodeAdvancedConfig,
+  OAuthTokenRefreshProviderConfig,
   EndpointAPIKey,
   ProviderEndpoint,
   PoolAdvancedConfig,
@@ -1505,6 +1508,14 @@ const selectedProviderConfig = computed<PoolAdvancedConfig | null>(() => {
 
 const selectedProviderClaudeConfig = computed(() => {
   return (selectedProviderData.value as Record<string, unknown> | null)?.claude_code_advanced as ClaudeCodeAdvancedConfig | null ?? null
+})
+
+const selectedProviderOAuthRefresh = computed<OAuthTokenRefreshProviderConfig | null>(() => {
+  return (selectedProviderData.value as Record<string, unknown> | null)?.oauth_token_refresh as OAuthTokenRefreshProviderConfig | null ?? null
+})
+
+const selectedProviderOAuthRefreshEffective = computed(() => {
+  return Boolean((selectedProviderData.value as Record<string, unknown> | null)?.oauth_token_refresh_effective_enabled)
 })
 
 function defaultEnabledPresetCount(providerType: string): number {

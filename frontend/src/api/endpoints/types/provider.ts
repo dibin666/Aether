@@ -938,6 +938,9 @@ export interface ProviderWithEndpointsSummary {
   pool_advanced?: PoolAdvancedConfig | null
   failover_rules?: FailoverRulesConfig | null
   oauth_token_refresh?: OAuthTokenRefreshProviderConfig | null
+  // 该 provider 最终是否被自动续期，以及结论来自显式配置还是 provider 类型默认
+  oauth_token_refresh_effective_enabled?: boolean
+  oauth_token_refresh_enabled_source?: 'explicit' | 'type_default'
   ops_configured: boolean  // 是否配置了扩展操作（余额监控等）
   ops_architecture_id?: string  // 扩展操作使用的架构 ID（如 cubence, anyrouter）
   codex_fingerprint_convergence_enabled?: boolean

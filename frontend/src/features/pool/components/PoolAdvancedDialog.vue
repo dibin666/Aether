@@ -67,6 +67,39 @@
           </div>
         </div>
 
+        <div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-muted/30 p-4">
+          <div class="min-w-0 space-y-1">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-medium">OAuth 自动续期</span>
+              <span
+                class="rounded-full px-2 py-0.5 text-[11px]"
+                :class="oauthRefreshEffective
+                  ? 'bg-success/15 text-success'
+                  : 'bg-muted text-muted-foreground'"
+              >
+                {{ oauthRefreshEffective ? '当前生效' : '当前不生效' }}
+              </span>
+            </div>
+            <p class="text-xs leading-5 text-muted-foreground">
+              {{ oauthRefreshModeDescription }}
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <Button
+              v-for="option in oauthRefreshOptions"
+              :key="option.value"
+              type="button"
+              size="sm"
+              :variant="form.oauth_refresh_mode === option.value ? 'default' : 'outline'"
+              :title="option.description"
+              :data-testid="`pool-oauth-refresh-mode-${option.value}`"
+              @click="form.oauth_refresh_mode = option.value"
+            >
+              {{ option.label }}
+            </Button>
+          </div>
+        </div>
+
         <div
           v-if="form.account_self_check_enabled"
           class="space-y-3 rounded-xl border border-dashed border-primary/25 bg-primary/5 p-4"
@@ -550,9 +583,16 @@ import {
   buildPoolHealthToggleCards,
   type PoolHealthToggleKey,
 } from '@/features/pool/utils/poolAdvancedDialog'
+import {
+  buildOAuthRefreshOverridePayload,
+  resolveOAuthRefreshOverrideMode,
+  OAUTH_REFRESH_OVERRIDE_OPTIONS,
+  type OAuthRefreshOverrideMode,
+} from '@/features/pool/utils/oauthRefreshOverride'
 import type {
   PoolAdvancedConfig,
   ClaudeCodeAdvancedConfig,
+  OAuthTokenRefreshProviderConfig,
   ProviderWithEndpointsSummary,
 } from '@/api/endpoints/types/provider'
 
@@ -562,6 +602,8 @@ const props = defineProps<{
   providerType?: string
   currentConfig: PoolAdvancedConfig | null
   currentClaudeConfig?: ClaudeCodeAdvancedConfig | null
+  currentOauthRefresh?: OAuthTokenRefreshProviderConfig | null
+  oauthRefreshEffectiveEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -578,9 +620,23 @@ const isClaudeCode = computed(() => {
 })
 
 const healthToggleCards = buildPoolHealthToggleCards()
+const oauthRefreshOptions = OAUTH_REFRESH_OVERRIDE_OPTIONS
+
+// 保存前显示的是后端算出的当前生效态；用户改了模式之后按新选择即时预览，
+// 「跟随类型默认」时无法在前端断言结果，退回后端给的当前值。
+const oauthRefreshEffective = computed(() => {
+  if (form.value.oauth_refresh_mode === 'enabled') return true
+  if (form.value.oauth_refresh_mode === 'disabled') return false
+  return props.oauthRefreshEffectiveEnabled ?? false
+})
+
+const oauthRefreshModeDescription = computed(
+  () => oauthRefreshOptions.find(item => item.value === form.value.oauth_refresh_mode)?.description ?? '',
+)
 const cooldownFieldLayout = buildPoolCooldownFieldLayout()
 
 const form = ref({
+  oauth_refresh_mode: 'inherit' as OAuthRefreshOverrideMode,
   rate_limit_cooldown_seconds: null as number | null | undefined,
   overload_cooldown_seconds: null as number | null | undefined,
   ignore_pool_cooldown: false,
@@ -683,6 +739,7 @@ watch([() => props.modelValue, () => props.providerId], ([open]) => {
   const scoreRules = cfg?.score_rules
   const scoreWeights = scoreRules?.weights
   form.value = {
+    oauth_refresh_mode: resolveOAuthRefreshOverrideMode(props.currentOauthRefresh),
     rate_limit_cooldown_seconds: cfg?.rate_limit_cooldown_seconds ?? null,
     overload_cooldown_seconds: cfg?.overload_cooldown_seconds ?? null,
     ignore_pool_cooldown: cfg?.ignore_pool_cooldown ?? false,
@@ -783,6 +840,13 @@ async function handleSave() {
 
     const payload: Parameters<typeof updateProvider>[1] = {
       pool_advanced: poolAdvanced as PoolAdvancedConfig,
+    }
+    // 后端把「字段缺省」当作不改动该段，所以没动过就别传，免得覆盖并发的改动
+    if (form.value.oauth_refresh_mode !== resolveOAuthRefreshOverrideMode(props.currentOauthRefresh)) {
+      payload.oauth_token_refresh = buildOAuthRefreshOverridePayload(
+        form.value.oauth_refresh_mode,
+        props.currentOauthRefresh,
+      )
     }
     if (isClaudeCode.value) {
       const cf = claudeForm.value

@@ -4,6 +4,7 @@ import type {
   ClaudeCodeAdvancedConfig,
   FailoverRulesConfig,
   PoolAdvancedConfig,
+  OAuthTokenRefreshProviderConfig,
   ProviderConfig,
   ProviderType,
   ProviderWithEndpointsSummary,
@@ -136,6 +137,8 @@ export async function updateProvider(
     claude_code_advanced: ClaudeCodeAdvancedConfig | null
     codex_fingerprint_convergence_enabled: boolean
     pool_advanced: PoolAdvancedConfig | null
+    // 省略该字段＝不改动这一段；显式 null＝移除整段并回到 provider 类型默认
+    oauth_token_refresh: OAuthTokenRefreshProviderConfig | null
     failover_rules: FailoverRulesConfig | null
     config: ProviderConfig | null
   }>,
