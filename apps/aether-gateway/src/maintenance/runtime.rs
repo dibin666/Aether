@@ -184,6 +184,7 @@ pub(crate) struct AdminSystemCleanupSummary {
     pub(crate) pending_failed: usize,
     pub(crate) pending_recovered: usize,
     pub(crate) usage: UsageCleanupSummary,
+    pub(crate) provider_key_task_events_deleted: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
@@ -201,6 +202,12 @@ pub(crate) async fn run_admin_system_cleanup_once(
     let proxy_node_metrics = cleanup_proxy_node_metrics_once(data).await?;
     let pending = cleanup_stale_pending_requests_once(data).await?;
     let usage = perform_usage_cleanup_once(data).await?;
+    let settings = config::usage_cleanup_settings(data).await?;
+    let window = config::usage_cleanup_window(chrono::Utc::now(), settings);
+    let cutoff_unix_secs = u64::try_from(window.log_cutoff.timestamp().max(0)).unwrap_or(0);
+    let provider_key_task_events_deleted = data
+        .delete_provider_key_task_events_before(cutoff_unix_secs)
+        .await?;
 
     Ok(AdminSystemCleanupSummary {
         audit_logs_deleted,
@@ -209,6 +216,7 @@ pub(crate) async fn run_admin_system_cleanup_once(
         pending_failed: pending.failed,
         pending_recovered: pending.recovered,
         usage,
+        provider_key_task_events_deleted,
     })
 }
 

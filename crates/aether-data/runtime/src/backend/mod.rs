@@ -249,6 +249,7 @@ mod tests {
         assert!(backends.read().request_candidates().is_some());
         assert!(backends.read().provider_catalog().is_some());
         assert!(backends.read().provider_quotas().is_some());
+        assert!(backends.read().provider_key_task_events().is_some());
         assert!(backends.read().usage().is_some());
         assert!(backends.read().video_tasks().is_some());
         assert!(backends.read().wallets().is_some());
@@ -260,6 +261,7 @@ mod tests {
         assert!(backends.write().proxy_nodes().is_some());
         assert!(backends.write().provider_catalog().is_some());
         assert!(backends.write().provider_quotas().is_some());
+        assert!(backends.write().provider_key_task_events().is_some());
         assert!(backends.write().settlement().is_some());
         assert!(backends.write().usage().is_some());
         assert!(backends.write().wallets().is_some());

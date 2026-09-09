@@ -46,6 +46,10 @@ use crate::repository::provider_catalog::{
     ProviderCatalogReadRepository, ProviderCatalogWriteRepository,
     SqlxProviderCatalogReadRepository,
 };
+use crate::repository::provider_key_task_events::{
+    ProviderKeyTaskEventReadRepository, ProviderKeyTaskEventWriteRepository,
+    SqlxProviderKeyTaskEventRepository,
+};
 use crate::repository::proxy_nodes::{
     ProxyNodeReadRepository, ProxyNodeWriteRepository, SqlxProxyNodeRepository,
 };
@@ -221,6 +225,12 @@ impl PostgresBackend {
         Arc::new(SqlxProviderQuotaRepository::new(self.pool_clone()))
     }
 
+    pub fn provider_key_task_event_read_repository(
+        &self,
+    ) -> Arc<dyn ProviderKeyTaskEventReadRepository> {
+        Arc::new(SqlxProviderKeyTaskEventRepository::new(self.pool_clone()))
+    }
+
     pub fn usage_read_repository(&self) -> Arc<dyn UsageReadRepository> {
         Arc::new(SqlxUsageReadRepository::new(self.pool_clone()))
     }
@@ -266,6 +276,12 @@ impl PostgresBackend {
 
     pub fn provider_quota_write_repository(&self) -> Arc<dyn ProviderQuotaWriteRepository> {
         Arc::new(SqlxProviderQuotaRepository::new(self.pool_clone()))
+    }
+
+    pub fn provider_key_task_event_write_repository(
+        &self,
+    ) -> Arc<dyn ProviderKeyTaskEventWriteRepository> {
+        Arc::new(SqlxProviderKeyTaskEventRepository::new(self.pool_clone()))
     }
 }
 
@@ -326,5 +342,7 @@ mod tests {
             .lease_runner(PostgresLeaseRunnerConfig::default())
             .expect("lease runner should build");
         let _provider_quota_writer = backend.provider_quota_write_repository();
+        let _provider_key_task_event_reader = backend.provider_key_task_event_read_repository();
+        let _provider_key_task_event_writer = backend.provider_key_task_event_write_repository();
     }
 }

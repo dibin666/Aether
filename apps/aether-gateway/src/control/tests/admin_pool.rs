@@ -253,3 +253,20 @@ fn classifies_admin_pool_malformed_provider_id_routes_as_admin_proxy_route() {
     assert_eq!(cleanup.route_family.as_deref(), Some("pool_manage"));
     assert_eq!(cleanup.route_kind.as_deref(), Some("cleanup_banned_keys"));
 }
+
+#[test]
+fn classify_task_account_events_route() {
+    let headers = headers(&[]);
+    let uri: Uri =
+        "/api/admin/tasks/maintenance.oauth.token.refresh/account-events?limit=200&order=desc"
+            .parse()
+            .expect("uri should parse");
+    let route =
+        classify_control_route(&http::Method::GET, &uri, &headers).expect("route should classify");
+    assert_eq!(route.route_family.as_deref(), Some("tasks_manage"));
+    assert_eq!(route.route_kind.as_deref(), Some("account_events"));
+    assert_eq!(
+        route.auth_endpoint_signature.as_deref(),
+        Some("admin:tasks")
+    );
+}

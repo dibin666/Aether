@@ -1534,3 +1534,60 @@ fn next_wallet_daily_usage_aggregation_run_rolls_to_next_day_after_slot() {
 
     assert_eq!(next.to_rfc3339(), "2026-04-01T16:10:00+00:00");
 }
+
+#[tokio::test]
+async fn admin_system_cleanup_deletes_provider_key_task_events_older_than_log_retention() {
+    use aether_data_contracts::repository::provider_key_task_events::{
+        ProviderKeyTaskEvent, ProviderKeyTaskEventQuery, ProviderKeyTaskEventWriteRepository,
+    };
+    let repo = Arc::new(
+        aether_data::repository::provider_key_task_events::InMemoryProviderKeyTaskEventRepository::new(),
+    );
+    let now = chrono::Utc::now().timestamp().max(0) as u64;
+    let old_ts = now.saturating_sub(400 * 24 * 3600);
+    let recent_ts = now.saturating_sub(5 * 24 * 3600);
+    let events = vec![
+        ProviderKeyTaskEvent::new(
+            "task_test",
+            "run_old",
+            "oauth_refresh_account_refreshed",
+            "p1",
+            "k1",
+            "oauth_refresh",
+            "refreshed",
+            old_ts,
+        ),
+        ProviderKeyTaskEvent::new(
+            "task_test",
+            "run_recent",
+            "oauth_refresh_account_refreshed",
+            "p1",
+            "k2",
+            "oauth_refresh",
+            "refreshed",
+            recent_ts,
+        ),
+    ];
+    repo.append_provider_key_task_events(&events)
+        .await
+        .expect("seed should succeed");
+
+    let data = crate::data::GatewayDataState::default()
+        .with_provider_key_task_event_repository_for_tests(repo.clone())
+        .with_system_config_values_for_tests([(
+            "log_retention_days".to_string(),
+            serde_json::json!(30),
+        )]);
+
+    let summary = super::run_admin_system_cleanup_once(&data)
+        .await
+        .expect("cleanup should succeed");
+
+    assert_eq!(summary.provider_key_task_events_deleted, 1);
+    let remaining = data
+        .list_provider_key_task_events(&ProviderKeyTaskEventQuery::new("task_test"))
+        .await
+        .expect("query should succeed");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].task_run_id, "run_recent");
+}

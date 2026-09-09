@@ -10,6 +10,7 @@ use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
     StoredProviderCatalogKeyMaintenanceSummary, StoredProviderCatalogProvider,
 };
+use aether_data_contracts::repository::provider_key_task_events::ProviderKeyTaskEvent;
 use aether_provider_pool::provider_pool_quota_metadata_updated_at;
 use aether_runtime_state::{RuntimeLockLease, RuntimeState};
 use futures_util::{stream, StreamExt};
@@ -1460,32 +1461,19 @@ async fn append_pool_quota_probe_account_event(
                 "额度刷新失败".to_string()
             }
         });
-    let mut event_payload = serde_json::json!({
-        "provider_id": provider.id,
-        "provider_name": provider.name,
-        "provider_type": provider_type,
-        "key_id": key_id,
-        "key_name": key_name,
-        "action": "quota_refresh",
-        "status": status,
-        "message": message,
-        "auto_removed": auto_removed,
-    });
-    if let Some(object) = event_payload.as_object_mut() {
-        for field in ["status_code", "reason", "error"] {
-            if let Some(value) = result
-                .and_then(|item| item.get(field))
-                .filter(|value| !value.is_null())
-            {
-                object.insert(field.to_string(), value.clone());
-            }
-        }
-        if let Some(error) = worker_error {
-            object.insert("error".to_string(), serde_json::json!(error));
-        }
-    }
-    append_event_with_logging(
-        state,
+    let reason = result
+        .and_then(|item| item.get("reason"))
+        .and_then(|v| v.as_str())
+        .map(ToOwned::to_owned)
+        .or_else(|| worker_error.map(|err| err.to_string()))
+        .or_else(|| {
+            result
+                .and_then(|item| item.get("error"))
+                .and_then(|v| v.as_str())
+                .map(ToOwned::to_owned)
+        });
+    let event = ProviderKeyTaskEvent::new(
+        TASK_KEY_POOL_QUOTA_PROBE,
         run_id,
         if succeeded {
             "quota_refresh_account_succeeded"
@@ -1494,16 +1482,28 @@ async fn append_pool_quota_probe_account_event(
         } else {
             "quota_refresh_account_failed"
         },
-        if succeeded {
-            "quota refreshed"
-        } else if auto_removed {
-            "quota account auto removed"
-        } else {
-            "quota refresh failed"
-        },
-        Some(event_payload),
+        &provider.id,
+        key_id,
+        "quota_refresh",
+        status,
+        now_unix_secs(),
     )
-    .await;
+    .with_provider_name(Some(&provider.name))
+    .with_provider_type(Some(provider_type))
+    .with_provider_api_key_name(Some(key_name))
+    .with_message(Some(message))
+    .with_reason(reason);
+    if let Err(error) = state.append_provider_key_task_events(&[event]).await {
+        warn!(
+            event_name = "pool_quota_probe_account_event_persistence_failed",
+            log_type = "ops",
+            worker = "pool_quota_probe",
+            provider_id = %provider.id,
+            key_id = %key_id,
+            error = ?error,
+            "failed to persist pool quota probe account event"
+        );
+    }
 }
 
 async fn append_pool_quota_probe_summary_event(
@@ -2783,5 +2783,60 @@ mod tests {
             ),
             Some(1_700_000_000)
         );
+    }
+
+    #[tokio::test]
+    async fn records_account_events_to_provider_key_task_events() {
+        use std::sync::Arc;
+        let repo = Arc::new(
+            aether_data::repository::provider_key_task_events::InMemoryProviderKeyTaskEventRepository::new(),
+        );
+        let data = crate::data::GatewayDataState::default()
+            .with_provider_key_task_event_repository_for_tests(repo.clone());
+        let app = AppState::new()
+            .expect("app should build")
+            .with_data_state_for_tests(data);
+        let provider = StoredProviderCatalogProvider::new(
+            "p1".to_string(),
+            "Provider One".to_string(),
+            None,
+            "codex".to_string(),
+        )
+        .expect("provider builds");
+
+        append_pool_quota_probe_account_event(
+            &app,
+            "run-123",
+            &provider,
+            "codex",
+            "k1",
+            "Key One",
+            Some(&json!({
+                "results": [{
+                    "key_id": "k1",
+                    "status": "success",
+                    "message": "额度刷新成功",
+                }]
+            })),
+            None,
+        )
+        .await;
+
+        let events = app
+            .list_provider_key_task_events(
+                &aether_data_contracts::repository::provider_key_task_events::ProviderKeyTaskEventQuery::new(
+                    TASK_KEY_POOL_QUOTA_PROBE,
+                )
+                .with_run_id("run-123"),
+            )
+            .await
+            .expect("events should read");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].provider_id, "p1");
+        assert_eq!(events[0].provider_api_key_id, "k1");
+        assert_eq!(events[0].action, "quota_refresh");
+        assert_eq!(events[0].status, "success");
+        assert_eq!(events[0].message.as_deref(), Some("额度刷新成功"));
+        assert_eq!(events[0].event_type, "quota_refresh_account_succeeded");
     }
 }

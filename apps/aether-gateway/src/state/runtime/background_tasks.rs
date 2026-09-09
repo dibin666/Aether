@@ -4,6 +4,9 @@ use aether_data_contracts::repository::background_tasks::{
     StoredBackgroundTaskRun, StoredBackgroundTaskRunPage, UpsertBackgroundTaskEvent,
     UpsertBackgroundTaskRun,
 };
+use aether_data_contracts::repository::provider_key_task_events::{
+    ProviderKeyTaskEvent, ProviderKeyTaskEventQuery,
+};
 
 impl AppState {
     pub(crate) async fn find_background_task_run(
@@ -75,6 +78,26 @@ impl AppState {
     ) -> Result<Option<StoredBackgroundTaskEvent>, GatewayError> {
         self.data
             .upsert_background_task_event(event)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn append_provider_key_task_events(
+        &self,
+        events: &[ProviderKeyTaskEvent],
+    ) -> Result<usize, GatewayError> {
+        self.data
+            .append_provider_key_task_events(events)
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn list_provider_key_task_events(
+        &self,
+        query: &ProviderKeyTaskEventQuery,
+    ) -> Result<Vec<ProviderKeyTaskEvent>, GatewayError> {
+        self.data
+            .list_provider_key_task_events(query)
             .await
             .map_err(|err| GatewayError::Internal(err.to_string()))
     }

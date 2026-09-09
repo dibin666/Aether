@@ -231,6 +231,99 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
                 .into_response(),
             )));
         }
+        Some("account_events") if request_context.method() == http::Method::GET => {
+            let Some(task_key) =
+                nested_task_id_from_path(request_context.path(), "/account-events")
+            else {
+                return Ok(Some(
+                    (
+                        http::StatusCode::NOT_FOUND,
+                        Json(json!({"detail":"Task not found"})),
+                    )
+                        .into_response(),
+                ));
+            };
+            let query = request_context.query_string();
+            let limit = query_param_value(query, "limit")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(200)
+                .clamp(1, 500);
+            let order_param = query_param_value(query, "order");
+            let descending = order_param
+                .as_deref()
+                .map_or(true, |v| !v.eq_ignore_ascii_case("asc"));
+            let run_id = query_param_value(query, "run_id").filter(|v| !v.trim().is_empty());
+
+            let effective_run_id = match run_id {
+                Some(id) => Some(id),
+                None => {
+                    let runs = state
+                        .list_background_task_runs(&BackgroundTaskListQuery {
+                            task_key_substring: Some(task_key.to_string()),
+                            offset: 0,
+                            limit: 1,
+                            ..BackgroundTaskListQuery::default()
+                        })
+                        .await
+                        .ok();
+                    runs.and_then(|r| {
+                        r.items
+                            .into_iter()
+                            .find(|item| item.task_key == task_key)
+                            .map(|item| item.id)
+                    })
+                }
+            };
+
+            let event_query = match &effective_run_id {
+                Some(id) => aether_data_contracts::repository::provider_key_task_events::ProviderKeyTaskEventQuery::new(task_key)
+                    .with_run_id(id)
+                    .with_limit(limit)
+                    .with_descending(descending),
+                None => aether_data_contracts::repository::provider_key_task_events::ProviderKeyTaskEventQuery::new(task_key)
+                    .with_limit(limit)
+                    .with_descending(descending),
+            };
+
+            let events = state
+                .app()
+                .list_provider_key_task_events(&event_query)
+                .await?;
+
+            let total = events.len();
+            return Ok(Some(mark_sensitive_admin_response_no_store(
+                attach_admin_audit_response(
+                    Json(json!({
+                        "items": events.into_iter().map(|event| {
+                            json!({
+                                "id": event.id,
+                                "task_key": event.task_key,
+                                "task_run_id": event.task_run_id,
+                                "event_type": event.event_type,
+                                "provider_id": event.provider_id,
+                                "provider_name": event.provider_name,
+                                "provider_type": event.provider_type,
+                                "provider_api_key_id": event.provider_api_key_id,
+                                "provider_api_key_name": event.provider_api_key_name,
+                                "action": event.action,
+                                "status": event.status,
+                                "message": event.message,
+                                "reason": event.reason,
+                                "created_at": unix_secs_to_rfc3339(event.created_at_unix_secs),
+                                "created_at_unix_secs": event.created_at_unix_secs,
+                            })
+                        }).collect::<Vec<_>>(),
+                        "total": total,
+                        "run_id": effective_run_id,
+                    }))
+                    .into_response(),
+                    "admin_task_account_events_viewed",
+                    "view_task_account_events",
+                    "background_task",
+                    task_key,
+                ),
+            )));
+        }
         Some("cancel") if request_context.method() == http::Method::POST => {
             let Some(run_id) = nested_task_id_from_path(request_context.path(), "/cancel") else {
                 return Ok(Some(
@@ -584,5 +677,28 @@ mod tests {
         ] {
             assert!(!serialized.contains(secret));
         }
+    }
+
+    #[test]
+    fn parses_account_events_task_key_from_nested_path() {
+        use super::nested_task_id_from_path;
+        assert_eq!(
+            nested_task_id_from_path(
+                "/api/admin/tasks/maintenance.oauth.token.refresh/account-events",
+                "/account-events",
+            ),
+            Some("maintenance.oauth.token.refresh")
+        );
+        assert_eq!(
+            nested_task_id_from_path(
+                "/api/admin/tasks/pool.quota.probe.worker/account-events",
+                "/account-events",
+            ),
+            Some("pool.quota.probe.worker")
+        );
+        assert_eq!(
+            nested_task_id_from_path("/api/admin/tasks//account-events", "/account-events"),
+            None
+        );
     }
 }

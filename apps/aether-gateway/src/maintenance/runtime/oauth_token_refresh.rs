@@ -5,6 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
+use aether_data_contracts::repository::provider_key_task_events::ProviderKeyTaskEvent;
 use futures_util::{stream, StreamExt};
 use serde_json::{Map, Value};
 use tokio::sync::Semaphore;
@@ -577,32 +578,39 @@ async fn perform_oauth_token_refresh_once_with_invocation(
                 if let Some(task_run_id) = task_run_id.as_deref() {
                     if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
                         account_events_recorded = account_events_recorded.saturating_add(1);
-                        append_event_with_logging(
-                            state,
+                        let event = ProviderKeyTaskEvent::new(
+                            TASK_KEY_OAUTH_TOKEN_REFRESH,
                             task_run_id,
                             if refreshed {
                                 "oauth_refresh_account_refreshed"
                             } else {
                                 "oauth_refresh_account_checked"
                             },
-                            if refreshed {
-                                "oauth token refreshed"
-                            } else {
-                                "oauth token checked"
-                            },
-                            Some(serde_json::json!({
-                                "provider_id": provider_id,
-                                "provider_name": provider_name,
-                                "provider_type": provider_type,
-                                "key_id": key_id,
-                                "key_name": key_name,
-                                "action": "oauth_refresh",
-                                "status": if refreshed { "refreshed" } else { "checked" },
-                                "message": if refreshed { "Token 已刷新" } else { "Token 已检查，无需更新" },
-                                "refreshed": refreshed,
-                            })),
+                            &provider_id,
+                            &key_id,
+                            "oauth_refresh",
+                            if refreshed { "refreshed" } else { "checked" },
+                            now_unix_secs(),
                         )
-                        .await;
+                        .with_provider_name(Some(&provider_name))
+                        .with_provider_type(Some(&provider_type))
+                        .with_provider_api_key_name(Some(&key_name))
+                        .with_message(Some(if refreshed {
+                            "Token 已刷新"
+                        } else {
+                            "Token 已检查，无需更新"
+                        }));
+                        if let Err(error) = state.append_provider_key_task_events(&[event]).await {
+                            warn!(
+                                event_name = "oauth_token_refresh_account_event_persistence_failed",
+                                log_type = "ops",
+                                worker = "oauth_token_refresh",
+                                provider_id = %provider_id,
+                                key_id = %key_id,
+                                error = ?error,
+                                "failed to persist oauth token refresh account event"
+                            );
+                        }
                     }
                 }
             }
@@ -618,24 +626,32 @@ async fn perform_oauth_token_refresh_once_with_invocation(
                 if let Some(task_run_id) = task_run_id.as_deref() {
                     if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
                         account_events_recorded = account_events_recorded.saturating_add(1);
-                        append_event_with_logging(
-                            state,
+                        let event = ProviderKeyTaskEvent::new(
+                            TASK_KEY_OAUTH_TOKEN_REFRESH,
                             task_run_id,
                             "oauth_refresh_account_skipped",
-                            "oauth token refresh skipped",
-                            Some(serde_json::json!({
-                                "provider_id": provider_id,
-                                "provider_name": provider_name,
-                                "provider_type": provider_type,
-                                "key_id": key_id,
-                                "key_name": key_name,
-                                "action": "oauth_refresh",
-                                "status": "skipped",
-                                "message": "Token 刷新已跳过",
-                                "reason": reason,
-                            })),
+                            &provider_id,
+                            &key_id,
+                            "oauth_refresh",
+                            "skipped",
+                            now_unix_secs(),
                         )
-                        .await;
+                        .with_provider_name(Some(&provider_name))
+                        .with_provider_type(Some(&provider_type))
+                        .with_provider_api_key_name(Some(&key_name))
+                        .with_message(Some("Token 刷新已跳过"))
+                        .with_reason(Some(&reason));
+                        if let Err(error) = state.append_provider_key_task_events(&[event]).await {
+                            warn!(
+                                event_name = "oauth_token_refresh_account_event_persistence_failed",
+                                log_type = "ops",
+                                worker = "oauth_token_refresh",
+                                provider_id = %provider_id,
+                                key_id = %key_id,
+                                error = ?error,
+                                "failed to persist oauth token refresh account event"
+                            );
+                        }
                     }
                 }
             }
@@ -660,24 +676,32 @@ async fn perform_oauth_token_refresh_once_with_invocation(
                 if let Some(task_run_id) = task_run_id.as_deref() {
                     if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
                         account_events_recorded = account_events_recorded.saturating_add(1);
-                        append_event_with_logging(
-                            state,
+                        let event = ProviderKeyTaskEvent::new(
+                            TASK_KEY_OAUTH_TOKEN_REFRESH,
                             task_run_id,
                             "oauth_refresh_failed",
-                            "oauth token refresh failed",
-                            Some(serde_json::json!({
-                                "provider_id": provider_id,
-                                "provider_name": provider_name,
-                                "provider_type": provider_type,
-                                "key_id": key_id,
-                                "key_name": key_name,
-                                "action": "oauth_refresh",
-                                "status": "failed",
-                                "message": "Token 刷新失败",
-                                "error": error,
-                            })),
+                            &provider_id,
+                            &key_id,
+                            "oauth_refresh",
+                            "failed",
+                            now_unix_secs(),
                         )
-                        .await;
+                        .with_provider_name(Some(&provider_name))
+                        .with_provider_type(Some(&provider_type))
+                        .with_provider_api_key_name(Some(&key_name))
+                        .with_message(Some("Token 刷新失败"))
+                        .with_reason(Some(&error));
+                        if let Err(error) = state.append_provider_key_task_events(&[event]).await {
+                            warn!(
+                                event_name = "oauth_token_refresh_account_event_persistence_failed",
+                                log_type = "ops",
+                                worker = "oauth_token_refresh",
+                                provider_id = %provider_id,
+                                key_id = %key_id,
+                                error = ?error,
+                                "failed to persist oauth token refresh account event"
+                            );
+                        }
                     }
                 }
             }
@@ -1339,11 +1363,14 @@ mod tests {
             vec![key],
         ));
         let background_task_repository = Arc::new(InMemoryBackgroundTaskRepository::default());
+        let provider_key_task_event_repository =
+            Arc::new(aether_data::repository::provider_key_task_events::InMemoryProviderKeyTaskEventRepository::new());
         let data = crate::data::GatewayDataState::with_provider_catalog_repository_for_tests(
             provider_catalog_repository,
         )
         .with_encryption_key_for_tests(DEVELOPMENT_ENCRYPTION_KEY)
         .with_background_task_repository_for_tests(background_task_repository)
+        .with_provider_key_task_event_repository_for_tests(provider_key_task_event_repository)
         .with_system_config_values_for_tests([
             ("enable_oauth_token_refresh".to_string(), json!(true)),
             (
@@ -1450,13 +1477,37 @@ mod tests {
             .list_background_task_events(&execution_run.id, 0, 100, false)
             .await
             .expect("scheduled task events should read");
-        let account_refresh_events = events
+        let completed_events = events
+            .iter()
+            .filter(|event| event.event_type == "oauth_refresh_completed")
+            .count();
+        assert!(
+            completed_events >= 2,
+            "both automatic scans should record completed summary events in background tasks"
+        );
+        let account_events = observer
+            .list_provider_key_task_events(
+                &aether_data_contracts::repository::provider_key_task_events::ProviderKeyTaskEventQuery::new(
+                    TASK_KEY_OAUTH_TOKEN_REFRESH,
+                ),
+            )
+            .await
+            .expect("scheduled account task events should read");
+        let account_refresh_events = account_events
             .iter()
             .filter(|event| event.event_type == "oauth_refresh_account_refreshed")
             .count();
         assert!(
             account_refresh_events >= 2,
-            "both automatic scans should record account refresh events"
+            "both automatic scans should record account refresh events in provider key task events"
+        );
+        assert!(
+            account_events.iter().any(|e| {
+                e.provider_id == "provider-scheduled-oauth"
+                    && e.provider_api_key_id == "key-scheduled-oauth"
+                    && e.message.as_deref() == Some("Token 已刷新")
+            }),
+            "account events should retain provider/key identification and message"
         );
         assert!(
             events

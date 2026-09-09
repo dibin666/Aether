@@ -426,6 +426,8 @@ impl GatewayDataState {
                 pool_score_writer: None,
                 provider_quota_reader: None,
                 provider_quota_writer: None,
+                provider_key_task_event_reader: None,
+                provider_key_task_event_writer: None,
                 routing_group_reader: None,
                 routing_group_writer: None,
                 usage_reader: None,
@@ -496,6 +498,8 @@ impl GatewayDataState {
         let pool_score_writer = backends.write().pool_scores();
         let provider_quota_reader = backends.read().provider_quotas();
         let provider_quota_writer = backends.write().provider_quotas();
+        let provider_key_task_event_reader = backends.read().provider_key_task_events();
+        let provider_key_task_event_writer = backends.write().provider_key_task_events();
         let routing_group_reader = backends.read().routing_groups().map(|repository| {
             Arc::new(super::routing_group_cache::CachedRoutingGroupReadRepository::new(
                 repository,
@@ -543,6 +547,8 @@ impl GatewayDataState {
             pool_score_writer,
             provider_quota_reader,
             provider_quota_writer,
+            provider_key_task_event_reader,
+            provider_key_task_event_writer,
             routing_group_reader,
             routing_group_writer,
             usage_reader,

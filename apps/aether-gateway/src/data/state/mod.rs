@@ -188,6 +188,10 @@ use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogKeyMaintenanceSummary, StoredProviderCatalogKeyPage,
     StoredProviderCatalogKeyStats, StoredProviderCatalogProvider,
 };
+pub(crate) use aether_data_contracts::repository::provider_key_task_events::{
+    ProviderKeyTaskEvent, ProviderKeyTaskEventQuery, ProviderKeyTaskEventReadRepository,
+    ProviderKeyTaskEventWriteRepository,
+};
 use aether_data_contracts::repository::quota::{
     ProviderKeyQuotaObservation, ProviderKeyQuotaObservationQuery, ProviderQuotaReadRepository,
     ProviderQuotaWriteRepository, StoredProviderQuotaSnapshot,
@@ -250,6 +254,8 @@ pub(crate) struct GatewayDataState {
     pool_score_writer: Option<Arc<dyn PoolMemberScoreWriteRepository>>,
     provider_quota_reader: Option<Arc<dyn ProviderQuotaReadRepository>>,
     provider_quota_writer: Option<Arc<dyn ProviderQuotaWriteRepository>>,
+    provider_key_task_event_reader: Option<Arc<dyn ProviderKeyTaskEventReadRepository>>,
+    provider_key_task_event_writer: Option<Arc<dyn ProviderKeyTaskEventWriteRepository>>,
     routing_group_reader: Option<Arc<dyn RoutingGroupReadRepository>>,
     routing_group_writer: Option<Arc<dyn RoutingGroupWriteRepository>>,
     usage_reader: Option<Arc<dyn UsageReadRepository>>,
@@ -412,6 +418,14 @@ impl fmt::Debug for GatewayDataState {
             .field(
                 "has_provider_quota_writer",
                 &self.provider_quota_writer.is_some(),
+            )
+            .field(
+                "has_provider_key_task_event_reader",
+                &self.provider_key_task_event_reader.is_some(),
+            )
+            .field(
+                "has_provider_key_task_event_writer",
+                &self.provider_key_task_event_writer.is_some(),
             )
             .field(
                 "has_routing_group_reader",

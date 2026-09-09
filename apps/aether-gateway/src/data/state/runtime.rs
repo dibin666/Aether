@@ -19,15 +19,15 @@ use super::{
     LocalVideoTaskReadResponse, PaymentGatewayConfigCasWriteInput, PaymentGatewayConfigRecord,
     PaymentGatewayConfigWriteInput, PaymentGatewaySecretCasUpdate, ProcessAdminWalletRefundInput,
     ProcessPaymentCallbackInput, ProcessPaymentCallbackOutcome, ProviderKeyQuotaObservation,
-    ProviderKeyQuotaObservationQuery, ReclaimWalletRechargeCheckoutInput,
-    ReconcileUsagePolicyCostInput, RedeemWalletCodeInput, RedeemWalletCodeOutcome,
-    ReleaseUsagePolicyRequestAdmissionInput, RequestAuditBundle, RequestCandidateTrace,
-    ReserveUsagePolicyCostInput, ReserveUsagePolicyCostOutcome, ReserveUsagePolicyRequestInput,
-    ReserveUsagePolicyRequestOutcome, StoredAdminAuditLogPage, StoredAdminPaymentCallbackPage,
-    StoredAdminPaymentOrder, StoredAdminPaymentOrderPage, StoredAdminRedeemCodeBatch,
-    StoredAdminRedeemCodeBatchPage, StoredAdminRedeemCodePage, StoredAdminWalletLedgerPage,
-    StoredAdminWalletListPage, StoredAdminWalletRefund, StoredAdminWalletRefundPage,
-    StoredAdminWalletRefundRequestPage, StoredAdminWalletTransaction,
+    ProviderKeyQuotaObservationQuery, ProviderKeyTaskEvent, ProviderKeyTaskEventQuery,
+    ReclaimWalletRechargeCheckoutInput, ReconcileUsagePolicyCostInput, RedeemWalletCodeInput,
+    RedeemWalletCodeOutcome, ReleaseUsagePolicyRequestAdmissionInput, RequestAuditBundle,
+    RequestCandidateTrace, ReserveUsagePolicyCostInput, ReserveUsagePolicyCostOutcome,
+    ReserveUsagePolicyRequestInput, ReserveUsagePolicyRequestOutcome, StoredAdminAuditLogPage,
+    StoredAdminPaymentCallbackPage, StoredAdminPaymentOrder, StoredAdminPaymentOrderPage,
+    StoredAdminRedeemCodeBatch, StoredAdminRedeemCodeBatchPage, StoredAdminRedeemCodePage,
+    StoredAdminWalletLedgerPage, StoredAdminWalletListPage, StoredAdminWalletRefund,
+    StoredAdminWalletRefundPage, StoredAdminWalletRefundRequestPage, StoredAdminWalletTransaction,
     StoredAdminWalletTransactionPage, StoredAnnouncement, StoredAnnouncementPage,
     StoredBackgroundTaskEvent, StoredBackgroundTaskRun, StoredBackgroundTaskRunPage,
     StoredBillingModelContext, StoredProviderQuotaSnapshot, StoredProviderUsageSummary,
@@ -1385,6 +1385,40 @@ impl GatewayDataState {
         match &self.provider_quota_writer {
             Some(repository) => repository.upsert_key_quota_observation(observation).await,
             None => Ok(false),
+        }
+    }
+
+    pub(crate) async fn append_provider_key_task_events(
+        &self,
+        events: &[ProviderKeyTaskEvent],
+    ) -> Result<usize, DataLayerError> {
+        match &self.provider_key_task_event_writer {
+            Some(repository) => repository.append_provider_key_task_events(events).await,
+            None => Ok(0),
+        }
+    }
+
+    pub(crate) async fn list_provider_key_task_events(
+        &self,
+        query: &ProviderKeyTaskEventQuery,
+    ) -> Result<Vec<ProviderKeyTaskEvent>, DataLayerError> {
+        match &self.provider_key_task_event_reader {
+            Some(repository) => repository.list_provider_key_task_events(query).await,
+            None => Ok(Vec::new()),
+        }
+    }
+
+    pub(crate) async fn delete_provider_key_task_events_before(
+        &self,
+        cutoff_unix_secs: u64,
+    ) -> Result<usize, DataLayerError> {
+        match &self.provider_key_task_event_writer {
+            Some(repository) => {
+                repository
+                    .delete_provider_key_task_events_before(cutoff_unix_secs)
+                    .await
+            }
+            None => Ok(0),
         }
     }
 

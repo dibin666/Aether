@@ -72,6 +72,11 @@ pub(super) async fn perform_automatic_usage_cleanup_once(
 ) -> Result<UsageCleanupSummary, DataLayerError> {
     let mut summary = perform_usage_cleanup_once(data).await?;
     cleanup_usage_policy_ledgers(data, &mut summary).await?;
+    let window = compute_usage_cleanup_window(data, ManualUsageCleanupMode::Policy, None).await?;
+    let cutoff_unix_secs = u64::try_from(window.log_cutoff.timestamp().max(0)).unwrap_or(0);
+    let _ = data
+        .delete_provider_key_task_events_before(cutoff_unix_secs)
+        .await?;
     Ok(summary)
 }
 

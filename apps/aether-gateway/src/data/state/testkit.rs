@@ -174,6 +174,8 @@ impl GatewayDataState {
             pool_score_writer: None,
             provider_quota_reader: None,
             provider_quota_writer: None,
+            provider_key_task_event_reader: None,
+            provider_key_task_event_writer: None,
             routing_group_reader: None,
             routing_group_writer: None,
             usage_reader: Some(usage_reader),

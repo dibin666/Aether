@@ -277,6 +277,18 @@ pub(super) fn classify_admin_observability_family_route(
             false,
         ))
     } else if method == http::Method::GET
+        && normalized_path_no_trailing.starts_with("/api/admin/tasks/")
+        && normalized_path_no_trailing.ends_with("/account-events")
+        && normalized_path_no_trailing.matches('/').count() == 5
+    {
+        Some(classified(
+            "admin_proxy",
+            "tasks_manage",
+            "account_events",
+            "admin:tasks",
+            false,
+        ))
+    } else if method == http::Method::GET
         && normalized_path_no_trailing.starts_with("/api/admin/pool/")
         && normalized_path_no_trailing.ends_with("/keys")
         && normalized_path_no_trailing.matches('/').count() == 5

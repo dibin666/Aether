@@ -14,6 +14,7 @@ use crate::repository::management_tokens::ManagementTokenWriteRepository;
 use crate::repository::oauth_providers::OAuthProviderWriteRepository;
 use crate::repository::pool_scores::PoolMemberScoreWriteRepository;
 use crate::repository::provider_catalog::ProviderCatalogWriteRepository;
+use crate::repository::provider_key_task_events::ProviderKeyTaskEventWriteRepository;
 use crate::repository::proxy_nodes::ProxyNodeWriteRepository;
 use crate::repository::quota::ProviderQuotaWriteRepository;
 use crate::repository::routing_profiles::RoutingGroupWriteRepository;
@@ -37,6 +38,7 @@ pub struct DataWriteRepositories {
     proxy_nodes: Option<Arc<dyn ProxyNodeWriteRepository>>,
     provider_catalog: Option<Arc<dyn ProviderCatalogWriteRepository>>,
     provider_quotas: Option<Arc<dyn ProviderQuotaWriteRepository>>,
+    provider_key_task_events: Option<Arc<dyn ProviderKeyTaskEventWriteRepository>>,
     routing_groups: Option<Arc<dyn RoutingGroupWriteRepository>>,
     settlement: Option<Arc<dyn SettlementWriteRepository>>,
     usage: Option<Arc<dyn UsageWriteRepository>>,
@@ -63,6 +65,10 @@ impl fmt::Debug for DataWriteRepositories {
             .field("has_proxy_nodes", &self.proxy_nodes.is_some())
             .field("has_provider_catalog", &self.provider_catalog.is_some())
             .field("has_provider_quotas", &self.provider_quotas.is_some())
+            .field(
+                "has_provider_key_task_events",
+                &self.provider_key_task_events.is_some(),
+            )
             .field("has_routing_groups", &self.routing_groups.is_some())
             .field("has_settlement", &self.settlement.is_some())
             .field("has_usage", &self.usage.is_some())
@@ -130,6 +136,11 @@ impl DataWriteRepositories {
         }
         if self.provider_quotas.is_none() {
             self.provider_quotas = Some(PostgresBackend::provider_quota_write_repository(backend));
+        }
+        if self.provider_key_task_events.is_none() {
+            self.provider_key_task_events = Some(
+                PostgresBackend::provider_key_task_event_write_repository(backend),
+            );
         }
         if self.routing_groups.is_none() {
             self.routing_groups = Some(PostgresBackend::routing_group_write_repository(backend));
@@ -206,6 +217,10 @@ impl DataWriteRepositories {
         self.provider_quotas.clone()
     }
 
+    pub fn provider_key_task_events(&self) -> Option<Arc<dyn ProviderKeyTaskEventWriteRepository>> {
+        self.provider_key_task_events.clone()
+    }
+
     pub fn routing_groups(&self) -> Option<Arc<dyn RoutingGroupWriteRepository>> {
         self.routing_groups.clone()
     }
@@ -240,6 +255,7 @@ impl DataWriteRepositories {
             || self.proxy_nodes.is_some()
             || self.provider_catalog.is_some()
             || self.provider_quotas.is_some()
+            || self.provider_key_task_events.is_some()
             || self.routing_groups.is_some()
             || self.settlement.is_some()
             || self.usage.is_some()
@@ -282,6 +298,7 @@ mod tests {
         assert!(write.proxy_nodes().is_some());
         assert!(write.provider_catalog().is_some());
         assert!(write.provider_quotas().is_some());
+        assert!(write.provider_key_task_events().is_some());
         assert!(write.settlement().is_some());
         assert!(write.usage().is_some());
         assert!(write.video_tasks().is_some());

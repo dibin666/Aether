@@ -17,6 +17,7 @@ use crate::repository::management_tokens::ManagementTokenReadRepository;
 use crate::repository::oauth_providers::OAuthProviderReadRepository;
 use crate::repository::pool_scores::PoolScoreReadRepository;
 use crate::repository::provider_catalog::ProviderCatalogReadRepository;
+use crate::repository::provider_key_task_events::ProviderKeyTaskEventReadRepository;
 use crate::repository::proxy_nodes::ProxyNodeReadRepository;
 use crate::repository::quota::ProviderQuotaReadRepository;
 use crate::repository::routing_profiles::RoutingGroupReadRepository;
@@ -43,6 +44,7 @@ pub struct DataReadRepositories {
     request_candidates: Option<Arc<dyn RequestCandidateReadRepository>>,
     provider_catalog: Option<Arc<dyn ProviderCatalogReadRepository>>,
     provider_quotas: Option<Arc<dyn ProviderQuotaReadRepository>>,
+    provider_key_task_events: Option<Arc<dyn ProviderKeyTaskEventReadRepository>>,
     routing_groups: Option<Arc<dyn RoutingGroupReadRepository>>,
     usage: Option<Arc<dyn UsageReadRepository>>,
     users: Option<Arc<dyn UserReadRepository>>,
@@ -75,6 +77,10 @@ impl fmt::Debug for DataReadRepositories {
             .field("has_request_candidates", &self.request_candidates.is_some())
             .field("has_provider_catalog", &self.provider_catalog.is_some())
             .field("has_provider_quotas", &self.provider_quotas.is_some())
+            .field(
+                "has_provider_key_task_events",
+                &self.provider_key_task_events.is_some(),
+            )
             .field("has_routing_groups", &self.routing_groups.is_some())
             .field("has_usage", &self.usage.is_some())
             .field("has_users", &self.users.is_some())
@@ -151,6 +157,11 @@ impl DataReadRepositories {
         }
         if self.provider_quotas.is_none() {
             self.provider_quotas = Some(PostgresBackend::provider_quota_read_repository(backend));
+        }
+        if self.provider_key_task_events.is_none() {
+            self.provider_key_task_events = Some(
+                PostgresBackend::provider_key_task_event_read_repository(backend),
+            );
         }
         if self.routing_groups.is_none() {
             self.routing_groups = Some(PostgresBackend::routing_group_read_repository(backend));
@@ -241,6 +252,10 @@ impl DataReadRepositories {
         self.provider_quotas.clone()
     }
 
+    pub fn provider_key_task_events(&self) -> Option<Arc<dyn ProviderKeyTaskEventReadRepository>> {
+        self.provider_key_task_events.clone()
+    }
+
     pub fn routing_groups(&self) -> Option<Arc<dyn RoutingGroupReadRepository>> {
         self.routing_groups.clone()
     }
@@ -278,6 +293,7 @@ impl DataReadRepositories {
             || self.request_candidates.is_some()
             || self.provider_catalog.is_some()
             || self.provider_quotas.is_some()
+            || self.provider_key_task_events.is_some()
             || self.routing_groups.is_some()
             || self.usage.is_some()
             || self.users.is_some()
@@ -323,6 +339,7 @@ mod tests {
         assert!(read.request_candidates().is_some());
         assert!(read.provider_catalog().is_some());
         assert!(read.provider_quotas().is_some());
+        assert!(read.provider_key_task_events().is_some());
         assert!(read.usage().is_some());
         assert!(read.video_tasks().is_some());
         assert!(read.wallets().is_some());
