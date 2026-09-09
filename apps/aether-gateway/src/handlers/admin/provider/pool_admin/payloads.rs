@@ -1233,6 +1233,7 @@ pub(super) fn build_admin_pool_key_payload(
     pool_score: Option<&StoredPoolMemberScore>,
     codex_cycle_usage_by_code: Option<&BTreeMap<String, StoredProviderApiKeyWindowUsageSummary>>,
     now_unix_secs: u64,
+    provider_config: Option<&serde_json::Value>,
 ) -> serde_json::Value {
     let cooldown_reason = runtime
         .cooldown_reason_by_key
@@ -1436,6 +1437,19 @@ pub(super) fn build_admin_pool_key_payload(
         serde_json::Value::Array(oauth_organizations),
     );
     payload.insert("oauth_temporary".to_string(), json!(oauth_temporary));
+    let (oauth_token_refresh_effective_enabled, oauth_token_refresh_enabled_source) =
+        crate::maintenance::provider_oauth_token_refresh_effective_state(
+            provider_type,
+            provider_config,
+        );
+    payload.insert(
+        "oauth_token_refresh_effective_enabled".to_string(),
+        json!(oauth_token_refresh_effective_enabled),
+    );
+    payload.insert(
+        "oauth_token_refresh_enabled_source".to_string(),
+        json!(oauth_token_refresh_enabled_source.as_str()),
+    );
     payload.insert(
         "account_status_code".to_string(),
         json!(account_status_code),
@@ -1742,5 +1756,76 @@ mod tests {
             admin_pool_build_account_quota("grok", Some(quota_snapshot)),
             Some("Auto剩余 40.0% (60/150) | Heavy剩余 0.0% (0/20)".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn build_admin_pool_key_payload_includes_effective_refresh_state_and_source() {
+        let app = crate::AppState::new().expect("app state should build");
+        let state = AdminAppState::new(&app);
+        let key = StoredProviderCatalogKey::new(
+            "k1".to_string(),
+            "p1".to_string(),
+            "key1".to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .unwrap();
+        let runtime = AdminProviderPoolRuntimeState::default();
+
+        // 1. Unconfigured Codex -> enabled: true, source: "type_default"
+        let payload = build_admin_pool_key_payload(
+            &state,
+            "codex",
+            &[],
+            &key,
+            &runtime,
+            None,
+            None,
+            None,
+            1000,
+            None,
+        );
+        assert_eq!(payload["oauth_token_refresh_effective_enabled"], true);
+        assert_eq!(
+            payload["oauth_token_refresh_enabled_source"],
+            "type_default"
+        );
+
+        // 2. Unconfigured non-Codex -> enabled: false, source: "type_default"
+        let payload = build_admin_pool_key_payload(
+            &state,
+            "openai",
+            &[],
+            &key,
+            &runtime,
+            None,
+            None,
+            None,
+            1000,
+            None,
+        );
+        assert_eq!(payload["oauth_token_refresh_effective_enabled"], false);
+        assert_eq!(
+            payload["oauth_token_refresh_enabled_source"],
+            "type_default"
+        );
+
+        // 3. Explicit true non-Codex -> enabled: true, source: "explicit"
+        let explicit_cfg = json!({"oauth_token_refresh": {"enabled": true}});
+        let payload = build_admin_pool_key_payload(
+            &state,
+            "openai",
+            &[],
+            &key,
+            &runtime,
+            None,
+            None,
+            None,
+            1000,
+            Some(&explicit_cfg),
+        );
+        assert_eq!(payload["oauth_token_refresh_effective_enabled"], true);
+        assert_eq!(payload["oauth_token_refresh_enabled_source"], "explicit");
     }
 }

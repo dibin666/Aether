@@ -139,20 +139,42 @@ pub(super) async fn build_admin_pool_overview_response(
         &key_stats_by_provider,
         &cooldown_counts_by_provider,
     );
+    let providers_by_id = providers
+        .iter()
+        .map(|provider| (provider.id.as_str(), provider))
+        .collect::<BTreeMap<_, _>>();
     if let Some(items) = payload.get_mut("items").and_then(Value::as_array_mut) {
         for item in items {
-            let Some(provider_id) = item.get("provider_id").and_then(Value::as_str) else {
-                continue;
-            };
-            let Some(metrics) = runtime_metrics_by_provider.get(provider_id) else {
-                continue;
-            };
             let Some(item_object) = item.as_object_mut() else {
                 continue;
             };
-            if let Some(metrics_object) = metrics.as_object() {
-                for (key, value) in metrics_object {
-                    item_object.insert(key.clone(), value.clone());
+            let Some(provider_id) = item_object
+                .get("provider_id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+            else {
+                continue;
+            };
+            if let Some(provider) = providers_by_id.get(provider_id.as_str()) {
+                let (effective_enabled, enabled_source) =
+                    crate::maintenance::provider_oauth_token_refresh_effective_state(
+                        &provider.provider_type,
+                        provider.config.as_ref(),
+                    );
+                item_object.insert(
+                    "oauth_token_refresh_effective_enabled".to_string(),
+                    json!(effective_enabled),
+                );
+                item_object.insert(
+                    "oauth_token_refresh_enabled_source".to_string(),
+                    json!(enabled_source.as_str()),
+                );
+            }
+            if let Some(metrics) = runtime_metrics_by_provider.get(provider_id.as_str()) {
+                if let Some(metrics_object) = metrics.as_object() {
+                    for (key, value) in metrics_object {
+                        item_object.insert(key.clone(), value.clone());
+                    }
                 }
             }
         }

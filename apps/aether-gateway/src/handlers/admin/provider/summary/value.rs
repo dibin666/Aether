@@ -169,6 +169,11 @@ pub(crate) fn build_admin_provider_summary_value(
         .and_then(|quota| quota.quota_expires_at_unix_secs)
         .or(provider.quota_expires_at_unix_secs)
         .and_then(unix_secs_to_rfc3339);
+    let (oauth_token_refresh_effective_enabled, oauth_token_refresh_enabled_source) =
+        crate::maintenance::provider_oauth_token_refresh_effective_state(
+            &provider.provider_type,
+            provider.config.as_ref(),
+        );
 
     json!({
         "id": provider.id.clone(),
@@ -197,6 +202,8 @@ pub(crate) fn build_admin_provider_summary_value(
         "failover_rules": admin_secret_safe_json(config.and_then(|cfg| cfg.get("failover_rules"))),
         "chat_pii_redaction": admin_secret_safe_json(config.and_then(|cfg| cfg.get("chat_pii_redaction"))),
         "oauth_token_refresh": json!(config.and_then(|cfg| cfg.get("oauth_token_refresh")).cloned()),
+        "oauth_token_refresh_effective_enabled": oauth_token_refresh_effective_enabled,
+        "oauth_token_refresh_enabled_source": oauth_token_refresh_enabled_source.as_str(),
         "total_endpoints": total_endpoints,
         "active_endpoints": active_endpoints,
         "total_keys": total_keys,
@@ -221,4 +228,81 @@ pub(crate) fn build_admin_provider_summary_value(
         "created_at": endpoint_timestamp_or_now(provider.created_at_unix_ms, now_unix_secs),
         "updated_at": endpoint_timestamp_or_now(provider.updated_at_unix_secs, now_unix_secs),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn summary_exposes_effective_oauth_token_refresh_state() {
+        // 1. Unconfigured Codex provider -> enabled, type_default
+        let codex_provider = StoredProviderCatalogProvider::new(
+            "p1".to_string(),
+            "Codex".to_string(),
+            None,
+            "codex".to_string(),
+        )
+        .unwrap();
+        let val =
+            build_admin_provider_summary_value(&codex_provider, &[], &[], None, None, vec![], 1000);
+        assert_eq!(val["oauth_token_refresh_effective_enabled"], true);
+        assert_eq!(val["oauth_token_refresh_enabled_source"], "type_default");
+
+        // 2. Unconfigured non-Codex provider -> disabled, type_default
+        let openai_provider = StoredProviderCatalogProvider::new(
+            "p2".to_string(),
+            "OpenAI".to_string(),
+            None,
+            "openai".to_string(),
+        )
+        .unwrap();
+        let val = build_admin_provider_summary_value(
+            &openai_provider,
+            &[],
+            &[],
+            None,
+            None,
+            vec![],
+            1000,
+        );
+        assert_eq!(val["oauth_token_refresh_effective_enabled"], false);
+        assert_eq!(val["oauth_token_refresh_enabled_source"], "type_default");
+
+        // 3. Explicit true non-Codex provider -> enabled, explicit
+        let mut explicit_openai = StoredProviderCatalogProvider::new(
+            "p3".to_string(),
+            "OpenAI".to_string(),
+            None,
+            "openai".to_string(),
+        )
+        .unwrap();
+        explicit_openai.config = Some(json!({"oauth_token_refresh": {"enabled": true}}));
+        let val = build_admin_provider_summary_value(
+            &explicit_openai,
+            &[],
+            &[],
+            None,
+            None,
+            vec![],
+            1000,
+        );
+        assert_eq!(val["oauth_token_refresh_effective_enabled"], true);
+        assert_eq!(val["oauth_token_refresh_enabled_source"], "explicit");
+
+        // 4. Explicit false Codex provider -> disabled, explicit
+        let mut disabled_codex = StoredProviderCatalogProvider::new(
+            "p4".to_string(),
+            "Codex".to_string(),
+            None,
+            "codex".to_string(),
+        )
+        .unwrap();
+        disabled_codex.config = Some(json!({"oauth_token_refresh": {"enabled": false}}));
+        let val =
+            build_admin_provider_summary_value(&disabled_codex, &[], &[], None, None, vec![], 1000);
+        assert_eq!(val["oauth_token_refresh_effective_enabled"], false);
+        assert_eq!(val["oauth_token_refresh_enabled_source"], "explicit");
+    }
 }

@@ -39,9 +39,39 @@ pub(crate) struct OAuthTokenRefreshWorkerConfig {
     pub(crate) max_per_run: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OAuthTokenRefreshEnabledSource {
+    Explicit,
+    TypeDefault,
+}
+
+impl OAuthTokenRefreshEnabledSource {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Explicit => "explicit",
+            Self::TypeDefault => "type_default",
+        }
+    }
+}
+
+pub(crate) fn provider_oauth_token_refresh_effective_state(
+    provider_type: &str,
+    provider_config: Option<&Value>,
+) -> (bool, OAuthTokenRefreshEnabledSource) {
+    let config = oauth_token_refresh_provider_config_object(provider_config);
+    if let Some(explicit) = config.and_then(|object| provider_config_bool(object, "enabled")) {
+        (explicit, OAuthTokenRefreshEnabledSource::Explicit)
+    } else {
+        let is_codex = provider_type.trim().eq_ignore_ascii_case("codex");
+        (is_codex, OAuthTokenRefreshEnabledSource::TypeDefault)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OAuthTokenRefreshProviderConfig {
     enabled: bool,
+    enabled_source: OAuthTokenRefreshEnabledSource,
     lookahead_seconds: u64,
     scan_interval: Option<Duration>,
     concurrency: usize,
@@ -96,12 +126,12 @@ impl OAuthTokenRefreshWorkerConfig {
 impl OAuthTokenRefreshProviderConfig {
     fn from_provider_config(
         global: &OAuthTokenRefreshWorkerConfig,
+        provider_type: &str,
         provider_config: Option<&Value>,
     ) -> Self {
         let config = oauth_token_refresh_provider_config_object(provider_config);
-        let enabled = config
-            .and_then(|object| provider_config_bool(object, "enabled"))
-            .unwrap_or(true);
+        let (enabled, enabled_source) =
+            provider_oauth_token_refresh_effective_state(provider_type, provider_config);
         let lookahead_seconds = config
             .and_then(|object| provider_config_u64(object, "lookahead_seconds"))
             .unwrap_or(global.lookahead_seconds)
@@ -125,6 +155,7 @@ impl OAuthTokenRefreshProviderConfig {
 
         Self {
             enabled,
+            enabled_source,
             lookahead_seconds,
             scan_interval,
             concurrency,
@@ -636,8 +667,11 @@ async fn collect_refresh_candidates(
         if remaining_this_run == 0 {
             break;
         }
-        let provider_config =
-            OAuthTokenRefreshProviderConfig::from_provider_config(config, provider.config.as_ref());
+        let provider_config = OAuthTokenRefreshProviderConfig::from_provider_config(
+            config,
+            &provider.provider_type,
+            provider.config.as_ref(),
+        );
         if !provider_config.enabled
             || !oauth_token_refresh_provider_scan_due(
                 state,
@@ -1204,9 +1238,11 @@ mod tests {
     use super::{
         agent_identity_needs_task_recovery, auth_config_has_refresh_token,
         is_nonfatal_legacy_catalog_credential_error, now_unix_secs, oauth_refresh_candidate,
-        oauth_refresh_due_for_cutoff, oauth_token_refresh_scan_is_due, OAuthTokenRefreshInvocation,
-        StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
-        TASK_KEY_OAUTH_TOKEN_REFRESH,
+        oauth_refresh_due_for_cutoff, oauth_token_refresh_scan_is_due,
+        provider_oauth_token_refresh_effective_state, OAuthTokenRefreshEnabledSource,
+        OAuthTokenRefreshInvocation, OAuthTokenRefreshProviderConfig,
+        OAuthTokenRefreshWorkerConfig, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
+        StoredProviderCatalogProvider, TASK_KEY_OAUTH_TOKEN_REFRESH,
     };
     use crate::GatewayError;
 
@@ -1692,5 +1728,165 @@ mod tests {
                 "endpoint proxy credential encryption is unavailable".to_string(),
             )
         ));
+    }
+
+    #[test]
+    fn provider_oauth_refresh_defaults_to_enabled_for_unconfigured_codex() {
+        let global = OAuthTokenRefreshWorkerConfig {
+            lookahead_seconds: 120,
+            interval: Duration::from_secs(60),
+            concurrency: 4,
+            max_per_run: 50,
+        };
+        let (enabled, source) = provider_oauth_token_refresh_effective_state("codex", None);
+        assert!(enabled);
+        assert_eq!(source, OAuthTokenRefreshEnabledSource::TypeDefault);
+
+        let provider_config =
+            OAuthTokenRefreshProviderConfig::from_provider_config(&global, "codex", None);
+        assert!(provider_config.enabled);
+        assert_eq!(
+            provider_config.enabled_source,
+            OAuthTokenRefreshEnabledSource::TypeDefault
+        );
+    }
+
+    #[test]
+    fn provider_oauth_refresh_defaults_to_disabled_for_unconfigured_non_codex() {
+        let global = OAuthTokenRefreshWorkerConfig {
+            lookahead_seconds: 120,
+            interval: Duration::from_secs(60),
+            concurrency: 4,
+            max_per_run: 50,
+        };
+        for non_codex_type in ["openai", "antigravity", "vertex_ai", "custom"] {
+            let (enabled, source) =
+                provider_oauth_token_refresh_effective_state(non_codex_type, None);
+            assert!(
+                !enabled,
+                "provider type {non_codex_type} should default to disabled"
+            );
+            assert_eq!(source, OAuthTokenRefreshEnabledSource::TypeDefault);
+
+            let provider_config = OAuthTokenRefreshProviderConfig::from_provider_config(
+                &global,
+                non_codex_type,
+                None,
+            );
+            assert!(!provider_config.enabled);
+            assert_eq!(
+                provider_config.enabled_source,
+                OAuthTokenRefreshEnabledSource::TypeDefault
+            );
+        }
+    }
+
+    #[test]
+    fn provider_oauth_refresh_respects_explicit_true_for_non_codex() {
+        let global = OAuthTokenRefreshWorkerConfig {
+            lookahead_seconds: 120,
+            interval: Duration::from_secs(60),
+            concurrency: 4,
+            max_per_run: 50,
+        };
+        let explicit_true_config = json!({
+            "oauth_token_refresh": {
+                "enabled": true
+            }
+        });
+        let (enabled, source) =
+            provider_oauth_token_refresh_effective_state("openai", Some(&explicit_true_config));
+        assert!(enabled);
+        assert_eq!(source, OAuthTokenRefreshEnabledSource::Explicit);
+
+        let provider_config = OAuthTokenRefreshProviderConfig::from_provider_config(
+            &global,
+            "openai",
+            Some(&explicit_true_config),
+        );
+        assert!(provider_config.enabled);
+        assert_eq!(
+            provider_config.enabled_source,
+            OAuthTokenRefreshEnabledSource::Explicit
+        );
+    }
+
+    #[test]
+    fn provider_oauth_refresh_respects_explicit_false_for_codex() {
+        let global = OAuthTokenRefreshWorkerConfig {
+            lookahead_seconds: 120,
+            interval: Duration::from_secs(60),
+            concurrency: 4,
+            max_per_run: 50,
+        };
+        let explicit_false_config = json!({
+            "oauth_token_refresh": {
+                "enabled": false
+            }
+        });
+        let (enabled, source) =
+            provider_oauth_token_refresh_effective_state("codex", Some(&explicit_false_config));
+        assert!(!enabled);
+        assert_eq!(source, OAuthTokenRefreshEnabledSource::Explicit);
+
+        let provider_config = OAuthTokenRefreshProviderConfig::from_provider_config(
+            &global,
+            "codex",
+            Some(&explicit_false_config),
+        );
+        assert!(!provider_config.enabled);
+        assert_eq!(
+            provider_config.enabled_source,
+            OAuthTokenRefreshEnabledSource::Explicit
+        );
+    }
+
+    #[test]
+    fn provider_oauth_refresh_migration_sql_idempotency_simulation() {
+        let migration_sql = include_str!(
+            "../../../../../crates/aether-data/adapters/postgres/migrations/20260910000000_default_oauth_refresh_to_codex_only.sql"
+        );
+        assert!(migration_sql.contains("UPDATE public.providers"));
+        assert!(migration_sql.contains("lower(btrim(provider_type)) <> 'codex'"));
+        assert!(migration_sql.contains("(config -> 'oauth_token_refresh' -> 'enabled') IS NULL"));
+
+        fn apply_migration_row(provider_type: &str, config: &mut serde_json::Value) -> bool {
+            if provider_type.trim().eq_ignore_ascii_case("codex") {
+                return false;
+            }
+            let Some(config_obj) = config.as_object_mut() else {
+                return false;
+            };
+            let oauth_cfg = config_obj
+                .entry("oauth_token_refresh")
+                .or_insert_with(|| json!({}));
+            let Some(oauth_obj) = oauth_cfg.as_object_mut() else {
+                return false;
+            };
+            if oauth_obj.contains_key("enabled") && !oauth_obj["enabled"].is_null() {
+                return false;
+            }
+            oauth_obj.insert("enabled".to_string(), serde_json::Value::Bool(true));
+            true
+        }
+
+        // 1. Unconfigured non-Codex -> gets enabled: true
+        let mut row_non_codex = json!({"other_setting": 123});
+        assert!(apply_migration_row("openai", &mut row_non_codex));
+        assert_eq!(row_non_codex["oauth_token_refresh"]["enabled"], true);
+
+        // 2. Already explicit false non-Codex -> untouched!
+        let mut row_explicit_false = json!({"oauth_token_refresh": {"enabled": false}});
+        assert!(!apply_migration_row("openai", &mut row_explicit_false));
+        assert_eq!(row_explicit_false["oauth_token_refresh"]["enabled"], false);
+
+        // 3. Codex provider -> untouched!
+        let mut row_codex = json!({});
+        assert!(!apply_migration_row("codex", &mut row_codex));
+        assert!(row_codex.get("oauth_token_refresh").is_none());
+
+        // 4. Idempotency: re-running on updated non-Codex row -> untouched!
+        assert!(!apply_migration_row("openai", &mut row_non_codex));
+        assert_eq!(row_non_codex["oauth_token_refresh"]["enabled"], true);
     }
 }

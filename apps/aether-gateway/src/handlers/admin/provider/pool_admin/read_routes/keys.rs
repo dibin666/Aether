@@ -774,9 +774,16 @@ pub(super) async fn build_admin_pool_list_keys_response(
                 pool_scores_by_key_id.get(&key.id),
                 codex_cycle_usage_by_key.get(&key.id),
                 now_unix_secs,
+                provider.config.as_ref(),
             )
         })
         .collect::<Vec<_>>();
+
+    let (oauth_token_refresh_effective_enabled, oauth_token_refresh_enabled_source) =
+        crate::maintenance::provider_oauth_token_refresh_effective_state(
+            &provider.provider_type,
+            provider.config.as_ref(),
+        );
 
     Ok(Json(json!({
         "total": total,
@@ -784,6 +791,8 @@ pub(super) async fn build_admin_pool_list_keys_response(
         "page_size": page_size,
         "keys": items,
         "quota_summary": quota_summary,
+        "oauth_token_refresh_effective_enabled": oauth_token_refresh_effective_enabled,
+        "oauth_token_refresh_enabled_source": oauth_token_refresh_enabled_source.as_str(),
     }))
     .into_response())
 }
