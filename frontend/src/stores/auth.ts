@@ -61,8 +61,7 @@ export const useAuthStore = defineStore('auth', () => {
     sessionRestoreAttempted = true
     const requestAuthStateVersion = authStateVersion
     const requestToken = token.value
-    let request!: Promise<boolean>
-    request = (async () => {
+    const request = (async () => {
       try {
         const accessToken = await apiClient.restoreSession(notifyOtherTabs)
         if (requestAuthStateVersion !== authStateVersion) {
@@ -83,12 +82,12 @@ export const useAuthStore = defineStore('auth', () => {
           }
         }
         return false
-      } finally {
-        if (sessionRestorePromise === request) {
-          sessionRestorePromise = null
-        }
       }
-    })()
+    })().finally(() => {
+      if (sessionRestorePromise === request) {
+        sessionRestorePromise = null
+      }
+    })
 
     sessionRestorePromise = request
     return request
@@ -221,13 +220,13 @@ export const useAuthStore = defineStore('auth', () => {
         // 保留登录状态；短暂退避后允许再次校验。
         log.info('Keeping session despite error, as per user requirement')
         return null
-      } finally {
-        if (fetchCurrentUserPromise === request) {
-          fetchCurrentUserPromise = null
-          fetchCurrentUserToken = null
-        }
       }
-    })()
+    })().finally(() => {
+      if (fetchCurrentUserPromise === request) {
+        fetchCurrentUserPromise = null
+        fetchCurrentUserToken = null
+      }
+    })
 
     fetchCurrentUserPromise = request
     return request

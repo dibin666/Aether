@@ -3,17 +3,17 @@
     <canvas ref="chartRef" />
     <div
       v-if="crosshairStats"
-      class="absolute top-2 right-2 bg-gray-800/90 text-gray-100 px-3 py-2 rounded-lg text-sm shadow-lg border border-gray-600"
+      class="absolute top-2 right-2 max-w-[calc(100%-1rem)] break-words bg-gray-800/90 text-gray-100 px-3 py-2 rounded-lg text-sm shadow-lg border border-gray-600"
     >
       <div class="font-medium text-yellow-400">
-        Y = {{ crosshairStats.yValue.toFixed(1) }} 分钟
+        {{ t('chart.crosshairValue', { value: crosshairStats.yValue.toFixed(1) }) }}
       </div>
       <!-- 单个 dataset 时显示简单统计 -->
       <div
         v-if="crosshairStats.datasets.length === 1"
         class="mt-1"
       >
-        <span class="text-green-400">{{ crosshairStats.datasets[0].belowCount }}</span> / {{ crosshairStats.datasets[0].totalCount }} 点在横线以下
+        <span class="text-green-400">{{ crosshairStats.datasets[0].belowCount }}</span> / {{ crosshairStats.datasets[0].totalCount }} {{ t('chart.pointsBelow') }}
         <span class="ml-2 text-blue-400">({{ crosshairStats.datasets[0].belowPercent.toFixed(1) }}%)</span>
       </div>
       <!-- 多个 dataset 时按模型分别显示 -->
@@ -36,7 +36,7 @@
         </div>
         <!-- 总计 -->
         <div class="flex items-center gap-2 pt-1 border-t border-gray-600 mt-1">
-          <span class="text-gray-300">总计:</span>
+          <span class="text-gray-300">{{ t('chart.total') }}:</span>
           <span class="text-green-400">{{ crosshairStats.totalBelowCount }}</span>/<span class="text-gray-400">{{ crosshairStats.totalCount }}</span>
           <span class="text-blue-400">({{ crosshairStats.totalBelowPercent.toFixed(1) }}%)</span>
         </div>
@@ -46,6 +46,8 @@
 </template>
 
 <script setup lang="ts">
+import type { TimeScatterChartData, TimeScatterPoint } from './types'
+import { getI18nLocale, useI18n } from '@/i18n'
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import {
   Chart as ChartJS,
@@ -56,12 +58,12 @@ import {
   Title,
   Tooltip,
   Legend,
-  type ChartData,
   type ChartOptions,
   type Plugin,
   type Scale
 } from 'chart.js'
 import 'chartjs-adapter-date-fns'
+import { enUS, zhCN } from 'date-fns/locale'
 
 const props = withDefaults(defineProps<Props>(), {
   height: 300,
@@ -82,7 +84,7 @@ ChartJS.register(
 )
 
 interface Props {
-  data: ChartData<'scatter'>
+  data: TimeScatterChartData
   options?: ChartOptions<'scatter'>
   height?: number
   compressGaps?: boolean
@@ -113,35 +115,15 @@ interface GapInfo {
   duration: number // 间隙时长（毫秒）
 }
 
-interface TimeScatterPoint {
-  x: string
-  y: number
-  _originalX?: string
-  _originalY?: number
-}
-
-type TimeScatterChartData = ChartData<'scatter', TimeScatterPoint[]>
-
-function asTimeScatterData(data: ChartData<'scatter'>): TimeScatterChartData {
-  return data as unknown as TimeScatterChartData
-}
-
-function isTimeScatterPoint(point: unknown): point is TimeScatterPoint {
-  if (typeof point !== 'object' || point === null) {
-    return false
-  }
-  const candidate = point as { x?: unknown; y?: unknown }
-  return typeof candidate.x === 'string' && typeof candidate.y === 'number'
-}
-
 const chartRef = ref<HTMLCanvasElement>()
-let chart: ChartJS<'scatter'> | null = null
+const { locale, t } = useI18n()
+let chart: ChartJS<'scatter', TimeScatterPoint[]> | null = null
 
 const crosshairY = ref<number | null>(null)
 const gapInfoList = ref<GapInfo[]>([])
 
 interface PreparedRenderData {
-  chartData: ChartData<'scatter'>
+  chartData: TimeScatterChartData
   gaps: GapInfo[]
 }
 
@@ -159,20 +141,20 @@ const crosshairStats = computed<CrosshairStats | null>(() => {
     let dsTotal = 0
 
     for (const point of dataset.data) {
-      if (!isTimeScatterPoint(point)) {
-        continue
-      }
-      dsTotal++
-      totalCount++
-      if (point.y <= crosshairY.value) {
-        belowCount++
-        totalBelowCount++
+      const p = point
+      if (typeof p.y === 'number') {
+        dsTotal++
+        totalCount++
+        if (p.y <= crosshairY.value) {
+          belowCount++
+          totalBelowCount++
+        }
       }
     }
 
     if (dsTotal > 0) {
       datasetStats.push({
-        label: dataset.label || 'Unknown',
+        label: dataset.label || t('chart.unknown'),
         color: (dataset.backgroundColor as string) || 'rgba(59, 130, 246, 0.7)',
         belowCount,
         totalCount: dsTotal,
@@ -223,18 +205,17 @@ function toRealValue(displayValue: number): number {
 }
 
 // 压缩时间间隙的数据转换
-function compressTimeGaps(data: ChartData<'scatter'>): {
-  data: ChartData<'scatter'>
+function compressTimeGaps(data: TimeScatterChartData): {
+  data: TimeScatterChartData
   gaps: GapInfo[]
   timeMapping: Map<number, number> // 原始时间 -> 压缩后时间
 } {
-  const sourceData = asTimeScatterData(data)
   const gapThresholdMs = props.gapThreshold * 60 * 1000
   const compressedGapSizeMs = props.compressedGapSize * 60 * 1000
 
   // 收集所有数据点的时间戳并排序
   const allTimestamps: number[] = []
-  for (const dataset of sourceData.datasets) {
+  for (const dataset of data.datasets) {
     for (const point of dataset.data) {
       allTimestamps.push(new Date(point.x).getTime())
     }
@@ -288,10 +269,10 @@ function compressTimeGaps(data: ChartData<'scatter'>): {
 
   // 转换数据
   const compressedData: TimeScatterChartData = {
-    ...sourceData,
-    datasets: sourceData.datasets.map(dataset => ({
+    ...data,
+    datasets: data.datasets.map(dataset => ({
       ...dataset,
-      data: dataset.data.map(point => {
+      data: (dataset.data).map(point => {
         const originalTs = new Date(point.x).getTime()
         const compressedTs = timeMapping.get(originalTs) ?? originalTs
         return {
@@ -303,24 +284,22 @@ function compressTimeGaps(data: ChartData<'scatter'>): {
     }))
   }
 
-  return { data: compressedData as unknown as ChartData<'scatter'>, gaps, timeMapping }
+  return { data: compressedData, gaps, timeMapping }
 }
 
 // 转换数据点的 Y 值
-function transformData(data: ChartData<'scatter'>): ChartData<'scatter'> {
-  const sourceData = asTimeScatterData(data)
-  const transformedData: TimeScatterChartData = {
-    ...sourceData,
-    datasets: sourceData.datasets.map(dataset => ({
+function transformData(data: TimeScatterChartData): TimeScatterChartData {
+  return {
+    ...data,
+    datasets: data.datasets.map(dataset => ({
       ...dataset,
-      data: dataset.data.map(point => ({
+      data: (dataset.data).map(point => ({
         ...point,
         y: toDisplayValue(Math.min(point.y, 120)),
         _originalY: point._originalY ?? point.y  // 保存原始值用于 tooltip
       }))
     }))
   }
-  return transformedData as unknown as ChartData<'scatter'>
 }
 
 function prepareRenderData(): PreparedRenderData {
@@ -349,7 +328,8 @@ function formatDuration(ms: number): string {
   return `${minutes}m`
 }
 
-const defaultOptions: ChartOptions<'scatter'> = {
+const defaultOptions = computed<ChartOptions<'scatter'>>(() => ({
+  locale: locale.value,
   responsive: true,
   maintainAspectRatio: false,
   interaction: {
@@ -359,6 +339,9 @@ const defaultOptions: ChartOptions<'scatter'> = {
   scales: {
     x: {
       type: 'time',
+      adapters: {
+        date: { locale: locale.value === 'zh-CN' ? zhCN : enUS }
+      },
       time: {
         displayFormats: {
           hour: 'HH:mm'
@@ -402,7 +385,7 @@ const defaultOptions: ChartOptions<'scatter'> = {
       },
       title: {
         display: true,
-        text: '间隔 (分钟)',
+        text: t('chart.intervalAxis'),
         color: 'rgb(107, 114, 128)'
       },
       afterBuildTicks(scale: Scale) {
@@ -428,10 +411,10 @@ const defaultOptions: ChartOptions<'scatter'> = {
       callbacks: {
         title: (contexts) => {
           if (contexts.length === 0) return ''
-          const point = contexts[0].raw as unknown as TimeScatterPoint
+          const point = contexts[0].raw as { x: string; _originalX?: string }
           const timeStr = point._originalX || point.x
           const date = new Date(timeStr)
-          return date.toLocaleString('zh-CN', {
+          return date.toLocaleString(getI18nLocale(), {
             month: 'numeric',
             day: 'numeric',
             hour: '2-digit',
@@ -439,9 +422,9 @@ const defaultOptions: ChartOptions<'scatter'> = {
           })
         },
         label: (context) => {
-          const point = context.raw as unknown as TimeScatterPoint
+          const point = context.raw as { x: string; y: number; _originalY?: number }
           const realY = point._originalY ?? toRealValue(point.y)
-          return `间隔: ${realY.toFixed(1)} 分钟`
+          return t('chart.intervalTooltip', { value: realY.toFixed(1) })
         }
       }
     }
@@ -475,7 +458,7 @@ const defaultOptions: ChartOptions<'scatter'> = {
 
     chartInstance.draw()
   }
-}
+}))
 
 // 修改 crosshairPlugin 使用显示值
 const crosshairPluginWithTransform: Plugin<'scatter'> = {
@@ -564,11 +547,11 @@ function createChart() {
   const { chartData, gaps } = prepareRenderData()
   gapInfoList.value = gaps
 
-  chart = new ChartJS(chartRef.value, {
+  chart = new ChartJS<'scatter', TimeScatterPoint[]>(chartRef.value, {
     type: 'scatter',
     data: chartData,
     options: {
-      ...defaultOptions,
+      ...defaultOptions.value,
       ...props.options
     },
     plugins: [crosshairPluginWithTransform, gapMarkerPlugin]
@@ -610,10 +593,10 @@ watch(
   ],
   updateChart
 )
-watch(() => props.options, () => {
+watch([() => props.options, defaultOptions], () => {
   if (chart) {
     chart.options = {
-      ...defaultOptions,
+      ...defaultOptions.value,
       ...props.options
     }
     chart.update('none')

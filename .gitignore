@@ -17,6 +17,10 @@ AGENTS.md
 .playwright-mcp/
 .agents
 
+docs/architecture
+!docs/architecture/architecture-dark.svg
+!docs/architecture/architecture-light.svg
+
 ### Python ###
 *.db
 *.db-*

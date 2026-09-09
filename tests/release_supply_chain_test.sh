@@ -23,10 +23,8 @@ assert_line "${COMPOSE_FILE}" \
     "    image: postgres:15.19@sha256:5f72c7b5bd616308ccfd2e74d6be16fb06364e5eecbb815fe9dc6ab9761d2111"
 assert_line "${COMPOSE_FILE}" \
     "    image: redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf"
-assert_line "${COMPOSE_FILE}" \
-    "    image: mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b"
 
-if grep -Eq '^[[:space:]]+image:[[:space:]]+(postgres|redis|mysql):[^@[:space:]]+[[:space:]]*$' "${COMPOSE_FILE}"; then
+if grep -Eq '^[[:space:]]+image:[[:space:]]+(postgres|redis):[^@[:space:]]+[[:space:]]*$' "${COMPOSE_FILE}"; then
     fail_test "compose contains a mutable third-party image tag"
 fi
 

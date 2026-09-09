@@ -108,6 +108,7 @@ function metricForGroup(
   return group?.metrics.find(metric => metric.key === key) ?? missingMetric(key)
 }
 
+// fork：按动态 cycle groups 逐组渲染，是上游小/大周期两列对比的超集
 const cycleGroupsWithRows = computed(() => props.cycleGroups.map(group => ({
   ...group,
   metrics: CYCLE_METRIC_KEYS.map(key => metricForGroup(group, key)),

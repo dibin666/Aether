@@ -32,7 +32,7 @@ use super::{
 
 const USERS_ME_USAGE_DATA_UNAVAILABLE_DETAIL: &str = "用户用量数据暂不可用";
 // The active-usage endpoint accepts an explicit list of request IDs.  Keep
-// this list bounded before it reaches the repository layer: SQLite/MySQL
+// this list bounded before it reaches the repository layer: the database
 // expand every value into a bind parameter, while PostgreSQL still has to
 // materialize the complete array.  Request IDs are normally UUIDs, but a
 // generous per-item bound preserves compatibility with provider-generated
@@ -2308,12 +2308,16 @@ mod tests {
 
     #[test]
     fn user_usage_active_override_uses_terminal_candidate_latency() {
-        let candidate = sample_candidate(
+        let mut candidate = sample_candidate(
             RequestCandidateStatus::Success,
             Some(200),
             Some(9_210),
             None,
         );
+        candidate.error_message = Some("private upstream diagnostic".to_string());
+        candidate.extra_data = Some(json!({
+            "upstream_response": {"body": {"error": {"message": "private upstream diagnostic"}}}
+        }));
 
         let payload =
             users_me_usage_terminal_candidate_state_override(&[candidate]).expect("override");
@@ -2321,6 +2325,7 @@ mod tests {
         assert_eq!(payload["status"], "completed");
         assert_eq!(payload["response_time_ms"], 9_210);
         assert_eq!(payload["status_code"], 200);
+        assert!(!payload.to_string().contains("private upstream diagnostic"));
         assert_eq!(
             payload["response_time_updated_at"],
             "1970-01-01T00:00:10.210+00:00"

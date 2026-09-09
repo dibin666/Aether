@@ -11,10 +11,6 @@ pub use aether_data_contracts::repository::users::{
     UserExportSortOrder, UserExportSummary, UserReadRepository, LAST_ACTIVE_ADMIN_DELETE_DENIED,
     LAST_ACTIVE_ADMIN_UPDATE_DENIED,
 };
-#[cfg(feature = "mysql")]
-pub use aether_data_mysql::MysqlUserReadRepository;
 #[cfg(feature = "postgres")]
 pub use aether_data_postgres::SqlxUserReadRepository;
-#[cfg(feature = "sqlite")]
-pub use aether_data_sqlite::SqliteUserReadRepository;
 pub use memory::InMemoryUserReadRepository;

@@ -55,38 +55,16 @@ services:
       retries: 5
     restart: unless-stopped
 
-  mysql:
-    # OCI index digest for the official multi-architecture mysql:8.0.46 image.
-    image: mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
-    container_name: aether-mysql
-    profiles:
-      - mysql
-    environment:
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-aether}
-      MYSQL_USER: ${MYSQL_USER:-aether}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
-      TZ: Asia/Shanghai
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-
   app:
     image: ${APP_IMAGE:-ghcr.io/fawney19/aether:latest}
     container_name: aether-app
-    user: "${AETHER_CONTAINER_UID:-65532}:${AETHER_CONTAINER_GID:-65532}"
+    user: "0:0"
     read_only: true
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - FOWNER
     security_opt:
       - no-new-privileges:true
     tmpfs:
@@ -94,6 +72,7 @@ services:
     env_file:
       - .env
     environment:
+      AETHER_DATABASE_DRIVER: postgres
       DATABASE_URL: postgresql://postgres:${DB_PASSWORD:?set DB_PASSWORD in .env}@postgres:5432/aether
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
       TZ: Asia/Shanghai
@@ -124,4 +103,3 @@ services:
 
 volumes:
   postgres_data:
-  mysql_data:

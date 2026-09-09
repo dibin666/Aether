@@ -380,9 +380,6 @@ type = "text"
 length = 128
 nullable = true
 
-  [table.payment_orders.columns.driver.mysql]
-type = "VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin"
-
 [[table.payment_orders.columns]]
 name = "gateway_response"
 type = "json"

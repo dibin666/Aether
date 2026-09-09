@@ -224,6 +224,21 @@ pub struct StoredRequestCandidate {
 }
 
 impl StoredRequestCandidate {
+    pub fn sanitize_for_persistence(&mut self) {
+        self.username = None;
+        self.api_key_name = None;
+        self.skip_reason = sanitize_request_candidate_skip_reason(self.skip_reason.take());
+        self.error_type = sanitize_request_candidate_error_type(self.error_type.take());
+        self.error_message = self
+            .error_message
+            .take()
+            .map(limit_candidate_diagnostic_text);
+        self.extra_data =
+            sanitize_request_candidate_extra_data_for_persistence(self.extra_data.take());
+        self.required_capabilities =
+            sanitize_request_candidate_required_capabilities(self.required_capabilities.take());
+    }
+
     pub fn sanitize_sensitive_diagnostics(&mut self) {
         self.username = None;
         self.api_key_name = None;
@@ -349,7 +364,7 @@ impl StoredRequestCandidate {
             started_at_unix_ms,
             finished_at_unix_ms,
         };
-        candidate.sanitize_sensitive_diagnostics();
+        candidate.sanitize_for_persistence();
         Ok(candidate)
     }
 }
@@ -386,7 +401,7 @@ impl RequestCandidateTrace {
         attempted_only: bool,
     ) -> Option<Self> {
         for candidate in &mut all_candidates {
-            candidate.sanitize_sensitive_diagnostics();
+            candidate.sanitize_for_persistence();
         }
         if all_candidates.is_empty() {
             return None;
@@ -510,8 +525,17 @@ pub struct DecisionTraceCandidate {
 }
 
 impl DecisionTraceCandidate {
+    pub fn sanitize_for_admin(&mut self) {
+        self.candidate.sanitize_for_persistence();
+        self.sanitize_catalog_metadata();
+    }
+
     pub fn sanitize_sensitive_diagnostics(&mut self) {
         self.candidate.sanitize_sensitive_diagnostics();
+        self.sanitize_catalog_metadata();
+    }
+
+    fn sanitize_catalog_metadata(&mut self) {
         self.provider_website = self
             .provider_website
             .take()
@@ -574,7 +598,9 @@ pub fn build_decision_trace(
             })
             .collect(),
     };
-    trace.sanitize_sensitive_diagnostics();
+    for item in &mut trace.candidates {
+        item.sanitize_for_admin();
+    }
     trace
 }
 
@@ -727,8 +753,12 @@ impl UpsertRequestCandidateRecord {
         self.api_key_name = None;
         self.skip_reason = sanitize_request_candidate_skip_reason(self.skip_reason.take());
         self.error_type = sanitize_request_candidate_error_type(self.error_type.take());
-        self.error_message = None;
-        self.extra_data = sanitize_request_candidate_extra_data(self.extra_data.take());
+        self.error_message = self
+            .error_message
+            .take()
+            .map(limit_candidate_diagnostic_text);
+        self.extra_data =
+            sanitize_request_candidate_extra_data_for_persistence(self.extra_data.take());
         self.required_capabilities =
             sanitize_request_candidate_required_capabilities(self.required_capabilities.take());
     }
@@ -786,6 +816,89 @@ pub fn sanitize_request_candidate_error_type(value: Option<String>) -> Option<St
         })
         .unwrap_or_else(|| UNCLASSIFIED_CANDIDATE_ERROR_TYPE.to_string());
     Some(safe)
+}
+
+const MAX_CANDIDATE_DIAGNOSTIC_BYTES: usize = 65_536;
+
+fn limit_candidate_diagnostic_text(mut text: String) -> String {
+    const SUFFIX: &str = "...[truncated]";
+    if text.len() > MAX_CANDIDATE_DIAGNOSTIC_BYTES {
+        let mut boundary = MAX_CANDIDATE_DIAGNOSTIC_BYTES - SUFFIX.len();
+        while !text.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        text.truncate(boundary);
+        text.push_str(SUFFIX);
+    }
+    text
+}
+
+fn limit_candidate_diagnostic_value(value: &serde_json::Value) -> serde_json::Value {
+    if let Some(text) = value.as_str() {
+        return serde_json::Value::String(limit_candidate_diagnostic_text(text.to_string()));
+    }
+    let serialized = value.to_string();
+    if serialized.len() > MAX_CANDIDATE_DIAGNOSTIC_BYTES {
+        serde_json::Value::String(limit_candidate_diagnostic_text(serialized))
+    } else {
+        value.clone()
+    }
+}
+
+pub fn sanitize_request_candidate_extra_data_for_persistence(
+    extra_data: Option<serde_json::Value>,
+) -> Option<serde_json::Value> {
+    let object = extra_data.as_ref()?.as_object()?;
+    let mut sanitized = sanitize_request_candidate_extra_data(extra_data.clone())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    for (key, fields) in [
+        ("upstream_response", &["headers", "body"][..]),
+        ("error_flow", &["message"][..]),
+        (
+            "failure_diagnostic",
+            &[
+                "path",
+                "field_path",
+                "message",
+                "type",
+                "reason",
+                "details",
+                "stage",
+                "source_format",
+                "target_format",
+                "safe_to_show",
+            ][..],
+        ),
+        (
+            "request_conversion_error",
+            &["path", "field_path", "message", "type", "reason"][..],
+        ),
+        (
+            "request_body_build_error",
+            &["path", "field_path", "message", "type", "reason"][..],
+        ),
+    ] {
+        let Some(diagnostic) = object.get(key).and_then(serde_json::Value::as_object) else {
+            continue;
+        };
+        let mut summary = sanitized
+            .remove(key)
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        for field in fields {
+            if let Some(value) = diagnostic.get(*field).filter(|value| !value.is_null()) {
+                summary.insert(
+                    (*field).to_string(),
+                    limit_candidate_diagnostic_value(value),
+                );
+            }
+        }
+        if !summary.is_empty() {
+            sanitized.insert(key.to_string(), serde_json::Value::Object(summary));
+        }
+    }
+    (!sanitized.is_empty()).then_some(serde_json::Value::Object(sanitized))
 }
 
 pub fn sanitize_request_candidate_extra_data(
@@ -1949,7 +2062,7 @@ mod tests {
     }
 
     #[test]
-    fn candidate_persistence_removes_credentials_and_raw_payloads() {
+    fn candidate_persistence_keeps_admin_errors_but_removes_request_credentials() {
         let mut record = UpsertRequestCandidateRecord {
             id: "candidate-1".to_string(),
             request_id: "request-1".to_string(),
@@ -2079,7 +2192,7 @@ mod tests {
         );
         assert!(record.username.is_none());
         assert!(record.api_key_name.is_none());
-        assert!(record.error_message.is_none());
+        assert_eq!(record.error_message.as_deref(), Some("unauthorized"));
         let extra = record
             .extra_data
             .as_ref()
@@ -2112,7 +2225,10 @@ mod tests {
         assert_eq!(extra["error_flow"]["stage"], "upstream");
         assert_eq!(extra["error_flow"]["retryable"], true);
         assert_eq!(extra["error_flow"]["status_code"], 401);
-        assert!(extra["error_flow"].get("message").is_none());
+        assert_eq!(
+            extra["error_flow"]["message"],
+            "token vertex-secret rejected"
+        );
         assert_eq!(extra["gateway_execution_runtime"], true);
         assert_eq!(extra["client_api_format"], "openai:responses");
         assert_eq!(extra["provider_api_format"], "claude:messages");
@@ -2127,8 +2243,14 @@ mod tests {
         assert_eq!(extra["upstream_response"]["source"], "upstream_response");
         assert_eq!(extra["upstream_response"]["status_code"], 401);
         assert_eq!(extra["upstream_response"]["body_state"], "inline");
-        assert!(extra["upstream_response"].get("headers").is_none());
-        assert!(extra["upstream_response"].get("body").is_none());
+        assert_eq!(
+            extra["upstream_response"]["headers"]["set-cookie"],
+            "session=secret"
+        );
+        assert_eq!(
+            extra["upstream_response"]["body"]["error"]["message"],
+            "token vertex-secret rejected"
+        );
         assert_eq!(
             extra["image_progress"]["last_client_visible_event"],
             "image_generation.partial_image"
@@ -2178,7 +2300,6 @@ mod tests {
 
         let serialized = serde_json::to_string(&record).expect("candidate should serialize");
         for sensitive in [
-            "vertex-secret",
             "client-secret",
             "credential-label-secret",
             "header-rule-secret",
@@ -2199,6 +2320,11 @@ mod tests {
                 "candidate must not retain {sensitive}"
             );
         }
+        let public_extra = super::sanitize_request_candidate_extra_data(record.extra_data);
+        let serialized =
+            serde_json::to_string(&public_extra).expect("public data should serialize");
+        assert!(!serialized.contains("vertex-secret"));
+        assert!(!serialized.contains("session=secret"));
     }
 
     #[test]
@@ -2278,8 +2404,8 @@ mod tests {
     }
 
     #[test]
-    fn candidate_database_read_sanitizes_legacy_diagnostic_text() {
-        let candidate = StoredRequestCandidate::new(
+    fn candidate_database_read_preserves_errors_until_public_projection() {
+        let mut candidate = StoredRequestCandidate::new(
             "candidate-1".to_string(),
             "request-1".to_string(),
             None,
@@ -2315,9 +2441,48 @@ mod tests {
             candidate.error_type.as_deref(),
             Some(UNCLASSIFIED_CANDIDATE_ERROR_TYPE)
         );
-        assert!(candidate.error_message.is_none());
+        assert_eq!(
+            candidate.error_message.as_deref(),
+            Some("legacy secret message")
+        );
         assert!(candidate.username.is_none());
         assert!(candidate.api_key_name.is_none());
+        candidate.sanitize_sensitive_diagnostics();
+        assert!(candidate.error_message.is_none());
+    }
+
+    #[test]
+    fn admin_diagnostics_are_bounded_and_public_projection_removes_them() {
+        let raw = json!({
+            "upstream_response": {"status_code": 400, "body": "错误内容".repeat(20_000)},
+            "error_flow": {"status_code": 400, "message": "private upstream failure"},
+            "failure_diagnostic": {"path": "$.input", "message": "private conversion failure", "safe_to_show": false, "stage": "request", "details": {"code": "invalid_enum_value", "actual": "private-value"}},
+            "request_body": {"input": "private prompt"}
+        });
+        let admin = super::sanitize_request_candidate_extra_data_for_persistence(Some(raw))
+            .expect("admin diagnostics should remain");
+        let body = admin["upstream_response"]["body"]
+            .as_str()
+            .expect("body should be text");
+        assert!(body.len() <= 65_536);
+        assert!(body.ends_with("...[truncated]"));
+        assert!(admin.get("request_body").is_none());
+        assert_eq!(admin["failure_diagnostic"]["safe_to_show"], false);
+        assert_eq!(admin["failure_diagnostic"]["stage"], "request");
+        assert_eq!(
+            admin["failure_diagnostic"]["details"]["code"],
+            "invalid_enum_value"
+        );
+        assert_eq!(
+            super::sanitize_request_candidate_extra_data_for_persistence(Some(admin.clone())),
+            Some(admin.clone()),
+        );
+        let public = super::sanitize_request_candidate_extra_data(Some(admin))
+            .expect("public status should remain");
+        assert_eq!(public["upstream_response"]["status_code"], 400);
+        assert!(public["upstream_response"].get("body").is_none());
+        assert!(public["error_flow"].get("message").is_none());
+        assert!(public.get("failure_diagnostic").is_none());
     }
 
     #[test]

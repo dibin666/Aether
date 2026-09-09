@@ -1499,7 +1499,6 @@ fn get_cached_auth_context_with_age(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -1595,40 +1594,24 @@ mod tests {
         .expect("endpoint should build")
     }
 
-    struct SqliteAuthConfigNodes {
+    struct PostgresAuthConfigNodes {
         first: AppState,
         second: AppState,
-        _database: TemporarySqliteDatabase,
+        _database: aether_testkit::ManagedPostgresServer,
     }
 
-    struct TemporarySqliteDatabase(PathBuf);
-
-    impl Drop for TemporarySqliteDatabase {
-        fn drop(&mut self) {
-            for suffix in ["", "-shm", "-wal"] {
-                let mut path = self.0.as_os_str().to_os_string();
-                path.push(suffix);
-                let _ = std::fs::remove_file(PathBuf::from(path));
-            }
-        }
-    }
-
-    async fn sqlite_auth_config_nodes(
+    async fn postgres_auth_config_nodes(
         auth_repository: Arc<InMemoryAuthApiKeySnapshotRepository>,
-    ) -> SqliteAuthConfigNodes {
-        let database_path = std::env::temp_dir().join(format!(
-            "aether-auth-config-{}.sqlite",
-            uuid::Uuid::new_v4()
-        ));
+    ) -> PostgresAuthConfigNodes {
+        let server = aether_testkit::ManagedPostgresServer::start()
+            .await
+            .expect("temporary PostgreSQL should start");
         let mut pool = SqlPoolConfig::default();
         pool.min_connections = 0;
         pool.max_connections = 4;
-        let database = SqlDatabaseConfig::new(
-            DatabaseDriver::Sqlite,
-            format!("sqlite://{}", database_path.display()),
-            pool,
-        )
-        .expect("sqlite config should build");
+        let database =
+            SqlDatabaseConfig::new(DatabaseDriver::Postgres, server.database_url(), pool)
+                .expect("postgres config should build");
         let config = GatewayDataConfig::from_database_config(database);
         let first_data = GatewayDataState::from_config(config.clone())
             .expect("first data state should build")
@@ -1637,27 +1620,27 @@ mod tests {
         assert!(first_data
             .run_database_migrations()
             .await
-            .expect("sqlite migrations should run"));
+            .expect("postgres migrations should run"));
         let second_data = GatewayDataState::from_config(config)
             .expect("second data state should build")
             .with_auth_api_key_reader(auth_repository)
             .without_wallet_reader_for_tests();
 
-        SqliteAuthConfigNodes {
+        PostgresAuthConfigNodes {
             first: AppState::new()
                 .expect("first app state should build")
                 .with_data_state_for_tests(first_data),
             second: AppState::new()
                 .expect("second app state should build")
                 .with_data_state_for_tests(second_data),
-            _database: TemporarySqliteDatabase(database_path),
+            _database: server,
         }
     }
 
     #[tokio::test]
     async fn strong_system_config_read_bypasses_app_and_data_caches() {
         let nodes =
-            sqlite_auth_config_nodes(Arc::new(InMemoryAuthApiKeySnapshotRepository::seed([])))
+            postgres_auth_config_nodes(Arc::new(InMemoryAuthApiKeySnapshotRepository::seed([])))
                 .await;
         let key = format!("test.auth.strong-read.{}", uuid::Uuid::new_v4());
         let old_value = serde_json::json!({"version": "old"});
@@ -2627,7 +2610,7 @@ mod tests {
         let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
             None, snapshot,
         )]));
-        let nodes = sqlite_auth_config_nodes(auth_repository.clone()).await;
+        let nodes = postgres_auth_config_nodes(auth_repository.clone()).await;
         nodes
             .first
             .auth_context_cache

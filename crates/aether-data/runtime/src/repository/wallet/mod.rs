@@ -42,10 +42,6 @@ pub use aether_data_contracts::repository::wallet::{
     WalletReadRepository, WalletReadSeed, WalletReadSnapshot, WalletRepository,
     WalletWriteRepository, WALLET_RECHARGE_CHECKOUT_CLAIM_LEASE_SECS,
 };
-#[cfg(feature = "mysql")]
-pub use aether_data_mysql::MysqlWalletReadRepository;
 #[cfg(feature = "postgres")]
 pub use aether_data_postgres::SqlxWalletRepository;
-#[cfg(feature = "sqlite")]
-pub use aether_data_sqlite::SqliteWalletReadRepository;
 pub use memory::InMemoryWalletRepository;

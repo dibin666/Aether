@@ -95,7 +95,7 @@
             :title="action.title"
             @pointerenter="action.key === 'viewProvider' && emit('prefetchProvider')"
             @focus="action.key === 'viewProvider' && emit('prefetchProvider')"
-            @click="emit(action.event)"
+            @click="triggerAction(action.event)"
           >
             <component
               :is="action.icon"
@@ -278,7 +278,7 @@
           :title="action.title"
           @pointerenter="action.key === 'viewProvider' && emit('prefetchProvider')"
           @focus="action.key === 'viewProvider' && emit('prefetchProvider')"
-          @click="emit(action.event)"
+          @click="triggerAction(action.event)"
         >
           <component
             :is="action.icon"
@@ -470,6 +470,17 @@ const emit = defineEmits<{
   selectProviderProxy: [nodeId: string]
   clearProviderProxy: []
 }>()
+
+function triggerAction(event: HeaderActionEvent) {
+  const handlers = {
+    import: () => emit('import'),
+    scheduling: () => emit('scheduling'),
+    viewProvider: () => emit('viewProvider'),
+    demandMetrics: () => emit('demandMetrics'),
+    advanced: () => emit('advanced'),
+  }
+  handlers[event]()
+}
 
 const { legacyT } = useI18n()
 

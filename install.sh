@@ -40,17 +40,12 @@ SERVICE_GROUP="${SERVICE_GROUP:-aether}"
 SERVICE_NAME="aether-gateway"
 COMPOSE_RELEASE_BASE_DIR="/opt/aether"
 COMPOSE_RELEASE_LOG_DIR="${COMPOSE_RELEASE_BASE_DIR}/logs"
-COMPOSE_RELEASE_SQLITE_DATABASE_URL="sqlite://${COMPOSE_RELEASE_BASE_DIR}/data/aether.db"
 COMPOSE_LOG_DESTINATION_DEFAULT="stdout"
 COMPOSE_LOG_FORMAT_DEFAULT="pretty"
 COMPOSE_LOG_ROTATION_DEFAULT="daily"
 COMPOSE_LOG_RETENTION_DAYS_DEFAULT="7"
 COMPOSE_LOG_MAX_FILES_DEFAULT="30"
 COMPOSE_APP_PORT_DEFAULT="8084"
-COMPOSE_CONTAINER_UID_DEFAULT="65532"
-COMPOSE_CONTAINER_GID_DEFAULT="65532"
-COMPOSE_CONTAINER_UID=""
-COMPOSE_CONTAINER_GID=""
 COMPOSE_CLI=()
 LAUNCHD_LABEL="${AETHER_LAUNCHD_LABEL:-com.aether.gateway}"
 LAUNCHD_LOG_DIR="${AETHER_LAUNCHD_LOG_DIR:-/var/log/aether}"
@@ -568,7 +563,7 @@ select_mode() {
             MODE="compose-single-node"
             return
             ;;
-        single-node|service|systemd|launchd|sqlite)
+        single-node|service|systemd|launchd)
             MODE="single-node"
             return
             ;;
@@ -588,10 +583,9 @@ select_mode() {
             cat >/dev/tty <<EOF
 
 请选择 Aether 部署模式:
-  1) Docker Compose 多节点部署（Postgres + Redis）
-  2) Docker Compose 单节点部署（SQLite）
-  3) 系统服务多节点部署（共享数据库 + Redis）
-  4) 系统服务单节点部署（SQLite）
+  1) Docker Compose 标准部署（Postgres + Redis）
+  2) Docker Compose 单节点部署（PostgreSQL）
+  3) 系统服务单节点部署（需提供 PostgreSQL DATABASE_URL）
 
 请输入选项 [1]:
 EOF
@@ -599,10 +593,9 @@ EOF
             cat >/dev/tty <<EOF
 
 Choose Aether deployment mode:
-  1) Docker Compose multi-node deployment (Postgres + Redis)
-  2) Docker Compose single-node deployment (SQLite)
-  3) System service multi-node deployment (shared database + Redis)
-  4) System service single-node deployment (SQLite)
+  1) Docker Compose standard deployment (Postgres + Redis)
+  2) Docker Compose single-node deployment (PostgreSQL)
+  3) System service single-node deployment (PostgreSQL)
 
 Enter choice [1]:
 EOF
@@ -1535,8 +1528,6 @@ JWT_SECRET_KEY=$(urlsafe_rand 32)
 ENCRYPTION_KEY=$(urlsafe_rand 32)
 DB_PASSWORD=$(urlsafe_rand 32)
 REDIS_PASSWORD=$(urlsafe_rand 32)
-MYSQL_PASSWORD=$(urlsafe_rand 32)
-MYSQL_ROOT_PASSWORD=$(urlsafe_rand 32)
 KEYS
 EOF
     atomic_install_managed_file "${rendered}" "${output}" 0755
@@ -1646,6 +1637,13 @@ derive_local_bundle_version() {
 
 generate_first_install_env() {
     local output="$1"
+    local database_url="${AETHER_DATABASE_URL:-${DATABASE_URL:-${AETHER_GATEWAY_DATA_POSTGRES_URL:-}}}"
+    [[ -n "${database_url}" ]] || die "PostgreSQL DATABASE_URL is required for system-service installs; set DATABASE_URL or use --mode compose"
+    case "${database_url}" in
+        postgres://*|postgresql://*) ;;
+        *) die "only PostgreSQL database URLs are supported" ;;
+    esac
+    validate_dotenv_scalar "DATABASE_URL" "${database_url}"
     local jwt_key encryption_key
     prompt_admin_password
     jwt_key="$(urlsafe_rand 32)"
@@ -1674,9 +1672,9 @@ AETHER_GATEWAY_DATABASE_MODE=auto
 AETHER_RUNTIME_BACKEND=memory
 API_KEY_PREFIX=sk
 
-AETHER_DATABASE_DRIVER=sqlite
-AETHER_DATABASE_URL=sqlite://${INSTALL_ROOT}/data/aether.db
-DATABASE_URL=sqlite://${INSTALL_ROOT}/data/aether.db
+AETHER_DATABASE_DRIVER=postgres
+AETHER_DATABASE_URL=${database_url}
+DATABASE_URL=${database_url}
 
 JWT_SECRET_KEY=${jwt_key}
 ENCRYPTION_KEY=${encryption_key}
@@ -1764,98 +1762,6 @@ compose_app_port() {
     printf '%s\n' "${APP_PORT:-${COMPOSE_APP_PORT_DEFAULT}}"
 }
 
-validate_compose_container_id() {
-    local label="$1"
-    local value="$2"
-
-    [[ "${value}" =~ ^[1-9][0-9]*$ ]] \
-        || die "${label} must be a positive numeric id, not root: ${value}"
-    [[ ${#value} -le 10 ]] \
-        || die "${label} is outside the supported numeric id range: ${value}"
-    (( 10#${value} <= 2147483647 )) \
-        || die "${label} is outside the supported numeric id range: ${value}"
-}
-
-resolve_new_compose_container_identity() {
-    local uid="${AETHER_CONTAINER_UID:-}"
-    local gid="${AETHER_CONTAINER_GID:-}"
-
-    if [[ -z "${uid}" || -z "${gid}" ]]; then
-        if [[ "${EUID}" -eq 0 && -n "${SUDO_UID:-}" && -n "${SUDO_GID:-}" ]]; then
-            uid="${uid:-${SUDO_UID}}"
-            gid="${gid:-${SUDO_GID}}"
-        elif [[ "${EUID}" -ne 0 ]]; then
-            uid="${uid:-$(id -u)}"
-            gid="${gid:-$(id -g)}"
-        else
-            uid="${uid:-${COMPOSE_CONTAINER_UID_DEFAULT}}"
-            gid="${gid:-${COMPOSE_CONTAINER_GID_DEFAULT}}"
-        fi
-    fi
-
-    validate_compose_container_id "AETHER_CONTAINER_UID" "${uid}"
-    validate_compose_container_id "AETHER_CONTAINER_GID" "${gid}"
-    COMPOSE_CONTAINER_UID="$((10#${uid}))"
-    COMPOSE_CONTAINER_GID="$((10#${gid}))"
-}
-
-resolve_compose_env_container_identity() {
-    local file="$1"
-    local uid gid
-
-    uid="$(env_file_value "${file}" "AETHER_CONTAINER_UID")"
-    gid="$(env_file_value "${file}" "AETHER_CONTAINER_GID")"
-    uid="$(strip_optional_quotes "${uid:-${COMPOSE_CONTAINER_UID_DEFAULT}}")"
-    gid="$(strip_optional_quotes "${gid:-${COMPOSE_CONTAINER_GID_DEFAULT}}")"
-    validate_compose_container_id "AETHER_CONTAINER_UID" "${uid}"
-    validate_compose_container_id "AETHER_CONTAINER_GID" "${gid}"
-    COMPOSE_CONTAINER_UID="$((10#${uid}))"
-    COMPOSE_CONTAINER_GID="$((10#${gid}))"
-}
-
-compose_app_container_is_running() {
-    command -v docker >/dev/null 2>&1 || return 1
-    [[ "$(docker inspect --format '{{.State.Running}}' aether-app 2>/dev/null || true)" == "true" ]]
-}
-
-prepare_compose_single_node_data_directory() {
-    local data_dir="${COMPOSE_DIR}/data"
-    local current_uid
-    local unsafe_path
-
-    resolve_compose_env_container_identity "${COMPOSE_DIR}/.env"
-    ensure_directory "${data_dir}" 0700
-    if compose_app_container_is_running; then
-        die "stop the existing aether-app container before migrating the Docker Compose SQLite data directory"
-    fi
-
-    unsafe_path="$(find "${data_dir}" -type l -print -quit)"
-    [[ -z "${unsafe_path}" ]] \
-        || die "Docker Compose data directory may not contain symbolic links: ${unsafe_path}"
-    unsafe_path="$(find "${data_dir}" ! -type d ! -type f -print -quit)"
-    [[ -z "${unsafe_path}" ]] \
-        || die "Docker Compose data directory may contain only directories and regular files: ${unsafe_path}"
-    unsafe_path="$(find "${data_dir}" -type f -links +1 -print -quit)"
-    [[ -z "${unsafe_path}" ]] \
-        || die "Docker Compose data directory may not contain multiply-linked files: ${unsafe_path}"
-
-    current_uid="$(id -u)"
-    if [[ "${EUID}" -eq 0 ]]; then
-        chown -R -P "${COMPOSE_CONTAINER_UID}:${COMPOSE_CONTAINER_GID}" "${data_dir}" \
-            || die "could not assign ${data_dir} to the non-root container identity"
-    elif [[ "${current_uid}" != "${COMPOSE_CONTAINER_UID}" ]]; then
-        die "${data_dir} must be owned by container uid ${COMPOSE_CONTAINER_UID}; rerun this installer as root to migrate existing SQLite data"
-    fi
-
-    find "${data_dir}" -type d -exec chmod 0700 {} + \
-        || die "could not secure Docker Compose data directories: ${data_dir}"
-    find "${data_dir}" -type f -exec chmod 0600 {} + \
-        || die "could not secure Docker Compose data files: ${data_dir}"
-    [[ "$(stat_file_uid "${data_dir}")" == "${COMPOSE_CONTAINER_UID}" ]] \
-        || die "Docker Compose data directory owner does not match AETHER_CONTAINER_UID=${COMPOSE_CONTAINER_UID}: ${data_dir}"
-    info "prepared ${data_dir} for container uid ${COMPOSE_CONTAINER_UID} gid ${COMPOSE_CONTAINER_GID}"
-}
-
 append_compose_log_env_defaults() {
     local output="$1"
     replace_or_append_env "${output}" "AETHER_LOG_DESTINATION" "${COMPOSE_LOG_DESTINATION_DEFAULT}"
@@ -1866,38 +1772,20 @@ append_compose_log_env_defaults() {
     replace_or_append_env "${output}" "AETHER_LOG_MAX_FILES" "${COMPOSE_LOG_MAX_FILES_DEFAULT}"
 }
 
-compose_log_env_block() {
-    cat <<EOF
-AETHER_LOG_DESTINATION=${COMPOSE_LOG_DESTINATION_DEFAULT}
-AETHER_LOG_FORMAT=${COMPOSE_LOG_FORMAT_DEFAULT}
-AETHER_LOG_DIR=${COMPOSE_RELEASE_LOG_DIR}
-AETHER_LOG_ROTATION=${COMPOSE_LOG_ROTATION_DEFAULT}
-AETHER_LOG_RETENTION_DAYS=${COMPOSE_LOG_RETENTION_DAYS_DEFAULT}
-AETHER_LOG_MAX_FILES=${COMPOSE_LOG_MAX_FILES_DEFAULT}
-EOF
-}
-
 generate_compose_env() {
     local output="$1"
-    local jwt_key encryption_key db_password redis_password mysql_password mysql_root_password
+    local jwt_key encryption_key db_password redis_password
     prompt_admin_password
     jwt_key="$(urlsafe_rand 32)"
     encryption_key="$(urlsafe_rand 32)"
     db_password="$(urlsafe_rand 32)"
     redis_password="$(urlsafe_rand 32)"
-    mysql_password="$(urlsafe_rand 32)"
-    mysql_root_password="$(urlsafe_rand 32)"
-    resolve_new_compose_container_identity
 
     cp "${COMPOSE_DIR}/.env.example" "${output}"
     replace_or_append_env "${output}" "APP_IMAGE" "$(compose_image)"
     replace_or_append_env "${output}" "APP_PORT" "$(compose_app_port)"
-    replace_or_append_env "${output}" "AETHER_CONTAINER_UID" "${COMPOSE_CONTAINER_UID}"
-    replace_or_append_env "${output}" "AETHER_CONTAINER_GID" "${COMPOSE_CONTAINER_GID}"
     replace_or_append_env "${output}" "DB_PASSWORD" "${db_password}"
     replace_or_append_env "${output}" "REDIS_PASSWORD" "${redis_password}"
-    replace_or_append_env "${output}" "MYSQL_PASSWORD" "${mysql_password}"
-    replace_or_append_env "${output}" "MYSQL_ROOT_PASSWORD" "${mysql_root_password}"
     replace_or_append_env "${output}" "JWT_SECRET_KEY" "${JWT_SECRET_KEY:-${jwt_key}}"
     replace_or_append_env "${output}" "ENCRYPTION_KEY" "${ENCRYPTION_KEY:-${encryption_key}}"
     replace_or_append_env "${output}" "ADMIN_EMAIL" "${ADMIN_EMAIL:-admin@example.local}"
@@ -1911,50 +1799,9 @@ generate_compose_env() {
 
 generate_compose_single_node_env() {
     local output="$1"
-    local jwt_key encryption_key
-    prompt_admin_password
-    jwt_key="$(urlsafe_rand 32)"
-    encryption_key="$(urlsafe_rand 32)"
-    resolve_new_compose_container_identity
-    validate_dotenv_scalar "APP_IMAGE" "$(compose_image)"
-    validate_dotenv_scalar "APP_PORT" "$(compose_app_port)"
-    validate_dotenv_scalar "JWT_SECRET_KEY" "${JWT_SECRET_KEY:-${jwt_key}}"
-    validate_dotenv_scalar "ENCRYPTION_KEY" "${ENCRYPTION_KEY:-${encryption_key}}"
-    validate_dotenv_scalar "ADMIN_EMAIL" "${ADMIN_EMAIL:-admin@example.local}"
-    validate_dotenv_scalar "ADMIN_USERNAME" "${ADMIN_USERNAME:-admin}"
-    validate_dotenv_scalar "ADMIN_PASSWORD" "${ADMIN_PASSWORD}"
-
-    cat > "${output}" <<EOF
-ENVIRONMENT=production
-TZ=Asia/Shanghai
-RUST_LOG=aether_gateway=info
-$(compose_log_env_block)
-
-APP_IMAGE=$(compose_image)
-APP_PORT=$(compose_app_port)
-AETHER_CONTAINER_UID=${COMPOSE_CONTAINER_UID}
-AETHER_CONTAINER_GID=${COMPOSE_CONTAINER_GID}
-AETHER_UPDATE_STRATEGY=docker
-AETHER_DOCKER_UPDATE_COMMAND=./update.sh
-AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY=single-node
-AETHER_GATEWAY_NODE_ROLE=all
-AETHER_GATEWAY_STATIC_DIR=/srv/frontend
-AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE=rust-authoritative
-AETHER_GATEWAY_DATABASE_MODE=auto
-AETHER_RUNTIME_BACKEND=memory
-API_KEY_PREFIX=sk
-
-AETHER_DATABASE_DRIVER=sqlite
-AETHER_DATABASE_URL=${COMPOSE_RELEASE_SQLITE_DATABASE_URL}
-DATABASE_URL=${COMPOSE_RELEASE_SQLITE_DATABASE_URL}
-
-JWT_SECRET_KEY=${JWT_SECRET_KEY:-${jwt_key}}
-ENCRYPTION_KEY=${ENCRYPTION_KEY:-${encryption_key}}
-
-ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.local}
-ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-ADMIN_PASSWORD=${ADMIN_PASSWORD}
-EOF
+    generate_compose_env "${output}"
+    replace_or_append_env "${output}" "AETHER_GATEWAY_DEPLOYMENT_TOPOLOGY" "single-node"
+    replace_or_append_env "${output}" "AETHER_DATABASE_DRIVER" "postgres"
 }
 
 install_config_dir() {
@@ -2262,15 +2109,18 @@ validate_env_file() {
         die "REDIS_URL still uses the example placeholder"
     fi
 
-    local database_is_sqlite="false"
-    if [[ "${database_driver}" == "sqlite" || "${database_url}" == sqlite:* ]]; then
-        database_is_sqlite="true"
-    fi
+    case "${database_driver}" in
+        ""|postgres|postgresql) ;;
+        *) die "only PostgreSQL database drivers are supported" ;;
+    esac
+    case "${database_url}" in
+        postgres://*|postgresql://*) ;;
+        *) die "a PostgreSQL DATABASE_URL is required" ;;
+    esac
 
     if [[ "${topology}" == "multi-node" ]]; then
         [[ "${node_role}" != "all" ]] || die "multi-node deployment requires AETHER_GATEWAY_NODE_ROLE=frontdoor or background"
         [[ -n "${database_url}" ]] || die "multi-node deployment requires AETHER_DATABASE_URL, DATABASE_URL, or AETHER_GATEWAY_DATA_POSTGRES_URL"
-        [[ "${database_is_sqlite}" != "true" ]] || die "multi-node deployment must use shared Postgres/MySQL, not SQLite"
         [[ -n "${redis_url}" ]] || die "multi-node deployment requires REDIS_URL or AETHER_GATEWAY_DATA_REDIS_URL"
         [[ "${runtime_backend}" != "memory" ]] || die "multi-node deployment must not use AETHER_RUNTIME_BACKEND=memory"
         [[ -z "${video_task_store_path}" ]] || die "multi-node deployment must not set AETHER_GATEWAY_VIDEO_TASK_STORE_PATH"
@@ -2280,11 +2130,6 @@ validate_env_file() {
         fi
         if [[ "${runtime_backend}" == "redis" && -z "${redis_url}" ]]; then
             die "AETHER_RUNTIME_BACKEND=redis requires REDIS_URL or AETHER_GATEWAY_DATA_REDIS_URL"
-        fi
-        if [[ -z "${database_url}" && -z "${redis_url}" ]]; then
-            warn "single-node env is running in minimal mode without full Postgres/Redis persistence"
-        elif [[ "${database_is_sqlite}" == "true" && -z "${redis_url}" ]]; then
-            info "single-node env is using SQLite with in-process runtime coordination"
         fi
     fi
 
@@ -2400,7 +2245,6 @@ install_compose_single_node_mode() {
     resolve_compose_dir
     info "preparing Docker Compose single-node deployment in ${COMPOSE_DIR}"
     ensure_directory "${COMPOSE_DIR}"
-    ensure_directory "${COMPOSE_DIR}/data"
     ensure_directory "${COMPOSE_DIR}/logs"
 
     install_project_file "docker-compose.single-node.yml" "${COMPOSE_DIR}/docker-compose.yml" "0644"
@@ -2421,7 +2265,6 @@ install_compose_single_node_mode() {
         rm -f -- "${generated_compose_env}"
     fi
 
-    prepare_compose_single_node_data_directory
 
     cat <<EOF
 
@@ -2431,7 +2274,6 @@ Docker Compose single-node files are ready:
   ${COMPOSE_DIR}/.env.example
   ${COMPOSE_DIR}/update.sh
   ${COMPOSE_DIR}/generate_keys.sh
-  ${COMPOSE_DIR}/data
   ${COMPOSE_DIR}/logs
 EOF
 
@@ -2666,12 +2508,8 @@ restart_service_if_requested() {
 
 print_systemd_next_steps() {
     local gateway_port
-    local database_driver
-    local database_url
     gateway_port="$(awk -F= '/^[[:space:]]*APP_PORT=/{print $2}' "${ENV_TARGET}" | tail -n1 | tr -d '[:space:]')"
     gateway_port="${gateway_port:-8084}"
-    database_driver="$(awk -F= '/^[[:space:]]*AETHER_DATABASE_DRIVER=/{print tolower($2)}' "${ENV_TARGET}" | tail -n1 | tr -d '[:space:]')"
-    database_url="$(awk -F= '/^[[:space:]]*(AETHER_DATABASE_URL|DATABASE_URL|AETHER_GATEWAY_DATA_POSTGRES_URL)=/{print $2}' "${ENV_TARGET}" | tail -n1 | tr -d '[:space:]')"
 
     cat <<EOF
 
@@ -2693,13 +2531,6 @@ Install directory:
 
 EOF
 
-    if [[ "${database_driver}" == "sqlite" || "${database_url}" == sqlite:* ]]; then
-        cat <<EOF
-SQLite data:
-  ${database_url#sqlite://}
-
-EOF
-    fi
 
     cat <<EOF
 Database:
@@ -2886,12 +2717,8 @@ restart_launchd_if_requested() {
 
 print_launchd_next_steps() {
     local gateway_port
-    local database_driver
-    local database_url
     gateway_port="$(awk -F= '/^[[:space:]]*APP_PORT=/{print $2}' "${ENV_TARGET}" | tail -n1 | tr -d '[:space:]')"
     gateway_port="${gateway_port:-8084}"
-    database_driver="$(awk -F= '/^[[:space:]]*AETHER_DATABASE_DRIVER=/{print tolower($2)}' "${ENV_TARGET}" | tail -n1 | tr -d '[:space:]')"
-    database_url="$(awk -F= '/^[[:space:]]*(AETHER_DATABASE_URL|DATABASE_URL|AETHER_GATEWAY_DATA_POSTGRES_URL)=/{print $2}' "${ENV_TARGET}" | tail -n1 | tr -d '[:space:]')"
 
     cat <<EOF
 
@@ -2916,13 +2743,6 @@ Install directory:
 
 EOF
 
-    if [[ "${database_driver}" == "sqlite" || "${database_url}" == sqlite:* ]]; then
-        cat <<EOF
-SQLite data:
-  ${database_url#sqlite://}
-
-EOF
-    fi
 
     cat <<EOF
 Database:

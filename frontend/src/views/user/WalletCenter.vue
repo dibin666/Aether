@@ -112,7 +112,7 @@
           </div>
           <RefreshButton
             :loading="loadingOrders || loadingTransactions"
-            @click="() => Promise.all([loadBalance(), loadOrders(), loadTransactions()])"
+            @click="refreshWallet"
           />
         </div>
 
@@ -682,6 +682,7 @@
 </template>
 
 <script setup lang="ts">
+import { getI18nLocale } from '@/i18n'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   Badge,
@@ -940,6 +941,10 @@ watch(activeTab, (tab) => {
 watch(refundableOrders, () => {
   syncRefundOrderSelection()
 })
+
+async function refreshWallet() {
+  await Promise.all([loadBalance(), loadOrders(), loadTransactions()])
+}
 
 async function loadBalance() {
   walletBalance.value = await walletApi.getBalance()
@@ -1327,7 +1332,7 @@ function handleRefundPageSizeChange(size: number) {
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '-'
-  return new Date(value).toLocaleString('zh-CN', {
+  return new Date(value).toLocaleString(getI18nLocale(), {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',

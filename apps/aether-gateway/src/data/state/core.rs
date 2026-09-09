@@ -1116,10 +1116,7 @@ impl GatewayDataState {
 }
 
 fn database_driver_supports_usage_counter_flush(driver: Option<DatabaseDriver>) -> bool {
-    matches!(
-        driver,
-        Some(DatabaseDriver::Postgres | DatabaseDriver::Mysql | DatabaseDriver::Sqlite)
-    )
+    matches!(driver, Some(DatabaseDriver::Postgres))
 }
 
 #[cfg(test)]
@@ -1131,12 +1128,6 @@ mod usage_counter_flush_backend_tests {
     fn every_sql_driver_supports_usage_counter_flush() {
         assert!(database_driver_supports_usage_counter_flush(Some(
             DatabaseDriver::Postgres
-        )));
-        assert!(database_driver_supports_usage_counter_flush(Some(
-            DatabaseDriver::Mysql
-        )));
-        assert!(database_driver_supports_usage_counter_flush(Some(
-            DatabaseDriver::Sqlite
         )));
         assert!(!database_driver_supports_usage_counter_flush(None));
     }

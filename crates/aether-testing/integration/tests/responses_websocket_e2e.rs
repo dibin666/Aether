@@ -1,6 +1,6 @@
 //! Responses WebSocket end-to-end coverage.
 //!
-//! Every test starts a protocol-aware mock upstream, seeds a throwaway SQLite
+//! Every test starts a protocol-aware mock upstream, seeds a throwaway PostgreSQL
 //! store, mounts the real gateway router, and drives the public
 //! `/v1/responses` WebSocket the way a client would.
 //!
@@ -9,7 +9,6 @@
 //! `response.completed` is not evidence that the turn was ever accounted for —
 //! only the row is.
 
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,9 +25,12 @@ use aether_data_contracts::repository::global_models::{
 use aether_data_contracts::repository::provider_catalog::{
     StoredProviderCatalogEndpoint, StoredProviderCatalogKey, StoredProviderCatalogProvider,
 };
+use aether_data_contracts::repository::routing_profiles::{
+    RoutingGroupLookupKey, UpdateRoutingGroupRecord,
+};
 use aether_data_contracts::repository::usage::{StoredRequestUsageAudit, UsageAuditListQuery};
 use aether_gateway::{build_router_with_state, AppState, GatewayDataConfig, UsageRuntimeConfig};
-use aether_testkit::SpawnedServer;
+use aether_testkit::{ManagedPostgresServer, SpawnedServer};
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::http::{HeaderMap, Uri};
@@ -492,8 +494,7 @@ async fn disabling_the_downstream_key_is_enforced_on_the_next_turn_of_the_same_s
     Ok(())
 }
 
-/// A client that walks away before the provider produced anything must settle
-/// as a void row: nothing was produced, so nothing is billed.
+/// Immediate cancellation voids token billing before the provider completes.
 ///
 /// This is the path with no protocol event to announce it: the relay loop owns
 /// the turn, and losing the client is an exit the upstream never reports.
@@ -507,7 +508,14 @@ async fn disabling_the_downstream_key_is_enforced_on_the_next_turn_of_the_same_s
 /// `a_closed_client_socket_before_any_terminal_still_voids_the_bill`.
 #[tokio::test]
 async fn client_disconnect_before_any_provider_output_settles_a_void_row() -> Result<(), BoxError> {
-    let harness = Harness::start(UpstreamBehavior::StallAfterCreated).await?;
+    let harness = Harness::start_configured(
+        UpstreamBehavior::StallAfterCreated,
+        ProviderFixture::SingleOpenAiKey,
+        PiiRedaction::Disabled,
+        true,
+        None,
+    )
+    .await?;
     let mut client = harness.connect().await?;
 
     client
@@ -540,6 +548,73 @@ async fn client_disconnect_before_any_provider_output_settles_a_void_row() -> Re
     );
     assert_eq!(audit.status_code, Some(499));
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn client_disconnect_defaults_to_completing_and_billing_the_turn() -> Result<(), BoxError> {
+    let harness = Harness::start(UpstreamBehavior::CompleteAfterRelease).await?;
+    let mut client = harness.connect().await?;
+    client
+        .send(response_create(json!({"input": "finish without client"})))
+        .await?;
+    receive_event(&mut client, "response.created").await?;
+    drop(client);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    harness.upstream.release_completion.notify_one();
+    let audits = harness
+        .usage_audits_where(1, "completed disconnected turn", |audit| {
+            audit.status == "completed" && audit.billing_status == "settled"
+        })
+        .await?;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].input_tokens, INPUT_TOKENS);
+    assert_eq!(audits[0].output_tokens, OUTPUT_TOKENS);
+    assert_eq!(audits[0].status_code, Some(200));
+    Ok(())
+}
+
+#[tokio::test]
+async fn client_disconnect_still_settles_the_per_request_fee_when_aborted() -> Result<(), BoxError>
+{
+    let harness = Harness::start_configured(
+        UpstreamBehavior::StallAfterCreated,
+        ProviderFixture::SingleOpenAiKey,
+        PiiRedaction::Disabled,
+        true,
+        Some(0.02),
+    )
+    .await?;
+    let mut client = harness.connect().await?;
+    client
+        .send(response_create(json!({"input": "cancel with request fee"})))
+        .await?;
+    receive_event(&mut client, "response.created").await?;
+    drop(client);
+    let audits = harness
+        .usage_audits_where(1, "cancelled request fee settlement", |audit| {
+            audit.status == "cancelled" && audit.billing_status == "settled"
+        })
+        .await?;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].status_code, Some(499));
+    assert_eq!(audits[0].total_tokens, 0);
+    assert_eq!(audits[0].total_cost_usd, 0.02);
+    assert_eq!(audits[0].actual_total_cost_usd, 0.02);
+    let backends = DataBackends::from_config(DataLayerConfig::from_database(
+        harness.database.config.clone(),
+    ))?;
+    let detail = backends
+        .read()
+        .usage()
+        .ok_or("usage reader unavailable")?
+        .find_by_request_id(&audits[0].request_id)
+        .await?
+        .ok_or("usage detail unavailable")?;
+    assert_eq!(
+        detail.request_metadata.as_ref().unwrap()["cancelled_request_fee"],
+        true
+    );
     Ok(())
 }
 
@@ -749,9 +824,9 @@ fn is_billed(audit: &StoredRequestUsageAudit) -> bool {
 // ---------------------------------------------------------------------------
 
 /// A live gateway wired to a mock Responses WebSocket upstream over a throwaway
-/// SQLite store.
+/// PostgreSQL store.
 struct Harness {
-    database: TemporarySqlite,
+    database: TemporaryPostgres,
     upstream: Arc<MockUpstreamState>,
     websocket_url: String,
     _upstream_server: SpawnedServer,
@@ -852,11 +927,21 @@ impl Harness {
         fixture: ProviderFixture,
         redaction: PiiRedaction,
     ) -> Result<Self, BoxError> {
+        Self::start_configured(behavior, fixture, redaction, false, None).await
+    }
+
+    async fn start_configured(
+        behavior: UpstreamBehavior,
+        fixture: ProviderFixture,
+        redaction: PiiRedaction,
+        cancel_on_client_disconnect: bool,
+        request_price: Option<f64>,
+    ) -> Result<Self, BoxError> {
         let upstream = Arc::new(MockUpstreamState::new(behavior));
         let upstream_server =
             SpawnedServer::start(mock_upstream_router(Arc::clone(&upstream))).await?;
 
-        let database = TemporarySqlite::new();
+        let database = TemporaryPostgres::new().await?;
         prepare_and_seed_database(
             &database.config,
             upstream_server.base_url(),
@@ -864,6 +949,16 @@ impl Harness {
             redaction,
         )
         .await?;
+
+        if let Some(price) = request_price {
+            let pool = sqlx::PgPool::connect(&database.config.url).await?;
+            sqlx::query("UPDATE models SET price_per_request = $1 WHERE id = $2")
+                .bind(price)
+                .bind(PROVIDER_MODEL_ID)
+                .execute(&pool)
+                .await?;
+            pool.close().await;
+        }
 
         let data_config = GatewayDataConfig::from_database_config(database.config.clone())
             .with_encryption_key(DEVELOPMENT_ENCRYPTION_KEY);
@@ -878,6 +973,32 @@ impl Harness {
                 ..UsageRuntimeConfig::default()
             })?;
         state.ensure_system_default_routing_group().await?;
+        if cancel_on_client_disconnect {
+            let backends =
+                DataBackends::from_config(DataLayerConfig::from_database(database.config.clone()))?;
+            let mut group = backends
+                .read()
+                .routing_groups()
+                .ok_or("routing reader unavailable")?
+                .find_routing_group(RoutingGroupLookupKey::SystemDefault)
+                .await?
+                .ok_or("default routing group unavailable")?;
+            group.config_json["default_policy"]["cancel_on_client_disconnect"] = json!(true);
+            backends
+                .write()
+                .routing_groups()
+                .ok_or("routing writer unavailable")?
+                .update_routing_group(
+                    &group.id,
+                    UpdateRoutingGroupRecord {
+                        config_json: Some(group.config_json),
+                        version: Some(group.version + 1),
+                        updated_at: group.updated_at + 1,
+                        ..Default::default()
+                    },
+                )
+                .await?;
+        }
         let gateway_server = SpawnedServer::start(build_router_with_state(state)).await?;
         let websocket_url = format!(
             "{}/v1/responses",
@@ -961,7 +1082,7 @@ impl Harness {
     /// Reads the persisted audit rows, oldest first.
     ///
     /// Opens its own handle per call rather than holding one for the lifetime of
-    /// the harness: the gateway keeps its own pool on the same SQLite file for
+    /// the harness: the gateway keeps its own pool on the same database for
     /// the whole test, and an idle second pool only adds contention.
     async fn usage_audits(&self) -> Result<Vec<StoredRequestUsageAudit>, BoxError> {
         let backends = DataBackends::from_config(DataLayerConfig::from_database(
@@ -1094,6 +1215,7 @@ where
 enum UpstreamBehavior {
     /// Announce, stream one delta, and complete — the ordinary turn.
     CompleteEveryTurn,
+    CompleteAfterRelease,
     /// Announce the response and then go quiet, leaving the turn in flight.
     StallAfterCreated,
     /// Announce the response and then hang up mid-turn.
@@ -1119,6 +1241,7 @@ struct MockUpstreamState {
     events: Mutex<Vec<Value>>,
     authorization_headers: Mutex<Vec<Option<String>>>,
     handshakes: Mutex<Vec<ObservedUpstreamHandshake>>,
+    release_completion: tokio::sync::Notify,
 }
 
 #[derive(Debug, Clone)]
@@ -1135,6 +1258,7 @@ impl MockUpstreamState {
             events: Mutex::new(Vec::new()),
             authorization_headers: Mutex::new(Vec::new()),
             handshakes: Mutex::new(Vec::new()),
+            release_completion: tokio::sync::Notify::new(),
         }
     }
 
@@ -1212,6 +1336,15 @@ async fn run_mock_upstream(
                 let response_id = format!("resp-e2e-{turn}");
                 match state.behavior {
                     UpstreamBehavior::CompleteEveryTurn => {
+                        if send_mock_turn(&mut socket, &response_id).await.is_err() {
+                            break;
+                        }
+                    }
+                    UpstreamBehavior::CompleteAfterRelease => {
+                        if send_mock_created(&mut socket, &response_id).await.is_err() {
+                            break;
+                        }
+                        state.release_completion.notified().await;
                         if send_mock_turn(&mut socket, &response_id).await.is_err() {
                             break;
                         }
@@ -1359,24 +1492,20 @@ async fn send_mock_event(socket: &mut WebSocket, event: Value) -> Result<(), axu
 // Seeded data store
 // ---------------------------------------------------------------------------
 
-struct TemporarySqlite {
-    directory: PathBuf,
+struct TemporaryPostgres {
+    _server: ManagedPostgresServer,
     config: SqlDatabaseConfig,
 }
 
-impl TemporarySqlite {
-    fn new() -> Self {
-        let directory = std::env::temp_dir().join(format!(
-            "aether-responses-ws-e2e-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4()
-        ));
-        let database_path = directory.join("aether.db");
-        Self {
-            directory,
+impl TemporaryPostgres {
+    async fn new() -> Result<Self, BoxError> {
+        let server = ManagedPostgresServer::start().await?;
+        let database_url = server.database_url().to_string();
+        Ok(Self {
+            _server: server,
             config: SqlDatabaseConfig {
-                driver: DatabaseDriver::Sqlite,
-                url: format!("sqlite://{}", database_path.display()),
+                driver: DatabaseDriver::Postgres,
+                url: database_url,
                 pool: SqlPoolConfig {
                     min_connections: 1,
                     max_connections: 4,
@@ -1387,13 +1516,7 @@ impl TemporarySqlite {
                     require_ssl: false,
                 },
             },
-        }
-    }
-}
-
-impl Drop for TemporarySqlite {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.directory);
+        })
     }
 }
 
@@ -1727,8 +1850,8 @@ async fn seed_weekly_request_limit(
         .id;
 
     let pool = backends
-        .sqlite()
-        .ok_or("SQLite backend unavailable")?
+        .postgres()
+        .ok_or("PostgreSQL backend unavailable")?
         .pool();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -1740,8 +1863,9 @@ INSERT INTO billing_plans (
   id, title, description, price_amount, price_currency, duration_unit,
   duration_value, enabled, sort_order, max_active_per_user,
   purchase_limit_scope, entitlements_json, created_at, updated_at
-) VALUES (?, 'WS weekly policy', NULL, 0, 'USD', 'month', 1, 1, 0, 1,
-          'active_period', ?, ?, ?)
+) VALUES ($1, 'WS weekly policy', NULL, 0, 'USD', 'month', 1, true, 0, 1,
+          'active_period', $2::text::jsonb,
+          TO_TIMESTAMP($3::bigint::double precision), TO_TIMESTAMP($4::bigint::double precision))
 "#,
     )
     .bind("plan-responses-ws-weekly")
@@ -1765,7 +1889,9 @@ INSERT INTO billing_plans (
 INSERT INTO payment_orders (
   id, order_no, wallet_id, user_id, amount_usd, pay_currency, status,
   payment_method, created_at, paid_at, credited_at, expires_at
-) VALUES (?, ?, ?, ?, 0, 'USD', 'paid', 'test', ?, ?, ?, ?)
+) VALUES ($1, $2, $3, $4, 0, 'USD', 'paid', 'test',
+          TO_TIMESTAMP($5::bigint::double precision), TO_TIMESTAMP($6::bigint::double precision),
+          TO_TIMESTAMP($7::bigint::double precision), TO_TIMESTAMP($8::bigint::double precision))
 "#,
     )
     .bind("order-responses-ws-weekly")
@@ -1783,7 +1909,9 @@ INSERT INTO payment_orders (
 INSERT INTO user_plan_entitlements (
   id, user_id, plan_id, payment_order_id, status, starts_at, expires_at,
   entitlements_snapshot, created_at, updated_at
-) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)
+) VALUES ($1, $2, $3, $4, 'active',
+          TO_TIMESTAMP($5::bigint::double precision), TO_TIMESTAMP($6::bigint::double precision),
+          $7::text::jsonb, TO_TIMESTAMP($8::bigint::double precision), TO_TIMESTAMP($9::bigint::double precision))
 "#,
     )
     .bind("entitlement-responses-ws-weekly")

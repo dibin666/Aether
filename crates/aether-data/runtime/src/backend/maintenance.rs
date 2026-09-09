@@ -1,9 +1,5 @@
-#[cfg(feature = "mysql")]
-mod mysql;
 #[cfg(feature = "postgres")]
 mod postgres;
-#[cfg(feature = "sqlite")]
-mod sqlite;
 
 use super::{summarize_pool, DataBackends, SqlBackendRef};
 use crate::maintenance::{
@@ -315,15 +311,7 @@ impl<'a> SqlBackendRef<'a> {
             Self::Postgres(postgres) => {
                 warm_pool(postgres.pool(), postgres.config().min_connections).await
             }
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => {
-                warm_pool(mysql.pool(), mysql.config().pool.min_connections).await
-            }
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => {
-                warm_pool(sqlite.pool(), sqlite.config().pool.min_connections).await
-            }
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -335,11 +323,7 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.run_table_maintenance(table_names).await,
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => mysql.run_table_maintenance(table_names).await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => sqlite.run_table_maintenance(table_names).await,
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -351,17 +335,7 @@ impl<'a> SqlBackendRef<'a> {
                 crate::lifecycle::migrate::run_migrations(postgres.pool()).await?;
                 Ok(true)
             }
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => {
-                crate::lifecycle::migrate::run_mysql_migrations(mysql.pool()).await?;
-                Ok(true)
-            }
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => {
-                crate::lifecycle::migrate::run_sqlite_migrations(sqlite.pool()).await?;
-                Ok(true)
-            }
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -373,17 +347,7 @@ impl<'a> SqlBackendRef<'a> {
                 crate::lifecycle::backfill::run_backfills(postgres.pool()).await?;
                 Ok(true)
             }
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => {
-                crate::lifecycle::backfill::run_mysql_backfills(mysql.pool()).await?;
-                Ok(true)
-            }
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => {
-                crate::lifecycle::backfill::run_sqlite_backfills(sqlite.pool()).await?;
-                Ok(true)
-            }
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -396,15 +360,7 @@ impl<'a> SqlBackendRef<'a> {
             Self::Postgres(postgres) => Ok(Some(
                 crate::lifecycle::migrate::pending_migrations(postgres.pool()).await?,
             )),
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => Ok(Some(
-                crate::lifecycle::migrate::pending_mysql_migrations(mysql.pool()).await?,
-            )),
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => Ok(Some(
-                crate::lifecycle::migrate::pending_sqlite_migrations(sqlite.pool()).await?,
-            )),
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -417,16 +373,7 @@ impl<'a> SqlBackendRef<'a> {
             Self::Postgres(postgres) => Ok(Some(
                 crate::lifecycle::migrate::prepare_database_for_startup(postgres.pool()).await?,
             )),
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => Ok(Some(
-                crate::lifecycle::migrate::prepare_mysql_database_for_startup(mysql.pool()).await?,
-            )),
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => Ok(Some(
-                crate::lifecycle::migrate::prepare_sqlite_database_for_startup(sqlite.pool())
-                    .await?,
-            )),
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -439,15 +386,7 @@ impl<'a> SqlBackendRef<'a> {
             Self::Postgres(postgres) => Ok(Some(
                 crate::lifecycle::backfill::pending_backfills(postgres.pool()).await?,
             )),
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => Ok(Some(
-                crate::lifecycle::backfill::pending_mysql_backfills(mysql.pool()).await?,
-            )),
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => Ok(Some(
-                crate::lifecycle::backfill::pending_sqlite_backfills(sqlite.pool()).await?,
-            )),
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -461,21 +400,7 @@ impl<'a> SqlBackendRef<'a> {
                 postgres.pool().num_idle(),
                 postgres.config().max_connections,
             ),
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => summarize_pool(
-                crate::database::DatabaseDriver::Mysql,
-                usize::try_from(mysql.pool().size()).unwrap_or(usize::MAX),
-                mysql.pool().num_idle(),
-                mysql.config().pool.max_connections,
-            ),
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => summarize_pool(
-                crate::database::DatabaseDriver::Sqlite,
-                usize::try_from(sqlite.pool().size()).unwrap_or(usize::MAX),
-                sqlite.pool().num_idle(),
-                sqlite.config().pool.max_connections,
-            ),
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -487,11 +412,7 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.aggregate_wallet_daily_usage(input).await,
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => mysql.aggregate_wallet_daily_usage(input).await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => sqlite.aggregate_wallet_daily_usage(input).await,
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -503,11 +424,7 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.aggregate_stats_hourly(input).await,
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => mysql.aggregate_stats_hourly(input).await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => sqlite.aggregate_stats_hourly(input).await,
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -519,11 +436,7 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.aggregate_stats_daily(input).await,
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => mysql.aggregate_stats_daily(input).await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => sqlite.aggregate_stats_daily(input).await,
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -535,11 +448,7 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.find_system_config_value(key).await,
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => mysql.find_system_config_value(key).await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => sqlite.find_system_config_value(key).await,
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -557,19 +466,7 @@ impl<'a> SqlBackendRef<'a> {
                     .compare_and_set_system_config_string_value(key, expected, replacement)
                     .await
             }
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => {
-                mysql
-                    .compare_and_set_system_config_string_value(key, expected, replacement)
-                    .await
-            }
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => {
-                sqlite
-                    .compare_and_set_system_config_string_value(key, expected, replacement)
-                    .await
-            }
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -580,11 +477,7 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.list_system_config_entries().await,
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => mysql.list_system_config_entries().await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => sqlite.list_system_config_entries().await,
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -602,19 +495,7 @@ impl<'a> SqlBackendRef<'a> {
                     .upsert_system_config_entry(key, value, description)
                     .await
             }
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => {
-                mysql
-                    .upsert_system_config_entry(key, value, description)
-                    .await
-            }
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => {
-                sqlite
-                    .upsert_system_config_entry(key, value, description)
-                    .await
-            }
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -623,11 +504,7 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.delete_system_config_value(key).await,
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => mysql.delete_system_config_value(key).await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => sqlite.delete_system_config_value(key).await,
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -636,11 +513,7 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.read_admin_system_stats().await,
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => mysql.read_admin_system_stats().await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => sqlite.read_admin_system_stats().await,
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -652,11 +525,7 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.purge_admin_system_data(target).await,
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => mysql.purge_admin_system_data(target).await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => sqlite.purge_admin_system_data(target).await,
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -667,11 +536,7 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.export_admin_system_usage_aggregates().await,
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => mysql.export_admin_system_usage_aggregates().await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => sqlite.export_admin_system_usage_aggregates().await,
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -695,29 +560,7 @@ impl<'a> SqlBackendRef<'a> {
                     )
                     .await
             }
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => {
-                mysql
-                    .import_admin_system_usage_aggregates(
-                        snapshot,
-                        user_id_map,
-                        api_key_id_map,
-                        mode,
-                    )
-                    .await
-            }
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => {
-                sqlite
-                    .import_admin_system_usage_aggregates(
-                        snapshot,
-                        user_id_map,
-                        api_key_id_map,
-                        mode,
-                    )
-                    .await
-            }
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }
@@ -729,11 +572,7 @@ impl<'a> SqlBackendRef<'a> {
         match self {
             #[cfg(feature = "postgres")]
             Self::Postgres(postgres) => postgres.purge_admin_request_bodies_batch(batch_size).await,
-            #[cfg(feature = "mysql")]
-            Self::Mysql(mysql) => mysql.purge_admin_request_bodies_batch(batch_size).await,
-            #[cfg(feature = "sqlite")]
-            Self::Sqlite(sqlite) => sqlite.purge_admin_request_bodies_batch(batch_size).await,
-            #[cfg(not(any(feature = "postgres", feature = "mysql", feature = "sqlite")))]
+            #[cfg(not(feature = "postgres"))]
             Self::Disabled(_) => unreachable!("a SQL backend cannot exist without a driver"),
         }
     }

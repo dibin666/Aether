@@ -8631,7 +8631,7 @@ enum WalletOwner<'a> {
 mod tests {
     use std::sync::Arc;
 
-    use aether_data::repository::pool_scores::SqlitePoolMemberScoreRepository;
+    use aether_data::repository::pool_scores::PostgresPoolMemberScoreRepository;
     use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
     use aether_data_contracts::repository::provider_catalog::{
         StoredProviderCatalogKey, StoredProviderCatalogProvider,
@@ -9353,12 +9353,11 @@ mod tests {
             .await
             .expect("a disabled score writer remains an allowed no-op");
 
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        let pool = sqlx::postgres::PgPoolOptions::new()
             .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool should connect");
-        let score_repository = Arc::new(SqlitePoolMemberScoreRepository::new(pool.clone()));
+            .connect_lazy("postgres://localhost/aether")
+            .expect("postgres pool should build");
+        let score_repository = Arc::new(PostgresPoolMemberScoreRepository::new(pool.clone()));
         pool.close().await;
         let app = AppState::new()
             .expect("app state should build")
