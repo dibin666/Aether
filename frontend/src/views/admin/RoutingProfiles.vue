@@ -500,6 +500,15 @@
             </div>
           </section>
 
+          <RoutingFailoverPolicyEditor
+            :key="draftGeneration"
+            ref="routingFailoverPolicyEditor"
+            :model-value="draft.config_json.default_policy"
+            :disabled="saving"
+            @update:model-value="updateRoutingFailoverPolicy"
+            @pending-change="routingFailoverPending = $event"
+          />
+
           <section class="space-y-4 rounded-lg border border-border/60 p-4">
             <div>
               <h3 class="text-sm font-medium">
@@ -882,7 +891,8 @@ import {
   type RoutingSchedulingMode,
   type RoutingSortingScope,
 } from '@/features/routing/utils/routingPolicy'
-import { RoutingPriorityPolicyEditor } from '@/features/routing/components'
+import { RoutingFailoverPolicyEditor, RoutingPriorityPolicyEditor } from '@/features/routing/components'
+import { normalizeRoutingFailoverPolicy, validateRoutingFailoverPolicy, type RoutingFailoverPolicy } from '@/features/routing/utils/routingFailover'
 import {
   createRoutingGroup,
   deleteRoutingGroup,
@@ -926,6 +936,8 @@ const schedulingModes: Array<{ value: RoutingSchedulingMode; label: string }> = 
 const groups = ref<RoutingGroupRecord[]>([])
 const selectedGroupId = ref<string | null>(null)
 const draft = ref<RoutingGroupDraft | null>(null)
+const routingFailoverPolicyEditor = ref<{ commitJsonDrafts: () => boolean } | null>(null)
+const routingFailoverPending = ref(false)
 const savedDraftSnapshot = ref<string | null>(null)
 const sortingScope = ref<RoutingSortingScope>('unified')
 const selectedPerModelName = ref<string | null>(null)
@@ -943,7 +955,7 @@ const groupActionId = ref<string | null>(null)
 const draggedGroupId = ref<string | null>(null)
 const dragOverGroupId = ref<string | null>(null)
 const isCreating = ref(false)
-let draftGeneration = 0
+const draftGeneration = ref(0)
 
 const switchModelTarget = ref<string | null>(null)
 const switchModelDialogOpen = ref(false)
@@ -1089,7 +1101,8 @@ function paramToString(value: unknown): string | null {
 }
 
 function clearDraftState(): void {
-  draftGeneration += 1
+  draftGeneration.value += 1
+  routingFailoverPending.value = false
   isCreating.value = false
   selectedGroupId.value = null
   draft.value = null
@@ -1104,7 +1117,8 @@ function clearDraftState(): void {
 
 function selectGroup(group: RoutingGroupRecord): void {
   const normalized = normalizeRecord(group)
-  draftGeneration += 1
+  draftGeneration.value += 1
+  routingFailoverPending.value = false
   isCreating.value = false
   selectedGroupId.value = normalized.id
   draft.value = buildDraft(normalized)
@@ -1119,7 +1133,8 @@ function setDraftEnabled(value: boolean): void {
 }
 
 function startCreate(): void {
-  draftGeneration += 1
+  draftGeneration.value += 1
+  routingFailoverPending.value = false
   isCreating.value = true
   selectedGroupId.value = null
   draft.value = {
@@ -1219,7 +1234,7 @@ const editingDirty = computed(() => {
 const draftDirty = computed(() => {
   if (!draft.value) return false
   if (isCreating.value) return true
-  return savedDraftSnapshot.value !== draftSnapshotValue(draft.value)
+  return routingFailoverPending.value || savedDraftSnapshot.value !== draftSnapshotValue(draft.value)
 })
 
 const canSaveDraft = computed(() => {
@@ -1338,6 +1353,15 @@ function updateExecutionPolicy(
       [field]: value,
     },
   })
+}
+
+function updateRoutingFailoverPolicy(value: RoutingFailoverPolicy): void {
+  if (!draft.value) return
+  const patch = normalizeRoutingFailoverPolicy(value)
+  Object.assign(draft.value.config_json.default_policy, patch)
+  if (editingConfig.value) {
+    Object.assign(editingConfig.value.default_policy, normalizeRoutingFailoverPolicy(patch))
+  }
 }
 
 function removePerModelPolicy(model: string): void {
@@ -1648,6 +1672,12 @@ async function saveDraft(): Promise<void> {
     showError('策略名称不能为空')
     return
   }
+  if (routingFailoverPolicyEditor.value && !routingFailoverPolicyEditor.value.commitJsonDrafts()) return
+  const failoverError = validateRoutingFailoverPolicy(draft.value.config_json.default_policy)
+  if (failoverError) {
+    showError(failoverError)
+    return
+  }
   const config = cloneConfig(draft.value.config_json)
   if (sortingScope.value === 'per_model' && perModelPolicies.value.length === 0) {
     showError('按模型排序时至少选择一个模型')
@@ -1655,7 +1685,7 @@ async function saveDraft(): Promise<void> {
   }
 
   const targetGroupId = draft.value.id ?? null
-  const submittedGeneration = draftGeneration
+  const submittedGeneration = draftGeneration.value
   const submittedSnapshot = draftSnapshotValue(draft.value)
   const wasCreating = isCreating.value || !draft.value.id
   saving.value = true
@@ -1674,7 +1704,7 @@ async function saveDraft(): Promise<void> {
       ? await createRoutingGroup(payload)
       : await updateRoutingGroup(targetGroupId, payload)
 
-    const sameDraftGeneration = draftGeneration === submittedGeneration
+    const sameDraftGeneration = draftGeneration.value === submittedGeneration
     const stillEditingSubmittedDraft = wasCreating
       ? sameDraftGeneration
         && isCreateRoute.value
