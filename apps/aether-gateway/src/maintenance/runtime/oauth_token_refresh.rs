@@ -301,6 +301,138 @@ enum OAuthTokenRefreshCandidateOutcome {
     },
 }
 
+impl OAuthTokenRefreshCandidateOutcome {
+    fn provider_id(&self) -> &str {
+        match self {
+            Self::Resolved { provider_id, .. }
+            | Self::Skipped { provider_id, .. }
+            | Self::Failed { provider_id, .. } => provider_id,
+        }
+    }
+
+    fn provider_name(&self) -> &str {
+        match self {
+            Self::Resolved { provider_name, .. }
+            | Self::Skipped { provider_name, .. }
+            | Self::Failed { provider_name, .. } => provider_name,
+        }
+    }
+
+    fn provider_type(&self) -> &str {
+        match self {
+            Self::Resolved { provider_type, .. }
+            | Self::Skipped { provider_type, .. }
+            | Self::Failed { provider_type, .. } => provider_type,
+        }
+    }
+
+    fn key_id(&self) -> &str {
+        match self {
+            Self::Resolved { key_id, .. }
+            | Self::Skipped { key_id, .. }
+            | Self::Failed { key_id, .. } => key_id,
+        }
+    }
+
+    fn key_name(&self) -> &str {
+        match self {
+            Self::Resolved { key_name, .. }
+            | Self::Skipped { key_name, .. }
+            | Self::Failed { key_name, .. } => key_name,
+        }
+    }
+}
+
+struct OAuthTokenRefreshAccountEventBuilder<'a> {
+    task_run_id: &'a str,
+    event_name: &'a str,
+    provider_id: &'a str,
+    provider_name: &'a str,
+    provider_type: &'a str,
+    key_id: &'a str,
+    key_name: &'a str,
+    status: &'a str,
+    message: &'a str,
+    reason: Option<&'a str>,
+    timestamp: u64,
+}
+
+impl<'a> OAuthTokenRefreshAccountEventBuilder<'a> {
+    fn from_outcome(
+        outcome: &'a OAuthTokenRefreshCandidateOutcome,
+        task_run_id: &'a str,
+        timestamp: u64,
+    ) -> Self {
+        let (event_name, status, message, reason) = match outcome {
+            OAuthTokenRefreshCandidateOutcome::Resolved {
+                refreshed: true, ..
+            } => (
+                "oauth_refresh_account_refreshed",
+                "refreshed",
+                "Token 已刷新",
+                None,
+            ),
+            OAuthTokenRefreshCandidateOutcome::Resolved {
+                refreshed: false, ..
+            } => (
+                "oauth_refresh_account_checked",
+                "checked",
+                "Token 已检查，无需更新",
+                None,
+            ),
+            OAuthTokenRefreshCandidateOutcome::Skipped { reason, .. } => (
+                "oauth_refresh_account_skipped",
+                "skipped",
+                "Token 刷新已跳过",
+                Some(reason.as_str()),
+            ),
+            OAuthTokenRefreshCandidateOutcome::Failed { error, .. } => (
+                "oauth_refresh_failed",
+                "failed",
+                "Token 刷新失败",
+                Some(error.as_str()),
+            ),
+        };
+
+        Self {
+            task_run_id,
+            event_name,
+            provider_id: outcome.provider_id(),
+            provider_name: outcome.provider_name(),
+            provider_type: outcome.provider_type(),
+            key_id: outcome.key_id(),
+            key_name: outcome.key_name(),
+            status,
+            message,
+            reason,
+            timestamp,
+        }
+    }
+
+    fn build(self) -> ProviderKeyTaskEvent {
+        let mut event = ProviderKeyTaskEvent::new(
+            TASK_KEY_OAUTH_TOKEN_REFRESH,
+            self.task_run_id,
+            self.event_name,
+            self.provider_id,
+            self.key_id,
+            "oauth_refresh",
+            self.status,
+            self.timestamp,
+        )
+        .with_provider_name(Some(self.provider_name))
+        .with_provider_type(Some(self.provider_type))
+        .with_provider_api_key_name(Some(self.key_name))
+        .with_message(Some(self.message));
+
+        if let Some(reason) = self.reason {
+            event = event.with_reason(Some(reason));
+        }
+
+        event
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OAuthTokenRefreshInvocation {
     Scheduled,
@@ -338,6 +470,40 @@ async fn perform_oauth_token_refresh_once_with_invocation(
     let config = OAuthTokenRefreshWorkerConfig::load(state).await?;
     let now_ts = now_unix_secs();
     let task_run_id = ensure_worker_execution_run(state, TASK_KEY_OAUTH_TOKEN_REFRESH).await;
+
+    let Some(catalog) = load_maintenance_catalog_snapshot(state).await? else {
+        return Ok(OAuthTokenRefreshRunSummary::default());
+    };
+
+    let (candidates, mut summary) =
+        collect_refresh_candidates(state, &catalog, &config, now_ts, invocation).await?;
+
+    let outcomes = execute_refresh_candidates(state, candidates, config.concurrency).await;
+
+    let account_events_recorded =
+        process_outcomes(state, outcomes, task_run_id.as_deref(), &mut summary).await;
+
+    record_run_completion(
+        state,
+        task_run_id.as_deref(),
+        &config,
+        &summary,
+        account_events_recorded,
+    )
+    .await;
+
+    Ok(summary)
+}
+
+struct MaintenanceCatalogSnapshot {
+    providers: Vec<StoredProviderCatalogProvider>,
+    endpoints_by_provider: BTreeMap<String, Vec<StoredProviderCatalogEndpoint>>,
+    keys_by_provider: BTreeMap<String, Vec<StoredProviderCatalogKey>>,
+}
+
+async fn load_maintenance_catalog_snapshot(
+    state: &AppState,
+) -> Result<Option<MaintenanceCatalogSnapshot>, GatewayError> {
     // Maintenance must not let one malformed historical proxy credential
     // abort the scan for every provider. Read the rows first, then open each
     // row in isolation so a bad record can be skipped while database errors
@@ -348,7 +514,7 @@ async fn perform_oauth_token_refresh_once_with_invocation(
         .map(|provider| provider.id.clone())
         .collect::<Vec<_>>();
     if provider_ids.is_empty() {
-        return Ok(OAuthTokenRefreshRunSummary::default());
+        return Ok(None);
     }
 
     let endpoints = read_oauth_maintenance_endpoints(state, &provider_ids).await?;
@@ -361,390 +527,23 @@ async fn perform_oauth_token_refresh_once_with_invocation(
         .list_provider_catalog_keys_by_provider_ids(&provider_ids)
         .await
         .map_err(|err| GatewayError::Internal(err.to_string()))?;
-    let endpoints_by_provider = group_endpoints_by_provider(endpoints);
-    let keys_by_provider = group_keys_by_provider(keys);
-    let mut summary = OAuthTokenRefreshRunSummary::default();
-    let mut remaining_this_run = config.max_per_run;
-    let mut candidates = Vec::<OAuthTokenRefreshCandidate>::new();
 
-    'providers: for provider in providers {
-        if remaining_this_run == 0 {
-            break;
-        }
-        let provider_config = OAuthTokenRefreshProviderConfig::from_provider_config(
-            &config,
-            provider.config.as_ref(),
-        );
-        if !provider_config.enabled
-            || !oauth_token_refresh_provider_scan_due(
-                state,
-                &provider.id,
-                &provider_config,
-                now_ts,
-                invocation,
-            )
-            .await
-        {
-            continue;
-        }
-        let provider_keys = keys_by_provider
-            .get(provider.id.as_str())
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        let provider_endpoints = endpoints_by_provider
-            .get(provider.id.as_str())
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        let refresh_cutoff_unix_secs = now_ts.saturating_add(provider_config.lookahead_seconds);
-        let provider_limit = provider_config.max_per_run.min(remaining_this_run);
-        let mut provider_selected = 0usize;
-        for key in provider_keys {
-            summary.scanned = summary.scanned.saturating_add(1);
-            if !oauth_refresh_candidate(&provider, key) {
-                summary.skipped = summary.skipped.saturating_add(1);
-                continue;
-            }
-
-            let Some(endpoint) = provider_oauth_maintenance_endpoint_for_provider(
-                &provider.provider_type,
-                provider_endpoints,
-            ) else {
-                summary.skipped = summary.skipped.saturating_add(1);
-                continue;
-            };
-
-            let transport = match state
-                .read_provider_transport_snapshot(&provider.id, &endpoint.id, &key.id)
-                .await
-            {
-                Ok(Some(transport)) => transport,
-                Ok(None) => {
-                    summary.skipped = summary.skipped.saturating_add(1);
-                    continue;
-                }
-                Err(err) if is_nonfatal_legacy_catalog_credential_error(&err) => {
-                    // Keep malformed historical credentials untouched. They
-                    // are intentionally skipped while other keys continue.
-                    summary.skipped = summary.skipped.saturating_add(1);
-                    warn!(
-                        event_name = "oauth_token_refresh_skipped_invalid_credential",
-                        log_type = "ops",
-                        worker = "oauth_token_refresh",
-                        provider_id = %provider.id,
-                        key_id = %key.id,
-                        reason = "invalid_stored_credential",
-                        "gateway skipped oauth refresh for an invalid stored credential"
-                    );
-                    continue;
-                }
-                Err(err) => return Err(err),
-            };
-            let decrypted_auth_config = transport.key.decrypted_auth_config.as_deref();
-            let is_agent_identity =
-                crate::provider_transport::is_codex_agent_identity_transport(&transport);
-            let needs_agent_task_recovery = is_agent_identity
-                && agent_identity_needs_task_recovery(
-                    decrypted_auth_config,
-                    key.oauth_invalid_reason.as_deref(),
-                );
-            if !needs_agent_task_recovery && !auth_config_has_refresh_token(decrypted_auth_config) {
-                summary.skipped = summary.skipped.saturating_add(1);
-                continue;
-            }
-            if !needs_agent_task_recovery
-                && !oauth_refresh_due_for_cutoff(
-                    key,
-                    decrypted_auth_config,
-                    refresh_cutoff_unix_secs,
-                )
-            {
-                summary.skipped = summary.skipped.saturating_add(1);
-                continue;
-            }
-            summary.eligible = summary.eligible.saturating_add(1);
-
-            candidates.push(OAuthTokenRefreshCandidate {
-                provider_id: provider.id.clone(),
-                provider_name: provider.name.clone(),
-                provider_type: provider.provider_type.clone(),
-                key_id: key.id.clone(),
-                key_name: key.name.clone(),
-                key: key.clone(),
-                transport,
-                proxy_node_id_override: provider_config.proxy_node_id_override.clone(),
-                provider_concurrency: provider_config.concurrency,
-            });
-            provider_selected = provider_selected.saturating_add(1);
-            remaining_this_run = remaining_this_run.saturating_sub(1);
-            if remaining_this_run == 0 {
-                break 'providers;
-            }
-            if provider_selected >= provider_limit {
-                break;
-            }
-        }
-    }
-
-    let mut provider_limits = HashMap::<String, Arc<Semaphore>>::new();
-    for candidate in &candidates {
-        provider_limits
-            .entry(candidate.provider_id.clone())
-            .or_insert_with(|| Arc::new(Semaphore::new(candidate.provider_concurrency)));
-    }
-    let execution_buffer = candidates.len().max(1);
-    let global_limit = Arc::new(Semaphore::new(config.concurrency));
-    let outcomes = stream::iter(candidates.into_iter().map(|candidate| {
-        let global_limit = Arc::clone(&global_limit);
-        let provider_limit = provider_limits
-            .get(&candidate.provider_id)
-            .cloned()
-            .expect("oauth refresh provider semaphore missing");
-        async move {
-            let _global_permit = global_limit
-                .acquire_owned()
-                .await
-                .expect("oauth refresh global semaphore closed");
-            let _provider_permit = provider_limit
-                .acquire_owned()
-                .await
-                .expect("oauth refresh provider semaphore closed");
-            let refresh_result = state
-                .force_local_oauth_refresh_entry_for_auto_refresh_with_proxy_override(
-                    &candidate.transport,
-                    candidate.proxy_node_id_override.clone(),
-                )
-                .await
-                .map(|entry| entry.map(|_| ()));
-
-            match refresh_result {
-                Ok(Some(())) => {
-                    match provider_key_credentials_changed(state, &candidate.key).await {
-                        Ok(refreshed) => OAuthTokenRefreshCandidateOutcome::Resolved {
-                            provider_id: candidate.provider_id,
-                            provider_name: candidate.provider_name,
-                            provider_type: candidate.provider_type,
-                            key_id: candidate.key_id,
-                            key_name: candidate.key_name,
-                            refreshed,
-                        },
-                        Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
-                            provider_id: candidate.provider_id,
-                            provider_name: candidate.provider_name,
-                            provider_type: candidate.provider_type,
-                            key_id: candidate.key_id,
-                            key_name: candidate.key_name,
-                            error: format!("{err:?}"),
-                        },
-                    }
-                }
-                Ok(None) => OAuthTokenRefreshCandidateOutcome::Skipped {
-                    provider_id: candidate.provider_id,
-                    provider_name: candidate.provider_name,
-                    provider_type: candidate.provider_type,
-                    key_id: candidate.key_id,
-                    key_name: candidate.key_name,
-                    reason: "refresh_not_run".to_string(),
-                },
-                Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
-                    provider_id: candidate.provider_id,
-                    provider_name: candidate.provider_name,
-                    provider_type: candidate.provider_type,
-                    key_id: candidate.key_id,
-                    key_name: candidate.key_name,
-                    error: format!("{err:?}"),
-                },
-            }
-        }
+    Ok(Some(MaintenanceCatalogSnapshot {
+        providers,
+        endpoints_by_provider: group_by_provider_id(endpoints, |endpoint| &endpoint.provider_id),
+        keys_by_provider: group_by_provider_id(keys, |key| &key.provider_id),
     }))
-    .buffer_unordered(execution_buffer)
-    .collect::<Vec<_>>()
-    .await;
+}
 
-    let mut account_events_recorded = 0usize;
-    for outcome in outcomes {
-        match outcome {
-            OAuthTokenRefreshCandidateOutcome::Resolved {
-                provider_id,
-                provider_name,
-                provider_type,
-                key_id,
-                key_name,
-                refreshed,
-            } => {
-                summary.resolved = summary.resolved.saturating_add(1);
-                if refreshed {
-                    summary.refreshed = summary.refreshed.saturating_add(1);
-                }
-                if let Some(task_run_id) = task_run_id.as_deref() {
-                    if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
-                        account_events_recorded = account_events_recorded.saturating_add(1);
-                        let event = ProviderKeyTaskEvent::new(
-                            TASK_KEY_OAUTH_TOKEN_REFRESH,
-                            task_run_id,
-                            if refreshed {
-                                "oauth_refresh_account_refreshed"
-                            } else {
-                                "oauth_refresh_account_checked"
-                            },
-                            &provider_id,
-                            &key_id,
-                            "oauth_refresh",
-                            if refreshed { "refreshed" } else { "checked" },
-                            now_unix_secs(),
-                        )
-                        .with_provider_name(Some(&provider_name))
-                        .with_provider_type(Some(&provider_type))
-                        .with_provider_api_key_name(Some(&key_name))
-                        .with_message(Some(if refreshed {
-                            "Token 已刷新"
-                        } else {
-                            "Token 已检查，无需更新"
-                        }));
-                        if let Err(error) = state.append_provider_key_task_events(&[event]).await {
-                            warn!(
-                                event_name = "oauth_token_refresh_account_event_persistence_failed",
-                                log_type = "ops",
-                                worker = "oauth_token_refresh",
-                                provider_id = %provider_id,
-                                key_id = %key_id,
-                                error = ?error,
-                                "failed to persist oauth token refresh account event"
-                            );
-                        }
-                    }
-                }
-            }
-            OAuthTokenRefreshCandidateOutcome::Skipped {
-                provider_id,
-                provider_name,
-                provider_type,
-                key_id,
-                key_name,
-                reason,
-            } => {
-                summary.skipped = summary.skipped.saturating_add(1);
-                if let Some(task_run_id) = task_run_id.as_deref() {
-                    if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
-                        account_events_recorded = account_events_recorded.saturating_add(1);
-                        let event = ProviderKeyTaskEvent::new(
-                            TASK_KEY_OAUTH_TOKEN_REFRESH,
-                            task_run_id,
-                            "oauth_refresh_account_skipped",
-                            &provider_id,
-                            &key_id,
-                            "oauth_refresh",
-                            "skipped",
-                            now_unix_secs(),
-                        )
-                        .with_provider_name(Some(&provider_name))
-                        .with_provider_type(Some(&provider_type))
-                        .with_provider_api_key_name(Some(&key_name))
-                        .with_message(Some("Token 刷新已跳过"))
-                        .with_reason(Some(&reason));
-                        if let Err(error) = state.append_provider_key_task_events(&[event]).await {
-                            warn!(
-                                event_name = "oauth_token_refresh_account_event_persistence_failed",
-                                log_type = "ops",
-                                worker = "oauth_token_refresh",
-                                provider_id = %provider_id,
-                                key_id = %key_id,
-                                error = ?error,
-                                "failed to persist oauth token refresh account event"
-                            );
-                        }
-                    }
-                }
-            }
-            OAuthTokenRefreshCandidateOutcome::Failed {
-                provider_id,
-                provider_name,
-                provider_type,
-                key_id,
-                key_name,
-                error,
-            } => {
-                summary.failed = summary.failed.saturating_add(1);
-                warn!(
-                    event_name = "oauth_token_refresh_failed",
-                    log_type = "ops",
-                    worker = "oauth_token_refresh",
-                    provider_id = %provider_id,
-                    key_id = %key_id,
-                    error = %error,
-                    "gateway oauth token auto refresh failed"
-                );
-                if let Some(task_run_id) = task_run_id.as_deref() {
-                    if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
-                        account_events_recorded = account_events_recorded.saturating_add(1);
-                        let event = ProviderKeyTaskEvent::new(
-                            TASK_KEY_OAUTH_TOKEN_REFRESH,
-                            task_run_id,
-                            "oauth_refresh_failed",
-                            &provider_id,
-                            &key_id,
-                            "oauth_refresh",
-                            "failed",
-                            now_unix_secs(),
-                        )
-                        .with_provider_name(Some(&provider_name))
-                        .with_provider_type(Some(&provider_type))
-                        .with_provider_api_key_name(Some(&key_name))
-                        .with_message(Some("Token 刷新失败"))
-                        .with_reason(Some(&error));
-                        if let Err(error) = state.append_provider_key_task_events(&[event]).await {
-                            warn!(
-                                event_name = "oauth_token_refresh_account_event_persistence_failed",
-                                log_type = "ops",
-                                worker = "oauth_token_refresh",
-                                provider_id = %provider_id,
-                                key_id = %key_id,
-                                error = ?error,
-                                "failed to persist oauth token refresh account event"
-                            );
-                        }
-                    }
-                }
-            }
-        }
+fn group_by_provider_id<T>(items: Vec<T>, get_id: impl Fn(&T) -> &str) -> BTreeMap<String, Vec<T>> {
+    let mut grouped = BTreeMap::new();
+    for item in items {
+        grouped
+            .entry(get_id(&item).to_owned())
+            .or_insert_with(Vec::new)
+            .push(item);
     }
-
-    info!(
-        event_name = "oauth_token_refresh_completed",
-        log_type = "ops",
-        worker = "oauth_token_refresh",
-        scanned = summary.scanned,
-        eligible = summary.eligible,
-        refreshed = summary.refreshed,
-        resolved = summary.resolved,
-        skipped = summary.skipped,
-        failed = summary.failed,
-        "gateway completed oauth token auto refresh scan"
-    );
-    if let Some(task_run_id) = task_run_id.as_deref() {
-        append_event_with_logging(
-            state,
-            task_run_id,
-            "oauth_refresh_completed",
-            "oauth token refresh scan completed",
-            Some(serde_json::json!({
-                "scanned": summary.scanned,
-                "eligible": summary.eligible,
-                "resolved": summary.resolved,
-                "refreshed": summary.refreshed,
-                "skipped": summary.skipped,
-                "failed": summary.failed,
-                "lookahead_seconds": config.lookahead_seconds,
-                "interval_seconds": config.interval.as_secs(),
-                "concurrency": config.concurrency,
-                "max_per_run": config.max_per_run,
-                "account_events_recorded": account_events_recorded,
-                "account_event_limit": OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT,
-            })),
-        )
-        .await;
-    }
-
-    Ok(summary)
+    grouped
 }
 
 async fn read_oauth_maintenance_providers(
@@ -822,30 +621,356 @@ async fn read_oauth_maintenance_endpoints(
     Ok(opened)
 }
 
-fn group_endpoints_by_provider(
-    endpoints: Vec<StoredProviderCatalogEndpoint>,
-) -> BTreeMap<String, Vec<StoredProviderCatalogEndpoint>> {
-    let mut grouped = BTreeMap::new();
-    for endpoint in endpoints {
-        grouped
-            .entry(endpoint.provider_id.clone())
-            .or_insert_with(Vec::new)
-            .push(endpoint);
+async fn collect_refresh_candidates(
+    state: &AppState,
+    catalog: &MaintenanceCatalogSnapshot,
+    config: &OAuthTokenRefreshWorkerConfig,
+    now_ts: u64,
+    invocation: OAuthTokenRefreshInvocation,
+) -> Result<(Vec<OAuthTokenRefreshCandidate>, OAuthTokenRefreshRunSummary), GatewayError> {
+    let mut summary = OAuthTokenRefreshRunSummary::default();
+    let mut remaining_this_run = config.max_per_run;
+    let mut candidates = Vec::<OAuthTokenRefreshCandidate>::new();
+
+    'providers: for provider in &catalog.providers {
+        if remaining_this_run == 0 {
+            break;
+        }
+        let provider_config =
+            OAuthTokenRefreshProviderConfig::from_provider_config(config, provider.config.as_ref());
+        if !provider_config.enabled
+            || !oauth_token_refresh_provider_scan_due(
+                state,
+                &provider.id,
+                &provider_config,
+                now_ts,
+                invocation,
+            )
+            .await
+        {
+            continue;
+        }
+        let provider_keys = catalog
+            .keys_by_provider
+            .get(provider.id.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let provider_endpoints = catalog
+            .endpoints_by_provider
+            .get(provider.id.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let refresh_cutoff_unix_secs = now_ts.saturating_add(provider_config.lookahead_seconds);
+        let provider_limit = provider_config.max_per_run.min(remaining_this_run);
+        let mut provider_selected = 0usize;
+
+        for key in provider_keys {
+            summary.scanned = summary.scanned.saturating_add(1);
+            match inspect_refresh_candidate(
+                state,
+                provider,
+                provider_endpoints,
+                &provider_config,
+                key,
+                refresh_cutoff_unix_secs,
+            )
+            .await?
+            {
+                Some(candidate) => {
+                    summary.eligible = summary.eligible.saturating_add(1);
+                    candidates.push(candidate);
+                    provider_selected = provider_selected.saturating_add(1);
+                    remaining_this_run = remaining_this_run.saturating_sub(1);
+                    if remaining_this_run == 0 {
+                        break 'providers;
+                    }
+                    if provider_selected >= provider_limit {
+                        break;
+                    }
+                }
+                None => {
+                    summary.skipped = summary.skipped.saturating_add(1);
+                }
+            }
+        }
     }
-    grouped
+
+    Ok((candidates, summary))
 }
 
-fn group_keys_by_provider(
-    keys: Vec<StoredProviderCatalogKey>,
-) -> BTreeMap<String, Vec<StoredProviderCatalogKey>> {
-    let mut grouped = BTreeMap::new();
-    for key in keys {
-        grouped
-            .entry(key.provider_id.clone())
-            .or_insert_with(Vec::new)
-            .push(key);
+async fn inspect_refresh_candidate(
+    state: &AppState,
+    provider: &StoredProviderCatalogProvider,
+    provider_endpoints: &[StoredProviderCatalogEndpoint],
+    provider_config: &OAuthTokenRefreshProviderConfig,
+    key: &StoredProviderCatalogKey,
+    refresh_cutoff_unix_secs: u64,
+) -> Result<Option<OAuthTokenRefreshCandidate>, GatewayError> {
+    if !oauth_refresh_candidate(provider, key) {
+        return Ok(None);
     }
-    grouped
+
+    let Some(endpoint) = provider_oauth_maintenance_endpoint_for_provider(
+        &provider.provider_type,
+        provider_endpoints,
+    ) else {
+        return Ok(None);
+    };
+
+    let transport = match state
+        .read_provider_transport_snapshot(&provider.id, &endpoint.id, &key.id)
+        .await
+    {
+        Ok(Some(transport)) => transport,
+        Ok(None) => return Ok(None),
+        Err(err) if is_nonfatal_legacy_catalog_credential_error(&err) => {
+            // Keep malformed historical credentials untouched. They
+            // are intentionally skipped while other keys continue.
+            warn!(
+                event_name = "oauth_token_refresh_skipped_invalid_credential",
+                log_type = "ops",
+                worker = "oauth_token_refresh",
+                provider_id = %provider.id,
+                key_id = %key.id,
+                reason = "invalid_stored_credential",
+                "gateway skipped oauth refresh for an invalid stored credential"
+            );
+            return Ok(None);
+        }
+        Err(err) => return Err(err),
+    };
+
+    let decrypted_auth_config = transport.key.decrypted_auth_config.as_deref();
+    let is_agent_identity =
+        crate::provider_transport::is_codex_agent_identity_transport(&transport);
+    let needs_agent_task_recovery = is_agent_identity
+        && agent_identity_needs_task_recovery(
+            decrypted_auth_config,
+            key.oauth_invalid_reason.as_deref(),
+        );
+    if !needs_agent_task_recovery && !auth_config_has_refresh_token(decrypted_auth_config) {
+        return Ok(None);
+    }
+    if !needs_agent_task_recovery
+        && !oauth_refresh_due_for_cutoff(key, decrypted_auth_config, refresh_cutoff_unix_secs)
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(OAuthTokenRefreshCandidate {
+        provider_id: provider.id.clone(),
+        provider_name: provider.name.clone(),
+        provider_type: provider.provider_type.clone(),
+        key_id: key.id.clone(),
+        key_name: key.name.clone(),
+        key: key.clone(),
+        transport,
+        proxy_node_id_override: provider_config.proxy_node_id_override.clone(),
+        provider_concurrency: provider_config.concurrency,
+    }))
+}
+
+async fn execute_refresh_candidates(
+    state: &AppState,
+    candidates: Vec<OAuthTokenRefreshCandidate>,
+    global_concurrency: usize,
+) -> Vec<OAuthTokenRefreshCandidateOutcome> {
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let mut provider_limits = HashMap::<String, Arc<Semaphore>>::new();
+    for candidate in &candidates {
+        provider_limits
+            .entry(candidate.provider_id.clone())
+            .or_insert_with(|| Arc::new(Semaphore::new(candidate.provider_concurrency)));
+    }
+    let execution_buffer = candidates.len().max(1);
+    let global_limit = Arc::new(Semaphore::new(global_concurrency));
+    stream::iter(candidates.into_iter().map(|candidate| {
+        let global_limit = Arc::clone(&global_limit);
+        let provider_limit = provider_limits
+            .get(&candidate.provider_id)
+            .cloned()
+            .expect("oauth refresh provider semaphore missing");
+        async move {
+            let _global_permit = global_limit
+                .acquire_owned()
+                .await
+                .expect("oauth refresh global semaphore closed");
+            let _provider_permit = provider_limit
+                .acquire_owned()
+                .await
+                .expect("oauth refresh provider semaphore closed");
+            refresh_candidate(state, candidate).await
+        }
+    }))
+    .buffer_unordered(execution_buffer)
+    .collect::<Vec<_>>()
+    .await
+}
+
+async fn refresh_candidate(
+    state: &AppState,
+    candidate: OAuthTokenRefreshCandidate,
+) -> OAuthTokenRefreshCandidateOutcome {
+    let refresh_result = state
+        .force_local_oauth_refresh_entry_for_auto_refresh_with_proxy_override(
+            &candidate.transport,
+            candidate.proxy_node_id_override.clone(),
+        )
+        .await
+        .map(|entry| entry.map(|_| ()));
+
+    match refresh_result {
+        Ok(Some(())) => match provider_key_credentials_changed(state, &candidate.key).await {
+            Ok(refreshed) => OAuthTokenRefreshCandidateOutcome::Resolved {
+                provider_id: candidate.provider_id,
+                provider_name: candidate.provider_name,
+                provider_type: candidate.provider_type,
+                key_id: candidate.key_id,
+                key_name: candidate.key_name,
+                refreshed,
+            },
+            Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
+                provider_id: candidate.provider_id,
+                provider_name: candidate.provider_name,
+                provider_type: candidate.provider_type,
+                key_id: candidate.key_id,
+                key_name: candidate.key_name,
+                error: format!("{err:?}"),
+            },
+        },
+        Ok(None) => OAuthTokenRefreshCandidateOutcome::Skipped {
+            provider_id: candidate.provider_id,
+            provider_name: candidate.provider_name,
+            provider_type: candidate.provider_type,
+            key_id: candidate.key_id,
+            key_name: candidate.key_name,
+            reason: "refresh_not_run".to_string(),
+        },
+        Err(err) => OAuthTokenRefreshCandidateOutcome::Failed {
+            provider_id: candidate.provider_id,
+            provider_name: candidate.provider_name,
+            provider_type: candidate.provider_type,
+            key_id: candidate.key_id,
+            key_name: candidate.key_name,
+            error: format!("{err:?}"),
+        },
+    }
+}
+
+async fn process_outcomes(
+    state: &AppState,
+    outcomes: Vec<OAuthTokenRefreshCandidateOutcome>,
+    task_run_id: Option<&str>,
+    summary: &mut OAuthTokenRefreshRunSummary,
+) -> usize {
+    let mut account_events_recorded = 0usize;
+    for outcome in &outcomes {
+        match outcome {
+            OAuthTokenRefreshCandidateOutcome::Resolved { refreshed, .. } => {
+                summary.resolved = summary.resolved.saturating_add(1);
+                if *refreshed {
+                    summary.refreshed = summary.refreshed.saturating_add(1);
+                }
+            }
+            OAuthTokenRefreshCandidateOutcome::Skipped { .. } => {
+                summary.skipped = summary.skipped.saturating_add(1);
+            }
+            OAuthTokenRefreshCandidateOutcome::Failed {
+                provider_id,
+                key_id,
+                error,
+                ..
+            } => {
+                summary.failed = summary.failed.saturating_add(1);
+                warn!(
+                    event_name = "oauth_token_refresh_failed",
+                    log_type = "ops",
+                    worker = "oauth_token_refresh",
+                    provider_id = %provider_id,
+                    key_id = %key_id,
+                    error = %error,
+                    "gateway oauth token auto refresh failed"
+                );
+            }
+        }
+
+        if let Some(task_run_id) = task_run_id {
+            if account_events_recorded < OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT {
+                account_events_recorded = account_events_recorded.saturating_add(1);
+                record_account_event(state, outcome, task_run_id).await;
+            }
+        }
+    }
+    account_events_recorded
+}
+
+async fn record_account_event(
+    state: &AppState,
+    outcome: &OAuthTokenRefreshCandidateOutcome,
+    task_run_id: &str,
+) {
+    let event =
+        OAuthTokenRefreshAccountEventBuilder::from_outcome(outcome, task_run_id, now_unix_secs())
+            .build();
+    if let Err(error) = state.append_provider_key_task_events(&[event]).await {
+        let provider_id = outcome.provider_id();
+        let key_id = outcome.key_id();
+        warn!(
+            event_name = "oauth_token_refresh_account_event_persistence_failed",
+            log_type = "ops",
+            worker = "oauth_token_refresh",
+            provider_id = %provider_id,
+            key_id = %key_id,
+            error = ?error,
+            "failed to persist oauth token refresh account event"
+        );
+    }
+}
+
+async fn record_run_completion(
+    state: &AppState,
+    task_run_id: Option<&str>,
+    config: &OAuthTokenRefreshWorkerConfig,
+    summary: &OAuthTokenRefreshRunSummary,
+    account_events_recorded: usize,
+) {
+    info!(
+        event_name = "oauth_token_refresh_completed",
+        log_type = "ops",
+        worker = "oauth_token_refresh",
+        scanned = summary.scanned,
+        eligible = summary.eligible,
+        refreshed = summary.refreshed,
+        resolved = summary.resolved,
+        skipped = summary.skipped,
+        failed = summary.failed,
+        "gateway completed oauth token auto refresh scan"
+    );
+    if let Some(task_run_id) = task_run_id {
+        append_event_with_logging(
+            state,
+            task_run_id,
+            "oauth_refresh_completed",
+            "oauth token refresh scan completed",
+            Some(serde_json::json!({
+                "scanned": summary.scanned,
+                "eligible": summary.eligible,
+                "resolved": summary.resolved,
+                "refreshed": summary.refreshed,
+                "skipped": summary.skipped,
+                "failed": summary.failed,
+                "lookahead_seconds": config.lookahead_seconds,
+                "interval_seconds": config.interval.as_secs(),
+                "concurrency": config.concurrency,
+                "max_per_run": config.max_per_run,
+                "account_events_recorded": account_events_recorded,
+                "account_event_limit": OAUTH_TOKEN_REFRESH_ACCOUNT_EVENT_LIMIT,
+            })),
+        )
+        .await;
+    }
 }
 
 fn oauth_refresh_candidate(
