@@ -53,7 +53,7 @@ pub use migrations::{
     run_migrations_with_bootstrap, BootstrapFuture, PostgresMigrationBootstrap, POSTGRES_MIGRATOR,
 };
 pub use oauth_providers::SqlxOAuthProviderRepository;
-pub use pool::{PostgresPool, PostgresPoolFactory};
+pub use pool::{acquire_postgres_migration_connection, PostgresPool, PostgresPoolFactory};
 pub use pool_scores::PostgresPoolMemberScoreRepository;
 pub use provider_catalog::SqlxProviderCatalogReadRepository;
 pub use provider_key_task_events::SqlxProviderKeyTaskEventRepository;

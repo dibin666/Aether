@@ -29,6 +29,7 @@ pub(crate) use runtime::{
     AdminCleanupRunRecord, AdminCleanupTaskKind, AdminStatsRebuildSummary,
     AdminSystemCleanupSummary, ManualUsageCleanupError, ManualUsageCleanupMode,
     ManualUsageCleanupOptions, OAuthTokenRefreshEnabledSource, OAuthTokenRefreshRunSummary,
+    PoolQuotaProbeReplenishCoordinator,
     PoolQuotaProbeRunSummary, PoolQuotaProbeWorkerConfig, ProviderCheckinRunSummary,
     ProviderQuotaAlertRunSummary, ProxyUpgradeRolloutCancelSummary,
     ProxyUpgradeRolloutConflictClearSummary, ProxyUpgradeRolloutNodeActionSummary,

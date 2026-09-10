@@ -3830,7 +3830,7 @@ mod tests {
 
     #[test]
     fn provider_api_keys_insert_values_match_bind_order() {
-        let source = include_str!("postgres.rs");
+        let source = include_str!("provider_catalog.rs");
         let query_start = source
             .find("INSERT INTO provider_api_keys (\n")
             .expect("provider_api_keys insert should exist");

@@ -2185,6 +2185,7 @@ mod tests {
                     upstream_is_stream: false,
                     request_query: None,
                     kiro_api_region: None,
+                    api_operation: None,
                 },
             )
             .as_deref(),
@@ -2199,6 +2200,7 @@ mod tests {
                     upstream_is_stream: true,
                     request_query: Some("tenant=demo"),
                     kiro_api_region: None,
+                    api_operation: None,
                 },
             )
             .as_deref(),
