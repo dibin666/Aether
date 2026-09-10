@@ -5,35 +5,35 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（HEAD） | `575c38f7b9f7137d9f29cd7be96ce112e30639c7` |
+| fork code baseline（合并提交） | `157a1ea2bf859db5a91e3b5d2dc83027533a413e` |
 | upstream HEAD | `95e4d0149cd38d99d54653aa0d1ba203bce68bc6` |
-| merge-base | `8260a8721` |
-| 分叉计数 | fork-only 213，upstream-only 10 |
-| fork-only 路径 | 282 个，`+25610/-910` |
-| upstream-only 路径 | 429 个，`+29880/-27644` |
-| 快照日期 | 2026-09-10（第三轮，预合并） |
+| merge-base | `95e4d0149cd38d99d54653aa0d1ba203bce68bc6` |
+| 分叉计数（不含本记录提交） | fork-only 215，upstream-only 0 |
+| fork-only 路径 | 282 个，`+25634/-904` |
+| upstream-only 路径 | 0 个，`+0/-0` |
+| 快照日期 | 2026-09-10（第四轮，合并后） |
 
-### 第三轮预合并快照
+### 第四轮合并后快照
 
-当前 fork 已包含私网 Provider Endpoint 安全放行、前端开关、m14.4 schema/迁移兼容修复，以及 provider-query 结构化失败返回；这些提交必须在合并后继续保留。
+`157a1ea2b` 是基于 `8260a8721` 的 `--no-ff` 合并提交，已完整纳入 upstream `95e4d0149` 之前的 10 个提交；当前没有待合入的 upstream 提交。
 
-待合入 upstream 的 10 个提交：
+本轮已合入的 upstream 提交：
 
-- `95e4d0149` / `72aea7898`：detail-log 合并及主线同步。
-- `8aedf87aa`：修复 nightly workflow 中截断的 Buildx action SHA。
-- `e9b64c3e9` / `28f61ec45` / `6aeadcd1d` / `3a8dadcd6` / `ecc16673e`：并发限制、高 RPM 路径、stream/usage 预算、Redis 流和测试夹具加固。
-- `d28dd8903`：恢复 legacy Provider Endpoint health 默认值及相关 API/UI 测试。
 - `33ea4ebf1`：错误日志敏感信息脱敏。
+- `d28dd8903`：恢复 legacy Provider Endpoint health 默认值及相关 API/UI 测试。
+- `ecc16673e` / `3a8dadcd6` / `6aeadcd1d` / `28f61ec45` / `e9b64c3e9`：并发限制、高 RPM 路径、stream/usage 预算、Redis 流和测试夹具加固。
+- `8aedf87aa`：修复 nightly workflow 中截断的 Buildx action SHA。
+- `72aea7898` / `95e4d0149`：detail-log 合并及主线同步。
 
-预合并重叠路径共 27 个，重点审查：
+合并后重点审查结论：
 
-- `apps/aether-gateway/src/execution_runtime/transport.rs`：保留私网 endpoint 的显式、逐 endpoint/key、origin 精确匹配放行，不恢复全局私网绕过。
-- `apps/aether-gateway/src/handlers/admin/request/provider/builders.rs`：保留 endpoint 配置写入校验。
-- `apps/aether-gateway/src/handlers/proxy/websocket/{transport.rs,responses/binding.rs}`：保留 WebSocket 私网 allowance 传递。
-- `apps/aether-gateway/src/maintenance/runtime/pool_quota_probe.rs`、`dispatch/pool_scheduler.rs`、`scheduler-core`：并发/调度加固采用 upstream，同时保留 `ignore_pool_cooldown` 与候选顺序不变量。
-- `crates/aether-data/adapters/postgres/migrations/**`：保留 fork 的 PostgreSQL-only、幂等迁移和 m14.4 schema 兼容修复。
-- `frontend/src/features/providers/components/EndpointFormDialog.vue`：保留私网开关、config 合并和 target 提示；上游 UI 删除或重构时采用手工混合。
-- `.skills/upstream-merge/**`：保留本 fork 的合并技能文档，不接受 upstream 删除。
+- `apps/aether-gateway/src/execution_runtime/transport.rs`、`private_upstream.rs`、provider builders 和 WebSocket 路径：私网 endpoint 仍是显式、逐 endpoint/key、origin 精确匹配放行，没有恢复全局私网绕过。
+- `frontend/src/features/providers/components/EndpointFormDialog.vue`：私网开关、config 合并和 target 提示仍在，前后端契约未断。
+- `crates/aether-data/adapters/postgres/migrations/**` 和 `provider_catalog.rs`：PostgreSQL-only、幂等迁移、m14.4 schema 兼容修复，以及 `ignore_pool_cooldown` 的列/读写/bind 仍在。
+- `maintenance/runtime/pool_quota_probe.rs`、`dispatch/pool_scheduler.rs`、`scheduler-core`：采用 upstream 的并发/调度加固，同时保留 fork 的冷却忽略和候选顺序不变量。
+- provider-query 结构化失败返回、local model test 结构化失败返回和敏感信息脱敏逻辑均保留。
+- 两处文本冲突采用手工混合：`data/state/testkit.rs` 保留 provider task event 字段并接入 upstream routing group fixtures；`maintenance/mod.rs` 同时导出 OAuth refresh 与 pool quota probe 类型。
+- 合并后测试构造器补齐 upstream 新增字段；provider catalog 的源码检查改为读取当前实现文件，避免引用已删除的 `postgres.rs`。
 
 第二轮合并（5 个上游提交，**0 冲突**）：
 - `f23086834` merge（`e58570d79..8260a8721`：strategy failover controls、routing failover/model testing 加固、payment order query 复用、workspace lint 修复、Linux-only release）
@@ -180,8 +180,16 @@ cd frontend && npm run test:run -- \
   src/features/usage/conversation/__tests__/openai.spec.ts
 ```
 
+本轮实际验证结果（2026-09-10）：
+
+- `cd frontend && npm run build`：通过；包含 VSCodex sync/build 和主前端 Vite build。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：通过。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`：通过；仅有既存的 `aether-admin` 测试未使用 import warning。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-provider-transport --lib`：497/497 通过。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-data-postgres --lib provider_api_keys_insert_values_match_bind_order`：1/1 通过。
+- `git diff --check` 和未解决冲突检查：通过，未发现 `UU` 文件。
+
 既存失败（非合并回归，无需在此修复）：
-- `cargo check -p aether-provider-transport --all-targets` 报 7 个测试编译错误（来自 `49cc64748`、`2c8920200`）。
 - `PoolManagement.codex-cycle-stats.spec.ts` 报 15 项失败（spec mock 缺少 `Gauge` 图标）。
 
 ## 8. 历史合并记录
@@ -197,3 +205,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-04 | `a169ba25d` | `27b0381a9` | 解决 4 处冲突，接入 quota 429 调度与数据库准备模式，保持 `deploy.sh` 纯构建与冷却忽略 |
 | 2026-09-09 | `90db3fe71`<br>`e57ff5a7d` | `e58570d79` | 分两批合入 93 提交移除 MySQL/SQLite 并接入信封 v2；新增账号级任务事件独立存储并完全合入 |
 | 2026-09-09 | `f23086834` | `8260a8721` | 5 提交、0 冲突；接入 routing failover controls 与 workspace lint 修复，4 个重叠路径逐项语义复核后无 fork 功能变化 |
+| 2026-09-10 | `157a1ea2b` | `95e4d0149` | 10 提交、2 处文本冲突；接入并发/stream/Redis/health/logging 加固，保留私网 endpoint、幂等迁移、`ignore_pool_cooldown` 和结构化 provider 失败契约 |
