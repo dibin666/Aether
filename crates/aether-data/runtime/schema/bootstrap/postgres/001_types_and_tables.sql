@@ -626,6 +626,7 @@ CREATE TABLE IF NOT EXISTS public.provider_api_keys (
     status_snapshot json,
     status character varying(64) DEFAULT 'active'::character varying NOT NULL,
     weight bigint DEFAULT 1 NOT NULL,
+    ignore_pool_cooldown boolean DEFAULT false NOT NULL,
     metadata json
 );
 
