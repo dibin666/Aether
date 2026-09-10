@@ -19,6 +19,7 @@ pub mod oauth_refresh;
 mod openai_image;
 mod outbound_request_policy;
 pub mod policy;
+pub mod private_network;
 pub mod provider_types;
 mod request_body;
 mod request_url;

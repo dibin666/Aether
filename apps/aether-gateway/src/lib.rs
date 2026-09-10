@@ -63,6 +63,7 @@ mod oauth;
 mod orchestration;
 mod plan_usage_policy;
 mod privacy;
+mod private_upstream;
 mod process_metrics;
 mod provider_key_auth;
 mod provider_pool_demand;

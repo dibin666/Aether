@@ -906,14 +906,27 @@ impl AppState {
         key_id: &str,
     ) -> Result<Option<crate::provider_transport::GatewayProviderTransportSnapshot>, GatewayError>
     {
-        crate::provider_transport::read_provider_transport_snapshot(
+        let snapshot = crate::provider_transport::read_provider_transport_snapshot(
             self,
             provider_id,
             endpoint_id,
             key_id,
         )
         .await
-        .map_err(|err| GatewayError::Internal(err.to_string()))
+        .map_err(|err| GatewayError::Internal(err.to_string()))?;
+        // Every cached and uncached snapshot read lands here, so this is the one
+        // place where private upstream allowances enter the process. Refreshing
+        // on each load keeps a revoked allowance from outliving the snapshot
+        // cache entry that carried it.
+        if let Some(snapshot) = snapshot.as_ref() {
+            crate::private_upstream::sync_endpoint_private_upstream_allowance(
+                &snapshot.endpoint.id,
+                &snapshot.key.id,
+                &snapshot.endpoint.base_url,
+                snapshot.endpoint.config.as_ref(),
+            );
+        }
+        Ok(snapshot)
     }
 
     async fn apply_global_format_conversion_override(

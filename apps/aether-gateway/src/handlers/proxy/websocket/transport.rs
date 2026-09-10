@@ -24,9 +24,12 @@ use wreq::ws::message::{CloseFrame as WreqCloseFrame, Message as WreqWsMessage};
 use crate::ai_serving::AiExecutionDecision;
 use crate::execution_runtime::transport::{
     build_browser_wreq_client, build_request_headers, normalize_execution_proxy_url,
-    validate_execution_upstream_url, ExecutionSafeDnsResolver, ExecutionTransportControls,
+    validate_execution_upstream_url_with_allowance, ExecutionSafeDnsResolver,
+    ExecutionTransportControls,
 };
 use crate::frontdoor_loop_guard::gateway_frontdoor_self_loop_guard_error;
+use crate::private_upstream::private_upstream_allowance;
+use crate::provider_transport::private_network::PrivateUpstreamOrigin;
 use crate::handlers::proxy::websocket::session::{
     WebSocketSessionLimits, RELAY_WRITE_TIMEOUT, TEARDOWN_WRITE_TIMEOUT,
 };
@@ -63,6 +66,7 @@ pub(crate) async fn connect_upstream_websocket(
         upstream_url,
         errors.upstream_url_invalid,
         errors.frontdoor_self_loop,
+        decision_private_upstream_allowance(decision),
     )?;
     let headers =
         websocket_handshake_headers(&decision.provider_request_headers, errors.headers_invalid)?;
@@ -93,12 +97,25 @@ fn guarded_websocket_upstream_url(
     raw: &str,
     invalid_code: &'static str,
     frontdoor_self_loop_code: &'static str,
+    private_upstream_allowance: Option<PrivateUpstreamOrigin>,
 ) -> Result<Url, &'static str> {
-    let upstream_url = websocket_upstream_url(raw, invalid_code)?;
+    let upstream_url = websocket_upstream_url(raw, invalid_code, private_upstream_allowance)?;
     if gateway_frontdoor_self_loop_guard_error(upstream_url.as_str()).is_some() {
         return Err(frontdoor_self_loop_code);
     }
     Ok(upstream_url)
+}
+
+/// The private upstream allowance the decision's endpoint and key were granted.
+///
+/// A decision without both identifiers cannot be matched against a saved
+/// endpoint, so it stays on the default-deny path.
+pub(crate) fn decision_private_upstream_allowance(
+    decision: &AiExecutionDecision,
+) -> Option<PrivateUpstreamOrigin> {
+    let endpoint_id = decision.endpoint_id.as_deref()?;
+    let key_id = decision.key_id.as_deref()?;
+    private_upstream_allowance(endpoint_id, key_id)
 }
 
 fn websocket_response_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
@@ -147,6 +164,7 @@ fn websocket_response_header_is_safe_to_retain(name: &HeaderName) -> bool {
 pub(crate) fn websocket_upstream_url(
     raw: &str,
     invalid_code: &'static str,
+    private_upstream_allowance: Option<PrivateUpstreamOrigin>,
 ) -> Result<Url, &'static str> {
     let mut url = Url::parse(raw).map_err(|_| invalid_code)?;
     let (http_scheme, websocket_scheme) = match url.scheme() {
@@ -155,7 +173,12 @@ pub(crate) fn websocket_upstream_url(
         _ => return Err(invalid_code),
     };
     url.set_scheme(http_scheme).map_err(|_| invalid_code)?;
-    let mut url = validate_execution_upstream_url(url.as_str()).map_err(|_| invalid_code)?;
+    // The allowance is compared against the HTTP form of the URL, which is the
+    // scheme the endpoint's saved base URL is written in.
+    let mut url = validate_execution_upstream_url_with_allowance(url.as_str(), || {
+        private_upstream_allowance
+    })
+    .map_err(|_| invalid_code)?;
     url.set_scheme(websocket_scheme).map_err(|_| invalid_code)?;
     Ok(url)
 }
@@ -804,6 +827,7 @@ mod tests {
             let url = websocket_upstream_url(
                 &format!("{http_scheme}://example.test:8080/backend-api/codex/responses?x=1"),
                 "invalid",
+                None,
             )
             .expect("URL should be converted");
             assert_eq!(
@@ -815,7 +839,9 @@ mod tests {
 
     #[test]
     fn rejects_upstream_url_with_credentials() {
-        assert!(websocket_upstream_url("https://token@example.test/responses", "invalid").is_err());
+        assert!(
+            websocket_upstream_url("https://token@example.test/responses", "invalid", None).is_err()
+        );
     }
 
     #[test]
@@ -834,7 +860,7 @@ mod tests {
             "ws://[::1]:8080/v1/responses",
         ] {
             assert!(
-                websocket_upstream_url(allowed, "invalid").is_ok(),
+                websocket_upstream_url(allowed, "invalid", None).is_ok(),
                 "{allowed}"
             );
         }
@@ -857,10 +883,45 @@ mod tests {
             "ftp://example.test/v1/responses",
         ] {
             assert!(
-                websocket_upstream_url(rejected, "invalid").is_err(),
+                websocket_upstream_url(rejected, "invalid", None).is_err(),
                 "{rejected}"
             );
         }
+    }
+
+    #[test]
+    fn websocket_upstream_url_honours_only_the_allowed_private_origin() {
+        let allowance = crate::provider_transport::private_network::resolve_endpoint_private_upstream_origin(
+            "http://10.0.0.106:8317/v1",
+            Some(&serde_json::json!({"private_network_access": {"enabled": true}})),
+        )
+        .expect("a private literal endpoint should resolve")
+        .expect("an enabled section should grant an allowance");
+
+        for allowed in [
+            "ws://10.0.0.106:8317/v1/realtime",
+            "http://10.0.0.106:8317/v1/realtime",
+        ] {
+            assert!(
+                websocket_upstream_url(allowed, "invalid", Some(allowance)).is_ok(),
+                "allowed private origin should upgrade: {allowed}"
+            );
+        }
+        for rejected in [
+            "ws://10.0.0.107:8317/v1/realtime",
+            "ws://10.0.0.106:8318/v1/realtime",
+            "wss://10.0.0.106:8317/v1/realtime",
+            "ws://169.254.169.254/v1/realtime",
+            "ws://token@10.0.0.106:8317/v1/realtime",
+            "ws://10.0.0.106:8317/v1/realtime#secret",
+        ] {
+            assert!(
+                websocket_upstream_url(rejected, "invalid", Some(allowance)).is_err(),
+                "allowance must not cover: {rejected}"
+            );
+        }
+        // Without the allowance the same target stays refused.
+        assert!(websocket_upstream_url("ws://10.0.0.106:8317/v1/realtime", "invalid", None).is_err());
     }
 
     #[tokio::test]
@@ -1049,6 +1110,7 @@ mod tests {
                 raw_url.as_str(),
                 "responses_upstream_url_invalid",
                 "responses_websocket_frontdoor_self_loop",
+                None,
             ),
             Err("responses_websocket_frontdoor_self_loop")
         );
@@ -1123,6 +1185,7 @@ mod tests {
                     raw_url.as_str(),
                     "codex_live_upstream_url_invalid",
                     "codex_live_websocket_frontdoor_self_loop",
+                    None,
                 ),
                 Err("codex_live_websocket_frontdoor_self_loop"),
                 "{path} must be rejected before an upstream handshake"

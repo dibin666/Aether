@@ -251,6 +251,47 @@ mod endpoint_key_count_tests {
     }
 
     #[test]
+    fn endpoint_response_reports_only_a_usable_private_network_origin() {
+        let cases = [
+            (
+                "http://10.0.0.106:8317/v1",
+                json!({"private_network_access": {"enabled": true}}),
+                json!("http://10.0.0.106:8317"),
+            ),
+            (
+                "http://10.0.0.106:8317/v1",
+                json!({"private_network_access": {"enabled": false}}),
+                Value::Null,
+            ),
+            // A hostname could resolve anywhere, and a public address needs no
+            // allowance, so neither is reported as granted.
+            (
+                "http://internal.corp.test:8317/v1",
+                json!({"private_network_access": {"enabled": true}}),
+                Value::Null,
+            ),
+            (
+                "https://api.example.test/v1",
+                json!({"private_network_access": {"enabled": true}}),
+                Value::Null,
+            ),
+        ];
+        for (base_url, config, expected) in cases {
+            let mut endpoint = sample_endpoint("chat", "openai:chat");
+            endpoint.base_url = base_url.to_string();
+            endpoint.config = Some(config);
+
+            let response =
+                super::build_admin_provider_endpoint_response(&endpoint, "provider", 0, 0, 0);
+
+            assert_eq!(
+                response["private_network_allowed_origin"], expected,
+                "unexpected allowance reported for {base_url}"
+            );
+        }
+    }
+
+    #[test]
     fn inherited_endpoint_counts_only_include_active_formats() {
         let responses_endpoint = sample_endpoint("responses", "openai:responses");
         let mut search_endpoint = sample_endpoint("search", "openai:search");
@@ -268,6 +309,19 @@ mod endpoint_key_count_tests {
         assert!(!total.contains_key("openai:search"));
         assert_eq!(active, total);
     }
+}
+
+fn endpoint_private_network_allowed_origin(
+    endpoint: &StoredProviderCatalogEndpoint,
+) -> serde_json::Value {
+    aether_provider_transport::private_network::resolve_endpoint_private_upstream_origin(
+        &endpoint.base_url,
+        endpoint.config.as_ref(),
+    )
+    .ok()
+    .flatten()
+    .map(|origin| serde_json::Value::String(origin.origin()))
+    .unwrap_or(serde_json::Value::Null)
 }
 
 fn endpoint_timestamp_or_now(value: Option<u64>, now_unix_secs: u64) -> serde_json::Value {
@@ -295,6 +349,9 @@ pub fn build_admin_provider_endpoint_response(
         "max_retries": endpoint.max_retries.unwrap_or(2),
         "is_active": endpoint.is_active,
         "config": admin_secret_safe_json(endpoint.config.as_ref()),
+        // Surface the origin execution would actually accept rather than making
+        // an operator re-derive it from `config` and `base_url` by hand.
+        "private_network_allowed_origin": endpoint_private_network_allowed_origin(endpoint),
         "proxy": admin_secret_safe_proxy(endpoint.proxy.as_ref()),
         "format_acceptance_config": admin_secret_safe_json(endpoint.format_acceptance_config.as_ref()),
         "total_keys": total_keys,

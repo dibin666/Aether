@@ -200,6 +200,48 @@
                 </div>
               </div>
 
+              <!-- 私网放行：默认拒绝私网/保留地址，逐个端点显式开启 -->
+              <div
+                v-if="!isEndpointConfigReadOnly"
+                class="rounded-md border border-dashed bg-muted/20 px-3 py-2.5 space-y-1.5"
+              >
+                <div class="flex items-start gap-3">
+                  <Switch
+                    :model-value="getEndpointPrivateNetworkEnabled(endpoint)"
+                    class="mt-0.5 shrink-0"
+                    :title="getEndpointPrivateNetworkEnabled(endpoint) ? '已允许访问该私网地址，点击关闭' : '默认拒绝私网地址，点击允许'"
+                    @update:model-value="(v: boolean) => updateEndpointPrivateNetwork(endpoint.id, v)"
+                  />
+                  <div class="min-w-0 space-y-1">
+                    <p class="text-sm font-medium leading-none">
+                      允许访问私网地址
+                    </p>
+                    <p class="text-[11px] text-muted-foreground leading-relaxed">
+                      仅放行本端点 Base URL 对应的那一个地址和端口。只支持字面 IP 的 http/https
+                      私网或保留地址；主机名、公网地址，以及带用户名密码或 # 片段的 URL 会被后端拒绝。
+                    </p>
+                  </div>
+                </div>
+                <p
+                  v-if="getEndpointPrivateNetworkError(endpoint)"
+                  class="text-[11px] text-destructive pl-[3.25rem]"
+                >
+                  {{ getEndpointPrivateNetworkError(endpoint) }}
+                </p>
+                <p
+                  v-else-if="getEndpointPrivateNetworkEnabled(endpoint) && getEndpointPrivateNetworkOrigin(endpoint)"
+                  class="text-[11px] text-muted-foreground pl-[3.25rem]"
+                >
+                  将放行：<code class="font-mono">{{ getEndpointPrivateNetworkOrigin(endpoint) }}</code>
+                </p>
+                <p
+                  v-if="getEndpointPrivateNetworkTargetHint(endpoint)"
+                  class="text-[11px] text-muted-foreground pl-[3.25rem]"
+                >
+                  {{ getEndpointPrivateNetworkTargetHint(endpoint) }}
+                </p>
+              </div>
+
               <!-- 请求/响应规则（请求头、请求体和响应头规则） -->
               <Collapsible
                 v-if="!isEndpointConfigReadOnly"
@@ -1005,6 +1047,38 @@
               </div>
             </div>
           </div>
+
+          <!-- 私网放行：新建时即可开启，规则与编辑态完全一致 -->
+          <div class="mt-3 rounded-md border border-dashed bg-muted/20 px-3 py-2.5 space-y-1.5">
+            <div class="flex items-start gap-3">
+              <Switch
+                v-model="newEndpoint.private_network_enabled"
+                class="mt-0.5 shrink-0"
+                :title="newEndpoint.private_network_enabled ? '已允许访问该私网地址，点击关闭' : '默认拒绝私网地址，点击允许'"
+              />
+              <div class="min-w-0 space-y-1">
+                <p class="text-sm font-medium leading-none">
+                  允许访问私网地址
+                </p>
+                <p class="text-[11px] text-muted-foreground leading-relaxed">
+                  仅放行本端点 Base URL 对应的那一个地址和端口。只支持字面 IP 的 http/https
+                  私网或保留地址；主机名、公网地址，以及带用户名密码或 # 片段的 URL 会被后端拒绝。
+                </p>
+              </div>
+            </div>
+            <p
+              v-if="newEndpointPrivateNetworkError"
+              class="text-[11px] text-destructive pl-[3.25rem]"
+            >
+              {{ newEndpointPrivateNetworkError }}
+            </p>
+            <p
+              v-else-if="newEndpoint.private_network_enabled && newEndpointPrivateNetworkOrigin"
+              class="text-[11px] text-muted-foreground pl-[3.25rem]"
+            >
+              将放行：<code class="font-mono">{{ newEndpointPrivateNetworkOrigin }}</code>
+            </p>
+          </div>
         </div>
       </div>
 
@@ -1080,6 +1154,13 @@ import EndpointRulesRevealDialog from './EndpointRulesRevealDialog.vue'
 import ProxyNodeSelect from './ProxyNodeSelect.vue'
 import { getDefaultEndpointBaseUrl, getDefaultEndpointPath } from './endpoint-default-paths'
 import {
+  endpointConfigWithPrivateNetworkAccess,
+  privateNetworkBaseUrlError,
+  privateNetworkOriginFromBaseUrl,
+  privateNetworkTargetRelation,
+  readEndpointPrivateNetworkAccess,
+} from './endpoint-private-network'
+import {
   fixedEndpointUpstreamStreamPolicy,
   isWebSocketEndpointApiFormat,
 } from './endpoint-protocol-policy'
@@ -1149,6 +1230,7 @@ interface EndpointEditState {
   url: string
   path: string
   upstreamStreamPolicy: string
+  privateNetworkEnabled: boolean
   rules: EditableRule[]
   responseRules: EditableRule[]
   bodyRules: EditableBodyRule[]
@@ -1920,6 +2002,7 @@ const newEndpoint = ref({
   api_format: '',
   base_url: '',
   custom_path: '',
+  private_network_enabled: false,
 })
 
 // API 格式列表
@@ -2023,6 +2106,16 @@ function getNewEndpointBaseUrl(): string {
 
 const newEndpointBaseUrlPlaceholder = computed(() => {
   return getEndpointBaseUrlPlaceholder(newEndpoint.value.api_format)
+})
+
+// 新建端点的私网放行提示，跟随正在输入的 Base URL 实时更新
+const newEndpointPrivateNetworkOrigin = computed(() => {
+  return privateNetworkOriginFromBaseUrl(getNewEndpointBaseUrl())?.origin ?? null
+})
+
+const newEndpointPrivateNetworkError = computed(() => {
+  if (!newEndpoint.value.private_network_enabled) return null
+  return privateNetworkBaseUrlError(getNewEndpointBaseUrl())
 })
 
 function getDisplayedPath(endpoint: ProviderEndpoint): string {
@@ -2209,6 +2302,7 @@ function initEndpointEditState(endpoint: ProviderEndpoint): EndpointEditState {
     url: endpoint.base_url,
     path: endpoint.custom_path || '',
     upstreamStreamPolicy: getEndpointUpstreamStreamPolicy(endpoint),
+    privateNetworkEnabled: readEndpointPrivateNetworkAccess(endpoint.config).enabled,
     rules,
     responseRules,
     bodyRules,
@@ -2308,6 +2402,14 @@ function updateEndpointField(endpointId: string, field: 'url' | 'path', value: s
   ensureEndpointEditState(endpointId)
   if (endpointEditStates.value[endpointId]) {
     endpointEditStates.value[endpointId][field] = value
+  }
+}
+
+// 切换私网放行开关（与 Base URL 一起在保存时提交，不单独下发请求）
+function updateEndpointPrivateNetwork(endpointId: string, enabled: boolean) {
+  ensureEndpointEditState(endpointId)
+  if (endpointEditStates.value[endpointId]) {
+    endpointEditStates.value[endpointId].privateNetworkEnabled = enabled
   }
 }
 
@@ -3101,8 +3203,52 @@ function hasUrlChanges(endpoint: ProviderEndpoint): boolean {
   if (!state) return false
   if (state.url !== endpoint.base_url) return true
   if (state.path !== (endpoint.custom_path || '')) return true
+  // 私网放行跟着 Base URL 一起保存：后端按合并后的记录校验，分开提交会用旧
+  // Base URL 去校验新开关而被拒。
+  if (hasPrivateNetworkChanges(endpoint)) return true
   // 注：upstreamStreamPolicy 现在由头部按钮直接保存，无需在此检查
   return false
+}
+
+// —— 私网放行（endpoint.config.private_network_access）——
+
+function getEndpointPrivateNetworkEnabled(endpoint: ProviderEndpoint): boolean {
+  return endpointEditStates.value[endpoint.id]?.privateNetworkEnabled
+    ?? readEndpointPrivateNetworkAccess(endpoint.config).enabled
+}
+
+function hasPrivateNetworkChanges(endpoint: ProviderEndpoint): boolean {
+  const state = endpointEditStates.value[endpoint.id]
+  if (!state) return false
+  return state.privateNetworkEnabled !== readEndpointPrivateNetworkAccess(endpoint.config).enabled
+}
+
+// 当前编辑框里的 Base URL，用来实时反映开关能放行哪个 origin
+function getEndpointPrivateNetworkBaseUrl(endpoint: ProviderEndpoint): string {
+  return endpointEditStates.value[endpoint.id]?.url ?? endpoint.base_url
+}
+
+function getEndpointPrivateNetworkOrigin(endpoint: ProviderEndpoint): string | null {
+  return privateNetworkOriginFromBaseUrl(getEndpointPrivateNetworkBaseUrl(endpoint))?.origin ?? null
+}
+
+function getEndpointPrivateNetworkError(endpoint: ProviderEndpoint): string | null {
+  if (!getEndpointPrivateNetworkEnabled(endpoint)) return null
+  return privateNetworkBaseUrlError(getEndpointPrivateNetworkBaseUrl(endpoint))
+}
+
+// 已保存的 target 钉选说明；开关关闭时仍然展示，因为关闭只撤销 enabled
+function getEndpointPrivateNetworkTargetHint(endpoint: ProviderEndpoint): string | null {
+  const { target } = readEndpointPrivateNetworkAccess(endpoint.config)
+  if (!target) return null
+  switch (privateNetworkTargetRelation(target, getEndpointPrivateNetworkBaseUrl(endpoint))) {
+    case 'matches':
+      return `已钉选目标 ${target}，与当前 Base URL 一致`
+    case 'mismatched':
+      return `已钉选目标 ${target}，与当前 Base URL 不一致，后端会拒绝保存`
+    default:
+      return `已钉选目标 ${target}，当前 Base URL 无法与之比对`
+  }
 }
 
 // 检查端点规则是否有修改
@@ -3357,7 +3503,12 @@ watch(() => [props.modelValue, props.provider?.id] as const, ([open]) => {
     void preloadDefaultBodyRules(localEndpoints.value)
   } else {
     // 关闭对话框时完全清空新端点表单
-    newEndpoint.value = { api_format: '', base_url: '', custom_path: '' }
+    newEndpoint.value = {
+      api_format: '',
+      base_url: '',
+      custom_path: '',
+      private_network_enabled: false,
+    }
     endpointEditStates.value = {}
     localEndpoints.value = []
   }
@@ -3415,6 +3566,15 @@ async function saveEndpoint(endpoint: ProviderEndpoint) {
     return
   }
 
+  // 开启私网放行时先本地拦一道，报错更直观；后端仍会重新校验。
+  if (state.privateNetworkEnabled) {
+    const privateNetworkErr = privateNetworkBaseUrlError(state.url)
+    if (privateNetworkErr) {
+      showError(legacyT(privateNetworkErr))
+      return
+    }
+  }
+
   savingEndpointId.value = endpoint.id
   try {
     // 仅提交变更字段；fixed provider 锁定 base_url，但允许覆盖 custom_path。
@@ -3426,12 +3586,23 @@ async function saveEndpoint(endpoint: ProviderEndpoint) {
     if (state.path !== (endpoint.custom_path || '')) payload.custom_path = state.path || null
 
     if (hasRulesChanges(endpoint)) payload.header_rules = rulesToHeaderRules(state.rules)
+
+    // config 的两处编辑串在同一个合并对象上，任何未被编辑的键都原样保留。
+    let nextConfig: Record<string, unknown> | null | undefined
     if (hasResponseHeaderRulesChanges(endpoint)) {
-      payload.config = endpointConfigWithResponseHeaderRules(
+      nextConfig = endpointConfigWithResponseHeaderRules(
         endpoint,
         rulesToHeaderRules(state.responseRules),
       )
     }
+    if (hasPrivateNetworkChanges(endpoint)) {
+      nextConfig = endpointConfigWithPrivateNetworkAccess(
+        nextConfig === undefined ? endpoint.config : nextConfig,
+        state.privateNetworkEnabled,
+      )
+    }
+    if (nextConfig !== undefined) payload.config = nextConfig
+
     if (hasBodyRulesChanges(endpoint)) payload.body_rules = rulesToBodyRules(state.bodyRules)
 
     // 注：upstreamStreamPolicy 现在由头部按钮直接保存，不在此处处理
@@ -3578,6 +3749,15 @@ async function handleAddEndpoint() {
     return
   }
 
+  const privateNetworkEnabled = newEndpoint.value.private_network_enabled
+  if (privateNetworkEnabled) {
+    const privateNetworkErr = privateNetworkBaseUrlError(baseUrl)
+    if (privateNetworkErr) {
+      showError(legacyT(privateNetworkErr))
+      return
+    }
+  }
+
   addingEndpoint.value = true
   try {
     await createEndpoint(props.provider.id, {
@@ -3586,12 +3766,20 @@ async function handleAddEndpoint() {
       base_url: baseUrl,
       custom_path: newEndpoint.value.custom_path || undefined,
       is_active: true,
+      ...(privateNetworkEnabled
+        ? { config: endpointConfigWithPrivateNetworkAccess(null, true) ?? undefined }
+        : {}),
     })
     success(locale.value === 'en-US'
       ? `Added ${formatApiFormat(newEndpoint.value.api_format)} endpoint`
       : `已添加 ${formatApiFormat(newEndpoint.value.api_format)} 端点`)
     // 重置表单，保留 URL
-    newEndpoint.value = { api_format: '', base_url: baseUrl, custom_path: '' }
+    newEndpoint.value = {
+      api_format: '',
+      base_url: baseUrl,
+      custom_path: '',
+      private_network_enabled: false,
+    }
     emit('endpointCreated')
   } catch (error: unknown) {
     showError(localizedApiError(error, '添加失败'), legacyT('错误'))

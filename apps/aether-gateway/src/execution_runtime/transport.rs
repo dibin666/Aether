@@ -54,6 +54,8 @@ use crate::execution_runtime::windsurf::maybe_execute_windsurf_sync;
 use crate::frontdoor_loop_guard::{
     configured_gateway_frontdoor_base_url, gateway_frontdoor_self_loop_guard_error,
 };
+use crate::private_upstream::private_upstream_allowance;
+use crate::provider_transport::private_network::PrivateUpstreamOrigin;
 use crate::stage_metrics::observe_gateway_stage_ms;
 use crate::tunnel::{self, tunnel_protocol};
 use crate::upstream_admission::UpstreamTargetAdmissionPermit;
@@ -1443,7 +1445,7 @@ pub(crate) async fn execute_stream_plan_via_local_tunnel(
         return Ok(None);
     };
 
-    validate_execution_upstream_url(plan.url.as_str())?;
+    validate_execution_plan_upstream_url(plan)?;
     if let Some(detail) = gateway_frontdoor_self_loop_guard_error(plan.url.as_str()) {
         return Err(ExecutionRuntimeTransportError::UpstreamRequest(detail));
     }
@@ -1601,7 +1603,7 @@ async fn execute_sync_plan_via_local_tunnel_inner(
     let node_id = resolve_local_tunnel_node_id(state, plan.proxy.as_ref()).ok_or_else(|| {
         ExecutionRuntimeTransportError::RelayError("local tunnel node unavailable".to_string())
     })?;
-    validate_execution_upstream_url(plan.url.as_str())?;
+    validate_execution_plan_upstream_url(plan)?;
     if let Some(detail) = gateway_frontdoor_self_loop_guard_error(plan.url.as_str()) {
         return Err(ExecutionRuntimeTransportError::UpstreamRequest(detail));
     }
@@ -1799,7 +1801,7 @@ async fn send_request_inner(
     body_bytes: Vec<u8>,
     apply_request_total_timeout: bool,
 ) -> Result<DirectHttpResponse, ExecutionRuntimeTransportError> {
-    validate_execution_upstream_url(plan.url.as_str())?;
+    validate_execution_plan_upstream_url(plan)?;
     if let Some(detail) = gateway_frontdoor_self_loop_guard_error(plan.url.as_str()) {
         return Err(ExecutionRuntimeTransportError::UpstreamRequest(detail));
     }
@@ -2281,7 +2283,9 @@ fn direct_h2c_sender_prewarm_cache_keys(
     let mut failed = 0;
     let mut first_error = None;
     for url in urls {
-        match direct_h2c_client_cache_key(url, timeouts) {
+        // Prewarm targets come from the process environment, not from a saved
+        // provider endpoint, so they never carry a private allowance.
+        match direct_h2c_client_cache_key(url, timeouts, None) {
             Ok(key) => {
                 if seen.insert(key.clone()) {
                     keys.push(key);
@@ -2321,8 +2325,9 @@ fn direct_h2c_prewarm_ready_required() -> bool {
 async fn cached_direct_h2c_sender(
     request_url: &str,
     timeouts: Option<&aether_contracts::ExecutionTimeouts>,
+    private_upstream_allowance: Option<PrivateUpstreamOrigin>,
 ) -> Result<DirectHyperH2cSenderLease, ExecutionRuntimeTransportError> {
-    let cache_key = direct_h2c_client_cache_key(request_url, timeouts)?;
+    let cache_key = direct_h2c_client_cache_key(request_url, timeouts, private_upstream_allowance)?;
     let cell = direct_h2c_sender_cache_cell(&cache_key);
     let entry = cell
         .get_or_try_init(|| async {
@@ -2395,13 +2400,16 @@ fn direct_h2c_sender_cache_cell(
 fn direct_h2c_client_cache_key(
     request_url: &str,
     timeouts: Option<&aether_contracts::ExecutionTimeouts>,
+    private_upstream_allowance: Option<PrivateUpstreamOrigin>,
 ) -> Result<DirectHyperH2cClientCacheKey, ExecutionRuntimeTransportError> {
     if reqwest::Url::parse(request_url).is_err() {
         return Err(ExecutionRuntimeTransportError::UpstreamRequest(
             "invalid h2c upstream origin".to_string(),
         ));
     }
-    validate_execution_upstream_url(request_url)?;
+    // The fast path builds and caches a connection keyed by origin, so it
+    // revalidates instead of trusting the caller's earlier check.
+    validate_execution_upstream_url_with_allowance(request_url, || private_upstream_allowance)?;
     let upstream_origin = direct_reqwest_upstream_origin(request_url).ok_or_else(|| {
         ExecutionRuntimeTransportError::UpstreamRequest("invalid h2c upstream origin".to_string())
     })?;
@@ -2536,7 +2544,7 @@ fn cached_direct_h2c_client(
     request_url: &str,
     timeouts: Option<&aether_contracts::ExecutionTimeouts>,
 ) -> Result<DirectHyperH2cClient, ExecutionRuntimeTransportError> {
-    let cache_key = direct_h2c_client_cache_key(request_url, timeouts)?;
+    let cache_key = direct_h2c_client_cache_key(request_url, timeouts, None)?;
 
     let cache_lock_started_at = Instant::now();
     if let Ok(mut cache) = DIRECT_H2C_CLIENT_CACHE.lock() {
@@ -2703,7 +2711,12 @@ async fn send_via_direct_h2c_fast_path(
     stream_first_byte_timeout: Option<Duration>,
 ) -> Result<hyper::Response<HyperIncomingBody>, ExecutionRuntimeTransportError> {
     let client_select_started_at = Instant::now();
-    let sender = cached_direct_h2c_sender(&plan.url, plan.timeouts.as_ref()).await?;
+    let sender = cached_direct_h2c_sender(
+        &plan.url,
+        plan.timeouts.as_ref(),
+        private_upstream_allowance(&plan.endpoint_id, &plan.key_id),
+    )
+    .await?;
     observe_gateway_stage_ms(
         "direct_h2c_client_select",
         client_select_started_at.elapsed().as_millis() as u64,
@@ -5146,6 +5159,31 @@ fn execution_log_url_host(url: &str) -> String {
 pub(crate) fn validate_execution_upstream_url(
     raw_url: &str,
 ) -> Result<url::Url, ExecutionRuntimeTransportError> {
+    validate_execution_upstream_url_with_allowance(raw_url, || None)
+}
+
+/// Validate the upstream URL an execution plan is about to request.
+///
+/// Identical to [`validate_execution_upstream_url`], except that a private or
+/// reserved target is accepted when the plan's endpoint and key carry an
+/// administrator-granted allowance for exactly that origin. The allowance is
+/// resolved lazily so the common public-target request never touches the
+/// registry.
+pub(crate) fn validate_execution_plan_upstream_url(
+    plan: &ExecutionPlan,
+) -> Result<url::Url, ExecutionRuntimeTransportError> {
+    validate_execution_upstream_url_with_allowance(plan.url.as_str(), || {
+        private_upstream_allowance(&plan.endpoint_id, &plan.key_id)
+    })
+}
+
+pub(crate) fn validate_execution_upstream_url_with_allowance<F>(
+    raw_url: &str,
+    private_upstream_allowance: F,
+) -> Result<url::Url, ExecutionRuntimeTransportError>
+where
+    F: FnOnce() -> Option<PrivateUpstreamOrigin>,
+{
     let url = url::Url::parse(raw_url).map_err(|_| {
         ExecutionRuntimeTransportError::UpstreamRequest("invalid upstream URL".to_string())
     })?;
@@ -5169,9 +5207,12 @@ pub(crate) fn validate_execution_upstream_url(
         Some(url::Host::Ipv6(address)) => Some(IpAddr::V6(address)),
         _ => None,
     };
+    // The credential, fragment, and scheme checks above stay unconditional: an
+    // allowance opens up one origin, never the rest of the URL contract.
     if literal_ip.is_some_and(|ip| {
         is_private_or_reserved_ip(ip) && !(url.scheme() == "http" && ip.is_loopback())
-    }) {
+    }) && !private_upstream_allowance().is_some_and(|allowance| allowance.allows(&url))
+    {
         return Err(ExecutionRuntimeTransportError::UpstreamRequest(
             "upstream URL must not target a private or reserved address".to_string(),
         ));
@@ -5354,7 +5395,8 @@ mod tests {
         record_manual_proxy_request_success, record_manual_proxy_stream_error,
         reqwest_urls_have_same_origin, resolve_execution_transport_controls,
         resolve_non_stream_total_timeout, resolve_proxy_url, resolve_stream_first_byte_timeout,
-        response_body_is_json, safe_redirect_decision, validate_execution_upstream_url,
+        response_body_is_json, safe_redirect_decision, validate_execution_plan_upstream_url,
+        validate_execution_upstream_url, validate_execution_upstream_url_with_allowance,
         validate_relay_target_url, with_upstream_response_body_limit, DirectSyncExecutionRuntime,
         ExecutionRuntimeTransportError, ExecutionTransportControls, RelayRequestMeta,
         SafeRedirectDecision, UpstreamResponseBodyPhase, DEFAULT_SCOPED_RESPONSE_BODY_LIMIT_BYTES,
@@ -5407,6 +5449,242 @@ mod tests {
             assert!(
                 validate_execution_upstream_url(rejected).is_err(),
                 "URL should be rejected: {rejected}"
+            );
+        }
+    }
+
+    fn private_endpoint_allowance(
+        base_url: &str,
+    ) -> crate::provider_transport::private_network::PrivateUpstreamOrigin {
+        crate::provider_transport::private_network::resolve_endpoint_private_upstream_origin(
+            base_url,
+            Some(&json!({"private_network_access": {"enabled": true}})),
+        )
+        .expect("a private literal endpoint should resolve")
+        .expect("an enabled section should grant an allowance")
+    }
+
+    fn private_upstream_plan(endpoint_id: &str, key_id: &str, url: &str) -> ExecutionPlan {
+        ExecutionPlan {
+            request_id: "req-private-upstream".into(),
+            candidate_id: None,
+            provider_name: Some("provider".into()),
+            provider_id: "prov-private-upstream".into(),
+            endpoint_id: endpoint_id.into(),
+            key_id: key_id.into(),
+            method: "POST".into(),
+            url: url.into(),
+            headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
+            content_type: Some("application/json".into()),
+            content_encoding: None,
+            body: RequestBody::from_json(json!({"model": "claude-3-haiku-20240307"})),
+            stream: false,
+            client_api_format: "claude:messages".into(),
+            provider_api_format: "claude:messages".into(),
+            model_name: Some("claude-3-haiku-20240307".into()),
+            proxy: None,
+            transport_profile: None,
+            timeouts: None,
+        }
+    }
+
+    #[test]
+    fn execution_upstream_url_refuses_private_targets_without_an_allowance() {
+        for rejected in [
+            "http://10.0.0.106:8317/v1/messages",
+            "http://192.168.1.10:8080/v1/messages",
+            "http://169.254.169.254/latest/meta-data",
+            "http://[fd00::1]:8443/v1/messages",
+        ] {
+            assert!(
+                validate_execution_upstream_url(rejected).is_err(),
+                "URL should be rejected without an allowance: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn execution_upstream_url_accepts_the_exact_allowed_private_origin() {
+        let allowance = private_endpoint_allowance("http://10.0.0.106:8317/v1");
+
+        for allowed in [
+            "http://10.0.0.106:8317/v1/messages",
+            "http://10.0.0.106:8317/v1/models?limit=1",
+        ] {
+            assert!(
+                validate_execution_upstream_url_with_allowance(allowed, || Some(allowance)).is_ok(),
+                "allowed private endpoint should be accepted: {allowed}"
+            );
+        }
+    }
+
+    #[test]
+    fn execution_upstream_allowance_does_not_widen_to_other_targets_or_url_shapes() {
+        let allowance = private_endpoint_allowance("http://10.0.0.106:8317/v1");
+
+        for rejected in [
+            // A neighbouring host, port, or scheme is a different target.
+            "http://10.0.0.107:8317/v1/messages",
+            "http://10.0.0.106:8318/v1/messages",
+            "http://10.0.0.106/v1/messages",
+            "https://10.0.0.106:8317/v1/messages",
+            // The classic SSRF pivots stay closed.
+            "http://169.254.169.254/latest/meta-data",
+            "http://[fd00::1]:8317/v1/messages",
+            // An allowance opens one origin, not the rest of the URL contract.
+            "http://token@10.0.0.106:8317/v1/messages",
+            "http://user:secret@10.0.0.106:8317/v1/messages",
+            "http://10.0.0.106:8317/v1/messages#fragment",
+            "ftp://10.0.0.106:8317/v1/messages",
+        ] {
+            assert!(
+                validate_execution_upstream_url_with_allowance(rejected, || Some(allowance))
+                    .is_err(),
+                "allowance must not cover: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn execution_plans_only_reach_private_targets_their_own_endpoint_was_granted() {
+        let endpoint_id = "ep-private-plan";
+        let key_id = "key-private-plan";
+        let allowed_url = "http://10.0.0.106:8317/v1/messages";
+
+        // Default deny: nothing has been loaded for this endpoint yet.
+        assert!(
+            validate_execution_plan_upstream_url(&private_upstream_plan(
+                endpoint_id,
+                key_id,
+                allowed_url
+            ))
+            .is_err(),
+            "an unregistered endpoint must not reach a private target"
+        );
+
+        crate::private_upstream::sync_endpoint_private_upstream_allowance(
+            endpoint_id,
+            key_id,
+            "http://10.0.0.106:8317/v1",
+            Some(&json!({"private_network_access": {"enabled": true}})),
+        );
+        assert!(
+            validate_execution_plan_upstream_url(&private_upstream_plan(
+                endpoint_id,
+                key_id,
+                allowed_url
+            ))
+            .is_ok(),
+            "the granted endpoint should reach its own saved origin"
+        );
+
+        // A plan that borrows the granted endpoint id but drifts to another
+        // internal target gains nothing.
+        assert!(validate_execution_plan_upstream_url(&private_upstream_plan(
+            endpoint_id,
+            key_id,
+            "http://169.254.169.254/latest/meta-data",
+        ))
+        .is_err());
+        // Neither does a plan that reuses the granted URL under a different key.
+        assert!(validate_execution_plan_upstream_url(&private_upstream_plan(
+            endpoint_id,
+            "key-private-plan-other",
+            allowed_url,
+        ))
+        .is_err());
+
+        crate::private_upstream::sync_endpoint_private_upstream_allowance(
+            endpoint_id,
+            key_id,
+            "http://10.0.0.106:8317/v1",
+            Some(&json!({"private_network_access": {"enabled": false}})),
+        );
+        assert!(
+            validate_execution_plan_upstream_url(&private_upstream_plan(
+                endpoint_id,
+                key_id,
+                allowed_url
+            ))
+            .is_err(),
+            "revoking the allowance must close the target again"
+        );
+    }
+
+    #[test]
+    fn public_execution_plans_keep_their_existing_validation() {
+        let endpoint_id = "ep-public-plan";
+        let key_id = "key-public-plan";
+        crate::private_upstream::sync_endpoint_private_upstream_allowance(
+            endpoint_id,
+            key_id,
+            "http://10.0.0.106:8317/v1",
+            Some(&json!({"private_network_access": {"enabled": true}})),
+        );
+
+        for allowed in [
+            "https://api.example.test/v1/messages",
+            "http://api.example.test:8080/v1/messages",
+            "https://8.8.8.8/v1/messages",
+        ] {
+            assert!(
+                validate_execution_plan_upstream_url(&private_upstream_plan(
+                    endpoint_id,
+                    key_id,
+                    allowed
+                ))
+                .is_ok(),
+                "public target should stay accepted: {allowed}"
+            );
+        }
+        for rejected in [
+            "https://token@api.example.test/v1/messages",
+            "https://api.example.test/v1/messages#secret",
+            "ftp://api.example.test/v1/messages",
+            "https://10.0.0.106:8317/v1/messages",
+        ] {
+            assert!(
+                validate_execution_plan_upstream_url(&private_upstream_plan(
+                    endpoint_id,
+                    key_id,
+                    rejected
+                ))
+                .is_err(),
+                "public-provider validation should still reject: {rejected}"
+            );
+        }
+    }
+
+    #[test]
+    fn private_allowances_do_not_survive_a_redirect_off_their_origin() {
+        let allowance = private_endpoint_allowance("http://10.0.0.106:8317/v1");
+        let granted = reqwest::Url::parse("http://10.0.0.106:8317/v1/messages").unwrap();
+
+        // Same-origin redirects are the only ones the client follows, and they
+        // stay inside the origin the administrator opened up.
+        let same_origin = reqwest::Url::parse("http://10.0.0.106:8317/v1/messages/retry").unwrap();
+        assert!(reqwest_urls_have_same_origin(&granted, &same_origin));
+        assert!(allowance.allows(&same_origin));
+
+        for drifted in [
+            "http://10.0.0.107:8317/v1/messages",
+            "http://169.254.169.254/latest/meta-data",
+            "http://10.0.0.106:8318/v1/messages",
+            "https://10.0.0.106:8317/v1/messages",
+        ] {
+            let drifted = reqwest::Url::parse(drifted).unwrap();
+            assert!(
+                !reqwest_urls_have_same_origin(&granted, &drifted),
+                "redirect target should not be same-origin: {drifted}"
+            );
+            assert_eq!(
+                safe_redirect_decision(1, false),
+                SafeRedirectDecision::Stop,
+                "cross-origin redirects must stop"
+            );
+            assert!(
+                !allowance.allows(&drifted),
+                "allowance must not cover redirect target: {drifted}"
             );
         }
     }
