@@ -47,6 +47,7 @@ pub fn sanitize_usage_request_metadata_object(source: &Map<String, Value>) -> Op
 
     insert_token(source, &mut target, "trace_id", 128);
     insert_ip_address(source, &mut target, "client_ip");
+    insert_user_agent(source, &mut target);
     insert_client_family(source, &mut target);
     for key in [
         "client_requested_stream",
@@ -206,6 +207,24 @@ fn insert_request_paths(source: &Map<String, Value>, target: &mut Map<String, Va
     insert_owned_string(target, "request_path", path);
     insert_owned_string(target, "request_query_string", query);
     insert_owned_string(target, "request_path_and_query", combined);
+}
+
+fn insert_user_agent(source: &Map<String, Value>, target: &mut Map<String, Value>) {
+    let Some(raw) = source.get("user_agent").and_then(Value::as_str) else {
+        return;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let sanitized: String = trimmed
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(1024)
+        .collect();
+    if !sanitized.is_empty() {
+        target.insert("user_agent".to_string(), Value::String(sanitized));
+    }
 }
 
 fn insert_client_family(source: &Map<String, Value>, target: &mut Map<String, Value>) {
@@ -1229,7 +1248,7 @@ mod tests {
         let metadata = sanitize_usage_request_metadata(Some(json!({
             "trace_id": "trace-1",
             "client_ip": "203.0.113.8",
-            "user_agent": "Bearer browser-secret",
+            "user_agent": "codex_cli_rs/0.104.0 (Ubuntu 24.04; x86_64)",
             "client_session_affinity": {
                 "client_family": "codex",
                 "session_key": "tenant/session-secret"
@@ -1257,6 +1276,10 @@ mod tests {
         assert_eq!(metadata["client_ip"], "203.0.113.8");
         assert_eq!(metadata["client_family"], "codex");
         assert_eq!(
+            metadata["user_agent"],
+            "codex_cli_rs/0.104.0 (Ubuntu 24.04; x86_64)"
+        );
+        assert_eq!(
             metadata["routing_candidate_skip_reason"],
             "unclassified_skip"
         );
@@ -1265,7 +1288,6 @@ mod tests {
             json!({"kind": "request_body_build", "path": "$.reasoning.summary"})
         );
         for key in [
-            "user_agent",
             "client_session_affinity",
             "proxy",
             "tls_fingerprint",
@@ -1437,15 +1459,71 @@ mod tests {
     }
 
     #[test]
-    fn user_agent_is_reduced_to_a_controlled_client_family() {
+    fn user_agent_is_persisted_alongside_the_inferred_client_family() {
         let metadata = sanitize_usage_request_metadata(Some(json!({
             "user_agent": "codex_vscode/0.131.0-alpha.9 (Windows; x86_64; tenant=secret)"
         })))
-        .expect("recognized client family should remain");
-        assert_eq!(metadata, json!({"client_family": "codex_vscode"}));
+        .expect("recognized client family and user agent should remain");
+        assert_eq!(
+            metadata,
+            json!({
+                "client_family": "codex_vscode",
+                "user_agent": "codex_vscode/0.131.0-alpha.9 (Windows; x86_64; tenant=secret)"
+            })
+        );
+
+        let unknown = sanitize_usage_request_metadata(Some(json!({
+            "user_agent": "private-client/1.0 account-secret"
+        })))
+        .expect("user agent should be persisted even if client family is unrecognized");
+        assert_eq!(
+            unknown,
+            json!({
+                "user_agent": "private-client/1.0 account-secret"
+            })
+        );
+    }
+
+    #[test]
+    fn user_agent_sanitization_rules() {
+        let metadata = sanitize_usage_request_metadata(Some(json!({
+            "user_agent": "CustomClient/1.0 (Bearer secret-token; env=prod)"
+        })))
+        .expect("metadata should remain");
+        assert_eq!(
+            metadata["user_agent"],
+            "CustomClient/1.0 (Bearer secret-token; env=prod)"
+        );
+
+        let multi_byte_char = "🦀";
+        let long_ua = multi_byte_char.repeat(1100);
+        let metadata_long = sanitize_usage_request_metadata(Some(json!({
+            "user_agent": long_ua
+        })))
+        .expect("metadata should remain");
+        let truncated = metadata_long["user_agent"].as_str().expect("string");
+        assert_eq!(truncated.chars().count(), 1024);
+        assert_eq!(truncated, multi_byte_char.repeat(1024));
+
+        let metadata_ctrl = sanitize_usage_request_metadata(Some(json!({
+            "user_agent": "Client/1.0\r\nInjected-Header: evil\0extra"
+        })))
+        .expect("metadata should remain");
+        assert_eq!(
+            metadata_ctrl["user_agent"],
+            "Client/1.0Injected-Header: evilextra"
+        );
 
         assert!(sanitize_usage_request_metadata(Some(json!({
-            "user_agent": "private-client/1.0 account-secret"
+            "user_agent": ""
+        })))
+        .is_none());
+        assert!(sanitize_usage_request_metadata(Some(json!({
+            "user_agent": "   \t\r\n   "
+        })))
+        .is_none());
+        assert!(sanitize_usage_request_metadata(Some(json!({
+            "user_agent": "\0\x01\x02"
         })))
         .is_none());
     }

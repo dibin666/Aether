@@ -1,10 +1,10 @@
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet, VecDeque},
     fmt,
     io::Read,
     net::{IpAddr, SocketAddr},
-    sync::LazyLock,
+    sync::{LazyLock, Mutex},
 };
 
 use crate::constants::*;
@@ -67,14 +67,37 @@ fn body_limit_bytes(value: Option<&str>, default_bytes: u64) -> u64 {
     configured.min(MAX_CONFIGURED_BUFFERED_BODY_BYTES)
 }
 
+const PRIVATE_CIDRS: &[&str] = &[
+    "127.0.0.0/8",
+    "::1/128",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "fc00::/7",
+    "169.254.0.0/16",
+    "fe80::/10",
+];
+
+pub(crate) fn parse_trusted_proxy_cidrs(value: &str) -> Vec<String> {
+    let mut cidrs = Vec::new();
+    for item in value.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if item.eq_ignore_ascii_case("private") {
+            for cidr in PRIVATE_CIDRS {
+                if !cidrs.iter().any(|c: &String| c == *cidr) {
+                    cidrs.push((*cidr).to_string());
+                }
+            }
+        } else if valid_ip_or_cidr(item) && !cidrs.iter().any(|c: &String| c == item) {
+            cidrs.push(item.to_string());
+        }
+    }
+    cidrs
+}
+
 static TRUSTED_PROXY_CIDRS: LazyLock<Vec<String>> = LazyLock::new(|| {
-    std::env::var(TRUSTED_PROXY_CIDRS_ENV)
-        .unwrap_or_else(|_| "127.0.0.0/8,::1/128".to_string())
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty() && valid_ip_or_cidr(value))
-        .map(ToOwned::to_owned)
-        .collect()
+    let raw = std::env::var(TRUSTED_PROXY_CIDRS_ENV)
+        .unwrap_or_else(|_| "127.0.0.0/8,::1/128".to_string());
+    parse_trusted_proxy_cidrs(&raw)
 });
 
 pub(crate) fn max_request_body_bytes() -> u64 {
@@ -145,9 +168,74 @@ pub(crate) fn request_origin_from_headers_and_remote_addr(
     }
 }
 
+struct BoundedIpCache {
+    set: HashSet<IpAddr>,
+    queue: VecDeque<IpAddr>,
+    capacity: usize,
+}
+
+impl BoundedIpCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            set: HashSet::new(),
+            queue: VecDeque::new(),
+            capacity,
+        }
+    }
+
+    fn check_and_insert(&mut self, ip: IpAddr) -> bool {
+        if self.set.contains(&ip) {
+            return false;
+        }
+        if self.queue.len() >= self.capacity {
+            if let Some(oldest) = self.queue.pop_front() {
+                self.set.remove(&oldest);
+            }
+        }
+        self.set.insert(ip);
+        self.queue.push_back(ip);
+        true
+    }
+}
+
+static UNTRUSTED_FORWARDED_WARN_IPS: LazyLock<Mutex<BoundedIpCache>> =
+    LazyLock::new(|| Mutex::new(BoundedIpCache::new(1024)));
+
+fn warn_untrusted_proxy_forwarded_headers_once(remote_ip: IpAddr, headers: &http::HeaderMap) {
+    let mut should_log = false;
+    if let Ok(mut cache) = UNTRUSTED_FORWARDED_WARN_IPS.lock() {
+        should_log = cache.check_and_insert(remote_ip);
+    }
+    if should_log {
+        let mut ignored = Vec::new();
+        if let Some(val) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            ignored.push(format!("X-Forwarded-For: {}", val.trim()));
+        }
+        if let Some(val) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+            ignored.push(format!("X-Real-IP: {}", val.trim()));
+        }
+        tracing::warn!(
+            remote_ip = %remote_ip,
+            ignored_headers = %ignored.join("; "),
+            "untrusted remote peer sent forwarded headers which were ignored; configure {TRUSTED_PROXY_CIDRS_ENV} to trust this proxy"
+        );
+    }
+}
+
 pub(crate) fn effective_client_ip(headers: &http::HeaderMap, remote_addr: &SocketAddr) -> IpAddr {
+    effective_client_ip_with_cidrs(headers, remote_addr, &TRUSTED_PROXY_CIDRS)
+}
+
+pub(crate) fn effective_client_ip_with_cidrs(
+    headers: &http::HeaderMap,
+    remote_addr: &SocketAddr,
+    trusted_cidrs: &[String],
+) -> IpAddr {
     let remote_ip = remote_addr.ip();
-    if !trusted_proxy_ip(remote_ip) {
+    if !trusted_proxy_ip_with_cidrs(remote_ip, trusted_cidrs) {
+        if headers.contains_key("x-forwarded-for") || headers.contains_key("x-real-ip") {
+            warn_untrusted_proxy_forwarded_headers_once(remote_ip, headers);
+        }
         return remote_ip;
     }
 
@@ -162,7 +250,7 @@ pub(crate) fn effective_client_ip(headers: &http::HeaderMap, remote_addr: &Socke
         .iter()
         .rev()
         .copied()
-        .find(|ip| !trusted_proxy_ip(*ip))
+        .find(|ip| !trusted_proxy_ip_with_cidrs(*ip, trusted_cidrs))
     {
         return client_ip;
     }
@@ -180,16 +268,22 @@ pub(crate) fn effective_client_ip(headers: &http::HeaderMap, remote_addr: &Socke
 }
 
 pub(crate) fn trusted_proxy_ip(ip: IpAddr) -> bool {
-    TRUSTED_PROXY_CIDRS
-        .iter()
-        .any(|pattern| ip_or_cidr_matches(pattern, ip))
+    trusted_proxy_ip_with_cidrs(ip, &TRUSTED_PROXY_CIDRS)
 }
 
-fn valid_ip_or_cidr(value: &str) -> bool {
-    if value.parse::<IpAddr>().is_ok() {
+pub(crate) fn trusted_proxy_ip_with_cidrs(ip: IpAddr, cidrs: &[String]) -> bool {
+    cidrs.iter().any(|pattern| ip_or_cidr_matches(pattern, ip))
+}
+
+pub(crate) fn valid_ip_or_cidr(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.eq_ignore_ascii_case("private") {
         return true;
     }
-    let Some((network, prefix)) = value.split_once('/') else {
+    if trimmed.parse::<IpAddr>().is_ok() {
+        return true;
+    }
+    let Some((network, prefix)) = trimmed.split_once('/') else {
         return false;
     };
     let Ok(network) = network.trim().parse::<IpAddr>() else {
@@ -927,10 +1021,12 @@ pub(crate) fn header_equals(
 #[cfg(test)]
 mod tests {
     use super::{
-        decoded_request_body_bytes, effective_client_ip, normalize_request_body_headers_and_bytes,
+        decoded_request_body_bytes, effective_client_ip, effective_client_ip_with_cidrs,
+        normalize_request_body_headers_and_bytes, parse_trusted_proxy_cidrs,
         request_origin_from_headers, request_origin_from_headers_and_remote_addr,
         request_origin_from_trusted_headers, should_skip_response_header,
-        tls_fingerprint_from_headers, RequestBodyNormalizationError, RequestOrigin,
+        tls_fingerprint_from_headers, trusted_proxy_ip_with_cidrs, valid_ip_or_cidr,
+        RequestBodyNormalizationError, RequestOrigin,
     };
 
     #[test]
@@ -1111,6 +1207,70 @@ mod tests {
         headers.append("x-real-ip", HeaderValue::from_static("203.0.113.8"));
         let remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 443);
 
+        assert_eq!(
+            effective_client_ip(&headers, &remote_addr),
+            remote_addr.ip()
+        );
+    }
+
+    #[test]
+    fn parse_trusted_proxy_cidrs_expands_private_and_supports_mixed() {
+        let cidrs = parse_trusted_proxy_cidrs("private, 203.0.113.7");
+        assert!(cidrs.contains(&"127.0.0.0/8".to_string()));
+        assert!(cidrs.contains(&"::1/128".to_string()));
+        assert!(cidrs.contains(&"10.0.0.0/8".to_string()));
+        assert!(cidrs.contains(&"172.16.0.0/12".to_string()));
+        assert!(cidrs.contains(&"192.168.0.0/16".to_string()));
+        assert!(cidrs.contains(&"fc00::/7".to_string()));
+        assert!(cidrs.contains(&"169.254.0.0/16".to_string()));
+        assert!(cidrs.contains(&"fe80::/10".to_string()));
+        assert!(cidrs.contains(&"203.0.113.7".to_string()));
+        assert!(!cidrs.contains(&"100.64.0.0/10".to_string()));
+        assert!(!cidrs.iter().any(|c| c.contains("100.64.")));
+    }
+
+    #[test]
+    fn parse_trusted_proxy_cidrs_does_not_trust_cgnat_by_default() {
+        let cidrs = parse_trusted_proxy_cidrs("private");
+        let cgnat_ip: IpAddr = "100.64.0.1".parse().unwrap();
+        assert!(!trusted_proxy_ip_with_cidrs(cgnat_ip, &cidrs));
+    }
+
+    #[test]
+    fn valid_ip_or_cidr_accepts_private_keyword_case_insensitively() {
+        assert!(valid_ip_or_cidr("private"));
+        assert!(valid_ip_or_cidr("PRIVATE"));
+        assert!(valid_ip_or_cidr("Private"));
+        assert!(valid_ip_or_cidr("  private  "));
+    }
+
+    #[test]
+    fn effective_client_ip_extracts_real_ip_from_docker_bridge_gateway_when_private_trusted() {
+        let private_cidrs = parse_trusted_proxy_cidrs("private");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.8, 192.168.32.1"),
+        );
+        let bridge_gateway = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 32, 1)), 8084);
+
+        assert_eq!(
+            effective_client_ip_with_cidrs(&headers, &bridge_gateway, &private_cidrs),
+            IpAddr::V4(Ipv4Addr::new(203, 0, 113, 8))
+        );
+    }
+
+    #[test]
+    fn effective_client_ip_untrusted_peer_with_forwarded_headers_does_not_panic() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.8"));
+        headers.insert("x-real-ip", HeaderValue::from_static("203.0.113.8"));
+        let remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1)), 443);
+        assert_eq!(
+            effective_client_ip(&headers, &remote_addr),
+            remote_addr.ip()
+        );
+        // Second call verifies throttled branch doesn't fail either
         assert_eq!(
             effective_client_ip(&headers, &remote_addr),
             remote_addr.ip()

@@ -72,6 +72,7 @@ services:
       AETHER_LOG_RETENTION_DAYS: ${AETHER_LOG_RETENTION_DAYS:-7}
       AETHER_LOG_MAX_FILES: ${AETHER_LOG_MAX_FILES:-30}
       APP_PORT: ${AETHER_RELEASE_LOCAL_PORT:-18085}
+      AETHER_TRUSTED_PROXY_CIDRS: ${AETHER_TRUSTED_PROXY_CIDRS:-private}
       AETHER_UPDATE_PROXY_URL: ${AETHER_UPDATE_PROXY_URL:-}
       UPDATE_PROXY_URL: ${UPDATE_PROXY_URL:-}
       AETHER_BASE_DIR: /opt/aether
@@ -81,7 +82,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "${AETHER_RELEASE_LOCAL_PORT:-18085}:${AETHER_RELEASE_LOCAL_PORT:-18085}"
+      - "${APP_BIND_ADDR:-127.0.0.1}:${AETHER_RELEASE_LOCAL_PORT:-18085}:${AETHER_RELEASE_LOCAL_PORT:-18085}"
     volumes:
       - aether_release_local_root:/opt/aether
     restart: unless-stopped

@@ -95,6 +95,7 @@ pub(crate) fn retain_first_byte_request_metadata(value: Option<Value>) -> Option
             key.as_str(),
             "trace_id"
                 | "client_ip"
+                | "user_agent"
                 | "client_family"
                 | "client_requested_stream"
                 | "upstream_is_stream"
@@ -414,6 +415,7 @@ mod tests {
             json!({
                 "trace_id": "trace-1",
                 "client_ip": "203.0.113.8",
+                "user_agent": "Claude-Code/1.0",
                 "client_family": "claude_code",
                 "client_requested_stream": false,
                 "upstream_is_stream": true,
@@ -475,6 +477,28 @@ mod tests {
                 "request_path": "/v1/chat/completions",
                 "request_path_and_query": "/v1/chat/completions",
                 "upstream_is_stream": true
+            })
+        );
+    }
+
+    #[test]
+    fn first_byte_metadata_retains_user_agent_and_client_family() {
+        let metadata = retain_first_byte_request_metadata(Some(json!({
+            "trace_id": "trace-fb-ua",
+            "client_ip": "203.0.113.9",
+            "user_agent": "codex_vscode/0.131.0-alpha.9",
+            "proxy": {"mode": "manual"},
+            "billing_snapshot": {"dimensions": [1]}
+        })))
+        .expect("first-byte metadata should remain");
+
+        assert_eq!(
+            metadata,
+            json!({
+                "trace_id": "trace-fb-ua",
+                "client_ip": "203.0.113.9",
+                "user_agent": "codex_vscode/0.131.0-alpha.9",
+                "client_family": "codex_vscode"
             })
         );
     }
@@ -620,6 +644,7 @@ mod tests {
                 "global_model_id": "global-model-1",
                 "global_model_name": "gpt-5",
                 "client_ip": "203.0.113.8",
+                "user_agent": "Claude-Code/1.0",
                 "client_family": "claude_code",
                 "billing_snapshot": {"status": "complete"},
                 "billing_snapshot_status": "complete"

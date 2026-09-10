@@ -3063,6 +3063,33 @@ mod tests {
     }
 
     #[test]
+    fn admin_usage_record_populates_user_agent_from_metadata() {
+        let expected_ua = "codex_vscode/0.131.0-alpha.9 (Windows 10.0.26200; x86_64)";
+        let item = StoredRequestUsageAudit {
+            request_metadata: Some(json!({
+                "client_ip": "192.168.0.28",
+                "user_agent": expected_ua
+            })),
+            ..sample_usage("completed", Some(200), None)
+        };
+
+        let record = admin_usage_record_json(
+            &item,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            false,
+            false,
+            None,
+        );
+        let active = admin_usage_active_request_json(&item, None, None, None);
+
+        assert_eq!(record["user_agent"], expected_ua);
+        assert_eq!(record["client_ip"], "192.168.0.28");
+        assert_eq!(record["client_family"], "codex_vscode");
+        assert_eq!(active["user_agent"], expected_ua);
+    }
+
+    #[test]
     fn admin_usage_record_labels_openai_js_user_agent_as_sdk() {
         let item = StoredRequestUsageAudit {
             request_metadata: Some(json!({
