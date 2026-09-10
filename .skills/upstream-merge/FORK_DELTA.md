@@ -5,13 +5,21 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（合并提交） | `157a1ea2bf859db5a91e3b5d2dc83027533a413e` |
-| upstream HEAD | `95e4d0149cd38d99d54653aa0d1ba203bce68bc6` |
+| fork code baseline（上一轮合并提交） | `157a1ea2bf859db5a91e3b5d2dc83027533a413e` |
+| 本轮预合并快照树 | `6e4fc13b1f91e76cf831ce3421470525465d0abc` |
+| upstream HEAD | `531f53b4437c5dd69b7a498eaf09f1fe414e027b` |
 | merge-base | `95e4d0149cd38d99d54653aa0d1ba203bce68bc6` |
-| 分叉计数（不含本记录提交） | fork-only 215，upstream-only 0 |
-| fork-only 路径 | 282 个，`+25634/-904` |
-| upstream-only 路径 | 0 个，`+0/-0` |
-| 快照日期 | 2026-09-10（第四轮，合并后） |
+| 分叉计数（以快照树计算） | fork-only 216，upstream-only 1 |
+| fork-only 路径 | 282 个，`+25643/-904` |
+| upstream-only 路径 | 11 个，`+1955/-673` |
+| 重叠路径 | 0 个 |
+| 快照日期 | 2026-09-10（第五轮，预合并） |
+
+### 第五轮预合并快照
+
+待合入 upstream 的唯一提交是 `531f53b44 feat(routing): simplify model scheduling configuration`。它新增统一的 routing scheduling policy 模型、编辑器和测试，并重构 `RoutingProfiles.vue`；相对上一轮 upstream 基线共 11 个路径、`+1955/-673`。
+
+本轮与 fork-only delta 的直接重叠路径为 0，预计不会出现文本冲突；仍需对 routing planner、pool scheduling、provider model-test 和 `RoutingProfiles.vue` 的静默语义变化做合并后审计。合并时采用 upstream 的新 routing scheduling 配置模型，同时保留以下 fork P0/P1 契约：私网 endpoint 放行、PostgreSQL 幂等迁移、`ignore_pool_cooldown`、transcription、额度统计、账号级任务事件和结构化 provider 失败返回。
 
 ### 第四轮合并后快照
 
