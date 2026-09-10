@@ -788,6 +788,10 @@ async fn connect_protocol_peer(
         loop {
             tokio::select! {
                 message = stream.next() => {
+                    // Collapsing the Ping arm's `if` into a match guard would move the
+                    // Pong send into the guard, hiding a network side effect there and
+                    // forcing a clone of the payload the guard may only borrow.
+                    #[allow(clippy::collapsible_match)]
                     match message {
                         Some(Ok(Message::Binary(data))) => {
                             match handle_binary_frame(&mut sink, data.to_vec()).await {

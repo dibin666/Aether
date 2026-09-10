@@ -743,7 +743,6 @@ pub fn build_admin_pool_selection_payload(keys: &[StoredProviderCatalogKey]) -> 
 mod tests {
     use super::{
         admin_pool_key_account_quota_exhausted, admin_pool_key_is_known_banned,
-        admin_pool_matches_quick_selector, admin_pool_sanitize_quick_selectors,
         apply_admin_pool_key_settings, build_admin_pool_batch_action_plan,
         build_admin_pool_batch_import_key_record, build_admin_pool_key_payload,
         resolve_admin_pool_key_settings, validate_admin_pool_key_settings_payload,

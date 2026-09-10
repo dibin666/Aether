@@ -251,7 +251,7 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
             let order_param = query_param_value(query, "order");
             let descending = order_param
                 .as_deref()
-                .map_or(true, |v| !v.eq_ignore_ascii_case("asc"));
+                .is_none_or(|v| !v.eq_ignore_ascii_case("asc"));
             let run_id = query_param_value(query, "run_id").filter(|v| !v.trim().is_empty());
 
             let effective_run_id = match run_id {

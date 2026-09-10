@@ -280,7 +280,8 @@ mod tests {
             "not-a-url",
         ] {
             assert!(
-                resolve_endpoint_private_upstream_origin(base_url, Some(&enabled_config())).is_err(),
+                resolve_endpoint_private_upstream_origin(base_url, Some(&enabled_config()))
+                    .is_err(),
                 "base_url should be refused: {base_url}"
             );
         }
@@ -295,8 +296,11 @@ mod tests {
             json!({"private_network_access": {"enabled": 1}}),
         ] {
             assert!(
-                resolve_endpoint_private_upstream_origin("http://10.0.0.106:8317/v1", Some(&config))
-                    .is_err(),
+                resolve_endpoint_private_upstream_origin(
+                    "http://10.0.0.106:8317/v1",
+                    Some(&config)
+                )
+                .is_err(),
                 "malformed section should be refused: {config}"
             );
         }
@@ -308,13 +312,10 @@ mod tests {
             "private_network_access": {"enabled": true, "target": "10.0.0.106:8317"},
         });
         assert_eq!(
-            resolve_endpoint_private_upstream_origin(
-                "http://10.0.0.106:8317/v1",
-                Some(&matching)
-            )
-            .unwrap()
-            .unwrap()
-            .origin(),
+            resolve_endpoint_private_upstream_origin("http://10.0.0.106:8317/v1", Some(&matching))
+                .unwrap()
+                .unwrap()
+                .origin(),
             "http://10.0.0.106:8317"
         );
 

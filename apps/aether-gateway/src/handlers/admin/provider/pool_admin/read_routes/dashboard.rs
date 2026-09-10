@@ -1820,7 +1820,12 @@ mod tests {
                 local_cost_usd: 0.0,
             }],
         };
-        let forecast = forecast_window(&current, &current.windows[0], &[current.clone()], 2_000);
+        let forecast = forecast_window(
+            &current,
+            &current.windows[0],
+            std::slice::from_ref(&current),
+            2_000,
+        );
         assert_eq!(forecast["confidence"], "low");
         assert!(forecast["estimated_exhaustion_unix_secs"].is_null());
     }

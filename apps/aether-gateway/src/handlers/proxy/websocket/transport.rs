@@ -28,11 +28,11 @@ use crate::execution_runtime::transport::{
     ExecutionTransportControls,
 };
 use crate::frontdoor_loop_guard::gateway_frontdoor_self_loop_guard_error;
-use crate::private_upstream::private_upstream_allowance;
-use crate::provider_transport::private_network::PrivateUpstreamOrigin;
 use crate::handlers::proxy::websocket::session::{
     WebSocketSessionLimits, RELAY_WRITE_TIMEOUT, TEARDOWN_WRITE_TIMEOUT,
 };
+use crate::private_upstream::private_upstream_allowance;
+use crate::provider_transport::private_network::PrivateUpstreamOrigin;
 
 #[derive(Clone, Copy)]
 pub(crate) struct UpstreamWebSocketErrorCodes {
@@ -175,10 +175,9 @@ pub(crate) fn websocket_upstream_url(
     url.set_scheme(http_scheme).map_err(|_| invalid_code)?;
     // The allowance is compared against the HTTP form of the URL, which is the
     // scheme the endpoint's saved base URL is written in.
-    let mut url = validate_execution_upstream_url_with_allowance(url.as_str(), || {
-        private_upstream_allowance
-    })
-    .map_err(|_| invalid_code)?;
+    let mut url =
+        validate_execution_upstream_url_with_allowance(url.as_str(), || private_upstream_allowance)
+            .map_err(|_| invalid_code)?;
     url.set_scheme(websocket_scheme).map_err(|_| invalid_code)?;
     Ok(url)
 }
@@ -840,7 +839,8 @@ mod tests {
     #[test]
     fn rejects_upstream_url_with_credentials() {
         assert!(
-            websocket_upstream_url("https://token@example.test/responses", "invalid", None).is_err()
+            websocket_upstream_url("https://token@example.test/responses", "invalid", None)
+                .is_err()
         );
     }
 
@@ -891,12 +891,13 @@ mod tests {
 
     #[test]
     fn websocket_upstream_url_honours_only_the_allowed_private_origin() {
-        let allowance = crate::provider_transport::private_network::resolve_endpoint_private_upstream_origin(
-            "http://10.0.0.106:8317/v1",
-            Some(&serde_json::json!({"private_network_access": {"enabled": true}})),
-        )
-        .expect("a private literal endpoint should resolve")
-        .expect("an enabled section should grant an allowance");
+        let allowance =
+            crate::provider_transport::private_network::resolve_endpoint_private_upstream_origin(
+                "http://10.0.0.106:8317/v1",
+                Some(&serde_json::json!({"private_network_access": {"enabled": true}})),
+            )
+            .expect("a private literal endpoint should resolve")
+            .expect("an enabled section should grant an allowance");
 
         for allowed in [
             "ws://10.0.0.106:8317/v1/realtime",
@@ -921,7 +922,9 @@ mod tests {
             );
         }
         // Without the allowance the same target stays refused.
-        assert!(websocket_upstream_url("ws://10.0.0.106:8317/v1/realtime", "invalid", None).is_err());
+        assert!(
+            websocket_upstream_url("ws://10.0.0.106:8317/v1/realtime", "invalid", None).is_err()
+        );
     }
 
     #[tokio::test]

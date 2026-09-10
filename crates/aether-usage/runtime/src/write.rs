@@ -3334,7 +3334,7 @@ fn estimated_text_response_usage(text: &str, reasoning: bool) -> EstimatedRespon
     let tokens = estimate_text_tokens(text);
     EstimatedResponseUsage {
         output_tokens: tokens,
-        reasoning_tokens: reasoning.then_some(tokens).unwrap_or_default(),
+        reasoning_tokens: if reasoning { tokens } else { 0 },
     }
 }
 
