@@ -16,10 +16,22 @@ WHERE NOT EXISTS (
     WHERE app_user.id = admission.subject_id
 );
 
-ALTER TABLE public.usage_cost_reservations
-    ADD CONSTRAINT usage_cost_reservations_subject_id_fkey
-    FOREIGN KEY (subject_id) REFERENCES public.users(id) ON DELETE CASCADE;
+DO $migration$
+BEGIN
+    ALTER TABLE public.usage_cost_reservations
+        ADD CONSTRAINT usage_cost_reservations_subject_id_fkey
+        FOREIGN KEY (subject_id) REFERENCES public.users(id) ON DELETE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END
+$migration$;
 
-ALTER TABLE public.usage_request_admissions
-    ADD CONSTRAINT usage_request_admissions_subject_id_fkey
-    FOREIGN KEY (subject_id) REFERENCES public.users(id) ON DELETE CASCADE;
+DO $migration$
+BEGIN
+    ALTER TABLE public.usage_request_admissions
+        ADD CONSTRAINT usage_request_admissions_subject_id_fkey
+        FOREIGN KEY (subject_id) REFERENCES public.users(id) ON DELETE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END
+$migration$;

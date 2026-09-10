@@ -15,5 +15,5 @@ UPDATE public.payment_callbacks
 SET payment_method = lower(btrim(payment_method))
 WHERE payment_method <> lower(btrim(payment_method));
 
-CREATE UNIQUE INDEX uq_payment_orders_payment_method_gateway_order_id
+CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_orders_payment_method_gateway_order_id
     ON public.payment_orders (payment_method, gateway_order_id);
