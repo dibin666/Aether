@@ -5,21 +5,21 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（上一轮合并提交） | `157a1ea2bf859db5a91e3b5d2dc83027533a413e` |
-| 本轮预合并快照树 | `6e4fc13b1f91e76cf831ce3421470525465d0abc` |
+| fork code baseline（本轮合并提交） | `a2a8847adeae83020dacf4e6d3483eb44d6f75b0` |
 | upstream HEAD | `531f53b4437c5dd69b7a498eaf09f1fe414e027b` |
-| merge-base | `95e4d0149cd38d99d54653aa0d1ba203bce68bc6` |
-| 分叉计数（以快照树计算） | fork-only 216，upstream-only 1 |
-| fork-only 路径 | 282 个，`+25643/-904` |
-| upstream-only 路径 | 11 个，`+1955/-673` |
-| 重叠路径 | 0 个 |
-| 快照日期 | 2026-09-10（第五轮，预合并） |
+| merge-base | `531f53b4437c5dd69b7a498eaf09f1fe414e027b` |
+| 分叉计数（不含本轮文档提交） | fork-only 218，upstream-only 0 |
+| fork-only 路径 | 282 个，`+25651/-904` |
+| upstream-only 路径 | 0 个，`+0/-0` |
+| 快照日期 | 2026-09-10（第五轮，合并后） |
 
-### 第五轮预合并快照
+### 第五轮快照与合并后结论
 
-待合入 upstream 的唯一提交是 `531f53b44 feat(routing): simplify model scheduling configuration`。它新增统一的 routing scheduling policy 模型、编辑器和测试，并重构 `RoutingProfiles.vue`；相对上一轮 upstream 基线共 11 个路径、`+1955/-673`。
+本轮已合入唯一提交 `531f53b44 feat(routing): simplify model scheduling configuration`。它新增统一的 routing scheduling policy 模型、编辑器和测试，并重构 `RoutingProfiles.vue`；相对上一轮 upstream 基线共 11 个路径、`+1955/-673`。
 
-本轮与 fork-only delta 的直接重叠路径为 0，预计不会出现文本冲突；仍需对 routing planner、pool scheduling、provider model-test 和 `RoutingProfiles.vue` 的静默语义变化做合并后审计。合并时采用 upstream 的新 routing scheduling 配置模型，同时保留以下 fork P0/P1 契约：私网 endpoint 放行、PostgreSQL 幂等迁移、`ignore_pool_cooldown`、transcription、额度统计、账号级任务事件和结构化 provider 失败返回。
+本轮与 fork-only delta 的直接重叠路径为 0，实际也未出现文本冲突。合并采用 upstream 的新 routing scheduling 配置模型；合并后审计确认以下 fork P0/P1 契约仍保留：私网 endpoint 放行、PostgreSQL 幂等迁移、`ignore_pool_cooldown`、transcription、额度统计、账号级任务事件和结构化 provider 失败返回。
+
+第五轮合并后没有 fork 功能性 delta 变化；新增 routing scheduling UI/策略属于 upstream 能力，已纳入“已被上游吸收”清单。
 
 ### 第四轮合并后快照
 
@@ -115,6 +115,7 @@ Chart.js 类型收窄（`ScatterChart.vue` 等）、`useEscapeKey` (`isContentEd
 ## 3. 已被上游吸收（不再是 fork 差异）
 
 - `importWithRetry` 前端 chunk 恢复 — 上游已有 `frontend/src/utils/importRetry.ts` + `router/routes/helpers.ts`
+- routing scheduling policy/editor — 上游 `RoutingSchedulingPolicyEditor`、`RoutingModelSelector` 和统一 scheduling policy 规则已纳入主线
 - `cyber_continue_failover`
 - Antigravity 自定义反代、fork TPS 修正 — 2026-08-26 已按要求回到 upstream baseline
 - legacy backfill
@@ -197,6 +198,14 @@ cd frontend && npm run test:run -- \
 - `CARGO_BUILD_JOBS=1 cargo test -p aether-data-postgres --lib provider_api_keys_insert_values_match_bind_order`：1/1 通过。
 - `git diff --check` 和未解决冲突检查：通过，未发现 `UU` 文件。
 
+第五轮实际验证结果（2026-09-10）：
+
+- `cd frontend && npm run build`：通过；包含 VSCodex build 和主前端 Vite build。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：通过。
+- routing 前端定向测试：3 个文件、43/43 通过（含新 scheduling editor/policy 和 RoutingProfiles failover）。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-routing-core --lib`：28/28 通过。
+- 合并后关键 fork 文件存在性与 `git diff --check`：通过；无未解决冲突。
+
 既存失败（非合并回归，无需在此修复）：
 - `PoolManagement.codex-cycle-stats.spec.ts` 报 15 项失败（spec mock 缺少 `Gauge` 图标）。
 
@@ -214,3 +223,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-09 | `90db3fe71`<br>`e57ff5a7d` | `e58570d79` | 分两批合入 93 提交移除 MySQL/SQLite 并接入信封 v2；新增账号级任务事件独立存储并完全合入 |
 | 2026-09-09 | `f23086834` | `8260a8721` | 5 提交、0 冲突；接入 routing failover controls 与 workspace lint 修复，4 个重叠路径逐项语义复核后无 fork 功能变化 |
 | 2026-09-10 | `157a1ea2b` | `95e4d0149` | 10 提交、2 处文本冲突；接入并发/stream/Redis/health/logging 加固，保留私网 endpoint、幂等迁移、`ignore_pool_cooldown` 和结构化 provider 失败契约 |
+| 2026-09-10 | `a2a8847ad` | `531f53b44` | 1 提交、0 文本冲突；接入统一 routing scheduling policy/editor，审计确认 fork P0/P1 功能无变化 |
