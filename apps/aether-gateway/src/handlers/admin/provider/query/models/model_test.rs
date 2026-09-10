@@ -1938,9 +1938,26 @@ async fn provider_query_execute_kiro_test_candidate(
         timeouts: state.resolve_transport_execution_timeouts(&transport),
     };
 
-    let result = state
+    let result = match state
         .execute_execution_runtime_sync_plan(Some(trace_id), &plan)
-        .await?;
+        .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            return Ok(ProviderQueryExecutionOutcome {
+                status: "failed",
+                skip_reason: None,
+                error_message: Some(format!("model test execution failed: {err:?}")),
+                status_code: None,
+                latency_ms: None,
+                request_url,
+                request_headers,
+                request_body: provider_request_body,
+                response_headers: BTreeMap::new(),
+                response_body: None,
+            });
+        }
+    };
     let response_body = if result.status_code < 400 {
         provider_query_finalize_kiro_result(
             route_path,
