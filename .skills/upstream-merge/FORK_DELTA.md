@@ -5,13 +5,35 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（HEAD） | `88e673f29251b131cd70c698ce64566d85f0b4bb` |
-| upstream HEAD | `8260a8721569f4f05a8539e45491f9aa216b10a3` |
-| merge-base | `8260a8721`（= upstream HEAD，已完全合入） |
-| 分叉计数 | fork-only 207，upstream-only 0 |
-| fork-only 路径 | 263 个，`+23628/-867` |
-| upstream-only 路径 | 0 |
-| 快照日期 | 2026-09-09（第二轮） |
+| fork code baseline（HEAD） | `575c38f7b9f7137d9f29cd7be96ce112e30639c7` |
+| upstream HEAD | `95e4d0149cd38d99d54653aa0d1ba203bce68bc6` |
+| merge-base | `8260a8721` |
+| 分叉计数 | fork-only 213，upstream-only 10 |
+| fork-only 路径 | 282 个，`+25610/-910` |
+| upstream-only 路径 | 429 个，`+29880/-27644` |
+| 快照日期 | 2026-09-10（第三轮，预合并） |
+
+### 第三轮预合并快照
+
+当前 fork 已包含私网 Provider Endpoint 安全放行、前端开关、m14.4 schema/迁移兼容修复，以及 provider-query 结构化失败返回；这些提交必须在合并后继续保留。
+
+待合入 upstream 的 10 个提交：
+
+- `95e4d0149` / `72aea7898`：detail-log 合并及主线同步。
+- `8aedf87aa`：修复 nightly workflow 中截断的 Buildx action SHA。
+- `e9b64c3e9` / `28f61ec45` / `6aeadcd1d` / `3a8dadcd6` / `ecc16673e`：并发限制、高 RPM 路径、stream/usage 预算、Redis 流和测试夹具加固。
+- `d28dd8903`：恢复 legacy Provider Endpoint health 默认值及相关 API/UI 测试。
+- `33ea4ebf1`：错误日志敏感信息脱敏。
+
+预合并重叠路径共 27 个，重点审查：
+
+- `apps/aether-gateway/src/execution_runtime/transport.rs`：保留私网 endpoint 的显式、逐 endpoint/key、origin 精确匹配放行，不恢复全局私网绕过。
+- `apps/aether-gateway/src/handlers/admin/request/provider/builders.rs`：保留 endpoint 配置写入校验。
+- `apps/aether-gateway/src/handlers/proxy/websocket/{transport.rs,responses/binding.rs}`：保留 WebSocket 私网 allowance 传递。
+- `apps/aether-gateway/src/maintenance/runtime/pool_quota_probe.rs`、`dispatch/pool_scheduler.rs`、`scheduler-core`：并发/调度加固采用 upstream，同时保留 `ignore_pool_cooldown` 与候选顺序不变量。
+- `crates/aether-data/adapters/postgres/migrations/**`：保留 fork 的 PostgreSQL-only、幂等迁移和 m14.4 schema 兼容修复。
+- `frontend/src/features/providers/components/EndpointFormDialog.vue`：保留私网开关、config 合并和 target 提示；上游 UI 删除或重构时采用手工混合。
+- `.skills/upstream-merge/**`：保留本 fork 的合并技能文档，不接受 upstream 删除。
 
 第二轮合并（5 个上游提交，**0 冲突**）：
 - `f23086834` merge（`e58570d79..8260a8721`：strategy failover controls、routing failover/model testing 加固、payment order query 复用、workspace lint 修复、Linux-only release）
