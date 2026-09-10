@@ -35,13 +35,30 @@ pub(super) async fn start_server(app: Router) -> (String, tokio::task::JoinHandl
         .await
         .expect("listener should bind");
     let addr = listener.local_addr().expect("local addr should resolve");
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let _server_thread = std::thread::Builder::new()
+        .name("test-axum-server".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("server runtime should build");
+            rt.block_on(async move {
+                let server = axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .with_graceful_shutdown(async move {
+                    let _ = rx.await;
+                });
+                let _ = server.await;
+            });
+        })
+        .expect("server thread should spawn");
     let handle = tokio::spawn(async move {
-        axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .await
-        .expect("server should run");
+        let _tx = tx;
+        futures_util::future::pending::<()>().await;
     });
     (format!("http://{addr}"), handle)
 }

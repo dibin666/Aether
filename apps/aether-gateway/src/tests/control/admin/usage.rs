@@ -2548,45 +2548,67 @@ async fn gateway_admin_usage_detail_raw_rejects_foreign_refs_and_disabled_captur
     }
 }
 
-#[tokio::test]
-async fn gateway_admin_usage_detail_raw_preserves_authorization_and_binary_headers() {
-    let state = AppState::new().unwrap().with_data_state_for_tests(
-        GatewayDataState::with_usage_reader_for_tests(Arc::new(
-            InMemoryUsageReadRepository::seed_with_detached_bodies(vec![
-                sample_selective_body_usage(),
-            ]),
-        )),
-    );
-    let gateway =
-        build_router_with_state(state).layer(tower_http::compression::CompressionLayer::new());
-    let (url, server) = start_server(gateway).await;
-    let client = reqwest::Client::new();
-    let endpoint = format!(
-        "{url}/api/admin/usage/usage-selected-body?body_field=response_body&body_format=raw"
-    );
-    let unauthorized = client.get(&endpoint).send().await.unwrap();
-    assert!(matches!(
-        unauthorized.status(),
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
-    ));
-    let response = admin_request(client.get(&endpoint))
-        .header("accept-encoding", "gzip")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.headers()["content-encoding"], "identity");
-    assert_eq!(response.headers()["x-aether-body-encoding"], "json");
-    assert_eq!(
-        response.headers()["cache-control"],
-        "no-store, no-transform"
-    );
-    let bytes = response.bytes().await.unwrap();
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
-        json!({ "marker": "response_body" })
-    );
-    server.abort();
+#[test]
+fn gateway_admin_usage_detail_raw_preserves_authorization_and_binary_headers() {
+    // In debug builds without compiler optimizations (-O0), axum's router combined with
+    // tower-http's CompressionLayer creates deep service/future nesting. On tokio's
+    // current_thread runtime, both the HTTP server and client request futures share
+    // the same call stack, overflowing the platform default 2 MiB test thread stack during
+    // the authorized raw-body streaming response. We execute the test on a dedicated thread
+    // with an 8 MiB stack (4x the 2 MiB default) to accommodate debug frame sizes.
+    const TEST_STACK_SIZE_BYTES: usize = 8 * 1024 * 1024;
+
+    std::thread::Builder::new()
+        .name("admin-usage-raw-headers-test".to_string())
+        .stack_size(TEST_STACK_SIZE_BYTES)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime should build")
+                .block_on(async {
+                    let state = AppState::new().unwrap().with_data_state_for_tests(
+                        GatewayDataState::with_usage_reader_for_tests(Arc::new(
+                            InMemoryUsageReadRepository::seed_with_detached_bodies(vec![
+                                sample_selective_body_usage(),
+                            ]),
+                        )),
+                    );
+                    let gateway = build_router_with_state(state)
+                        .layer(tower_http::compression::CompressionLayer::new());
+                    let (url, server) = start_server(gateway).await;
+                    let client = reqwest::Client::new();
+                    let endpoint = format!(
+                        "{url}/api/admin/usage/usage-selected-body?body_field=response_body&body_format=raw"
+                    );
+                    let unauthorized = client.get(&endpoint).send().await.unwrap();
+                    assert!(matches!(
+                        unauthorized.status(),
+                        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+                    ));
+                    let response = admin_request(client.get(&endpoint))
+                        .header("accept-encoding", "gzip")
+                        .send()
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status(), StatusCode::OK);
+                    assert_eq!(response.headers()["content-encoding"], "identity");
+                    assert_eq!(response.headers()["x-aether-body-encoding"], "json");
+                    assert_eq!(
+                        response.headers()["cache-control"],
+                        "no-store, no-transform"
+                    );
+                    let bytes = response.bytes().await.unwrap();
+                    assert_eq!(
+                        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+                        json!({ "marker": "response_body" })
+                    );
+                    server.abort();
+                });
+        })
+        .expect("thread should spawn")
+        .join()
+        .expect("test thread should complete successfully");
 }
 
 #[tokio::test]
