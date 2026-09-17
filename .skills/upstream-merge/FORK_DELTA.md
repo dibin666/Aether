@@ -5,13 +5,113 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并提交） | `a2a8847adeae83020dacf4e6d3483eb44d6f75b0` |
-| upstream HEAD | `531f53b4437c5dd69b7a498eaf09f1fe414e027b` |
-| merge-base | `531f53b4437c5dd69b7a498eaf09f1fe414e027b` |
-| 分叉计数（不含本轮文档提交） | fork-only 218，upstream-only 0 |
-| fork-only 路径 | 282 个，`+25651/-904` |
+| fork code baseline（本轮合并提交） | `c504f059f7e7e818cacf08b52d7c4a04ada55522` |
+| upstream HEAD | `fb25dde4c9783eef7017383f49cf4362b5904e59` |
+| merge-base | `fb25dde4c9783eef7017383f49cf4362b5904e59` |
+| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 223，upstream-only 0 |
+| fork-only 路径 | 290 个，`+26091/-982` |
 | upstream-only 路径 | 0 个，`+0/-0` |
-| 快照日期 | 2026-09-10（第五轮，合并后） |
+| 快照日期 | 2026-09-17（第六轮，合并后） |
+
+### 第六轮合并前快照与合并后结论（2026-09-17）
+
+| 项 | 值 |
+|---|---|
+| fork 分支 / 当前提交 | `rust` / `b0dafb37a4c9dc836884688d8b9e35421304f3bd` |
+| upstream 目标 | `upstream/main` / `fb25dde4c9783eef7017383f49cf4362b5904e59` |
+| merge-base | `531f53b4437c5dd69b7a498eaf09f1fe414e027b` |
+| 分叉计数 | fork-only 222，upstream-only 40 |
+| fork-only 路径 | 290 个，`+26091/-982` |
+| upstream-only 路径 | 165 个，`+13296/-728` |
+| 直接重叠路径 | 29 个（见下方） |
+| 合并状态 | 已完成：`c504f059f7e7e818cacf08b52d7c4a04ada55522`；冲突策略 `1C, 2C` |
+
+合并前待合入 upstream 提交（40 个，按拓扑顺序）：
+
+```text
+28cd77eb5 fix(deepseek): 完整保留思考内容并移除空值补齐
+30e36cd09 fix(deepseek): 仅按官方地址识别思考兼容
+b748b5bfd Merge pull request #813 from AAEE86/fix-deepseek-reasoning-replay
+60b89cc84 fix(payment): restore recharge crediting and balance refresh
+23e0af7b1 fix(frontend): show Anti Gravity v1internal endpoint path
+ea24d6191 fix(antigravity): omit agent requestType from v1internal envelope
+c5adcf031 fix(responses): map raw reasoning into content, keep summary for CLI
+dfe88e34e feat(providers): add multi-select batch delete for provider models
+e4f89de90 feat(providers): pin associated models to the top of the associate dialog
+7daf355e6 fix(pool): keep schedulable keys when stale inactive scores exist
+f753f14fd style(pool): satisfy rustfmt for stale score test
+e83399db2 feat(providers): add xAI provider with device code OAuth
+04c4a9776 feat(xai): add native image and video endpoints
+cc5050155 Merge pull request #1 from hkxiaoyao/fix/pool-stale-inactive-score
+01acff077 fix(routing): preserve fixed order for streaming chat
+6e6407160 Merge pull request #824 from wanzhao-ysy/fix/fixed-order-target-select
+e7864e561 Merge pull request #822 from stabey/upstream-pr/xai-media
+88df2a2ed Merge pull request #815 from wanzhao-ysy/fix/antigravity-endpoint-default-path
+6e431e2ff Merge pull request #820 from Kayphoon/cursor/responses-reasoning-content-68bd
+5a6692ade Merge pull request #818 from wanzhao-ysy/fix/antigravity-omit-agent-request-type
+e9899200f Merge pull request #821 from Kayphoon/feat/provider-model-batch-delete-and-pin
+a5456cdc3 fix(routing): 按调度配置所选模型筛选提供商
+e5ab73bf3 test(usage): preserve terminal build release notification
+c0ded116a Merge pull request #826 from zhefox/main
+03496c46c fix(ai-formats): carry OpenRouter reasoning fields through chat conversion
+e66dd00b8 test(frontend): make cross-tab refresh retry timing deterministic
+53562fd9d Merge pull request #828 from zhefox/main
+03b198d5a Merge pull request #825 from AAEE86/fix-scheduling-model-providers
+fe1723d87 fix(responses): bound upstream tool call IDs
+72a4bf340 Merge pull request #829 from zhefox/fix/responses-call-id-length
+5842c7232 fix(usage): preserve full bodies before queue truncation
+364692da5 Merge pull request #830 from zhefox/fix/usage-full-body-retention
+4ff412903 Merge pull request #823 from stabey/fix/openrouter-reasoning-fields
+fdf55525f fix(ai-formats): keep client-declared search tools as Gemini function declarations
+6c92db2ba fix(antigravity): send googleSearch instead of the Gemini 1.5 retrieval tool
+bcb230800 feat(ai-formats): deliver Gemini grounding to every client as native citations
+681ce56c4 Merge pull request #831 from stabey/fix/gemini-native-search
+5a55116b6 fix(antigravity): harden tool schemas and Claude thought replay
+4124749a7 fix(ai-serving): route provider-aware normalization through root seams
+fb25dde4c Merge pull request #832 from dalamudx/fix/antigravity-schema-thought-replay
+```
+
+直接重叠路径：
+
+```text
+apps/aether-gateway/src/ai_serving/planner/candidate_resolution.rs
+apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/request.rs
+apps/aether-gateway/src/ai_serving/planner/standard/openai/chat/decision/request.rs
+apps/aether-gateway/src/ai_serving/pure/mod.rs
+apps/aether-gateway/src/api/ai/registry.rs
+apps/aether-gateway/src/constants.rs
+apps/aether-gateway/src/control/route/ai.rs
+apps/aether-gateway/src/data/state/testing/video_tasks.rs
+apps/aether-gateway/src/dispatch/pool_scheduler.rs
+apps/aether-gateway/src/executor/orchestration.rs
+apps/aether-gateway/src/frontdoor_loop_guard.rs
+apps/aether-gateway/src/handlers/admin/provider/pool_admin/payloads.rs
+apps/aether-gateway/src/handlers/admin/provider/query/models/model_test.rs
+apps/aether-gateway/src/handlers/admin/provider/write/normalize.rs
+apps/aether-gateway/src/handlers/shared/catalog.rs
+apps/aether-gateway/src/router.rs
+crates/aether-ai/formats/src/api.rs
+crates/aether-ai/formats/src/formats/registry.rs
+crates/aether-ai/formats/src/formats/shared/mod.rs
+crates/aether-ai/formats/src/formats/shared/routing.rs
+crates/aether-ai/formats/src/formats/shared/stream_core/format_matrix.rs
+crates/aether-data/adapters/postgres/src/usage/tests.rs
+crates/aether-provider/transport/src/conversion.rs
+crates/aether-provider/transport/src/lib.rs
+crates/aether-provider/transport/src/request_url/mod.rs
+frontend/src/api/endpoints/types/provider.ts
+frontend/src/i18n/messages.ts
+frontend/src/utils/providerKeyQuota.ts
+frontend/src/views/admin/PoolManagement.vue
+```
+
+合并后审计结论：
+
+- `c504f059f` 是基于 `b0dafb37a` 的 `--no-ff` 合并，已完整纳入 `upstream/main` 的 40 个提交；合并后 `upstream-only` 为 0。
+- 29 个重叠路径已逐个对比合并提交与两个父提交。`pool_scheduler.rs` 保留 stale inactive score 修复和 fork 的 `ignore_pool_cooldown` 回归测试；`pool_admin/payloads.rs` 保留 upstream 的 xAI 额度显示及 fork 的 OAuth 刷新状态 helper/测试。
+- upstream 新增的 xAI provider/device OAuth、原生 image/video、Gemini grounding citations、视频 GET 路由、reasoning/tool schema 修复和完整 usage body 保留；私网 endpoint、transcription、额度/usage、自助详情、永不熔断、OAuth 刷新、账号级任务事件、冷却忽略、调度不变量和纯构建部署契约均通过复核。
+- **本轮没有 fork 功能性 delta 变化**；新增 xAI/Gemini/video 能力属于 upstream 能力，不加入 fork 特有功能清单。
+- 合并后的待合入 upstream 提交：0。
 
 ### 第五轮快照与合并后结论
 
@@ -94,7 +194,7 @@
 
 8. **账号级任务事件独立存储**（本轮新增）
    - 外部契约：`provider_key_task_events` 表、`GET /api/admin/tasks/{task_key}/account-events`，隔离账号级高频事件，避免污染 `background_tasks` 审计与触发白名单拦截。
-   - 关键文件：`migrations/20260909000000_create_provider_key_task_events.sql`、`crates/aether-data/**/provider_key_task_events.rs`、`apps/aether-gateway/src/handlers/admin/features/background_tasks/account_events.rs`。
+   - 关键文件：`crates/aether-data/adapters/postgres/migrations/20260909000000_add_provider_key_task_events.sql`、`crates/aether-data/**/provider_key_task_events.rs`、`apps/aether-gateway/src/handlers/admin/features/background_tasks/routes.rs`。
    - 合并规则：`background_tasks` 事件白名单保持严格安全校验，账号事件全部写入独立表；迁移必须包含 `IF NOT EXISTS`，不进 generated baseline。
 
 ### P1 功能
@@ -131,6 +231,7 @@ Chart.js 类型收窄（`ScatterChart.vue` 等）、`useEscapeKey` (`isContentEd
 6. fork 的迁移只放 `migrations/` 目录、不进 generated baseline，且必须 `IF NOT EXISTS`。
 7. **零冲突不等于零风险，重叠路径必须逐个语义复核**。上游删除某个符号、而 fork 仍有调用方时，git 会静默取上游侧且不产生任何冲突标记。实例：2026-09-09 第一轮，上游删了 `PoolManagementHeader.vue` 里三个按钮的 `triggerAction` handler、fork 保留了按钮，自动合并后按钮点击直接抛 TypeError，全程无冲突提示。合并后必须对 `comm -12` 得出的重叠路径逐个 `git diff --cached` 复核，重点看「上游删了什么、fork 还在不在用」。前端同类问题靠 `npm run test:run` 全量跑才能兜住。
 8. 前端 handler/事件映射表要用 `Record<UnionType, ...>` 显式标注，让漏项在 `vue-tsc` 阶段暴露，而不是运行时。
+9. 第六轮冲突映射固定记录为 `1C, 2C`：`pool_scheduler.rs` 保留 stale-score 与 `ignore_pool_cooldown` 两组测试；`pool_admin/payloads.rs` 保留 xAI 额度与 OAuth 刷新状态两组契约。
 
 ## 5. 运维警告
 
@@ -189,6 +290,30 @@ cd frontend && npm run test:run -- \
   src/features/usage/conversation/__tests__/openai.spec.ts
 ```
 
+第六轮实际验证结果（2026-09-17）：
+
+- `cd frontend && npm run build`：通过；包含 VSCodex sync/build 和主前端 Vite build。两个依赖目录已存在，因此未运行 `npm install`。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：通过，4 分 10 秒。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`：通过，11 分 24 秒。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib dispatch::pool_scheduler`：54/54 通过，测试运行 50.96 秒。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib handlers::admin::provider::pool_admin::payloads`：6/6 通过，测试运行 0.14 秒。
+- 合并解析阶段 `git diff --check`、暂存区检查和未解决冲突检查均通过；合并后 29 个重叠路径已完成语义审计。
+
+第六轮未运行项目（unverified）：
+
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-data-contracts background_task`
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-data provider_key_task_events`
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib handlers::admin::provider::pool::runtime::writes`
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib maintenance::runtime::pool_quota_probe`
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-ai-formats transcription`
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-scheduler-core disable_circuit_breaker`
+- `CARGO_BUILD_JOBS=1 RUST_MIN_STACK=8388608 cargo test -p aether-gateway users_me_usage`
+- 前端 4 个定向测试：`PoolKeyDisplayPanels.spec.ts`、`PoolConsumptionStats.spec.ts`、`PoolSchedulingDialog.cache-affinity.spec.ts`、`openai.spec.ts`。
+
+第六轮非阻塞警告：
+
+- frontend build 提示 `caniuse-lite` 已 12 个月未更新；不影响本轮构建结果。
+
 本轮实际验证结果（2026-09-10）：
 
 - `cd frontend && npm run build`：通过；包含 VSCodex sync/build 和主前端 Vite build。
@@ -224,3 +349,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-09 | `f23086834` | `8260a8721` | 5 提交、0 冲突；接入 routing failover controls 与 workspace lint 修复，4 个重叠路径逐项语义复核后无 fork 功能变化 |
 | 2026-09-10 | `157a1ea2b` | `95e4d0149` | 10 提交、2 处文本冲突；接入并发/stream/Redis/health/logging 加固，保留私网 endpoint、幂等迁移、`ignore_pool_cooldown` 和结构化 provider 失败契约 |
 | 2026-09-10 | `a2a8847ad` | `531f53b44` | 1 提交、0 文本冲突；接入统一 routing scheduling policy/editor，审计确认 fork P0/P1 功能无变化 |
+| 2026-09-17 | `c504f059f` | `fb25dde4c` | 40 提交、2 处文本冲突；采用 `1C, 2C` 手工混合，接入 xAI/Gemini/video 能力，审计确认 fork P0/P1 功能无变化 |
