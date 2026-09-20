@@ -5,13 +5,64 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并提交） | `c504f059f7e7e818cacf08b52d7c4a04ada55522` |
-| upstream HEAD | `fb25dde4c9783eef7017383f49cf4362b5904e59` |
-| merge-base | `fb25dde4c9783eef7017383f49cf4362b5904e59` |
-| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 223，upstream-only 0 |
-| fork-only 路径 | 290 个，`+26091/-982` |
+| fork code baseline（本轮合并提交） | `b18ea85799c81ca9f74b358ae362c0cb0dcf528a` |
+| upstream HEAD | `ba7c9f8b270cce63b0515299076b30129d7d64b4` |
+| merge-base | `ba7c9f8b270cce63b0515299076b30129d7d64b4` |
+| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 225，upstream-only 0 |
+| fork-only 路径 | 290 个，`+26221/-981` |
 | upstream-only 路径 | 0 个，`+0/-0` |
-| 快照日期 | 2026-09-17（第六轮，合并后） |
+| 快照日期 | 2026-09-20（第七轮，合并后） |
+
+### 第七轮合并前快照与合并后结论（2026-09-20）
+
+| 项 | 值 |
+|---|---|
+| fork 分支 / 当前提交 | `rust` / `f4140dacc303d1015f5c9c61bd41a7e21d40b893` |
+| upstream 目标 | `upstream/main` / `ba7c9f8b270cce63b0515299076b30129d7d64b4` |
+| merge-base | `fb25dde4c9783eef7017383f49cf4362b5904e59` |
+| 分叉计数 | fork-only 224，upstream-only 4 |
+| fork-only 路径 | 290 个，`+26217/-982` |
+| upstream-only 路径 | 33 个，`+1379/-514` |
+| 直接重叠路径 | 11 个（见下方） |
+| 合并状态 | 已完成：`b18ea85799c81ca9f74b358ae362c0cb0dcf528a`；**0 处文本冲突**，无需用户冲突选择 |
+
+合并前待合入 upstream 提交（4 个，按拓扑顺序）：
+
+```text
+166de3335 fix(responses): keep raw reasoning on content only
+37e3a3668 Merge pull request #835 from Kayphoon/fix/responses-reasoning-content-only
+a95f0d248 feat(stats): add user group usage views
+ba7c9f8b2 Merge pull request #834 from dalamudx/feat/user-group-stats
+```
+
+直接重叠路径：
+
+```text
+apps/aether-gateway/src/control/route/admin/observability_families.rs
+apps/aether-gateway/src/handlers/admin/observability/stats/analytics_routes.rs
+apps/aether-gateway/src/handlers/admin/observability/stats/cost_routes.rs
+crates/aether-ai/formats/src/formats/shared/stream_core/format_matrix.rs
+crates/aether-data/adapters/postgres/src/usage/mod.rs
+crates/aether-data/adapters/postgres/src/usage/tests.rs
+crates/aether-data/contracts/src/repository/usage/types.rs
+crates/aether-data/runtime/src/repository/usage/memory.rs
+crates/aether-data/runtime/src/repository/usage/memory/tests.rs
+frontend/src/api/usage.ts
+frontend/src/i18n/messages.ts
+```
+
+合并后审计结论：
+
+- `b18ea8579` 是基于 `f4140dacc` 的 `--no-ff` 合并，已完整纳入 `upstream/main` 的 4 个提交；合并后 `upstream-only` 为 0。
+- upstream 新增用户组使用统计：新路由 `GET /api/admin/stats/leaderboard/user-groups`、三个 usage 查询结构新增 `user_ids: Option<Vec<String>>` 批量用户范围、`UserStats.vue` 重写并 i18n 化 `LeaderboardTable.vue`；另含 `fix(responses): keep raw reasoning on content only`。
+- 11 个重叠路径已逐个语义复核。upstream 本轮**没有删除任何 public 符号**（`git diff` 删除行中无 `pub fn/struct/enum/const/trait/type` 与前端 `export`），因此不存在规则 7 的“静默取上游侧”风险；`LeaderboardTable.vue` 新增的 `showMemberCount`/`selectable`/`select` 均为带默认值的可选项，既有调用方 `CostAnalysis.vue` 不受影响。
+- **合并回归修复 3 处**（均为 fork 调用点适配 upstream 新增的必填 `user_ids` 字段，语义上 fork 场景不按用户组取范围，故一律 `None`）：
+  - `pool_admin/read_routes/dashboard.rs` 两处 `UsageTimeSeriesQuery` 字面量补 `user_ids: None`。
+  - `repository/usage/memory/tests.rs` 中 upstream 新增的 `usage_analytics_filters_by_multiple_user_ids` 补 fork 独有的 `provider_id`/`provider_api_key_ids`；fork 的 `usage_analytics_filters_by_canonical_provider_and_key_cohort` 补 `user_ids`。
+  - 注意：`UsageTimeSeriesQuery` 的 `provider_id` / `provider_api_key_ids` 是 fork 独有字段（P0 第 2 项号池消耗看板），upstream 侧不存在，upstream 每次新增该结构的构造点都会在 `--all-targets` 阶段暴露。
+- fork P0 第 1–8 项与 P1 第 9–10 项逐项存在性复核通过：transcription 格式与 `audio_duration_seconds` 计费、consumption-stats 处理器与两个前端页面、`usage_request_detail` 开关与 `detailScope`、`disable_circuit_breaker`、OAuth 刷新配置、`ignore_pool_cooldown`、`keep_priority_on_conversion`、账号级任务事件迁移与路由、`deploy.sh` 纯构建契约、`pool.quota.probe.worker` 全部保留。
+- **本轮没有 fork 功能性 delta 变化**；用户组统计属于 upstream 能力，不加入 fork 特有功能清单。
+- 合并后的待合入 upstream 提交：0。
 
 ### 第六轮合并前快照与合并后结论（2026-09-17）
 
@@ -232,6 +283,7 @@ Chart.js 类型收窄（`ScatterChart.vue` 等）、`useEscapeKey` (`isContentEd
 7. **零冲突不等于零风险，重叠路径必须逐个语义复核**。上游删除某个符号、而 fork 仍有调用方时，git 会静默取上游侧且不产生任何冲突标记。实例：2026-09-09 第一轮，上游删了 `PoolManagementHeader.vue` 里三个按钮的 `triggerAction` handler、fork 保留了按钮，自动合并后按钮点击直接抛 TypeError，全程无冲突提示。合并后必须对 `comm -12` 得出的重叠路径逐个 `git diff --cached` 复核，重点看「上游删了什么、fork 还在不在用」。前端同类问题靠 `npm run test:run` 全量跑才能兜住。
 8. 前端 handler/事件映射表要用 `Record<UnionType, ...>` 显式标注，让漏项在 `vue-tsc` 阶段暴露，而不是运行时。
 9. 第六轮冲突映射固定记录为 `1C, 2C`：`pool_scheduler.rs` 保留 stale-score 与 `ignore_pool_cooldown` 两组测试；`pool_admin/payloads.rs` 保留 xAI 额度与 OAuth 刷新状态两组契约。
+10. **`UsageTimeSeriesQuery` 是 fork 扩展过的上游结构**：fork 为号池消耗看板加了 `provider_id` 与 `provider_api_key_ids` 两个字段，upstream 侧没有。上游每次给该结构加必填字段（如第七轮的 `user_ids`），fork 的 `dashboard.rs` 构造点会断编译、而上游新写的测试构造点会因缺 fork 字段断编译，两类都只有 `cargo check --workspace --all-targets` 能一次性暴露。第七轮有一处测试构造点错误正是在 `cargo check --workspace` 通过之后才由 `--all-targets` 抓出，印证了规则 4。
 
 ## 5. 运维警告
 
@@ -289,6 +341,34 @@ cd frontend && npm run test:run -- \
   src/features/pool/components/__tests__/PoolSchedulingDialog.cache-affinity.spec.ts \
   src/features/usage/conversation/__tests__/openai.spec.ts
 ```
+
+第七轮实际验证结果（2026-09-20）：
+
+- `cd frontend && npm run build`：通过，1 分 2 秒；包含 VSCodex sync/build 和主前端 Vite build。两个依赖目录已存在，因此未运行 `npm install`。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：通过，3 分 45 秒，无警告。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`：首跑在 `repository/usage/memory/tests.rs` 报 `E0063 missing field user_ids`，补字段后复跑通过。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-data --lib repository::usage::memory`：41/41 通过（含 upstream 新增的 `usage_analytics_filters_by_multiple_user_ids` 与 fork 的 `usage_analytics_filters_by_canonical_provider_and_key_cohort`）。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-data-postgres --lib usage`：135 通过、14 ignored。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib pool_admin::read_dashboard`：5/5 通过（fork 号池看板，本轮改过构造点）。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib admin::stats`：30/30 通过（upstream 新增 user-group 统计路由）。
+- `cd frontend && npm run test:run -- src/api/__tests__/admin-analytics-cache.spec.ts`：3/3 通过。
+- `git diff --check`、暂存区检查和未解决冲突检查均通过；11 个重叠路径已完成语义审计。
+
+第七轮未运行项目（unverified）：
+
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-data-contracts background_task`
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-data provider_key_task_events`
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib handlers::admin::provider::pool::runtime::writes`
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib maintenance::runtime::pool_quota_probe`
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-ai-formats transcription`
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-scheduler-core disable_circuit_breaker`
+- `CARGO_BUILD_JOBS=1 RUST_MIN_STACK=8388608 cargo test -p aether-gateway users_me_usage`
+- 前端 4 个定向测试：`PoolKeyDisplayPanels.spec.ts`、`PoolConsumptionStats.spec.ts`、`PoolSchedulingDialog.cache-affinity.spec.ts`、`openai.spec.ts`。
+
+第七轮非阻塞警告：
+
+- `cargo test -p aether-gateway --lib` 首次构建耗时 10 分 41 秒，单次超过 600 秒工具超时，已改为后台执行后取回结果；不影响结论。
+- 注意：`pool_admin/read_routes/dashboard.rs` 的测试模块在 test 列表中的路径是 `handlers::admin::provider::pool_admin::read_dashboard::tests`，按目录名 `read_routes` 过滤会匹配到 0 个测试。
 
 第六轮实际验证结果（2026-09-17）：
 
@@ -350,3 +430,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-10 | `157a1ea2b` | `95e4d0149` | 10 提交、2 处文本冲突；接入并发/stream/Redis/health/logging 加固，保留私网 endpoint、幂等迁移、`ignore_pool_cooldown` 和结构化 provider 失败契约 |
 | 2026-09-10 | `a2a8847ad` | `531f53b44` | 1 提交、0 文本冲突；接入统一 routing scheduling policy/editor，审计确认 fork P0/P1 功能无变化 |
 | 2026-09-17 | `c504f059f` | `fb25dde4c` | 40 提交、2 处文本冲突；采用 `1C, 2C` 手工混合，接入 xAI/Gemini/video 能力，审计确认 fork P0/P1 功能无变化 |
+| 2026-09-20 | `b18ea8579` | `ba7c9f8b2` | 4 提交、0 文本冲突；接入用户组使用统计与 Responses reasoning 修正，修复 3 处 `user_ids` 构造点回归，审计确认 fork P0/P1 功能无变化 |
