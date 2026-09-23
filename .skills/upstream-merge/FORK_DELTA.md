@@ -5,13 +5,78 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并提交） | `b18ea85799c81ca9f74b358ae362c0cb0dcf528a` |
-| upstream HEAD | `ba7c9f8b270cce63b0515299076b30129d7d64b4` |
-| merge-base | `ba7c9f8b270cce63b0515299076b30129d7d64b4` |
-| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 225，upstream-only 0 |
-| fork-only 路径 | 290 个，`+26221/-981` |
+| fork code baseline（本轮合并提交） | `a110bcba11712daa8e87284b91d8ba86c547c9d3` |
+| upstream HEAD | `ec95989e0250cb55f338fe473b1eca2a0f81c130` |
+| merge-base | `ec95989e0250cb55f338fe473b1eca2a0f81c130` |
+| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 227，upstream-only 0 |
+| fork-only 路径 | 290 个，`+26302/-981` |
 | upstream-only 路径 | 0 个，`+0/-0` |
-| 快照日期 | 2026-09-20（第七轮，合并后） |
+| 快照日期 | 2026-09-23（第八轮，合并后） |
+
+### 第八轮合并前快照与合并后结论（2026-09-23）
+
+| 项 | 值 |
+|---|---|
+| fork 分支 / 当前提交 | `rust` / `e728af61be216909e3b54428b60520569e080791` |
+| upstream 目标 | `upstream/main` / `ec95989e0250cb55f338fe473b1eca2a0f81c130` |
+| merge-base | `ba7c9f8b270cce63b0515299076b30129d7d64b4` |
+| 分叉计数 | fork-only 226，upstream-only 12 |
+| fork-only 路径 | 290 个，`+26302/-981` |
+| upstream-only 路径 | 39 个，`+1585/-188` |
+| 直接重叠路径 | 16 个（见下方） |
+| 合并状态 | 已完成：`a110bcba11712daa8e87284b91d8ba86c547c9d3`；**0 处文本冲突**，无需用户冲突选择 |
+
+合并前待合入 upstream 提交（12 个，按拓扑顺序）：
+
+```text
+906baae88 fix(gemini): preserve tool thought signatures
+67d041448 Merge pull request #836 from dalamudx/fix/gemini-thought-signature-replay
+0486435f1 feat(usage): 展示调度跳过候选及原因并补齐手机端提示
+0b7c7f94a Merge pull request #833 from AAEE86/feat/usage-skipped-candidates
+69930a605 fix(codex): preserve explicit service tiers and adapt usage badges
+f86dd1046 Merge pull request #841 from zhefox/fix/codex-service-tier-passthrough
+f960bbd2c feat: expose upstream response model in usage records
+e3c01fb55 fix: avoid usage payload json recursion overflow
+70d1a4ab7 fix: import usage body capture state in tests
+07cb401fd fix: extract nested provider response models
+7f5e1a64f merge: integrate usage response models with service tier badges
+ec95989e0 Merge pull request #842 from zhefox/fix/usage-response-model-conflicts
+```
+
+直接重叠路径：
+
+```text
+apps/aether-gateway/src/execution_runtime/transport.rs
+apps/aether-gateway/src/handlers/public/support/user_me_usage.rs
+crates/aether-admin/src/observability/usage.rs
+crates/aether-data/adapters/postgres/src/usage/tests.rs
+crates/aether-data/contracts/src/repository/usage/metadata_policy.rs
+crates/aether-data/contracts/src/repository/usage/types.rs
+crates/aether-usage/runtime/src/request_metadata.rs
+crates/aether-usage/runtime/src/write.rs
+frontend/src/api/dashboard.ts
+frontend/src/api/me.ts
+frontend/src/api/usage.ts
+frontend/src/features/usage/components/RequestDetailDrawer.vue
+frontend/src/features/usage/components/UsageRecordsTable.vue
+frontend/src/features/usage/components/__tests__/UsageRecordsTable.spec.ts
+frontend/src/features/usage/composables/useUsageData.ts
+frontend/src/views/shared/Usage.vue
+```
+
+合并后审计结论：
+
+- `a110bcba1` 是基于 `e728af61b` 的 `--no-ff` 合并，已完整纳入 `upstream/main` 的 12 个提交；合并后 `upstream-only` 为 0。
+- upstream 本轮能力：usage 记录新增 `response_model`（`request_metadata.provider_response_model`，仅在请求/响应 body 均为权威完整捕获且模型不同时写入）、调度跳过候选标记与原因（`has_skipped_candidate`、`skipped_candidate_reasons`、状态筛选 `has_skipped_candidate`）、Codex 显式 service tier 透传、Gemini 工具 thought signature 保留。
+- upstream 本轮**没有删除任何 public 符号**，也没有给 fork 测试构造的公共结构体（`UsageTimeSeriesQuery`、`ProviderApiKeyWindowUsageRequest`、`StoredProviderApiKeyWindowUsageSummary`、`UsageProviderPerformanceQuery`）新增字段，规则 7 与规则 10 均未触发；本轮无合并回归修复。
+- 16 个重叠路径逐个语义复核，双方改动均为不相交的增量：
+  - 后端 8 个：fork 的 `user_agent` 持久化/首字节保留、`reasoning_tokens`、号池窗口统计字段、自助详情接口与 upstream 的 `response_model` 提取/清洗/透出互不干扰；`metadata_policy.rs` 与 `request_metadata.rs` 的白名单两侧新增键并存。
+  - P0 第 3 项：fork 的 `build_users_me_usage_detail_payload` 以 `build_users_me_usage_record_payload` 为底，自动继承 upstream 新增的 `response_model`；`RequestDetailDrawer.vue` 的 `detailScope` 与 `summaryRecord` 保留，`Usage.vue` 仍传 `:detail-scope` 与 `:can-view-detail`。
+  - upstream 在 `HorizontalRequestTimeline.vue` 新增的跳过原因只来自 admin trace API（`/api/admin/monitoring/trace/{id}`），普通用户自助详情不会拿到候选/调度信息。
+  - `UsageRecordsTable.vue`：upstream 的跳过候选标记与响应模型 tooltip 和 fork 的 `canViewDetail` 行点击门控位于不同行；upstream 新增测试全部经 `mountUsageRecordsTable` helper 挂载，已携带 fork 的 `canViewDetail: true`。
+- fork P0 第 1–8 项与 P1 第 9–10 项逐项存在性复核通过：transcription 格式与 `audio_duration_seconds` 计费、consumption-stats 处理器与两个前端页面、`usage_request_detail` 开关与 `detailScope`、`disable_circuit_breaker`、OAuth 刷新配置、`ignore_pool_cooldown`、`keep_priority_on_conversion`、账号级任务事件迁移与路由、`deploy.sh` 纯构建契约（无 compose/restart）、`pool.quota.probe.worker` 全部保留。
+- **本轮没有 fork 功能性 delta 变化**；响应模型与跳过候选展示属于 upstream 能力，不加入 fork 特有功能清单。
+- 合并后的待合入 upstream 提交：0。
 
 ### 第七轮合并前快照与合并后结论（2026-09-20）
 
@@ -284,6 +349,7 @@ Chart.js 类型收窄（`ScatterChart.vue` 等）、`useEscapeKey` (`isContentEd
 8. 前端 handler/事件映射表要用 `Record<UnionType, ...>` 显式标注，让漏项在 `vue-tsc` 阶段暴露，而不是运行时。
 9. 第六轮冲突映射固定记录为 `1C, 2C`：`pool_scheduler.rs` 保留 stale-score 与 `ignore_pool_cooldown` 两组测试；`pool_admin/payloads.rs` 保留 xAI 额度与 OAuth 刷新状态两组契约。
 10. **`UsageTimeSeriesQuery` 是 fork 扩展过的上游结构**：fork 为号池消耗看板加了 `provider_id` 与 `provider_api_key_ids` 两个字段，upstream 侧没有。上游每次给该结构加必填字段（如第七轮的 `user_ids`），fork 的 `dashboard.rs` 构造点会断编译、而上游新写的测试构造点会因缺 fork 字段断编译，两类都只有 `cargo check --workspace --all-targets` 能一次性暴露。第七轮有一处测试构造点错误正是在 `cargo check --workspace` 通过之后才由 `--all-targets` 抓出，印证了规则 4。
+11. **自助详情 payload 自动继承用户列表 payload**：`build_users_me_usage_detail_payload` 以 `build_users_me_usage_record_payload` 为底再覆盖敏感字段。upstream 每次给用户 usage 列表 payload 加字段（如第八轮的 `response_model`），自助详情会无冲突地自动暴露该字段。合并时必须复核新字段对普通用户是否安全；若涉及 provider/成本/调度信息，要在 detail builder 中显式置 `Value::Null`。前端 `UsageRecordsTable` 的 `canViewDetail` 是 fork 必填 prop，upstream 新增的测试若绕过 `mountUsageRecordsTable` helper 直接挂载，需要补该 prop。
 
 ## 5. 运维警告
 
@@ -340,7 +406,28 @@ cd frontend && npm run test:run -- \
   src/views/admin/__tests__/PoolConsumptionStats.spec.ts \
   src/features/pool/components/__tests__/PoolSchedulingDialog.cache-affinity.spec.ts \
   src/features/usage/conversation/__tests__/openai.spec.ts
+
+# 4. usage 重叠路径回归（usage 元数据/记录 payload 与自助详情前端契约重叠时选用）
+CARGO_BUILD_JOBS=1 cargo test -p aether-data-contracts --lib repository::usage
+CARGO_BUILD_JOBS=1 cargo test -p aether-usage-runtime --lib request_metadata
+CARGO_BUILD_JOBS=1 cargo test -p aether-admin --lib observability::usage
+cd frontend && npm run test:run -- \
+  src/features/usage/components/__tests__/UsageRecordsTable.spec.ts \
+  src/features/usage/components/__tests__/RequestDetailDrawer.pricing.spec.ts
 ```
+
+第八轮实际验证结果（2026-09-23）：
+
+- `cd frontend && npm run build`：通过，1 分 11 秒；包含 VSCodex sync/build 和主前端 Vite build。两个依赖目录已存在，因此未运行 `npm install`。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：通过，3 分 57 秒，无警告。
+- 上面第 4 组三条 Rust 定向测试串行执行，合计 5 分 3 秒：`aether-data-contracts` 63/63、`aether-usage-runtime` 23/23、`aether-admin` 46/46 通过；fork 的 `user_agent`/`reasoning_tokens` 测试与 upstream 的 `response_model` 测试在同一合并文件中均通过。
+- 前端 `UsageRecordsTable.spec.ts` 52/52、`RequestDetailDrawer.pricing.spec.ts` 13/13 通过。
+- `git diff --cached --check` 与未解决冲突检查通过；16 个重叠路径已完成语义审计。
+
+第八轮未运行项目（unverified）：
+
+- `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`：规则 4 的触发条件（upstream 改了 fork 测试构造的公共结构体）本轮不成立，未运行。upstream 新增的 gateway 测试（`user_me_usage.rs`、`execution_runtime/transport.rs`、`tests/ai_execute/stream_cli/direct.rs`）只做了 helper 签名人工核对，未编译。
+- 第 2 组全部 7 条 fork 功能定向测试，以及第 3 组 4 个前端定向测试。
 
 第七轮实际验证结果（2026-09-20）：
 
@@ -431,3 +518,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-10 | `a2a8847ad` | `531f53b44` | 1 提交、0 文本冲突；接入统一 routing scheduling policy/editor，审计确认 fork P0/P1 功能无变化 |
 | 2026-09-17 | `c504f059f` | `fb25dde4c` | 40 提交、2 处文本冲突；采用 `1C, 2C` 手工混合，接入 xAI/Gemini/video 能力，审计确认 fork P0/P1 功能无变化 |
 | 2026-09-20 | `b18ea8579` | `ba7c9f8b2` | 4 提交、0 文本冲突；接入用户组使用统计与 Responses reasoning 修正，修复 3 处 `user_ids` 构造点回归，审计确认 fork P0/P1 功能无变化 |
+| 2026-09-23 | `a110bcba1` | `ec95989e0` | 12 提交、0 文本冲突；接入 usage 响应模型、调度跳过候选展示、Codex service tier 透传与 Gemini thought signature，16 个重叠路径复核无回归，fork P0/P1 功能无变化 |
