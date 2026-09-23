@@ -5,13 +5,85 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并提交） | `a110bcba11712daa8e87284b91d8ba86c547c9d3` |
-| upstream HEAD | `ec95989e0250cb55f338fe473b1eca2a0f81c130` |
-| merge-base | `ec95989e0250cb55f338fe473b1eca2a0f81c130` |
-| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 227，upstream-only 0 |
-| fork-only 路径 | 290 个，`+26302/-981` |
+| fork code baseline（本轮合并提交） | `54a37118a594d2857f317534516f28a97406b277` |
+| upstream HEAD | `57f53903f593fadf67cf1c44d0bee0824a7da3d9` |
+| merge-base | `57f53903f593fadf67cf1c44d0bee0824a7da3d9` |
+| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 229，upstream-only 0 |
+| fork-only 路径 | 277 个，`+25812/-913` |
 | upstream-only 路径 | 0 个，`+0/-0` |
-| 快照日期 | 2026-09-23（第八轮，合并后） |
+| 快照日期 | 2026-09-23（第九轮，合并后） |
+
+### 第九轮合并前快照与合并后结论（2026-09-23）
+
+合并前快照：
+
+| 项 | 值 |
+|---|---|
+| fork 分支 / 当前 HEAD | `rust` / `356bf097f2852bfff9af031b58b57da94eb91815` |
+| 上一轮已合并代码 baseline | `a110bcba11712daa8e87284b91d8ba86c547c9d3` |
+| upstream 目标 | `upstream/main` / `57f53903f593fadf67cf1c44d0bee0824a7da3d9` |
+| merge-base | `ec95989e0250cb55f338fe473b1eca2a0f81c130` |
+| 分叉计数（当前 HEAD...upstream/main） | fork-only 228，upstream-only 8 |
+| fork-only 路径 | 290 个，`+26390/-981` |
+| upstream-only 路径 | 38 个，`+1666/-115` |
+| 直接重叠路径 | 16 个（见下方） |
+| 合并前工作区 | 含 `.mcp.json` 与本文件预快照的未提交修改；用户确认保留后继续 |
+
+合并前待合入 upstream 提交（8 个，按拓扑顺序）：
+
+```text
+cd765f2c2 fix(admin): return user API key IP rules
+2a9d8d3b2 Merge pull request #845 from RWDai/review/pr-01-user-api-key-ip-rules
+1a4eba100 feat(codex): add optional minimum quota reserve for pool scheduling
+5745442ed Merge pull request #847 from zhefox/main
+7e033d057 feat(codex): add dynamic CLI client profile
+595b8e4e0 Merge pull request #848 from AAEE86/codex-dynamic-client-profile
+81788d3a6 fix(codex): confine codex profile api to ai_serving root seams
+57f53903f Merge pull request #849 from AAEE86/codex-dynamic-client-profile
+```
+
+直接重叠路径：
+
+```text
+apps/aether-gateway/src/ai_serving/api.rs
+apps/aether-gateway/src/ai_serving/pure/mod.rs
+apps/aether-gateway/src/dispatch/pool_scheduler.rs
+apps/aether-gateway/src/handlers/admin/provider/pool_admin/payloads.rs
+apps/aether-gateway/src/handlers/admin/provider/pool_admin/read_routes/keys.rs
+apps/aether-gateway/src/handlers/admin/provider/pool/config.rs
+apps/aether-gateway/src/handlers/admin/provider/pool/runtime/writes.rs
+apps/aether-gateway/src/handlers/admin/provider/query/models/model_test.rs
+apps/aether-gateway/src/handlers/admin/provider/shared/support.rs
+apps/aether-gateway/src/lib.rs
+apps/aether-gateway/src/main.rs
+apps/aether-gateway/src/state/core.rs
+apps/aether-gateway/src/task_runtime/mod.rs
+apps/aether-gateway/src/tests/control/admin/pool.rs
+crates/aether-admin/src/provider/pool.rs
+frontend/src/api/endpoints/types/provider.ts
+```
+
+合并后审计结论：
+
+- `54a37118a594d2857f317534516f28a97406b277` 是 `--no-ff` 合并提交，父提交为本地 `356bf097f2852bfff9af031b58b57da94eb91815` 与 `upstream/main` `57f53903f593fadf67cf1c44d0bee0824a7da3d9`；合并后 merge-base 等于 upstream HEAD，`upstream-only` 为 0。
+- 纳入 upstream API key IP rules、Codex `reserve_minimum_quota`（默认关闭，最低额度达到阈值时标记/跳过）及动态 Codex CLI client profile（根 seam、预热与后台刷新 worker）。
+- 两个文本冲突（`pool_scheduler.rs`、`pool/config.rs`）属于同一功能组；用户选择 `1B (theirs)`，采用 upstream 的最低额度预留逻辑。无其它文本冲突。
+- 按用户要求，完整移除应用层 `ignore_pool_cooldown`：调度绕过、运行时/配置/API、PostgreSQL adapter 读写、前端开关/类型及关联测试均清除。普通本地冷却按默认规则工作；已恢复 upstream scored-pool cooldown 路径。PostgreSQL bootstrap 列与两条历史迁移保留，不做删列或数据清除。
+- 16 个直接重叠路径逐项与两侧父提交复核；transcription、额度/自助详情、`disable_circuit_breaker`、OAuth 刷新/账号事件、调度优先级、纯构建部署契约、清理保留期与 quota probe worker 均保留。除明确退役的 `ignore_pool_cooldown` 外，本轮没有其它 fork 功能变化。
+- 当前 fork 特有功能清单已移除 `ignore_pool_cooldown`；本轮功能 delta 明确记录为用户要求的应用层功能退役，旧版快照继续保留历史事实。
+- `cd frontend && npm run build`：通过（含 VSCodex）；提示 `caniuse-lite` 数据已 12 个月未更新，为非阻塞警告。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：通过（最终合并树，2 分 22 秒）。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`：通过（最终合并树，4 分 59 秒）。
+- 定向测试通过：`cargo test -p aether-gateway --lib pool_key_cursor_` 12/12；`cargo test -p aether-gateway --lib reserve_minimum_quota` 4/4；`cargo test -p aether-gateway --lib error_feedback_applies_unschedulable_rule_cooldown` 1/1；`cargo test -p aether-data-postgres --lib provider_api_keys_` 5/5。
+- `cargo fmt --all -- --check`、`git diff --check`、未解决冲突检查通过。
+
+本轮未执行（unverified；按冲突范围未扩展到其它行为测试）：
+
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-data-contracts background_task` 与 `CARGO_BUILD_JOBS=1 cargo test -p aether-data provider_key_task_events`。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib maintenance::runtime::pool_quota_probe`、`CARGO_BUILD_JOBS=1 cargo test -p aether-ai-formats transcription`、`CARGO_BUILD_JOBS=1 cargo test -p aether-scheduler-core disable_circuit_breaker`。
+- `CARGO_BUILD_JOBS=1 RUST_MIN_STACK=8388608 cargo test -p aether-gateway users_me_usage`。
+- §7 中其余 usage 元数据与前端行为测试（`UsageRecordsTable`、`RequestDetailDrawer`、`PoolKeyDisplayPanels`、`PoolConsumptionStats`、`PoolSchedulingDialog.cache-affinity`、`openai.spec.ts`）；本轮仅运行上方列出的冲突/相关测试。
+- upstream Codex dynamic profile / API key IP rules 行为测试，以及 `frontend/src/features/pool/components/__tests__/PoolSchedulingDialog.minimum-quota.spec.ts` 本轮未运行（unverified）；已完成 workspace all-targets 编译与生产构建。
 
 ### 第八轮合并前快照与合并后结论（2026-09-23）
 
@@ -296,32 +368,30 @@ frontend/src/views/admin/PoolManagement.vue
 5. **OAuth Token 自动刷新控制与可观测性**
    - 外部契约：全局配置（`enable_oauth_token_refresh` 等 6 键）与 Provider 覆盖、双层限流信号量、代理覆盖、每账号事件（refreshed/checked/skipped/failed）、后台任务事件 `order=desc`。
    - 关键文件：`apps/aether-gateway/src/maintenance/runtime/oauth_token_refresh.rs`、`state/oauth.rs`、`task_runtime/mod.rs`、`crates/aether-data/**/background_tasks.rs`。
-   - 合并规则：保持全局/Provider 扫描间隔与限流契约；后台任务事件 API 保持 `order=desc` 排序；账号事件详见第 8 项独立存储。
+   - 合并规则：保持全局/Provider 扫描间隔与限流契约；后台任务事件 API 保持 `order=desc` 排序；账号事件详见第 7 项独立存储。
 
-6. **`ignore_pool_cooldown`**
-   - 外部契约：`pool_advanced.ignore_pool_cooldown` 运行时开关，关闭全部 `set_pool_cooldown` 写入（`score_ranking_enabled` 与 `skip_exhausted_accounts` 仅为配置兼容，运行时由上游接管）。
-   - 关键文件：`apps/aether-gateway/src/handlers/admin/provider/pool/runtime/writes.rs`、`crates/aether-pool-core/src/scheduler.rs`。
-   - 合并规则：冲突时该开关必须包住所有 `set_pool_cooldown` 调用；上游冷却原因细分（如 429 quota vs rate limit）放入开关内部，不得删除开关。
-
-7. **号池调度不变量**
+6. **号池调度不变量**
    - 外部契约：cache-affinity 命中提升 pool group priority 到最高、routed policy 继承 `keep_priority_on_conversion`、`probing_enabled` 关闭时不显示虚假热池指标、模型测试候选顺序 `scheduled.chain(skipped)`。
    - 关键文件：`apps/aether-gateway/src/ai_serving/planner/candidate_ranking.rs`、`dispatch/pool_scheduler.rs`、`frontend/src/features/pool/**`。
    - 合并规则：上游 routing policy 调整时必须维持 priority 继承与 cache-affinity 提升双生效；测试候选顺序保持可调度优先于跳过项。
 
-8. **账号级任务事件独立存储**（本轮新增）
+7. **账号级任务事件独立存储**（第八轮新增）
    - 外部契约：`provider_key_task_events` 表、`GET /api/admin/tasks/{task_key}/account-events`，隔离账号级高频事件，避免污染 `background_tasks` 审计与触发白名单拦截。
    - 关键文件：`crates/aether-data/adapters/postgres/migrations/20260909000000_add_provider_key_task_events.sql`、`crates/aether-data/**/provider_key_task_events.rs`、`apps/aether-gateway/src/handlers/admin/features/background_tasks/routes.rs`。
    - 合并规则：`background_tasks` 事件白名单保持严格安全校验，账号事件全部写入独立表；迁移必须包含 `IF NOT EXISTS`，不进 generated baseline。
 
+### 本轮按用户要求退役的功能
+- `ignore_pool_cooldown`：2026-09-23 起从应用层、API 与 UI 移除；PostgreSQL bootstrap 列及两条历史迁移保留，不删除已有数据。
+
 ### P1 功能
 
-9. **本地镜像构建链**
+8. **本地镜像构建链**
    - 外部契约：`deploy.sh` 契约是纯构建镜像不做 compose restart（含 `.code-hash` 缓存、`--tag`、`AETHER_TUNNEL_MODE`、BuildKit 缓存控制），`Dockerfile.app.local`、`docker-compose.build.yml`、`publish-image.yml`。
    - 关键文件：`deploy.sh`、`Dockerfile.app.local`、`docker-compose.build.yml`、`.github/workflows/publish-image.yml`。
    - 合并规则：上游在已删除的 restart 尾块内的改动不构成恢复理由；保持纯构建契约，本地迁移使用 `DATABASE_MODE` 兼容。
 
-10. **清理任务保留期下限与定时探测**
-   - 外部契约：detail/compressed/header retention 下限 1 天，log retention 下限 30 天，避免配置 0 导致破坏性立即清理；`pool.quota.probe.worker` 注册为 scheduled interval task。
+9. **清理任务保留期下限与定时探测**
+   - 外部契约：detail/compressed/header retention 下限 1 天，log retention 下限 30 天，避免配置 0 导致破坏性立即清理；`pool.quota.probe.worker` 注册为 scheduled interval task.
    - 关键文件：`apps/aether-gateway/src/maintenance/runtime/config.rs`、`apps/aether-gateway/src/task_runtime/mod.rs`。
    - 合并规则：上游清理配置重构时保留下限防呆；上游定时任务注册表变动时确保 quota probe worker 不漏注。
 
@@ -368,7 +438,7 @@ Routes:
 Provider config:
   pool_advanced.score_ranking_enabled   (兼容读写；scheduler 不读取)
   pool_advanced.skip_exhausted_accounts (兼容读写；quota 耗尽一律阻断)
-  pool_advanced.ignore_pool_cooldown    (fork 运行时有效；拦截全部 set_pool_cooldown 写入)
+  pool_advanced.reserve_minimum_quota   (upstream Codex-only; default false; remaining quota <= 1% is reserved)
   oauth_token_refresh.{enabled,lookahead_seconds,interval_seconds,concurrency,max_per_run,proxy_node_id}
 
 Key capability:
@@ -519,3 +589,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-17 | `c504f059f` | `fb25dde4c` | 40 提交、2 处文本冲突；采用 `1C, 2C` 手工混合，接入 xAI/Gemini/video 能力，审计确认 fork P0/P1 功能无变化 |
 | 2026-09-20 | `b18ea8579` | `ba7c9f8b2` | 4 提交、0 文本冲突；接入用户组使用统计与 Responses reasoning 修正，修复 3 处 `user_ids` 构造点回归，审计确认 fork P0/P1 功能无变化 |
 | 2026-09-23 | `a110bcba1` | `ec95989e0` | 12 提交、0 文本冲突；接入 usage 响应模型、调度跳过候选展示、Codex service tier 透传与 Gemini thought signature，16 个重叠路径复核无回归，fork P0/P1 功能无变化 |
+| 2026-09-23 | `54a37118a` | `57f53903f` | 8 提交、2 处文本冲突（`1B: theirs`）；接入 API key IP rules、Codex 最低额度预留与动态 CLI profile；按用户要求退役应用层 `ignore_pool_cooldown`，保留 PostgreSQL 列/迁移；16 个重叠路径审计及构建验证通过 |
