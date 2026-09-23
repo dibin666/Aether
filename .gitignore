@@ -16,6 +16,7 @@
 AGENTS.md
 .playwright-mcp/
 .agents
+.mcp.json
 
 docs/architecture
 !docs/architecture/architecture-dark.svg
