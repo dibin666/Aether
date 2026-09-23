@@ -1249,17 +1249,19 @@ pub(super) fn build_admin_pool_key_payload(
     let cooldown_ttl_seconds = cooldown_reason
         .as_ref()
         .and_then(|_| runtime.cooldown_ttl_by_key.get(&key.id).copied());
-    let pool_cooldown_ignored = key.ignore_pool_cooldown
-        || pool_config
-            .as_ref()
-            .is_some_and(|config| config.ignore_pool_cooldown);
     let health_score = admin_pool_health_score(key);
     let circuit_breaker_open = false;
     let auth_semantics = provider_key_auth_semantics(key, provider_type);
-    let account_quota_exhausted = pool_config
-        .as_ref()
-        .is_some_and(|config| config.skip_exhausted_accounts)
-        && admin_provider_pool_pure::admin_pool_key_account_quota_exhausted(key, provider_type);
+    let account_quota_exhausted = pool_config.as_ref().is_some_and(|config| {
+        (config.skip_exhausted_accounts
+            && admin_provider_pool_pure::admin_pool_key_account_quota_exhausted(key, provider_type))
+            || (config.reserve_minimum_quota
+                && admin_provider_pool_pure::admin_pool_key_minimum_quota_reached(
+                    key,
+                    provider_type,
+                    None,
+                ))
+    });
     let auth_config = state.parse_catalog_auth_config_json(key);
     let oauth_expires_at =
         admin_pool_derive_oauth_expires_at(provider_type, key, auth_config.as_ref());
@@ -1346,12 +1348,8 @@ pub(super) fn build_admin_pool_key_payload(
     let (scheduling_status, scheduling_reason, scheduling_label, scheduling_reasons) =
         admin_pool_scheduling_payload(
             key,
-            (!pool_cooldown_ignored)
-                .then_some(cooldown_reason.as_deref())
-                .flatten(),
-            (!pool_cooldown_ignored)
-                .then_some(cooldown_ttl_seconds)
-                .flatten(),
+            cooldown_reason.as_deref(),
+            cooldown_ttl_seconds,
             account_status_blocked,
             account_status_code.as_deref(),
             account_status_label.as_deref(),
@@ -1368,16 +1366,6 @@ pub(super) fn build_admin_pool_key_payload(
     payload.insert("key_id".to_string(), json!(key.id));
     payload.insert("key_name".to_string(), json!(key.name));
     payload.insert("is_active".to_string(), json!(key.is_active));
-    payload.insert(
-        "ignore_pool_cooldown".to_string(),
-        json!(key.ignore_pool_cooldown),
-    );
-    payload.insert(
-        "provider_ignore_pool_cooldown".to_string(),
-        json!(pool_config
-            .as_ref()
-            .is_some_and(|config| config.ignore_pool_cooldown)),
-    );
     payload.insert("auth_type".to_string(), json!(key.auth_type));
     payload.insert(
         "auth_type_by_format".to_string(),

@@ -463,16 +463,14 @@ pub(crate) async fn record_admin_provider_pool_error(
             spawn_remove_pool_active_probe_member(runtime, provider_id, key_id);
             return;
         }
-        if !pool_config.ignore_pool_cooldown {
-            set_pool_cooldown(
-                runtime,
-                provider_id,
-                key_id,
-                "forbidden_403",
-                pool_config.rate_limit_cooldown_seconds.max(300),
-            )
-            .await;
-        }
+        set_pool_cooldown(
+            runtime,
+            provider_id,
+            key_id,
+            "forbidden_403",
+            pool_config.rate_limit_cooldown_seconds.max(300),
+        )
+        .await;
         return;
     }
 
@@ -486,16 +484,14 @@ pub(crate) async fn record_admin_provider_pool_error(
         matching_unschedulable_rule(&pool_config.unschedulable_rules, &error_message)
     {
         let ttl_seconds = (rule.duration_minutes.max(1)).saturating_mul(60).max(60);
-        if !pool_config.ignore_pool_cooldown {
-            set_pool_cooldown(
-                runtime,
-                provider_id,
-                key_id,
-                &format!("rule:{}", rule.keyword),
-                ttl_seconds,
-            )
-            .await;
-        }
+        set_pool_cooldown(
+            runtime,
+            provider_id,
+            key_id,
+            &format!("rule:{}", rule.keyword),
+            ttl_seconds,
+        )
+        .await;
         return;
     }
 
@@ -506,28 +502,24 @@ pub(crate) async fn record_admin_provider_pool_error(
                 .or_else(|| parse_google_quota_cooldown_seconds(error_body)),
             pool_config,
         );
-        if !pool_config.ignore_pool_cooldown {
-            let reason = if error_body_indicates_quota_exhaustion(error_body) {
-                "quota_exhausted_429"
-            } else {
-                "rate_limited_429"
-            };
-            set_pool_cooldown(runtime, provider_id, key_id, reason, ttl_seconds).await;
-        }
+        let reason = if error_body_indicates_quota_exhaustion(error_body) {
+            "quota_exhausted_429"
+        } else {
+            "rate_limited_429"
+        };
+        set_pool_cooldown(runtime, provider_id, key_id, reason, ttl_seconds).await;
         return;
     }
 
     if status_code == 529 {
-        if !pool_config.ignore_pool_cooldown {
-            set_pool_cooldown(
-                runtime,
-                provider_id,
-                key_id,
-                "overloaded_529",
-                pool_config.overload_cooldown_seconds,
-            )
-            .await;
-        }
+        set_pool_cooldown(
+            runtime,
+            provider_id,
+            key_id,
+            "overloaded_529",
+            pool_config.overload_cooldown_seconds,
+        )
+        .await;
         return;
     }
 
@@ -550,9 +542,7 @@ pub(crate) async fn record_admin_provider_pool_error(
             parse_retry_after_seconds(response_headers),
             pool_config,
         );
-        if !pool_config.ignore_pool_cooldown {
-            set_pool_cooldown(runtime, provider_id, key_id, &reason, ttl_seconds).await;
-        }
+        set_pool_cooldown(runtime, provider_id, key_id, &reason, ttl_seconds).await;
     }
 }
 
@@ -604,16 +594,14 @@ pub(crate) async fn record_admin_provider_pool_stream_timeout(
         .await;
 
     if count >= pool_config.stream_timeout_threshold {
-        if !pool_config.ignore_pool_cooldown {
-            set_pool_cooldown(
-                runtime,
-                provider_id,
-                key_id,
-                &format!("stream_timeout_x{count}"),
-                pool_config.stream_timeout_cooldown_seconds.max(1),
-            )
-            .await;
-        }
+        set_pool_cooldown(
+            runtime,
+            provider_id,
+            key_id,
+            &format!("stream_timeout_x{count}"),
+            pool_config.stream_timeout_cooldown_seconds.max(1),
+        )
+        .await;
     }
 }
 
@@ -663,6 +651,7 @@ mod tests {
             unschedulable_rules: Vec::new(),
             lru_enabled: true,
             skip_exhausted_accounts: false,
+            reserve_minimum_quota: false,
             sticky_session_ttl_seconds: 120,
             latency_window_seconds: 600,
             latency_sample_limit: 10,
@@ -670,7 +659,6 @@ mod tests {
             cost_limit_per_key_tokens: Some(10_000),
             rate_limit_cooldown_seconds: 300,
             overload_cooldown_seconds: 30,
-            ignore_pool_cooldown: false,
             probing_enabled: false,
             probing_target_percent: None,
             probing_target_count: None,
@@ -1046,51 +1034,6 @@ mod tests {
             &pool_config,
             529,
             Some(r#"{"error":{"message":"overloaded"}}"#),
-            None,
-        )
-        .await;
-
-        let runtime = read_admin_provider_pool_runtime_state(
-            runtime,
-            "provider-1",
-            &key_ids,
-            &pool_config,
-            None,
-        )
-        .await;
-
-        assert!(runtime.cooldown_reason_by_key.is_empty());
-        assert!(runtime.cooldown_ttl_by_key.is_empty());
-    }
-
-    #[tokio::test]
-    async fn error_feedback_does_not_write_cooldown_when_pool_cooldown_is_ignored() {
-        let Some(redis) = start_managed_redis_or_skip().await else {
-            return;
-        };
-        let app = build_runner_app(redis.redis_url(), "pool_runtime_ignore_cooldown").await;
-        let runtime = app.runtime_state.as_ref();
-        let mut pool_config = sample_pool_config();
-        pool_config.ignore_pool_cooldown = true;
-        let key_ids = vec!["key-429".to_string(), "key-503".to_string()];
-
-        record_admin_provider_pool_error(
-            runtime,
-            "provider-1",
-            "key-429",
-            &pool_config,
-            429,
-            Some(r#"{"error":{"message":"rate limited"}}"#),
-            None,
-        )
-        .await;
-        record_admin_provider_pool_error(
-            runtime,
-            "provider-1",
-            "key-503",
-            &pool_config,
-            503,
-            Some(r#"{"error":{"message":"unavailable"}}"#),
             None,
         )
         .await;

@@ -46,7 +46,7 @@ use crate::handlers::shared::provider_pool::{
     AdminProviderPoolSchedulingPreset,
 };
 use crate::orchestration::{
-    local_execution_candidate_metadata_from_report_context, IGNORE_POOL_COOLDOWN_REPORT_FIELD,
+    local_execution_candidate_metadata_from_report_context,
     ROUTING_POOL_POLICY_OVERRIDE_REPORT_FIELD,
 };
 use crate::scheduler::affinity::{
@@ -833,11 +833,6 @@ async fn resolve_pool_feedback_context(
     else {
         return None;
     };
-    pool_config.ignore_pool_cooldown |= context
-        .report_context
-        .and_then(|value| value.get(IGNORE_POOL_COOLDOWN_REPORT_FIELD))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
 
     if let Some(override_policy) = context
         .report_context
@@ -1567,12 +1562,7 @@ async fn record_pool_error_effect(
         state,
         context,
         Some(false),
-        pool_score_hard_state_for_status(effect.status_code, effect.error_body).filter(
-            |hard_state| {
-                !pool_context.pool_config.ignore_pool_cooldown
-                    || !matches!(hard_state, PoolMemberHardState::Cooldown)
-            },
-        ),
+        pool_score_hard_state_for_status(effect.status_code, effect.error_body),
         Some(pool_score_delta_for_status(effect.status_code)),
         serde_json::json!({
             "last_request_feedback": {
@@ -1929,7 +1919,7 @@ async fn record_pool_stream_timeout_effect(
         state,
         context,
         Some(false),
-        (!pool_context.pool_config.ignore_pool_cooldown).then_some(PoolMemberHardState::Cooldown),
+        Some(PoolMemberHardState::Cooldown),
         Some(-250),
         serde_json::json!({
             "last_request_feedback": {

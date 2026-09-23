@@ -169,6 +169,18 @@ pub fn admin_pool_key_account_quota_exhausted(
     aether_provider_pool::provider_pool_key_account_quota_exhausted(key, provider_type)
 }
 
+pub fn admin_pool_key_minimum_quota_reached(
+    key: &StoredProviderCatalogKey,
+    provider_type: &str,
+    provider_model_name: Option<&str>,
+) -> bool {
+    aether_provider_pool::provider_pool_key_minimum_quota_reached(
+        key,
+        provider_type,
+        provider_model_name,
+    )
+}
+
 pub fn admin_pool_key_quota_hard_blocked(
     key: &StoredProviderCatalogKey,
     provider_type: &str,
@@ -1149,7 +1161,6 @@ pub fn build_admin_pool_key_payload(
         "key_id": key.id,
         "key_name": key.name,
         "is_active": key.is_active,
-        "ignore_pool_cooldown": key.ignore_pool_cooldown,
         "auth_type": key.auth_type,
         "status_snapshot": key
             .status_snapshot

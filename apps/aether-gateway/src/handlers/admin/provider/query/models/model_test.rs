@@ -1133,7 +1133,6 @@ fn provider_query_ai_pool_scheduling_config(
         lru_enabled: config.lru_enabled,
         skip_exhausted_accounts: config.skip_exhausted_accounts,
         cost_limit_per_key_tokens: config.cost_limit_per_key_tokens,
-        ignore_pool_cooldown: config.ignore_pool_cooldown,
     }
 }
 
@@ -1305,7 +1304,6 @@ fn provider_query_pool_catalog_key_context(
             provider_type,
             quota_snapshot,
         ),
-        ignore_pool_cooldown: key.ignore_pool_cooldown,
         quota_hard_blocked: admin_provider_pool_pure::admin_pool_key_quota_hard_blocked(
             key,
             provider_type,
@@ -1343,6 +1341,7 @@ async fn provider_query_apply_pool_scheduler_to_test_candidates(
         provider.id.clone(),
         provider_query_ai_pool_runtime_state(&runtime),
     );
+    let reserve_minimum_quota = pool_config.reserve_minimum_quota;
     let pool_config =
         provider_query_ai_pool_scheduling_config(pool_config, provider.provider_type.as_str());
     let inputs = keys
@@ -1354,6 +1353,14 @@ async fn provider_query_apply_pool_scheduler_to_test_candidates(
                 effective_model: effective_model.to_string(),
                 scheduler_skip_reason: None,
             };
+            let mut key_context =
+                provider_query_pool_catalog_key_context(state, &key, &provider.provider_type);
+            key_context.quota_exhausted |= reserve_minimum_quota
+                && admin_provider_pool_pure::admin_pool_key_minimum_quota_reached(
+                    &key,
+                    &provider.provider_type,
+                    Some(effective_model),
+                );
             AiPoolCandidateInput {
                 facts: AiPoolCandidateFacts {
                     provider_id: provider.id.clone(),
@@ -1365,11 +1372,7 @@ async fn provider_query_apply_pool_scheduler_to_test_candidates(
                     key_internal_priority: key.internal_priority,
                 },
                 pool_config: Some(pool_config.clone()),
-                key_context: provider_query_pool_catalog_key_context(
-                    state,
-                    &key,
-                    &provider.provider_type,
-                ),
+                key_context,
                 candidate,
             }
         })

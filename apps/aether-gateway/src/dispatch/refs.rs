@@ -211,7 +211,6 @@ mod tests {
                 sticky_key_attempts: None,
             },
             ranking: None,
-            ignore_pool_cooldown: false,
         }
     }
 }

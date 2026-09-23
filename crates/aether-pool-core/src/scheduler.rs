@@ -22,7 +22,6 @@ pub struct PoolSchedulingConfig {
     /// always an admission block; reset-aware adapters decide when it clears.
     pub skip_exhausted_accounts: bool,
     pub cost_limit_per_key_tokens: Option<u64>,
-    pub ignore_pool_cooldown: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -41,7 +40,6 @@ pub struct PoolMemberSignals {
     pub quota_reset_seconds: Option<f64>,
     pub account_blocked: bool,
     pub quota_exhausted: bool,
-    pub ignore_pool_cooldown: bool,
     pub quota_hard_blocked: bool,
     pub health_score: Option<f64>,
     pub latency_avg_ms: Option<f64>,
@@ -244,10 +242,7 @@ fn schedule_pool_group<Candidate>(
             continue;
         }
 
-        if !pool_config.ignore_pool_cooldown
-            && !item.key_context.ignore_pool_cooldown
-            && runtime.cooldown_reason_by_key.contains_key(&key_id)
-        {
+        if runtime.cooldown_reason_by_key.contains_key(&key_id) {
             skipped.push(PoolSkippedCandidate {
                 candidate: item.candidate,
                 skip_reason: POOL_COOLDOWN_SKIP_REASON,
@@ -917,47 +912,6 @@ mod tests {
     }
 
     #[test]
-    fn pool_scheduler_ignores_provider_or_account_cooldown_override() {
-        let mut provider_ignored =
-            sample_candidate("provider-pool", "endpoint-1", "key-provider", 10, true);
-        provider_ignored
-            .pool_config
-            .as_mut()
-            .expect("pool config should exist")
-            .ignore_pool_cooldown = true;
-        let mut account_ignored =
-            sample_candidate("provider-pool", "endpoint-1", "key-account", 10, true);
-        account_ignored.key_context.ignore_pool_cooldown = true;
-
-        let runtime_by_provider = BTreeMap::from([(
-            "provider-pool".to_string(),
-            PoolRuntimeState {
-                cooldown_reason_by_key: BTreeMap::from([
-                    ("key-provider".to_string(), "429".to_string()),
-                    ("key-account".to_string(), "429".to_string()),
-                ]),
-                ..PoolRuntimeState::default()
-            },
-        )]);
-
-        let outcome = run_pool_scheduler(
-            vec![provider_ignored, account_ignored],
-            &runtime_by_provider,
-            "seed",
-        );
-
-        assert_eq!(
-            outcome
-                .candidates
-                .iter()
-                .map(|item| item.candidate.as_str())
-                .collect::<Vec<_>>(),
-            vec!["key-provider", "key-account"]
-        );
-        assert!(outcome.skipped_candidates.is_empty());
-    }
-
-    #[test]
     fn pool_scheduler_always_skips_hard_quota_blocks() {
         let ready = sample_candidate("provider-pool", "endpoint-1", "key-ready", 10, true);
         let mut hard_blocked =
@@ -1583,7 +1537,6 @@ mod tests {
             lru_enabled: true,
             skip_exhausted_accounts: false,
             cost_limit_per_key_tokens: None,
-            ignore_pool_cooldown: false,
         });
         PoolCandidateInput {
             candidate: key_id.to_string(),

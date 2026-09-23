@@ -2249,7 +2249,6 @@ mod tests {
                 sticky_key_attempts: Some(1),
             },
             ranking: None,
-            ignore_pool_cooldown: false,
         }
     }
 

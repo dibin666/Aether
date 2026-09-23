@@ -22,9 +22,8 @@ pub(crate) use self::adaptive::{
 pub(crate) use self::attempt::{
     attempt_identity_from_report_context, insert_pool_key_lease_report_context_fields,
     local_execution_candidate_metadata_from_report_context, next_same_key_retry_attempt,
-    ExecutionAttemptIdentity, LocalExecutionCandidateMetadata, IGNORE_POOL_COOLDOWN_REPORT_FIELD,
-    POOL_KEY_RETRY_INDEX_STRIDE, ROUTING_POOL_POLICY_OVERRIDE_REPORT_FIELD,
-    SCHEDULER_AFFINITY_EPOCH_REPORT_FIELD,
+    ExecutionAttemptIdentity, LocalExecutionCandidateMetadata, POOL_KEY_RETRY_INDEX_STRIDE,
+    ROUTING_POOL_POLICY_OVERRIDE_REPORT_FIELD, SCHEDULER_AFFINITY_EPOCH_REPORT_FIELD,
 };
 pub(crate) use self::classifier::{
     classify_anthropic_failure_disposition, classify_failure_disposition, classify_local_failover,

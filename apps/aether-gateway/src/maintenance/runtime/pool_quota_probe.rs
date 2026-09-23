@@ -1379,7 +1379,6 @@ async fn record_score_probe_results_from_payload(
     selected_key_ids: &[String],
     payload: Option<&Value>,
     attempted_at: u64,
-    ignored_key_ids: &BTreeSet<String>,
 ) -> BTreeSet<String> {
     let mut recorded = std::collections::BTreeSet::new();
     let mut succeeded = BTreeSet::new();
@@ -1400,26 +1399,15 @@ async fn record_score_probe_results_from_payload(
             if probe_result_succeeded(item) {
                 succeeded.insert(key_id.to_string());
             }
-            let ignore_pool_cooldown = ignored_key_ids.contains(key_id);
             record_score_probe_result_for_key(
                 state,
                 provider_id,
                 key_id,
                 attempted_at,
                 probe_result_succeeded(item),
-                probe_result_hard_state(item)
-                    .or_else(|| {
-                        (!probe_result_succeeded(item)).then_some(PoolMemberHardState::Cooldown)
-                    })
-                    .map(|hard_state| {
-                        if ignore_pool_cooldown
-                            && matches!(hard_state, PoolMemberHardState::Cooldown)
-                        {
-                            PoolMemberHardState::Available
-                        } else {
-                            hard_state
-                        }
-                    }),
+                probe_result_hard_state(item).or_else(|| {
+                    (!probe_result_succeeded(item)).then_some(PoolMemberHardState::Cooldown)
+                }),
                 serde_json::json!({
                     "last_probe": {
                         "source": "pool_quota_probe",
@@ -1444,11 +1432,7 @@ async fn record_score_probe_results_from_payload(
             key_id,
             attempted_at,
             false,
-            Some(if ignored_key_ids.contains(key_id) {
-                PoolMemberHardState::Available
-            } else {
-                PoolMemberHardState::Cooldown
-            }),
+            Some(PoolMemberHardState::Cooldown),
             serde_json::json!({
                 "last_probe": {
                     "source": "pool_quota_probe",
@@ -1830,11 +1814,6 @@ async fn perform_pool_quota_probe_for_provider(
     summary.selected_keys += selected_count;
 
     let selected_key_ids = keys.iter().map(|key| key.id.clone()).collect::<Vec<_>>();
-    let ignored_key_ids = keys
-        .iter()
-        .filter(|key| pool_config.ignore_pool_cooldown || key.ignore_pool_cooldown)
-        .map(|key| key.id.clone())
-        .collect::<BTreeSet<_>>();
     let key_names_by_id = keys
         .iter()
         .map(|key| (key.id.clone(), key.name.clone()))
@@ -1919,7 +1898,6 @@ async fn perform_pool_quota_probe_for_provider(
                     std::slice::from_ref(&key_id),
                     payload.as_ref(),
                     now_ts,
-                    &ignored_key_ids,
                 )
                 .await;
                 add_active_probe_member_ids(
@@ -1958,11 +1936,7 @@ async fn perform_pool_quota_probe_for_provider(
                     &key_id,
                     now_ts,
                     false,
-                    Some(if ignored_key_ids.contains(&key_id) {
-                        PoolMemberHardState::Available
-                    } else {
-                        PoolMemberHardState::Cooldown
-                    }),
+                    Some(PoolMemberHardState::Cooldown),
                     pool_quota_probe_worker_error_score_reason(&err),
                 )
                 .await;
