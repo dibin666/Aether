@@ -4229,7 +4229,7 @@ mod tests {
         assert_eq!(metadata.get("api_key_is_standalone"), Some(&json!(true)));
         assert_eq!(metadata.get("client_ip"), Some(&json!("203.0.113.8")));
         assert_eq!(metadata.get("client_family"), Some(&json!("claude_code")));
-        assert!(metadata.get("user_agent").is_none());
+        assert_eq!(metadata.get("user_agent"), Some(&json!("Claude-Code/1.0")));
         let body_size = metadata
             .get("body_size")
             .and_then(Value::as_object)

@@ -65,12 +65,16 @@ frontend/src/views/admin/__tests__/PoolManagement.codex-cycle-stats.spec.ts
 - **本轮没有 fork 功能性 delta 变化**；用户组 provider 统计、批量钱包调整、批量模型创建属于 upstream 能力，不加入 fork 特有功能清单。
 - 合并后的待合入 upstream 提交：0。
 
-验证状态（**按用户要求本轮不编译**）：
+验证结果（2026-09-29，编译后补录）：
 
-- `cd frontend && npm run build`：**未运行（unverified）**。
-- `CARGO_BUILD_JOBS=1 cargo check --workspace` 与 `--all-targets`：**未运行（unverified）**。规则 4/10 已触发，下一次有编译环境时必须先跑 `--all-targets`。
-- 已通过：`git diff --cached --check`、未解决冲突检查（0）、`rustfmt --check` 于 `runtime.rs`。
-- 全部第 7 节定向测试均未运行（unverified）。
+- `cd frontend && npm run build`：通过，2 分 11 秒（含 VSCodex）；依赖已存在，未运行 `npm install`。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：通过，7 分 16 秒，无警告。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`：首跑报 `E0063`——upstream 新增测试 `memory/tests.rs` 的 `UsageTimeSeriesQuery`（带 `provider_names`）缺 fork 独有的 `provider_id`/`provider_api_key_ids`；补 `None` 后复跑通过。再次印证规则 4 与规则 10：静态扫描只查了“缺 `provider_names`”，漏掉了反方向（upstream 新构造点缺 fork 字段）。
+- 定向测试（串行）：`cargo test -p aether-data --lib repository::usage::memory` 42/42；`cargo test -p aether-gateway --lib pool_admin::read_dashboard` 5/5；`cargo test -p aether-gateway --lib admin::stats` 31/31；`cargo test -p aether-usage-runtime --lib write` 89/89。
+- **既存失败已修**（非本轮合并回归）：`write::tests::pending_usage_record_preserves_standalone_key_metadata` 断言 `user_agent` 不存在，但 fork 的 user_agent 持久化（`write.rs` `context_string(context, "user_agent")`）合并前 `e9c520ce9` 已写入该字段；测试改为断言 `user_agent == "Claude-Code/1.0"`。
+- `git diff --check`、未解决冲突检查、`runtime.rs` 的 `rustfmt --check` 通过。
+
+未运行（unverified）：第 7 节其余定向测试（`background_task`、`provider_key_task_events`、`pool_quota_probe`、`transcription`、`disable_circuit_breaker`、`users_me_usage`）及前端 4 个定向测试；本轮冲突范围未涉及。
 
 ### 第九轮合并前快照与合并后结论（2026-09-23）
 
@@ -649,4 +653,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-20 | `b18ea8579` | `ba7c9f8b2` | 4 提交、0 文本冲突；接入用户组使用统计与 Responses reasoning 修正，修复 3 处 `user_ids` 构造点回归，审计确认 fork P0/P1 功能无变化 |
 | 2026-09-23 | `a110bcba1` | `ec95989e0` | 12 提交、0 文本冲突；接入 usage 响应模型、调度跳过候选展示、Codex service tier 透传与 Gemini thought signature，16 个重叠路径复核无回归，fork P0/P1 功能无变化 |
 | 2026-09-23 | `54a37118a` | `57f53903f` | 8 提交、2 处文本冲突（`1B: theirs`）；接入 API key IP rules、Codex 最低额度预留与动态 CLI profile；按用户要求退役应用层 `ignore_pool_cooldown`，保留 PostgreSQL 列/迁移；16 个重叠路径审计及构建验证通过 |
-| 2026-09-29 | `29351e388` | `00a315e3b` | 39 提交、1 处文本冲突（`runtime.rs` 导入手工并集）；接入用户组 provider 统计、批量钱包调整、SSE/转换修复；补 3 处 `provider_names` 构造点；按用户要求未编译（unverified），fork P0/P1 功能无变化 |
+| 2026-09-29 | `29351e388` | `00a315e3b` | 39 提交、1 处文本冲突（`runtime.rs` 导入手工并集）；接入用户组 provider 统计、批量钱包调整、SSE/转换修复；补 3 处 `provider_names` 构造点；前端构建、`cargo check --workspace(--all-targets)` 通过，另补 1 处 fork 字段与 1 个既存失败测试；fork P0/P1 功能无变化 |

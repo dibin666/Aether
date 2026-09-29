@@ -2340,6 +2340,8 @@ async fn usage_analytics_intersects_provider_allowlist_and_user_scope() {
                 user_ids: Some(vec!["user-1".to_string()]),
                 provider_names: names.clone(),
                 provider_name: provider.clone(),
+                provider_id: None,
+                provider_api_key_ids: None,
                 model: None,
                 granularity: UsageTimeSeriesGranularity::Day,
                 tz_offset_minutes: 0,
