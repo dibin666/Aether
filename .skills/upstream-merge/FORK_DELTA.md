@@ -5,13 +5,72 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并提交） | `54a37118a594d2857f317534516f28a97406b277` |
-| upstream HEAD | `57f53903f593fadf67cf1c44d0bee0824a7da3d9` |
-| merge-base | `57f53903f593fadf67cf1c44d0bee0824a7da3d9` |
-| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 229，upstream-only 0 |
+| fork code baseline（本轮合并提交） | `29351e388` |
+| upstream HEAD | `00a315e3b` |
+| merge-base | `00a315e3b` |
+| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 232，upstream-only 0 |
 | fork-only 路径 | 277 个，`+25812/-913` |
 | upstream-only 路径 | 0 个，`+0/-0` |
-| 快照日期 | 2026-09-23（第九轮，合并后） |
+| 快照日期 | 2026-09-29（第十轮，合并后） |
+
+### 第十轮合并前快照与合并后结论（2026-09-29）
+
+| 项 | 值 |
+|---|---|
+| fork 分支 / 当前 HEAD | `rust` / `e9c520ce9` |
+| upstream 目标 | `upstream/main` / `00a315e3b` |
+| merge-base | `57f53903f593fadf67cf1c44d0bee0824a7da3d9` |
+| 分叉计数（HEAD...upstream/main） | fork-only 231，upstream-only 39 |
+| upstream-only 路径 | 121 个，`+7952/-1212` |
+| 直接重叠路径 | 22 个（见下方） |
+| 合并状态 | 已完成：`29351e388`；1 处文本冲突（`runtime.rs` 导入列表，手工并集） |
+
+合并前待合入 upstream 提交（39 个）主题：Codex 恢复额度状态修复、Codex 指纹设置提示、gateway 测试瘦身（CI/nextest）、管理端批量调整用户钱包余额（含幂等、下限归零、跨标签串行）、手动清理/SMTP 测试/系统更新路由请求体缓冲、`usage_body_blobs` 清理 truncate、SSE prefetch 交接保留解析状态、跨格式转换 live 修复、lint 顺序修复、用户组 provider 维度统计与未分组视图、批量管理模型支持创建统一模型。
+
+直接重叠路径：
+
+```text
+apps/aether-gateway/src/data/state/mod.rs
+apps/aether-gateway/src/data/state/runtime.rs
+apps/aether-gateway/src/dispatch/pool_scheduler.rs
+apps/aether-gateway/src/handlers/admin/observability/stats/analytics_routes.rs
+apps/aether-gateway/src/handlers/admin/observability/stats/cost_routes.rs
+apps/aether-gateway/src/handlers/shared/catalog.rs
+apps/aether-gateway/src/main.rs
+apps/aether-gateway/src/state/core.rs
+apps/aether-gateway/src/tests/control/admin/pool.rs
+apps/aether-gateway/src/tests/control/admin/provider_ops.rs
+apps/aether-gateway/src/tests/mod.rs
+crates/aether-ai/formats/src/formats/shared/stream_rewrite.rs
+crates/aether-data/adapters/postgres/src/usage/mod.rs
+crates/aether-data/contracts/src/repository/usage/types.rs
+crates/aether-data/runtime/src/repository/usage/memory.rs
+crates/aether-data/runtime/src/repository/usage/memory/tests.rs
+crates/aether-usage/runtime/src/write.rs
+frontend/src/api/endpoints/providers.ts
+frontend/src/i18n/messages.ts
+frontend/src/utils/cache.ts
+frontend/src/views/admin/PoolManagement.vue
+frontend/src/views/admin/__tests__/PoolManagement.codex-cycle-stats.spec.ts
+```
+
+合并后审计结论：
+
+- `29351e388` 是 `--no-ff` 合并提交，已完整纳入 39 个 upstream 提交；合并后 `upstream-only` 为 0。
+- 唯一文本冲突 `data/state/runtime.rs` 是 `use super::{...}` 导入列表：fork 侧新增 `ProviderKeyQuotaObservation(Query)`、`ProviderKeyTaskEvent(Query)`，upstream 侧新增 `PrepareAdminUserWalletBalanceBatch*`、`StoredAdminUserWalletBalanceBatch`。两侧互不冲突，采用手工并集并经 `rustfmt --check`；无功能取舍，故未向用户提问。
+- **规则 10 再次触发**：upstream 给 `UsageTimeSeriesQuery`、`UsageAuditSummaryQuery`、`UsageLeaderboardQuery` 新增必填字段 `provider_names: Option<Vec<String>>`（provider 名称白名单，空集匹配无结果）。已为 3 处缺该字段的构造点补 `provider_names: None`：`pool_admin/read_routes/dashboard.rs` 两处、`repository/usage/memory/tests.rs` 中 fork 的 `usage_analytics_filters_by_canonical_provider_and_key_cohort`。`UsageAuditSummaryQuery` 与 `UsageLeaderboardQuery` 的构造点无遗漏（静态扫描）。
+- upstream 本轮未删除任何 fork 仍在调用的公共符号（被删的 `pub(super)` 测试 helper 随架构守卫拆分迁移；`tunnel_ip_family` 仅收窄为 `pub(crate)`，调用方均在同 crate）。
+- `pool_scheduler.rs` 上游改动仅限测试夹具（去除无关 Fernet 加解密、增加 83% 用例）；`usage/runtime/write.rs` 仅新增 SSE 解析诊断 `first_parse_error`；两者与 fork 的 `reserve_minimum_quota` 采用 upstream 语义、冷却默认规则无冲突。
+- P0/P1 存在性静态复核通过：`audio_duration_seconds`、`disable_circuit_breaker`、`provider_key_task_events`、`usage_request_detail`、`keep_priority_on_conversion`、`consumption-stats`、`detailScope`（`RequestDetailDrawer.vue`/`Usage.vue`）均与合并前一致；`ignore_pool_cooldown` 仅剩 PostgreSQL bootstrap 列与历史迁移。
+- **本轮没有 fork 功能性 delta 变化**；用户组 provider 统计、批量钱包调整、批量模型创建属于 upstream 能力，不加入 fork 特有功能清单。
+- 合并后的待合入 upstream 提交：0。
+
+验证状态（**按用户要求本轮不编译**）：
+
+- `cd frontend && npm run build`：**未运行（unverified）**。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace` 与 `--all-targets`：**未运行（unverified）**。规则 4/10 已触发，下一次有编译环境时必须先跑 `--all-targets`。
+- 已通过：`git diff --cached --check`、未解决冲突检查（0）、`rustfmt --check` 于 `runtime.rs`。
+- 全部第 7 节定向测试均未运行（unverified）。
 
 ### 第九轮合并前快照与合并后结论（2026-09-23）
 
@@ -590,3 +649,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-20 | `b18ea8579` | `ba7c9f8b2` | 4 提交、0 文本冲突；接入用户组使用统计与 Responses reasoning 修正，修复 3 处 `user_ids` 构造点回归，审计确认 fork P0/P1 功能无变化 |
 | 2026-09-23 | `a110bcba1` | `ec95989e0` | 12 提交、0 文本冲突；接入 usage 响应模型、调度跳过候选展示、Codex service tier 透传与 Gemini thought signature，16 个重叠路径复核无回归，fork P0/P1 功能无变化 |
 | 2026-09-23 | `54a37118a` | `57f53903f` | 8 提交、2 处文本冲突（`1B: theirs`）；接入 API key IP rules、Codex 最低额度预留与动态 CLI profile；按用户要求退役应用层 `ignore_pool_cooldown`，保留 PostgreSQL 列/迁移；16 个重叠路径审计及构建验证通过 |
+| 2026-09-29 | `29351e388` | `00a315e3b` | 39 提交、1 处文本冲突（`runtime.rs` 导入手工并集）；接入用户组 provider 统计、批量钱包调整、SSE/转换修复；补 3 处 `provider_names` 构造点；按用户要求未编译（unverified），fork P0/P1 功能无变化 |
