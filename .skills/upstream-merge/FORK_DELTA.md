@@ -74,7 +74,9 @@ frontend/src/views/admin/__tests__/PoolManagement.codex-cycle-stats.spec.ts
 - **既存失败已修**（非本轮合并回归）：`write::tests::pending_usage_record_preserves_standalone_key_metadata` 断言 `user_agent` 不存在，但 fork 的 user_agent 持久化（`write.rs` `context_string(context, "user_agent")`）合并前 `e9c520ce9` 已写入该字段；测试改为断言 `user_agent == "Claude-Code/1.0"`。
 - `git diff --check`、未解决冲突检查、`runtime.rs` 的 `rustfmt --check` 通过。
 
-未运行（unverified）：第 7 节其余定向测试（`background_task`、`provider_key_task_events`、`pool_quota_probe`、`transcription`、`disable_circuit_breaker`、`users_me_usage`）及前端 4 个定向测试；本轮冲突范围未涉及。
+第 7 节其余定向测试（2026-09-29 补跑，串行，全部通过）：`aether-data-contracts background_task` 5/5；`aether-data provider_key_task_events` 2/2；`aether-gateway --lib ...pool::runtime::writes` 18/18；`...maintenance::runtime::pool_quota_probe` 26/26；`aether-ai-formats transcription` 10/10；`aether-scheduler-core disable_circuit_breaker` 1/1；`RUST_MIN_STACK=8388608 aether-gateway users_me_usage` 7/7；前端 4 个定向测试文件共 10/10（`PoolKeyDisplayPanels`、`PoolConsumptionStats`、`PoolSchedulingDialog.cache-affinity`、`openai.spec.ts`）。
+
+未运行（unverified）：第 7 节第 4 组 usage 重叠路径回归（`aether-data-contracts repository::usage`、`aether-usage-runtime request_metadata`、`aether-admin observability::usage`）及 `UsageRecordsTable`/`RequestDetailDrawer.pricing` 前端测试；本轮 upstream 未改这些 usage 元数据/详情契约文件。
 
 ### 第九轮合并前快照与合并后结论（2026-09-23）
 
