@@ -352,6 +352,7 @@ async fn build_dashboard_overview(
 
     let timeline = state
         .summarize_usage_time_series(&UsageTimeSeriesQuery {
+            provider_names: None,
             created_from_unix_secs: range.start_unix_secs,
             created_until_unix_secs: range.end_unix_secs,
             granularity: range.granularity.usage(),
@@ -545,6 +546,7 @@ async fn build_dashboard_account_detail(
     );
     let timeline = state
         .summarize_usage_time_series(&UsageTimeSeriesQuery {
+            provider_names: None,
             created_from_unix_secs: range.start_unix_secs,
             created_until_unix_secs: range.end_unix_secs,
             granularity: range.granularity.usage(),
