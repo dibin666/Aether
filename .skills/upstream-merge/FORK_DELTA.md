@@ -5,13 +5,73 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并提交） | `29351e388` |
-| upstream HEAD | `00a315e3b` |
-| merge-base | `00a315e3b` |
-| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 232，upstream-only 0 |
-| fork-only 路径 | 277 个，`+25812/-913` |
+| fork code baseline（本轮合并提交） | `6691cce29` |
+| upstream HEAD | `54fbcc25a` |
+| merge-base | `54fbcc25a` |
+| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 236，upstream-only 0 |
+| fork-only 路径 | 276 个，`+25951/-921` |
 | upstream-only 路径 | 0 个，`+0/-0` |
-| 快照日期 | 2026-09-29（第十轮，合并后） |
+| 快照日期 | 2026-09-30（第十一轮，合并后） |
+
+### 第十一轮合并前快照与合并后结论（2026-09-30）
+
+| 项 | 值 |
+|---|---|
+| fork 分支 / 合并前 HEAD | `rust` / `510706e02be26a2b10bfa69398c4def63a550973` |
+| upstream 目标 | `upstream/main` / `54fbcc25a171b26966131398ec7c8e462a274348` |
+| merge-base | `00a315e3bfdd802fe50c6948c95f4411ea2856a8` |
+| 分叉计数（HEAD...upstream/main） | fork-only 235，upstream-only 13（合并前）；合并后 236 / 0 |
+| fork-only 路径 | 276 个，`+25951/-921` |
+| upstream-only 路径 | 36 个，`+2539/-85` |
+| 直接重叠路径 | 6 个（见下方） |
+| 合并状态 | 已完成：`6691cce29540897ac08f8279e0f4c105da4449d4`；**0 处文本冲突**，无需用户冲突选择；单批合并（13 提交 < 40） |
+
+合并前待合入 upstream 提交（13 个，按拓扑顺序）：
+
+```text
+c1aa5d618 feat(claude-code): 为 claude_code provider 补全 Claude Code 请求体特征
+e8ee7b4ec fix(claude-code): 升级伪装的 Claude Code 版本到 2.1.284
+5d5880d75 fix(claude-code): 让 openai:responses/chat 转 claude 的路径也应用请求体伪装
+fa06e9695 test(claude-code): 补充 Responses → claude_code 网关测试,验证上游请求体已伪装
+d068b6296 Merge pull request #870 from dalamudx/feat/claude-code-body-mimicry
+8093899b5 feat(claude-code): 支持通过 /api/oauth/usage 查询账号 5H/周额度并在号池展示
+491364867 feat(claude-code): 提供商详情抽屉展示账号 5H/周额度
+125cd40aa feat(claude-code): 被动采样 anthropic-ratelimit-unified 响应头更新额度
+b49f5c0fd feat(claude-code): 只读展示重置机会（cedar_ember）并补齐额度文案国际化
+9cc4018a3 fix(claude-code): 额度查询携带 x-app/claude-cli UA 以获取 cedar_ember，并在无重置机会时显式清空
+7f45617f7 fix(claude-code): 修复 clippy needless_borrow 并更新不再受支持的 claude_code 额度刷新测试
+017d08d45 test(claude-code): 批量授权测试兼容授权后异步额度刷新
+54fbcc25a Merge pull request #871 from dalamudx/feat/claude-code-usage-quota
+```
+
+直接重叠路径：
+
+```text
+apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/request.rs
+apps/aether-gateway/src/handlers/shared/catalog.rs
+crates/aether-provider/transport/src/same_format_provider/mod.rs
+frontend/src/api/endpoints/types/provider.ts
+frontend/src/i18n/messages.ts
+frontend/src/views/admin/PoolManagement.vue
+```
+
+合并后审计结论：
+
+- `6691cce29` 是 `--no-ff` 合并提交，父提交为 `510706e02` 与 `upstream/main` `54fbcc25a`；合并后 merge-base 等于 upstream HEAD，`upstream-only` 为 0；合并提交相对第一父提交只改动 36 个路径，与 upstream-only 路径数一致。
+- upstream 本轮能力：Claude Code 请求体伪装（含 responses/chat → claude 转换路径与同格式路径，伪装版本 `2.1.284`）；Claude Code OAuth 账号 5H/周/周 Sonnet/周 Fable 额度（`/api/oauth/usage` 主动查询 + `anthropic-ratelimit-unified` 响应头被动采样 + 重置机会 `cedar_ember`），新增 `ClaudeCodeProviderPoolAdapter`、`build_claude_code_quota_status_snapshot`、号池/详情抽屉展示与 i18n。
+- 6 个重叠路径逐个与两侧父提交复核，双方改动均为不相交增量：`catalog.rs` 新增 `claude_code` 分支进入统一 `status_snapshot.quota`（version 2 windows），与 fork 的 consumption-stats/`quota_available` 读取同一窗口模型；`PoolManagement.vue` 仅新增 `claude_code` 额度列/刷新支持与窗口进度项，fork 的续期状态、消耗统计入口未受影响；`request.rs` 仅在同格式路径追加 body mimicry；`same_format_provider/mod.rs` 仅测试版本号断言。
+- upstream 本轮**没有删除任何 fork 仍在调用的符号**：唯一被删 `pub const CLAUDE_CODE_PROVIDER_POOL_ADAPTER` 已由专用 adapter 取代，全仓无残留引用；`UnsupportedQuotaProviderPoolAdapter` 及 `VERTEX_AI_PROVIDER_POOL_ADAPTER` 保留。未新增 fork 扩展结构（`UsageTimeSeriesQuery` 等）的必填字段，规则 4/10/11 均未触发；本轮无合并回归修复。
+- P0/P1 存在性静态复核通过：`audio_duration_seconds`、`disable_circuit_breaker`、`provider_key_task_events`、`usage_request_detail`、`keep_priority_on_conversion`、`consumption-stats`、`account-events`、`detailScope` 均存在；`ignore_pool_cooldown` 应用层残留为 0（仅 PostgreSQL bootstrap 列与历史迁移）。
+- **本轮没有 fork 功能性 delta 变化**；Claude Code 请求体伪装与账号额度属于 upstream 能力，不加入 fork 特有功能清单。
+- 合并后的待合入 upstream 提交：0。
+
+验证结果（2026-09-30）：
+
+- `cd frontend && npm run build`：通过，1 分 44 秒（含 VSCodex）；依赖已存在，未运行 `npm install`。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：通过，3 分 36 秒，无警告。
+- `git diff --check`、未解决冲突检查通过。
+
+未运行（unverified）：`cargo check --workspace --all-targets` 及第 7 节全部行为测试——本轮 0 冲突、无回归修复，且 upstream 未改 fork 测试构造的公共结构体（规则 4 触发条件不成立）；upstream 新增的 gateway 测试（`tests/ai_execute/sync/cli.rs`、`catalog.rs` claude_code 快照测试）与前端 Claude Code 额度展示均未运行。
 
 ### 第十轮合并前快照与合并后结论（2026-09-29）
 
@@ -656,3 +716,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-23 | `a110bcba1` | `ec95989e0` | 12 提交、0 文本冲突；接入 usage 响应模型、调度跳过候选展示、Codex service tier 透传与 Gemini thought signature，16 个重叠路径复核无回归，fork P0/P1 功能无变化 |
 | 2026-09-23 | `54a37118a` | `57f53903f` | 8 提交、2 处文本冲突（`1B: theirs`）；接入 API key IP rules、Codex 最低额度预留与动态 CLI profile；按用户要求退役应用层 `ignore_pool_cooldown`，保留 PostgreSQL 列/迁移；16 个重叠路径审计及构建验证通过 |
 | 2026-09-29 | `29351e388` | `00a315e3b` | 39 提交、1 处文本冲突（`runtime.rs` 导入手工并集）；接入用户组 provider 统计、批量钱包调整、SSE/转换修复；补 3 处 `provider_names` 构造点；前端构建、`cargo check --workspace(--all-targets)` 通过，另补 1 处 fork 字段与 1 个既存失败测试；fork P0/P1 功能无变化 |
+| 2026-09-30 | `6691cce29` | `54fbcc25a` | 13 提交、0 文本冲突；接入 Claude Code 请求体伪装与 OAuth 账号 5H/周额度；6 个重叠路径复核无回归，前端构建与 `cargo check --workspace` 通过，fork P0/P1 功能无变化 |
