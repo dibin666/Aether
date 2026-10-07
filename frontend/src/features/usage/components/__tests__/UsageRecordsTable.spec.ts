@@ -453,6 +453,21 @@ describe('UsageRecordsTable', () => {
     const actualBadge = root.querySelector<HTMLElement>('[data-usage-model-badge="actual-reasoning"]')
     expect(actualBadge?.textContent?.trim()).toBe('实际 high')
     expect(actualBadge?.title).toContain('发送给上游：max')
+    // 同一强度在请求徽章和实际徽章上颜色一致，不同强度颜色不同。
+    expect(actualBadge?.className).toContain('amber')
+    expect(root.querySelector<HTMLElement>('[data-usage-model-badge="reasoning"]')?.className)
+      .toContain('rose')
+  })
+
+  it('colors the same reasoning effort identically on request and actual badges', () => {
+    const root = mountUsageRecordsTable([buildRecord({
+      reasoning_effort: 'high',
+      actual_reasoning_effort: 'high',
+    })])
+
+    const requestBadge = root.querySelector<HTMLElement>('[data-usage-model-badge="reasoning"]')
+    const actualBadge = root.querySelector<HTMLElement>('[data-usage-model-badge="actual-reasoning"]')
+    expect(requestBadge?.className).toContain('amber')
     expect(actualBadge?.className).toContain('amber')
   })
 
@@ -510,9 +525,10 @@ describe('UsageRecordsTable', () => {
       expect(badge?.classList.contains('text-[10px]')).toBe(true)
       expect(badge?.classList.contains('leading-4')).toBe(true)
     }
-    expect(reasoningBadge?.classList.contains('border-primary/30')).toBe(true)
-    expect(reasoningBadge?.classList.contains('bg-primary/5')).toBe(true)
-    expect(reasoningBadge?.classList.contains('text-primary')).toBe(true)
+    // max 使用固定的 rose 色，与其他强度区分。
+    expect(reasoningBadge?.classList.contains('border-rose-500/30')).toBe(true)
+    expect(reasoningBadge?.classList.contains('bg-rose-500/5')).toBe(true)
+    expect(reasoningBadge?.classList.contains('text-rose-600')).toBe(true)
     expect(fastBadge?.getAttribute('variant')).toBe('outline-transparent')
     expect(fastBadge?.classList.contains('border-amber-400/50')).toBe(false)
     expect(fastBadge?.classList.contains('!bg-transparent')).toBe(false)

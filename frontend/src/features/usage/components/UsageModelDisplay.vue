@@ -148,21 +148,33 @@ const reasoningLabel = computed(() => {
   return actual ?? requested
 })
 
+// 每个思考强度固定一种颜色，请求徽章与实际徽章同级同色，便于一眼对比。
+const REASONING_EFFORT_BADGE_CLASSES: Record<string, string> = {
+  low: 'border-sky-500/30 bg-sky-500/5 text-sky-700 dark:text-sky-300',
+  medium: 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300',
+  high: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  xhigh: 'border-violet-500/30 bg-violet-500/5 text-violet-700 dark:text-violet-300',
+  max: 'border-rose-500/30 bg-rose-500/5 text-rose-600 dark:text-rose-300',
+}
+const DEFAULT_REASONING_BADGE_CLASS = 'border-primary/30 bg-primary/5 text-primary'
+
+function reasoningEffortBadgeClass(effort: string | null): string {
+  return (effort && REASONING_EFFORT_BADGE_CLASSES[effort.toLowerCase()])
+    || DEFAULT_REASONING_BADGE_CLASS
+}
+
 // 上游响应体回显的实际思考强度；与发送给上游的强度不一致时说明被上游降级/改写。
 const actualReasoningBadge = computed<ModelBadgePresentation | null>(() => {
   const actual = normalizeText(props.record.actual_reasoning_effort)
   if (!actual) return null
   const sent = normalizeText(props.record.reasoning_effort)
     ?? normalizeText(props.record.requested_reasoning_effort)
-  const mismatched = sent !== null && sent.toLowerCase() !== actual.toLowerCase()
   const title = `上游实际思考强度：${actual}${sent ? `\n发送给上游：${sent}` : ''}`
   return {
     key: 'actual-reasoning',
     label: `实际 ${actual}`,
     variant: 'outline',
-    className: mismatched
-      ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-      : 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300',
+    className: reasoningEffortBadgeClass(actual),
     title,
     ariaLabel: title.replace('\n', '，'),
   }
@@ -185,7 +197,11 @@ const modelBadges = computed<ModelBadgePresentation[]>(() => {
       key: 'reasoning',
       label: reasoningLabel.value,
       variant: 'outline',
-      className: 'border-primary/30 bg-primary/5 text-primary',
+      // "xhigh -> max" 这类转换按最终发给上游的强度着色。
+      className: reasoningEffortBadgeClass(
+        normalizeText(props.record.reasoning_effort)
+          ?? normalizeText(props.record.requested_reasoning_effort),
+      ),
       title: `Reasoning: ${reasoningLabel.value}`,
       ariaLabel: `Reasoning: ${reasoningLabel.value}`,
     })
