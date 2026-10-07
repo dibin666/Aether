@@ -744,6 +744,12 @@ export function useUsageData(options: UseUsageDataOptions) {
               ? record.actual_service_tier
               : null)
           : existing.actual_service_tier,
+        // 响应侧思考强度同样属于最终候选，空值清除旧候选残留。
+        actual_reasoning_effort: statusProgressed
+          ? (typeof record.actual_reasoning_effort === 'string' && record.actual_reasoning_effort.trim()
+              ? record.actual_reasoning_effort
+              : null)
+          : existing.actual_reasoning_effort,
         // 终态列表快照是最终候选的权威事实；空值必须清除旧候选的响应模型。
         response_model: statusProgressed
           ? (typeof record.response_model === 'string' && record.response_model.trim()

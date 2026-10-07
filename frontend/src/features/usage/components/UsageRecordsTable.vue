@@ -1735,7 +1735,9 @@ function getModelTooltip(record: UsageRecord): string {
   const serviceTierTitle = getServiceTierTitle(record)
   const tierSuffix = serviceTierTitle ? `\n${serviceTierTitle}` : ''
   const cyberSuffix = hasCyberPolicyError(record) ? '\nCyber Policy: blocked' : ''
-  const suffix = `${reasoningEffort ? `\nReasoning: ${reasoningEffort}` : ''}${tierSuffix}${cyberSuffix}`
+  const actualReasoningEffort = record.actual_reasoning_effort?.trim()
+  const actualReasoningSuffix = actualReasoningEffort ? `\n上游实际思考强度: ${actualReasoningEffort}` : ''
+  const suffix = `${reasoningEffort ? `\nReasoning: ${reasoningEffort}` : ''}${actualReasoningSuffix}${tierSuffix}${cyberSuffix}`
   const requestModel = record.model.trim()
   const mappingModel = record.target_model?.trim()
   const responseModel = record.response_model?.trim()

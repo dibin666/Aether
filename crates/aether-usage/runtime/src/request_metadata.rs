@@ -1,16 +1,18 @@
 use aether_contracts::ExecutionPlan;
 use aether_data_contracts::repository::usage::{
+    extract_provider_actual_reasoning_effort_from_response,
     extract_provider_actual_service_tier_from_response,
     extract_provider_reasoning_effort_from_body, extract_provider_response_model_from_bodies,
-    extract_provider_service_tier_from_body, normalize_provider_service_tier,
-    resolve_provider_cache_ttl_minutes,
+    extract_provider_service_tier_from_body, normalize_provider_reasoning_effort,
+    normalize_provider_service_tier, resolve_provider_cache_ttl_minutes,
     sanitize_usage_request_metadata as project_usage_request_metadata,
     sanitize_usage_request_metadata_object as project_usage_request_metadata_object,
     sanitize_usage_request_metadata_ref as project_usage_request_metadata_ref,
     usage_body_capture_is_authoritative, UsageBodyCaptureState,
-    PROVIDER_ACTUAL_SERVICE_TIER_METADATA_KEY, PROVIDER_CACHE_TTL_MINUTES_METADATA_KEY,
-    PROVIDER_REASONING_EFFORT_METADATA_KEY, PROVIDER_RESPONSE_MODEL_METADATA_KEY,
-    PROVIDER_SERVICE_TIER_METADATA_KEY, REQUESTED_REASONING_EFFORT_METADATA_KEY,
+    PROVIDER_ACTUAL_REASONING_EFFORT_METADATA_KEY, PROVIDER_ACTUAL_SERVICE_TIER_METADATA_KEY,
+    PROVIDER_CACHE_TTL_MINUTES_METADATA_KEY, PROVIDER_REASONING_EFFORT_METADATA_KEY,
+    PROVIDER_RESPONSE_MODEL_METADATA_KEY, PROVIDER_SERVICE_TIER_METADATA_KEY,
+    REQUESTED_REASONING_EFFORT_METADATA_KEY,
 };
 use serde_json::{Map, Value};
 
@@ -237,6 +239,8 @@ pub(crate) fn attach_provider_response_body_metadata(
     metadata: Option<Value>,
     provider_response_body: Option<&Value>,
 ) -> Option<Value> {
+    let metadata =
+        attach_provider_actual_reasoning_effort_metadata(metadata, provider_response_body);
     if metadata
         .as_ref()
         .and_then(Value::as_object)
@@ -345,6 +349,11 @@ pub(crate) fn refresh_provider_response_body_metadata(
         });
     let body_is_complete_object =
         provider_response_body.and_then(Value::as_object).is_some() && !is_capture_placeholder;
+    let metadata = refresh_provider_actual_reasoning_effort_metadata(
+        metadata,
+        provider_response_body,
+        body_is_complete_object,
+    );
     let actual_service_tier =
         extract_provider_actual_service_tier_from_response(provider_response_body)
             .and_then(|value| normalize_provider_service_tier(&value));
@@ -368,6 +377,67 @@ pub(crate) fn refresh_provider_response_body_metadata(
         Value::String(actual_service_tier),
     );
     (!object.is_empty()).then_some(Value::Object(object))
+}
+
+/// 只在尚无值时补充响应体回显的实际思考强度，保留已有的终态事实。
+fn attach_provider_actual_reasoning_effort_metadata(
+    metadata: Option<Value>,
+    provider_response_body: Option<&Value>,
+) -> Option<Value> {
+    if metadata
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|object| object.get(PROVIDER_ACTUAL_REASONING_EFFORT_METADATA_KEY))
+        .and_then(Value::as_str)
+        .and_then(normalize_provider_reasoning_effort)
+        .is_some()
+    {
+        return metadata;
+    }
+    let Some(actual_reasoning_effort) =
+        extract_provider_actual_reasoning_effort_from_response(provider_response_body)
+    else {
+        return metadata;
+    };
+    let mut object = match metadata {
+        Some(Value::Object(object)) => object,
+        _ => Map::new(),
+    };
+    object.insert(
+        PROVIDER_ACTUAL_REASONING_EFFORT_METADATA_KEY.to_string(),
+        Value::String(actual_reasoning_effort),
+    );
+    Some(Value::Object(object))
+}
+
+/// 完整响应体是终态候选的权威事实：缺少思考强度时清除旧候选残留；
+/// 截断占位或缺失 body 时保留已有值。
+fn refresh_provider_actual_reasoning_effort_metadata(
+    metadata: Option<Value>,
+    provider_response_body: Option<&Value>,
+    body_is_complete_object: bool,
+) -> Option<Value> {
+    let actual_reasoning_effort =
+        extract_provider_actual_reasoning_effort_from_response(provider_response_body);
+    let Some(actual_reasoning_effort) = actual_reasoning_effort else {
+        if !body_is_complete_object {
+            return metadata;
+        }
+        let Some(Value::Object(mut object)) = metadata else {
+            return None;
+        };
+        object.remove(PROVIDER_ACTUAL_REASONING_EFFORT_METADATA_KEY);
+        return (!object.is_empty()).then_some(Value::Object(object));
+    };
+    let mut object = match metadata {
+        Some(Value::Object(object)) => object,
+        _ => Map::new(),
+    };
+    object.insert(
+        PROVIDER_ACTUAL_REASONING_EFFORT_METADATA_KEY.to_string(),
+        Value::String(actual_reasoning_effort),
+    );
+    Some(Value::Object(object))
 }
 
 pub(crate) fn attach_provider_actual_service_tier_metadata(
@@ -906,6 +976,39 @@ mod tests {
                 "provider_actual_service_tier": "default"
             })
         );
+    }
+
+    #[test]
+    fn provider_response_metadata_records_actual_reasoning_effort_from_responses_stream() {
+        let body = json!({
+            "chunks": [
+                {"type": "response.created", "response": {"reasoning": {"effort": "high"}}},
+                {"type": "response.output_item.added", "item": {"type": "function_call"}},
+                {"type": "response.completed", "response": {
+                    "reasoning": {"context": "all_turns", "effort": "High", "summary": "detailed"}
+                }}
+            ]
+        });
+        let metadata = attach_provider_response_body_metadata(
+            Some(json!({"provider_reasoning_effort": "max"})),
+            Some(&body),
+        )
+        .expect("actual reasoning effort should be attached");
+        assert_eq!(metadata["provider_reasoning_effort"], "max");
+        assert_eq!(metadata["provider_actual_reasoning_effort"], "high");
+
+        // 完整响应体没有该字段时清除旧候选残留；截断占位保留已有值。
+        let cleared = refresh_provider_response_body_metadata(
+            Some(json!({"provider_actual_reasoning_effort": "high"})),
+            Some(&json!({"id": "resp_1", "output": []})),
+        );
+        assert!(cleared.is_none());
+        let preserved = refresh_provider_response_body_metadata(
+            Some(json!({"provider_actual_reasoning_effort": "high"})),
+            Some(&json!({"truncated": true, "reason": "body_capture_limit_exceeded"})),
+        )
+        .expect("placeholder must preserve terminal fact");
+        assert_eq!(preserved["provider_actual_reasoning_effort"], "high");
     }
 
     #[test]

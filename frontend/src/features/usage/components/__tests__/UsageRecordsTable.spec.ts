@@ -441,6 +441,21 @@ describe('UsageRecordsTable', () => {
       .toBe('Fast')
   })
 
+  it('shows upstream actual reasoning effort next to the request reasoning badge', () => {
+    const root = mountUsageRecordsTable([buildRecord({
+      reasoning_effort: 'max',
+      actual_reasoning_effort: 'high',
+    })])
+
+    const badges = [...root.querySelectorAll<HTMLElement>('[data-usage-model-layout="inline"] [data-usage-model-badge]')]
+      .map(badge => badge.dataset.usageModelBadge)
+    expect(badges.indexOf('actual-reasoning')).toBe(badges.indexOf('reasoning') + 1)
+    const actualBadge = root.querySelector<HTMLElement>('[data-usage-model-badge="actual-reasoning"]')
+    expect(actualBadge?.textContent?.trim()).toBe('实际 high')
+    expect(actualBadge?.title).toContain('发送给上游：max')
+    expect(actualBadge?.className).toContain('amber')
+  })
+
   it('shows request reasoning effort while the record is pending', () => {
     const root = mountUsageRecordsTable([buildRecord({
       status: 'pending',

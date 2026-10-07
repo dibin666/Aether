@@ -656,6 +656,9 @@ async function pollActiveRequests() {
         record.actual_service_tier = typeof update.actual_service_tier === 'string' && update.actual_service_tier.trim()
           ? update.actual_service_tier
           : null
+        record.actual_reasoning_effort = typeof update.actual_reasoning_effort === 'string' && update.actual_reasoning_effort.trim()
+          ? update.actual_reasoning_effort
+          : null
         // 活跃接口返回的是当前最终候选快照，服务端空值要清除旧响应模型。
         record.response_model = typeof update.response_model === 'string' && update.response_model.trim()
           ? update.response_model
@@ -1142,6 +1145,7 @@ function handleDetailRequestState(update: {
   reasoningEffort?: string | null
   serviceTier?: string | null
   actualServiceTier?: string | null
+  actualReasoningEffort?: string | null
   responseModel?: string | null
   imageProgress?: ImageProgress | null
   errorMessage?: string | null
@@ -1283,6 +1287,11 @@ function handleDetailRequestState(update: {
   if ('actualServiceTier' in update) {
     record.actual_service_tier = typeof update.actualServiceTier === 'string'
       ? update.actualServiceTier
+      : null
+  }
+  if ('actualReasoningEffort' in update) {
+    record.actual_reasoning_effort = typeof update.actualReasoningEffort === 'string'
+      ? update.actualReasoningEffort
       : null
   }
   if ('responseModel' in update) {

@@ -80,7 +80,7 @@ import { Badge } from '@/components/ui'
 import { isCyberPolicyError } from '../utils/cyberError'
 import { formatServiceTierFact } from '../utils/service-tier'
 
-type ModelBadgeKey = 'compact' | 'reasoning' | 'fast' | 'service-tier' | 'cyber' | 'reasoning_tokens'
+type ModelBadgeKey = 'compact' | 'reasoning' | 'actual-reasoning' | 'fast' | 'service-tier' | 'cyber' | 'reasoning_tokens'
 
 interface ModelBadgePresentation {
   key: ModelBadgeKey
@@ -98,6 +98,7 @@ interface UsageModelDisplayRecord {
   request_type?: string | null
   requested_reasoning_effort?: string | null
   reasoning_effort?: string | null
+  actual_reasoning_effort?: string | null
   service_tier?: string | null
   reasoning_tokens?: number
   error_message?: string | null
@@ -147,6 +148,26 @@ const reasoningLabel = computed(() => {
   return actual ?? requested
 })
 
+// 上游响应体回显的实际思考强度；与发送给上游的强度不一致时说明被上游降级/改写。
+const actualReasoningBadge = computed<ModelBadgePresentation | null>(() => {
+  const actual = normalizeText(props.record.actual_reasoning_effort)
+  if (!actual) return null
+  const sent = normalizeText(props.record.reasoning_effort)
+    ?? normalizeText(props.record.requested_reasoning_effort)
+  const mismatched = sent !== null && sent.toLowerCase() !== actual.toLowerCase()
+  const title = `上游实际思考强度：${actual}${sent ? `\n发送给上游：${sent}` : ''}`
+  return {
+    key: 'actual-reasoning',
+    label: `实际 ${actual}`,
+    variant: 'outline',
+    className: mismatched
+      ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+      : 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300',
+    title,
+    ariaLabel: title.replace('\n', '，'),
+  }
+})
+
 const modelBadges = computed<ModelBadgePresentation[]>(() => {
   const badges: ModelBadgePresentation[] = []
   if (normalizeText(props.record.request_type)?.toLowerCase() === 'compact') {
@@ -168,6 +189,9 @@ const modelBadges = computed<ModelBadgePresentation[]>(() => {
       title: `Reasoning: ${reasoningLabel.value}`,
       ariaLabel: `Reasoning: ${reasoningLabel.value}`,
     })
+  }
+  if (props.showReasoningBadge && actualReasoningBadge.value) {
+    badges.push(actualReasoningBadge.value)
   }
 
   const serviceTier = formatServiceTierFact(props.record.service_tier)

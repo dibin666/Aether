@@ -58,6 +58,7 @@ export interface UsageRecordDetail {
   request_type?: string | null
   requested_reasoning_effort?: string | null
   reasoning_effort?: string | null
+  actual_reasoning_effort?: string | null
   service_tier?: string | null
   actual_service_tier?: string | null
   response_model?: string | null
@@ -399,6 +400,7 @@ export const meApi = {
       request_type?: string | null
       requested_reasoning_effort?: string | null
       reasoning_effort?: string | null
+      actual_reasoning_effort?: string | null
       service_tier?: string | null
       actual_service_tier?: string | null
       image_progress?: ImageProgress | null
@@ -446,6 +448,7 @@ export const meApi = {
       request_type?: string | null
       requested_reasoning_effort?: string | null
       reasoning_effort?: string | null
+      actual_reasoning_effort?: string | null
       service_tier?: string | null
       actual_service_tier?: string | null
       image_progress?: ImageProgress | null

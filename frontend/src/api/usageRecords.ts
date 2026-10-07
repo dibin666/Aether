@@ -23,6 +23,7 @@ export interface UsageRecord {
   request_type?: string | null  // 由请求语义识别出的操作类型
   requested_reasoning_effort?: string | null  // 用户请求侧 reasoning 级别，用于展示转换关系
   reasoning_effort?: string | null  // 从发送给 Provider 的请求体提取的 reasoning 级别
+  actual_reasoning_effort?: string | null  // 上游响应体回显的实际 reasoning 级别
   service_tier?: string | null  // 从发送给 Provider 的请求体提取的服务层级
   actual_service_tier?: string | null  // 响应侧审计事实，不用于 Fast 展示或计费
   api_format?: string

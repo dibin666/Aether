@@ -5,6 +5,8 @@ use serde_json::Value;
 
 pub const PROVIDER_REASONING_EFFORT_METADATA_KEY: &str = "provider_reasoning_effort";
 pub const REQUESTED_REASONING_EFFORT_METADATA_KEY: &str = "requested_reasoning_effort";
+/// 上游响应体回显的实际思考强度（如 OpenAI Responses 的 `response.reasoning.effort`）。
+pub const PROVIDER_ACTUAL_REASONING_EFFORT_METADATA_KEY: &str = "provider_actual_reasoning_effort";
 pub const PROVIDER_SERVICE_TIER_METADATA_KEY: &str = "provider_service_tier";
 pub const PROVIDER_ACTUAL_SERVICE_TIER_METADATA_KEY: &str = "provider_actual_service_tier";
 pub const PROVIDER_RESPONSE_MODEL_METADATA_KEY: &str = "provider_response_model";
@@ -55,7 +57,36 @@ pub fn extract_provider_reasoning_effort_from_body(value: Option<&Value>) -> Opt
         .and_then(normalize_provider_reasoning_effort)
 }
 
-fn normalize_provider_reasoning_effort(value: &str) -> Option<String> {
+/// 从上游响应体读取实际生效的思考强度，只展开 chunks/response 这类已知包装，
+/// 避免在工具参数等任意嵌套内容中误匹配同名字段。
+pub fn extract_provider_actual_reasoning_effort_from_response(
+    value: Option<&Value>,
+) -> Option<String> {
+    let value = value?;
+    value
+        .get("chunks")
+        .and_then(Value::as_array)
+        .and_then(|chunks| {
+            chunks.iter().rev().find_map(|chunk| {
+                extract_provider_actual_reasoning_effort_from_response(Some(chunk))
+            })
+        })
+        .or_else(|| {
+            value.get("response").and_then(|response| {
+                extract_provider_actual_reasoning_effort_from_response(Some(response))
+            })
+        })
+        .or_else(|| {
+            value
+                .get("reasoning")
+                .and_then(Value::as_object)
+                .and_then(|reasoning| reasoning.get("effort"))
+                .and_then(Value::as_str)
+                .and_then(normalize_provider_reasoning_effort)
+        })
+}
+
+pub fn normalize_provider_reasoning_effort(value: &str) -> Option<String> {
     let value = value.trim();
     if value.is_empty() || value.len() > 64 {
         return None;
@@ -835,6 +866,14 @@ impl StoredRequestUsageAudit {
             .and_then(normalize_provider_service_tier)
             .or_else(|| {
                 extract_provider_actual_service_tier_from_response(self.response_body.as_ref())
+            })
+    }
+
+    pub fn provider_actual_reasoning_effort(&self) -> Option<String> {
+        self.request_metadata_string(PROVIDER_ACTUAL_REASONING_EFFORT_METADATA_KEY)
+            .and_then(normalize_provider_reasoning_effort)
+            .or_else(|| {
+                extract_provider_actual_reasoning_effort_from_response(self.response_body.as_ref())
             })
     }
 

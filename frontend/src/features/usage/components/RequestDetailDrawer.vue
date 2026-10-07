@@ -1021,6 +1021,7 @@ const emit = defineEmits<{
     reasoningEffort?: string | null
     serviceTier?: string | null
     actualServiceTier?: string | null
+    actualReasoningEffort?: string | null
     responseModel?: string | null
     imageProgress?: ImageProgress | null
     errorMessage?: string | null
@@ -1172,6 +1173,7 @@ type HeaderModelTextField =
   | 'reasoning_effort'
   | 'service_tier'
   | 'actual_service_tier'
+  | 'actual_reasoning_effort'
 
 const FINAL_PROVIDER_HEADER_FIELDS = new Set<HeaderModelTextField>([
   'target_model',
@@ -1179,6 +1181,7 @@ const FINAL_PROVIDER_HEADER_FIELDS = new Set<HeaderModelTextField>([
   'reasoning_effort',
   'service_tier',
   'actual_service_tier',
+  'actual_reasoning_effort',
 ])
 
 let modelSnapshotRevision = 0
@@ -1268,6 +1271,7 @@ watch(
     props.summaryRecord?.reasoning_effort,
     props.summaryRecord?.service_tier,
     props.summaryRecord?.actual_service_tier,
+    props.summaryRecord?.actual_reasoning_effort,
   ],
   () => {
     summaryModelRevision.value = ++modelSnapshotRevision
@@ -1309,6 +1313,7 @@ function emitDetailRequestState(nextDetail: RequestDetail) {
   const reasoningEffort = resolveHeaderModelTextField('reasoning_effort', nextDetail)
   const serviceTier = resolveHeaderModelTextField('service_tier', nextDetail)
   const actualServiceTier = resolveHeaderModelTextField('actual_service_tier', nextDetail)
+  const actualReasoningEffort = resolveHeaderModelTextField('actual_reasoning_effort', nextDetail)
   const responseModel = resolveHeaderModelTextField('response_model', nextDetail)
 
   emit('requestState', {
@@ -1346,6 +1351,7 @@ function emitDetailRequestState(nextDetail: RequestDetail) {
     ...(reasoningEffort ? { reasoningEffort } : {}),
     ...(serviceTier ? { serviceTier } : {}),
     ...(actualServiceTier ? { actualServiceTier } : {}),
+    ...(actualReasoningEffort ? { actualReasoningEffort } : {}),
     ...(responseModel ? { responseModel } : {}),
     errorMessage: nextDetail.error_message ?? undefined,
     updatedAt: nextDetail.updated_at ?? undefined,
@@ -1630,6 +1636,7 @@ const headerModelRecord = computed(() => {
       currentDetail,
     ),
     reasoning_effort: resolveHeaderModelTextField('reasoning_effort', currentDetail),
+    actual_reasoning_effort: resolveHeaderModelTextField('actual_reasoning_effort', currentDetail),
     service_tier: resolveHeaderModelTextField('service_tier', currentDetail),
     error_message: errorMessage,
   }

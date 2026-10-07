@@ -1372,6 +1372,9 @@ fn admin_usage_active_request_json(
     if let Some(requested_reasoning_effort) = item.requested_reasoning_effort() {
         value["requested_reasoning_effort"] = json!(requested_reasoning_effort);
     }
+    if let Some(actual_reasoning_effort) = item.provider_actual_reasoning_effort() {
+        value["actual_reasoning_effort"] = json!(actual_reasoning_effort);
+    }
     if let Some(service_tier) = item.provider_service_tier() {
         value["service_tier"] = json!(service_tier);
     }
@@ -1535,6 +1538,12 @@ pub fn admin_usage_record_json(
         object.insert(
             "requested_reasoning_effort".to_string(),
             json!(requested_reasoning_effort),
+        );
+    }
+    if let Some(actual_reasoning_effort) = item.provider_actual_reasoning_effort() {
+        object.insert(
+            "actual_reasoning_effort".to_string(),
+            json!(actual_reasoning_effort),
         );
     }
     if let Some(service_tier) = item.provider_service_tier() {

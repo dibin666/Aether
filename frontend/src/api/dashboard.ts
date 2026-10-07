@@ -222,6 +222,7 @@ export interface RequestDetail {
   response_model?: string | null  // 上游响应体实际返回的模型名
   requested_reasoning_effort?: string | null
   reasoning_effort?: string | null
+  actual_reasoning_effort?: string | null
   service_tier?: string | null
   actual_service_tier?: string | null
   tokens: {

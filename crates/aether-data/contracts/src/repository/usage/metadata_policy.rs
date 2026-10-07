@@ -9,13 +9,14 @@ use crate::repository::candidates::sanitize_request_candidate_skip_reason;
 
 use super::{
     normalize_provider_response_model, LIVE_SESSION_METADATA_KEY,
-    PLAN_USAGE_RESERVATION_DEFERRED_METADATA_KEY, PROVIDER_ACTUAL_SERVICE_TIER_METADATA_KEY,
-    PROVIDER_CACHE_TTL_MINUTES_METADATA_KEY, PROVIDER_REASONING_EFFORT_METADATA_KEY,
-    PROVIDER_RESPONSE_MODEL_METADATA_KEY, PROVIDER_SERVICE_TIER_METADATA_KEY,
-    REALTIME_SESSION_METADATA_KEY, REQUESTED_REASONING_EFFORT_METADATA_KEY,
-    ROUTING_CANDIDATE_SKIP_REASON_METADATA_KEY, ROUTING_FAILURE_DIAGNOSTIC_METADATA_KEY,
-    USAGE_AVAILABLE_METADATA_KEY, USAGE_PRICING_AVAILABLE_METADATA_KEY,
-    WEBSOCKET_MODE_METADATA_KEY, WEBSOCKET_TRANSPORT_METADATA_KEY,
+    PLAN_USAGE_RESERVATION_DEFERRED_METADATA_KEY, PROVIDER_ACTUAL_REASONING_EFFORT_METADATA_KEY,
+    PROVIDER_ACTUAL_SERVICE_TIER_METADATA_KEY, PROVIDER_CACHE_TTL_MINUTES_METADATA_KEY,
+    PROVIDER_REASONING_EFFORT_METADATA_KEY, PROVIDER_RESPONSE_MODEL_METADATA_KEY,
+    PROVIDER_SERVICE_TIER_METADATA_KEY, REALTIME_SESSION_METADATA_KEY,
+    REQUESTED_REASONING_EFFORT_METADATA_KEY, ROUTING_CANDIDATE_SKIP_REASON_METADATA_KEY,
+    ROUTING_FAILURE_DIAGNOSTIC_METADATA_KEY, USAGE_AVAILABLE_METADATA_KEY,
+    USAGE_PRICING_AVAILABLE_METADATA_KEY, WEBSOCKET_MODE_METADATA_KEY,
+    WEBSOCKET_TRANSPORT_METADATA_KEY,
 };
 
 const UPSTREAM_IS_STREAM_KEY: &str = "upstream_is_stream";
@@ -87,6 +88,7 @@ pub fn sanitize_usage_request_metadata_object(source: &Map<String, Value>) -> Op
     for key in [
         REQUESTED_REASONING_EFFORT_METADATA_KEY,
         PROVIDER_REASONING_EFFORT_METADATA_KEY,
+        PROVIDER_ACTUAL_REASONING_EFFORT_METADATA_KEY,
     ] {
         insert_known_string(source, &mut target, key, sanitize_reasoning_effort);
     }
@@ -1306,6 +1308,15 @@ mod tests {
         ] {
             assert!(metadata.get(key).is_none(), "{key} must not be persisted");
         }
+    }
+
+    #[test]
+    fn persistence_projection_keeps_actual_reasoning_effort() {
+        let metadata = sanitize_usage_request_metadata(Some(json!({
+            "provider_actual_reasoning_effort": "high"
+        })))
+        .expect("actual reasoning effort should persist");
+        assert_eq!(metadata["provider_actual_reasoning_effort"], "high");
     }
 
     #[test]

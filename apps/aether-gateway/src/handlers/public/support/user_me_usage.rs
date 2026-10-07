@@ -677,6 +677,9 @@ fn build_users_me_usage_record_payload(
     if let Some(requested_reasoning_effort) = item.requested_reasoning_effort() {
         payload["requested_reasoning_effort"] = json!(requested_reasoning_effort);
     }
+    if let Some(actual_reasoning_effort) = item.provider_actual_reasoning_effort() {
+        payload["actual_reasoning_effort"] = json!(actual_reasoning_effort);
+    }
     if let Some(service_tier) = item.provider_service_tier() {
         payload["service_tier"] = json!(service_tier);
     }
@@ -762,6 +765,9 @@ fn build_users_me_usage_active_payload(item: &StoredRequestUsageAudit) -> serde_
     }
     if let Some(requested_reasoning_effort) = item.requested_reasoning_effort() {
         payload["requested_reasoning_effort"] = json!(requested_reasoning_effort);
+    }
+    if let Some(actual_reasoning_effort) = item.provider_actual_reasoning_effort() {
+        payload["actual_reasoning_effort"] = json!(actual_reasoning_effort);
     }
     if let Some(service_tier) = item.provider_service_tier() {
         payload["service_tier"] = json!(service_tier);
