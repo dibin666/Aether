@@ -34,6 +34,7 @@ mod audit;
 mod auth;
 mod backup;
 mod bark_push;
+mod build_version;
 mod cache;
 mod client_session_affinity;
 mod clock;

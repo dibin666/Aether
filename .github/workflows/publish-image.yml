@@ -110,12 +110,23 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # 二进制缓存只按 Rust 构建输入计算键：仅前端变更时直接复用上次编译的二进制，
+      # 跳过整个 Rust 编译。版本号由镜像的 AETHER_IMAGE_VERSION 在运行时覆盖。
+      - name: Restore cached gateway binary
+        id: binary-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: target/${{ matrix.target }}/release/aether-gateway
+          key: ${{ env.CACHE_VERSION }}-gateway-bin-${{ matrix.target }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/**', 'crates/**', 'apps/**') }}
+
       - name: Install Rust toolchain
+        if: steps.binary-cache.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
       - name: Rust cache
+        if: steps.binary-cache.outputs.cache-hit != 'true'
         uses: Swatinem/rust-cache@v2
         with:
           prefix-key: ${{ env.CACHE_VERSION }}-rust
@@ -125,15 +136,24 @@ jobs:
           cache-on-failure: true
 
       - name: Install cross
+        if: steps.binary-cache.outputs.cache-hit != 'true'
         uses: taiki-e/install-action@cross
 
       - name: Build Linux binary
+        if: steps.binary-cache.outputs.cache-hit != 'true'
         env:
           AETHER_BUILD_VERSION: ${{ needs.version.outputs.build_version }}
           AETHER_VERSION: ${{ needs.version.outputs.build_version }}
           AETHER_BUILD_TYPE: release
           CARGO_TERM_COLOR: always
         run: cross build --release --locked -p aether-gateway --features jemalloc --target ${{ matrix.target }}
+
+      - name: Save gateway binary cache
+        if: steps.binary-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: target/${{ matrix.target }}/release/aether-gateway
+          key: ${{ steps.binary-cache.outputs.cache-primary-key }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v6
@@ -187,6 +207,8 @@ jobs:
           context: .
           file: ./Dockerfile.app
           push: true
+          build-args: |
+            AETHER_IMAGE_VERSION=${{ needs.version.outputs.build_version }}
           platforms: linux/amd64,linux/arm64
           tags: |
             ${{ needs.version.outputs.image }}:${{ needs.version.outputs.version }}

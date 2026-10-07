@@ -31,13 +31,17 @@ FROM gcr.io/distroless/static-debian12@sha256:6447365a6337c3732f412d1b74357b30a6
 
 COPY --from=layout /opt/aether /opt/aether
 
+# CI 仅前端变更时会复用旧二进制，运行时以镜像版本为准（为空时回退到编译期版本）。
+ARG AETHER_IMAGE_VERSION=""
+
 WORKDIR /opt/aether
 
 ENV RUST_LOG=aether_gateway=info \
     APP_PORT=8084 \
     HOME=/tmp/aether-home \
     AETHER_UPDATE_STRATEGY=docker \
-    AETHER_GATEWAY_STATIC_DIR=/opt/aether/current/frontend
+    AETHER_GATEWAY_STATIC_DIR=/opt/aether/current/frontend \
+    AETHER_IMAGE_VERSION=${AETHER_IMAGE_VERSION}
 
 EXPOSE 8084
 

@@ -21,9 +21,7 @@ pub(crate) fn mount_core_routes(router: Router<AppState>) -> Router<AppState> {
 }
 
 fn current_gateway_version() -> &'static str {
-    option_env!("AETHER_BUILD_VERSION")
-        .filter(|version| !version.is_empty())
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
+    crate::build_version::current_build_version()
 }
 
 pub(crate) async fn health(State(state): State<AppState>) -> impl IntoResponse {

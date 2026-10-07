@@ -37,10 +37,7 @@ const SOURCE_BUILD_RELEASE_BLOCKER: &str = "当前为源码构建，请手动切
 const RELEASE_CACHE_TTL: Duration = Duration::from_secs(1200);
 
 pub(crate) fn current_aether_version() -> String {
-    option_env!("AETHER_BUILD_VERSION")
-        .filter(|version| !version.is_empty())
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .to_string()
+    crate::build_version::current_build_version().to_string()
 }
 
 pub(crate) fn build_admin_system_check_update_payload() -> serde_json::Value {

@@ -72,9 +72,9 @@ pub(super) async fn build_admin_monitoring_trace_request_response(
         resolved.usage.as_ref(),
         &key_accounts,
     );
-    if let Ok(version) = axum::http::HeaderValue::from_str(
-        option_env!("AETHER_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
-    ) {
+    if let Ok(version) =
+        axum::http::HeaderValue::from_str(crate::build_version::current_build_version())
+    {
         response
             .headers_mut()
             .insert("x-aether-build-version", version);
