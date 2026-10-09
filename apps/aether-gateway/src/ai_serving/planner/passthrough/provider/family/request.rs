@@ -22,10 +22,11 @@ use crate::ai_serving::transport::{
     build_grok_upstream_url, build_same_format_provider_headers,
     resolve_local_gemini_cli_request_auth, GeminiCliRequestAuth, GeminiCliRequestAuthSupport,
     GeminiCliRequestEnvelopeSupport, GrokHeaderInput, SameFormatProviderCompatibilityEdit,
-    SameFormatProviderCompatibilityEditAction, SameFormatProviderHeadersInput,
-    GEMINI_CLI_USER_AGENT, GROK_CHAT_PATH,
+    SameFormatProviderCompatibilityEditAction, SameFormatProviderHeadersInput, GROK_CHAT_PATH,
 };
-use crate::ai_serving::{CandidateFailureDiagnostic, GatewayProviderTransportSnapshot};
+use crate::ai_serving::{
+    CandidateFailureDiagnostic, GatewayProviderTransportSnapshot, CODEX_RESPONSES_LITE_HEADER,
+};
 use crate::{AppState, GatewayError};
 
 mod policy;
@@ -277,7 +278,9 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         // re-enforce stream-field policy afterward.
         // Kiro behavior classification already hard-requires upstream streaming,
         // and the Kiro envelope does not use a top-level body stream field.
-        if prepared.kiro_auth.is_none() {
+        if prepared.kiro_auth.is_none()
+            && spec.operation != Some(crate::ai_serving::ApiOperation::OpenAiMemoriesSummarize)
+        {
             enforce_provider_body_stream_policy(
                 &mut base_provider_request_body,
                 prepared.provider_api_format.as_str(),
@@ -297,8 +300,9 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         prepared.mapped_model.as_str(),
         source_model,
     );
-    if let Err(violation) =
-        crate::ai_serving::finalize_openai_provider_request_with_codex_model_capabilities(
+    if spec.operation != Some(crate::ai_serving::ApiOperation::OpenAiMemoriesSummarize) {
+        if let Err(violation) =
+        crate::ai_serving::finalize_openai_provider_request_with_codex_model_capabilities_and_reasoning_replay_policy(
             &mut base_provider_request_body,
             crate::ai_serving::OpenAiProviderRequestFinalization {
                 source_api_format: spec.api_format,
@@ -314,6 +318,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
                 ),
             },
             codex_model_capabilities.as_ref(),
+            reasoning_replay_policy,
         )
     {
         mark_skipped_local_same_format_provider_candidate_with_extra_data(
@@ -333,6 +338,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         )
         .await;
         return Ok(None);
+    }
     }
 
     // Same-format requests skip `apply_transport_request_body_semantics`, so the opt-in
@@ -548,7 +554,10 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         .map(build_antigravity_static_identity_headers)
         .unwrap_or_default();
     if prepared.behavior.is_gemini_cli {
-        extra_headers.insert("user-agent".to_string(), GEMINI_CLI_USER_AGENT.to_string());
+        extra_headers.insert(
+            "user-agent".to_string(),
+            crate::ai_serving::transport::gemini_cli::gemini_cli_client_user_agent(),
+        );
     }
     let Some(mut provider_request_headers) = (if is_grok {
         build_grok_browser_headers(GrokHeaderInput {
@@ -619,6 +628,11 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         source_model,
         codex_model_capabilities.as_ref(),
     );
+    if spec.operation == Some(crate::ai_serving::ApiOperation::OpenAiMemoriesSummarize) {
+        provider_request_headers
+            .retain(|name, _| !name.eq_ignore_ascii_case(CODEX_RESPONSES_LITE_HEADER));
+        provider_request_headers.insert("accept".to_string(), "application/json".to_string());
+    }
     crate::ai_serving::transport::xai::insert_cli_identity_headers_if_needed(
         transport.as_ref(),
         prepared.provider_api_format.as_str(),

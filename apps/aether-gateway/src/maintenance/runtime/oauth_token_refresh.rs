@@ -871,7 +871,7 @@ async fn refresh_candidate(
                 provider_type: candidate.provider_type,
                 key_id: candidate.key_id,
                 key_name: candidate.key_name,
-                error: format!("{err:?}"),
+                error: crate::error::redact_error_debug(&err),
             },
         },
         Ok(None) => OAuthTokenRefreshCandidateOutcome::Skipped {
@@ -888,7 +888,7 @@ async fn refresh_candidate(
             provider_type: candidate.provider_type,
             key_id: candidate.key_id,
             key_name: candidate.key_name,
-            error: format!("{err:?}"),
+            error: crate::error::redact_error_debug(&err),
         },
     }
 }
@@ -1244,6 +1244,7 @@ mod tests {
         OAuthTokenRefreshWorkerConfig, StoredProviderCatalogEndpoint, StoredProviderCatalogKey,
         StoredProviderCatalogProvider, TASK_KEY_OAUTH_TOKEN_REFRESH,
     };
+    use crate::error::redact_error_debug;
     use crate::GatewayError;
 
     fn sample_provider() -> StoredProviderCatalogProvider {
@@ -1888,5 +1889,19 @@ mod tests {
         // 4. Idempotency: re-running on updated non-Codex row -> untouched!
         assert!(!apply_migration_row("openai", &mut row_non_codex));
         assert_eq!(row_non_codex["oauth_token_refresh"]["enabled"], true);
+    }
+
+    #[test]
+    fn oauth_refresh_failure_detail_preserves_context_without_credentials() {
+        let error = GatewayError::Internal(
+            r#"oauth request failed: status=503 token="refresh-secret" retry=2"#.to_string(),
+        );
+
+        let detail = redact_error_debug(&error);
+
+        assert!(detail.contains("oauth request failed"));
+        assert!(detail.contains("status=503"));
+        assert!(detail.contains("[REDACTED]"));
+        assert!(!detail.contains("refresh-secret"));
     }
 }

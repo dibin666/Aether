@@ -1459,6 +1459,7 @@ pub(super) async fn handle_users_me_usage_get(
                 limit: None,
                 offset: None,
                 newest_first: true,
+                ..Default::default()
             };
             total_record_count = match state
                 .count_usage_audits_by_keyword_search(&keyword_query)
@@ -1509,6 +1510,7 @@ pub(super) async fn handle_users_me_usage_get(
                     limit: None,
                     offset: None,
                     newest_first: true,
+                    ..Default::default()
                 })
                 .await
             {
@@ -1539,6 +1541,7 @@ pub(super) async fn handle_users_me_usage_get(
                     limit: Some(limit),
                     offset: Some(offset),
                     newest_first: true,
+                    ..Default::default()
                 })
                 .await
             {
@@ -1810,6 +1813,7 @@ pub(super) async fn handle_users_me_usage_active_get(
                 limit: Some(50),
                 offset: None,
                 newest_first: true,
+                ..Default::default()
             })
             .await
         {
@@ -2298,6 +2302,29 @@ mod tests {
         assert_eq!(active["requested_reasoning_effort"], "xhigh");
         assert_eq!(record["reasoning_effort"], "max");
         assert_eq!(active["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn user_usage_payloads_expose_gemini_thinking_config_reasoning_mapping() {
+        let item = StoredRequestUsageAudit {
+            request_body: Some(json!({
+                "generationConfig": {
+                    "thinkingConfig": { "includeThoughts": true, "thinkingLevel": "HIGH" }
+                }
+            })),
+            provider_request_body: Some(json!({
+                "generationConfig": { "thinkingConfig": { "thinkingBudget": 8192 } }
+            })),
+            ..sample_usage("completed")
+        };
+
+        let record = build_users_me_usage_record_payload(&item, false, &BTreeMap::new(), false);
+        let active = build_users_me_usage_active_payload(&item);
+
+        assert_eq!(record["requested_reasoning_effort"], "high");
+        assert_eq!(active["requested_reasoning_effort"], "high");
+        assert_eq!(record["reasoning_effort"], "xhigh");
+        assert_eq!(active["reasoning_effort"], "xhigh");
     }
 
     #[test]
