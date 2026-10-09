@@ -5,13 +5,54 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并提交） | `6691cce29` |
-| upstream HEAD | `54fbcc25a` |
-| merge-base | `54fbcc25a` |
-| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 236，upstream-only 0 |
-| fork-only 路径 | 276 个，`+25951/-921` |
-| upstream-only 路径 | 0 个，`+0/-0` |
-| 快照日期 | 2026-09-30（第十一轮，合并后） |
+| fork code baseline（本轮合并提交） | `d067cab4f`（批次 2；批次 1 为 `9151a0fe2`） |
+| upstream HEAD | `bad13237d` |
+| merge-base | `bad13237d` |
+| 分叉计数（含本轮两个合并提交，不含本轮文档提交） | fork-only 243，upstream-only 0 |
+| fork-only 路径 | 286 个，`+26409/-964`（合并前口径） |
+| upstream-only 路径 | 563 个，`+52698/-15288` |
+| 快照日期 | 2026-10-09（第十二轮，合并后） |
+
+### 第十二轮合并前快照与合并后结论（2026-10-09）
+
+| 项 | 值 |
+|---|---|
+| fork 分支 / 合并前 HEAD | `rust` / `efdb50be6f98a55c878dc09e220c16f92c51ab2a` |
+| upstream 目标 | `upstream/main` / `bad13237d27453ba34fd53a3915ae1b0a217d43f` |
+| merge-base | `54fbcc25a171b26966131398ec7c8e462a274348` |
+| 分叉计数（HEAD...upstream/main） | fork-only 241，upstream-only 45（合并前）；合并后 243 / 0 |
+| 直接重叠路径 | 77 个（`comm -12` 口径） |
+| 合并状态 | 已完成，**分两批**（45 提交 > 40 且含结构性重构）：批次 1 `9151a0fe2`（至 `e7de935e6`，37 提交，10 处冲突）；批次 2 `d067cab4f`（至 `bad13237d`，8 提交，4 处冲突） |
+
+批次切分点：`466c7918a feat: unify provider scheduling workspace` 之前（`e7de935e6`）。
+
+upstream 本轮主题：概览/分析看板重构与迁移加固（`066ea87d7`、future dashboard summary、provider expenses）、用户分析统一、Codex CLI 0.159.3 画像与 memories 协议（`OPENAI_MEMORIES_SYNC_PLAN_KIND`）、Claude Code 动态 CLI 画像与统一 provider client identity、配额倒计时归零后读取层归一化、Gemini thinkingConfig 推理强度徽章、全局模型名不入 provider alias、模型映射按 endpoint/api-format 限定、统一 provider 调度工作区与可选路由组/组合计费、provider 展示顺序分页修复、隧道 systemd 修复、OAuth 刷新失败日志脱敏。
+
+冲突策略（用户逐组确认，全部 manual hybrid）：`1H, 2H, 3H, 4H, 5H`，批次 2 的 4 处冲突均为同类导入并集。
+
+- 组 1（plan kind / 路由导入并集）：`planner/common.rs`、`decision/control_plan.rs`、`contracts/plan_kinds.rs`、`shared/routing.rs`、`usage/runtime/report.rs` 同时保留 fork 的 `OPENAI_TRANSCRIPTION_*` 与 upstream 的 `OPENAI_MEMORIES_SYNC_PLAN_KIND`（P0 第 1 项保留）。
+- 组 2（`family/request.rs`）：导入并集（fork `body_rules_have_enabled_rules`；upstream `CODEX_RESPONSES_LITE_HEADER`），采用 upstream 的 memories 跳过分支与 `..._and_reasoning_replay_policy` finalize；`GEMINI_CLI_USER_AGENT` 导入随 upstream 移除用法而去除。
+- 组 3（`handlers/shared/catalog.rs`）：保留 fork 抽出的 `provider_key_quota_status_snapshot_payload(status_snapshot, upstream_metadata, ..)`，并保留 upstream 的 `normalize_expired_quota_windows`（仅在 `provider_key_status_snapshot_payload` 内调用）。
+- 组 4（`oauth_token_refresh.rs`）：以 fork 的 `MaintenanceCatalogSnapshot`/账号事件结构为底；upstream 对该文件的实质改动只有失败错误脱敏，已移植为 `redact_error_debug(&err)`（两处 `Failed.error`）并并存两个单测。
+- 组 5（测试）：`memory/tests.rs`、`UsageRecordsTable.spec.ts` 两侧用例并存（fork 的 actual-reasoning 徽章 + upstream 的 Gemini 推理强度）。
+
+合并后审计结论：
+
+- 两个合并提交均为 `--no-ff`，合并后 merge-base 等于 upstream HEAD，`upstream-only` 为 0。
+- fork 迁移 `20260909000000_add_provider_key_task_events.sql` 未被改动且未进入 upstream bootstrap/generated baseline（规则 6 保持）；`background_tasks` 白名单文件无改动（规则 3 保持）；`deploy.sh`/`.github` 无 upstream 改动。
+- upstream 删除了若干 `pub` 符号（`build_cross_format_*_upstream_url`、`GEMINI_CLI_USER_AGENT`、`ClaudeCodeTransportIdentityProfile` 等被统一 identity profile 取代、`provider_pool_reset_deadline_elapsed` 等），`cargo check --workspace --all-targets` 全部通过，说明 fork 无残留调用方。
+- P0/P1 存在性静态复核通过：`audio_duration_seconds`、`disable_circuit_breaker`、`provider_key_task_events`、`usage_request_detail`、`keep_priority_on_conversion`、`consumption-stats`、`account-events`、`detailScope` 均存在；`ignore_pool_cooldown` 应用层残留为 0（仅 PostgreSQL bootstrap 列与历史迁移）。
+- **本轮没有 fork 功能性 delta 变化**；路由组/组合计费、统一调度工作区、概览看板、Codex memories、Claude Code 动态画像属于 upstream 能力，不加入 fork 特有功能清单。
+- 合并后的待合入 upstream 提交：0。
+
+验证结果（2026-10-09，串行）：
+
+- `cd frontend && npm run build`：批次 1 通过 1 分 27 秒；批次 2 通过（15.6 秒，含缓存）。依赖已存在，未运行 `npm install`。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：批次 1 通过 6 分 9 秒，批次 2 通过 2 分 46 秒，均无警告。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`：批次 2 最终树通过，8 分 10 秒。
+- `git diff --check`：仅 upstream 生成的 `schema/generated/postgres/baseline/{009_overview,010_dashboard,010_provider_expenses}.sql` 报 EOF 多余空行（upstream 内容，非阻塞，未改动）。
+
+未运行（unverified）：第 7 节全部行为测试及前端测试——本轮冲突均为导入/用例并集，未触及行为逻辑；仅新移植的 `oauth_refresh_failure_detail_preserves_context_without_credentials` 测试及 upstream 新增测试未执行。
 
 ### 第十一轮合并前快照与合并后结论（2026-09-30）
 
@@ -717,3 +758,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-23 | `54a37118a` | `57f53903f` | 8 提交、2 处文本冲突（`1B: theirs`）；接入 API key IP rules、Codex 最低额度预留与动态 CLI profile；按用户要求退役应用层 `ignore_pool_cooldown`，保留 PostgreSQL 列/迁移；16 个重叠路径审计及构建验证通过 |
 | 2026-09-29 | `29351e388` | `00a315e3b` | 39 提交、1 处文本冲突（`runtime.rs` 导入手工并集）；接入用户组 provider 统计、批量钱包调整、SSE/转换修复；补 3 处 `provider_names` 构造点；前端构建、`cargo check --workspace(--all-targets)` 通过，另补 1 处 fork 字段与 1 个既存失败测试；fork P0/P1 功能无变化 |
 | 2026-09-30 | `6691cce29` | `54fbcc25a` | 13 提交、0 文本冲突；接入 Claude Code 请求体伪装与 OAuth 账号 5H/周额度；6 个重叠路径复核无回归，前端构建与 `cargo check --workspace` 通过，fork P0/P1 功能无变化 |
+| 2026-10-09 | `9151a0fe2`<br>`d067cab4f` | `bad13237d` | 45 提交分两批合入、14 处冲突（全部 hybrid：plan kind 并集、request.rs、catalog 额度归一化、OAuth 刷新日志脱敏、测试并存）；前端构建与 `cargo check --workspace(--all-targets)` 通过，fork P0/P1 功能无变化 |
