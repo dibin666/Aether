@@ -1849,7 +1849,9 @@ mod tests {
         );
         assert!(migration_sql.contains("UPDATE public.providers"));
         assert!(migration_sql.contains("lower(btrim(provider_type)) <> 'codex'"));
-        assert!(migration_sql.contains("(config -> 'oauth_token_refresh' -> 'enabled') IS NULL"));
+        assert!(
+            migration_sql.contains("(config::jsonb -> 'oauth_token_refresh' -> 'enabled') IS NULL")
+        );
 
         fn apply_migration_row(provider_type: &str, config: &mut serde_json::Value) -> bool {
             if provider_type.trim().eq_ignore_ascii_case("codex") {
