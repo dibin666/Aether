@@ -52,7 +52,9 @@ upstream 本轮主题：概览/分析看板重构与迁移加固（`066ea87d7`�
 - `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`：批次 2 最终树通过，8 分 10 秒。
 - `git diff --check`：仅 upstream 生成的 `schema/generated/postgres/baseline/{009_overview,010_dashboard,010_provider_expenses}.sql` 报 EOF 多余空行（upstream 内容，非阻塞，未改动）。
 
-未运行（unverified）：第 7 节全部行为测试及前端测试——本轮冲突均为导入/用例并集，未触及行为逻辑；仅新移植的 `oauth_refresh_failure_detail_preserves_context_without_credentials` 测试及 upstream 新增测试未执行。
+- 定向测试：`CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib oauth_token_refresh` 30/30 通过（含移植的 `oauth_refresh_failure_detail_preserves_context_without_credentials`）。首跑 29/30，失败的 `provider_oauth_refresh_migration_sql_idempotency_simulation` 是**既存失败**（非合并回归）：迁移 `20260910000000_default_oauth_refresh_to_codex_only.sql` 自 `b56e61a31` 起使用 `config::jsonb -> ...`，测试断言仍是 `config -> ...`；已改断言，提交 `6ccf1caf8`。
+
+未运行（unverified）：第 7 节其余行为测试及前端测试——本轮冲突均为导入/用例并集，未触及行为逻辑；upstream 新增测试未执行。
 
 ### 第十一轮合并前快照与合并后结论（2026-09-30）
 
