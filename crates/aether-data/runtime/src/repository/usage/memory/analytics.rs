@@ -59,6 +59,27 @@ fn available(row: &StoredRequestUsageAudit, key: &str) -> bool {
         .and_then(serde_json::Value::as_bool)
         != Some(false)
 }
+/// 提供商明细分组的展示名：分组键依旧是 provider_id（保证与 PostgreSQL 实现一致），
+/// 只是把展示标签换成使用记录里的提供商名称快照，名称缺失或为历史占位值时回退到 provider_id。
+/// provider_id 为空说明无法归属，保持 None 让前端显示“未归属提供商”。
+fn provider_display_label(
+    rows: &[&StoredRequestUsageAudit],
+    group_id: Option<&str>,
+) -> Option<String> {
+    let id = group_id?;
+    rows.iter()
+        .map(|row| row.provider_name.trim())
+        .filter(|name| {
+            !name.is_empty()
+                && !matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "unknown" | "unknow" | "pending"
+                )
+        })
+        .max()
+        .map(str::to_owned)
+        .or_else(|| Some(id.to_owned()))
+}
 // The legacy audit contract stores epoch seconds despite its historical field name.
 fn usage_started_ms(row: &StoredRequestUsageAudit) -> u64 {
     row.created_at_unix_ms.saturating_mul(1000)
@@ -136,14 +157,16 @@ fn apply_allocations(
 }
 fn decimal_sum(
     rows: &[&StoredRequestUsageAudit],
-    value: impl Fn(&StoredRequestUsageAudit) -> f64,
+    value: impl Fn(&StoredRequestUsageAudit) -> Option<f64>,
 ) -> Option<String> {
     let amounts = rows
         .iter()
         .filter(|row| {
             available(row, USAGE_PRICING_AVAILABLE_METADATA_KEY) && row.billing_status == "settled"
         })
-        .map(|row| (value(row) * 100_000_000.0).round() as i128)
+        .filter_map(|row| value(row))
+        .filter(|amount| amount.is_finite())
+        .map(|amount| (amount * 100_000_000.0).round() as i128)
         .collect::<Vec<_>>();
     if amounts.is_empty() {
         None
@@ -270,8 +293,8 @@ fn metrics(
     metrics.first_byte_p90_ms = first_percentile(0.9);
     metrics.first_byte_p99_ms = first_percentile(0.99);
     metrics.usage_active_users = users.len() as u64;
-    metrics.rated_amount = decimal_sum(rows, |row| row.total_cost_usd);
-    metrics.billable_amount = decimal_sum(rows, |row| row.actual_total_cost_usd);
+    metrics.rated_amount = decimal_sum(rows, |row| Some(row.total_cost_usd));
+    metrics.billable_amount = decimal_sum(rows, |row| row.billing_cost());
     metrics
 }
 
@@ -281,7 +304,7 @@ fn dashboard_total_metrics(
 ) -> UsageAnalyticsMetrics {
     let mut metrics = UsageAnalyticsMetrics {
         request_count: rows.len() as u64,
-        billable_amount: decimal_sum(rows, |row| row.actual_total_cost_usd),
+        billable_amount: decimal_sum(rows, |row| row.billing_cost()),
         ..Default::default()
     };
     for row in rows {
@@ -654,10 +677,17 @@ impl InMemoryUsageReadRepository {
                     };
                     groups.entry(group).or_default().push(row);
                 }
+                // 提供商明细分组需要单独解析展示名，其余分组仍然用分组键本身作为标签。
+                let provider_breakdown = query.view == UsageAnalyticsView::Breakdown
+                    && query.group_by == UsageAnalyticsGroupBy::Provider;
                 let mut grouped = groups
                     .into_iter()
                     .map(|(id, rows)| UsageAnalyticsRow {
-                        label: id.clone(),
+                        label: if provider_breakdown {
+                            provider_display_label(&rows, id.as_deref())
+                        } else {
+                            id.clone()
+                        },
                         bucket_start: (query.view != UsageAnalyticsView::Breakdown)
                             .then(|| id.clone())
                             .flatten(),

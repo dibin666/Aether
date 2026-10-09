@@ -484,6 +484,11 @@ fn classifies_users_me_routes_as_public_support_route() {
         ),
         (
             http::Method::GET,
+            "/api/users/me/routing-groups",
+            "routing_groups",
+        ),
+        (
+            http::Method::GET,
             "/api/users/me/vscodex/devices",
             "vscodex_devices_list",
         ),

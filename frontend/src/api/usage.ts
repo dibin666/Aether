@@ -32,6 +32,10 @@ export interface UsageRecord {
   cache_read_input_tokens?: number
   total_tokens: number
   cost?: number
+  billing_multiplier?: number | null
+  routing_group_id?: string | null
+  routing_group_name?: string | null
+  billing_cost?: number | null
   response_time?: number
   response_time_ms?: number | null
   first_byte_time_ms?: number | null
@@ -619,6 +623,10 @@ export const usageApi = {
       cost: number
       actual_cost?: number | null
       rate_multiplier?: number | null
+      billing_multiplier?: number | null
+      routing_group_id?: string | null
+      routing_group_name?: string | null
+      billing_cost?: number | null
       response_time_ms: number | null
       first_byte_time_ms: number | null
       end_to_end_time_ms?: number | null
@@ -692,6 +700,10 @@ export const usageApi = {
       cost: number
       actual_cost?: number | null
       rate_multiplier?: number | null
+      billing_multiplier?: number | null
+      routing_group_id?: string | null
+      routing_group_name?: string | null
+      billing_cost?: number | null
       response_time_ms: number | null
       first_byte_time_ms: number | null
       end_to_end_time_ms?: number | null
