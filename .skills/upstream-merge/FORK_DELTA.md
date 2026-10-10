@@ -5,13 +5,71 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并提交） | `d067cab4f`（批次 2；批次 1 为 `9151a0fe2`） |
-| upstream HEAD | `bad13237d` |
-| merge-base | `bad13237d` |
-| 分叉计数（含本轮两个合并提交，不含本轮文档提交） | fork-only 243，upstream-only 0 |
-| fork-only 路径 | 286 个，`+26409/-964`（合并前口径） |
-| upstream-only 路径 | 563 个，`+52698/-15288` |
-| 快照日期 | 2026-10-09（第十二轮，合并后） |
+| fork code baseline（本轮合并提交） | `652363c33`（第十三轮，单批） |
+| upstream HEAD | `6bafef672` |
+| merge-base | `6bafef672` |
+| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 247，upstream-only 0 |
+| 本轮 upstream-only 路径 | 63 个，`+3142/-384` |
+| 快照日期 | 2026-10-10（第十三轮，合并后） |
+
+### 第十三轮合并前快照与合并后结论（2026-10-10）
+
+| 项 | 值 |
+|---|---|
+| fork 分支 / 合并前 HEAD | `rust` / `be0b64e8f` |
+| upstream 目标 | `upstream/main` / `6bafef672fcfeda669612403e607e071ea10e58a` |
+| merge-base | `bad13237d27453ba34fd53a3915ae1b0a217d43f` |
+| 分叉计数（HEAD...upstream/main） | fork-only 246，upstream-only 4（合并前）；合并后 247 / 0 |
+| 直接重叠路径 | 13 个（`comm -12` 口径） |
+| 合并状态 | 已完成：`652363c33579a9289967bff6e6ec49b075de5eed`；**0 处文本冲突**，无需用户冲突选择；单批（4 提交 < 40） |
+
+合并前待合入 upstream 提交（4 个）：
+
+```text
+63520c8c2 feat: allow wallet fallback after plan quota exhaustion
+6b6d5b3a8 fix: align dashboard charts with customer billing and history coverage
+29ba6c8cb style: format wallet fallback reporting and postgres test
+6bafef672 fix(pool): honor quota exhaustion toggle and default ignore to off
+```
+
+直接重叠路径：
+
+```text
+apps/aether-gateway/src/dispatch/pool_scheduler.rs
+apps/aether-gateway/src/handlers/admin/provider/pool/config.rs
+crates/aether-data/adapters/postgres/src/usage/mod.rs
+crates/aether-data/contracts/src/repository/usage/metadata_policy.rs
+crates/aether-data/runtime/schema/bootstrap/postgres/001_types_and_tables.sql
+crates/aether-usage/runtime/src/request_metadata.rs
+crates/aether-usage/runtime/src/write.rs
+frontend/src/api/auth.ts
+frontend/src/api/endpoints/types/provider.ts
+frontend/src/api/me.ts
+frontend/src/features/pool/components/PoolAdvancedDialog.vue
+frontend/src/features/pool/utils/poolAdvancedDialog.ts
+frontend/src/features/pool/utils/__tests__/poolAdvancedDialog.spec.ts
+```
+
+upstream 本轮主题：套餐额度耗尽后允许钱包兜底（用户偏好 `allow_wallet_overage`、usage metadata `plan_wallet_fallback`、迁移 `20261009000000_user_preferences_allow_wallet_overage.sql`）、概览图表对齐客户计费与历史覆盖（`unique_providers`、迁移 `20261008000000_make_customer_billing_parallel_unsafe.sql`）、号池「忽略耗尽账号」开关恢复。
+
+合并后审计结论：
+
+- `652363c33` 为 `--no-ff` 合并，合并后 merge-base 等于 upstream HEAD，`upstream-only` 为 0。
+- **号池耗尽语义变更（upstream 覆盖 fork 此前注释/契约）**：`6bafef672` 取消「耗尽一律阻断」，恢复 `pool_advanced.ignore_exhausted_accounts`（默认 false=阻断；true=放行，但 `quota_hard_blocked` 与最低额度预留仍阻断）。`skip_exhausted_accounts` 现由 `ignore_exhausted_accounts` 反推（缺省 true）。该行为属 upstream，fork 无对应特有功能，第 6 节配置速查已更新；P0 第 6 项调度不变量（cache-affinity、`keep_priority_on_conversion`、候选顺序）未受影响。
+- 13 个重叠路径逐个复核，双方改动为不相交增量：fork 的 `user_agent`/`reasoning_tokens` 持久化与 upstream 的 `plan_wallet_fallback` 白名单并存；`provider.ts`/`PoolAdvancedDialog` 仅新增 upstream 开关。
+- upstream 未删除任何 `pub` 符号；新增必填字段 `StoredUserPreferenceRecord.allow_wallet_overage`（`serde(default)`）与 `unique_providers: Option<u64>`，`cargo check --workspace --all-targets` 通过，说明 fork 构造点无遗漏；`UsageTimeSeriesQuery` 未变（规则 10 未触发）。`build_users_me_usage_*` 未新增字段（规则 11 未触发）。
+- fork 迁移 `20260909000000_add_provider_key_task_events.sql` 未改动、未进 baseline（规则 6）；`background_tasks` 白名单与 `deploy.sh`/`.github` 无改动。
+- **本轮没有 fork 功能性 delta 变化**；钱包兜底、概览图表对齐、耗尽开关属于 upstream 能力。
+- 合并后的待合入 upstream 提交：0。
+
+验证结果（2026-10-10，串行）：
+
+- `cd frontend && npm run build`：通过，1 分 18 秒；依赖已存在，未运行 `npm install`。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：通过，3 分 31 秒。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`：通过，8 分 52 秒。
+- `git diff --check`、未解决冲突检查通过。
+
+未运行（unverified）：第 7 节行为测试及前端测试，upstream 新增测试（`pool_scheduler`、`aether-pool-core`、`poolAdvancedDialog.spec.ts`、wallet fallback）未执行——本轮 0 冲突。
 
 ### 第十二轮合并前快照与合并后结论（2026-10-09）
 
@@ -605,7 +663,7 @@ Routes:
 
 Provider config:
   pool_advanced.score_ranking_enabled   (兼容读写；scheduler 不读取)
-  pool_advanced.skip_exhausted_accounts (兼容读写；quota 耗尽一律阻断)
+  pool_advanced.ignore_exhausted_accounts (upstream；默认 false=耗尽账号阻断，true=放行；skip_exhausted_accounts 由其反推，hard-block 与最低额度预留仍阻断)
   pool_advanced.reserve_minimum_quota   (upstream Codex-only; default false; remaining quota <= 1% is reserved)
   oauth_token_refresh.{enabled,lookahead_seconds,interval_seconds,concurrency,max_per_run,proxy_node_id}
 
@@ -761,3 +819,4 @@ cd frontend && npm run test:run -- \
 | 2026-09-29 | `29351e388` | `00a315e3b` | 39 提交、1 处文本冲突（`runtime.rs` 导入手工并集）；接入用户组 provider 统计、批量钱包调整、SSE/转换修复；补 3 处 `provider_names` 构造点；前端构建、`cargo check --workspace(--all-targets)` 通过，另补 1 处 fork 字段与 1 个既存失败测试；fork P0/P1 功能无变化 |
 | 2026-09-30 | `6691cce29` | `54fbcc25a` | 13 提交、0 文本冲突；接入 Claude Code 请求体伪装与 OAuth 账号 5H/周额度；6 个重叠路径复核无回归，前端构建与 `cargo check --workspace` 通过，fork P0/P1 功能无变化 |
 | 2026-10-09 | `9151a0fe2`<br>`d067cab4f` | `bad13237d` | 45 提交分两批合入、14 处冲突（全部 hybrid：plan kind 并集、request.rs、catalog 额度归一化、OAuth 刷新日志脱敏、测试并存）；前端构建与 `cargo check --workspace(--all-targets)` 通过，fork P0/P1 功能无变化 |
+| 2026-10-10 | `652363c33` | `6bafef672` | 4 提交、0 文本冲突；接入钱包兜底、概览图表计费对齐、耗尽账号开关恢复；13 个重叠路径复核无回归，前端构建与 `cargo check --workspace(--all-targets)` 通过，fork P0/P1 功能无变化 |
