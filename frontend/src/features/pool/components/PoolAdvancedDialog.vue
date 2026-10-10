@@ -649,7 +649,7 @@ const form = ref({
   account_self_check_concurrency: null as number | null | undefined,
   auto_remove_banned_keys: false,
   auto_remove_quota_exhausted_keys: false,
-  skip_exhausted_accounts: false,
+  ignore_exhausted_accounts: false,
 })
 
 interface ClaudeFormState {
@@ -690,8 +690,8 @@ function getHealthToggleValue(key: PoolHealthToggleKey): boolean {
       return form.value.auto_remove_banned_keys
     case 'auto_remove_quota_exhausted_keys':
       return form.value.auto_remove_quota_exhausted_keys
-    case 'skip_exhausted_accounts':
-      return form.value.skip_exhausted_accounts
+    case 'ignore_exhausted_accounts':
+      return form.value.ignore_exhausted_accounts
   }
 }
 
@@ -712,8 +712,8 @@ function updateHealthToggleValue(key: PoolHealthToggleKey, value: boolean): void
     case 'auto_remove_quota_exhausted_keys':
       form.value.auto_remove_quota_exhausted_keys = value
       return
-    case 'skip_exhausted_accounts':
-      form.value.skip_exhausted_accounts = value
+    case 'ignore_exhausted_accounts':
+      form.value.ignore_exhausted_accounts = value
   }
 }
 
@@ -751,7 +751,7 @@ watch([() => props.modelValue, () => props.providerId], ([open]) => {
     account_self_check_concurrency: cfg?.account_self_check_concurrency ?? null,
     auto_remove_banned_keys: cfg?.auto_remove_banned_keys ?? false,
     auto_remove_quota_exhausted_keys: cfg?.auto_remove_quota_exhausted_keys ?? false,
-    skip_exhausted_accounts: cfg?.skip_exhausted_accounts ?? false,
+    ignore_exhausted_accounts: cfg?.ignore_exhausted_accounts ?? false,
   }
 
   const cc = props.currentClaudeConfig
@@ -820,7 +820,7 @@ async function handleSave() {
         : undefined,
       auto_remove_banned_keys: form.value.auto_remove_banned_keys,
       auto_remove_quota_exhausted_keys: form.value.auto_remove_quota_exhausted_keys,
-      skip_exhausted_accounts: form.value.skip_exhausted_accounts,
+      ignore_exhausted_accounts: form.value.ignore_exhausted_accounts,
     })
 
     const payload: Parameters<typeof updateProvider>[1] = {
