@@ -214,6 +214,12 @@ fn warn_untrusted_proxy_forwarded_headers_once(remote_ip: IpAddr, headers: &http
         if let Some(val) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
             ignored.push(format!("X-Real-IP: {}", val.trim()));
         }
+        if let Some(val) = headers
+            .get("cf-connecting-ip")
+            .and_then(|v| v.to_str().ok())
+        {
+            ignored.push(format!("CF-Connecting-IP: {}", val.trim()));
+        }
         tracing::warn!(
             remote_ip = %remote_ip,
             ignored_headers = %ignored.join("; "),
@@ -233,10 +239,20 @@ pub(crate) fn effective_client_ip_with_cidrs(
 ) -> IpAddr {
     let remote_ip = remote_addr.ip();
     if !trusted_proxy_ip_with_cidrs(remote_ip, trusted_cidrs) {
-        if headers.contains_key("x-forwarded-for") || headers.contains_key("x-real-ip") {
+        if headers.contains_key("x-forwarded-for")
+            || headers.contains_key("x-real-ip")
+            || headers.contains_key("cf-connecting-ip")
+        {
             warn_untrusted_proxy_forwarded_headers_once(remote_ip, headers);
         }
         return remote_ip;
+    }
+
+    // Cloudflare Tunnel commonly preserves the original visitor address in
+    // CF-Connecting-IP instead of X-Forwarded-For. Only accept it after the
+    // peer itself has passed the trusted-proxy CIDR check above.
+    if let Some(client_ip) = single_ip_header(headers, "cf-connecting-ip") {
+        return client_ip;
     }
 
     let forwarded_ips = headers
@@ -254,6 +270,15 @@ pub(crate) fn effective_client_ip_with_cidrs(
     {
         return client_ip;
     }
+    // An explicit 0/0 configuration means the operator intentionally trusts
+    // the complete forwarded chain. In that mode the normal "rightmost
+    // untrusted address" walk has no result, so use the leftmost/original
+    // address instead of falling back to the Docker bridge gateway.
+    if trusts_all_forwarded_headers(trusted_cidrs) {
+        if let Some(client_ip) = forwarded_ips.first().copied() {
+            return client_ip;
+        }
+    }
 
     let mut real_ip_values = headers.get_all("x-real-ip").iter();
     let real_ip = real_ip_values
@@ -265,6 +290,23 @@ pub(crate) fn effective_client_ip_with_cidrs(
     }
 
     remote_ip
+}
+
+fn single_ip_header(headers: &http::HeaderMap, name: &str) -> Option<IpAddr> {
+    let mut values = headers.get_all(name).iter();
+    let value = values
+        .next()?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<IpAddr>()
+        .ok()?;
+    values.next().is_none().then_some(value)
+}
+
+fn trusts_all_forwarded_headers(trusted_cidrs: &[String]) -> bool {
+    trusted_cidrs.iter().any(|cidr| cidr.trim() == "0.0.0.0/0")
+        && trusted_cidrs.iter().any(|cidr| cidr.trim() == "::/0")
 }
 
 pub(crate) fn trusted_proxy_ip(ip: IpAddr) -> bool {
@@ -386,6 +428,13 @@ fn client_ip_from_headers(headers: &http::HeaderMap) -> Option<String> {
         })
         .or_else(|| {
             header_value_str(headers, "x-real-ip").and_then(|value| {
+                let value = value.trim();
+                (!value.is_empty() && !value.eq_ignore_ascii_case("unknown"))
+                    .then(|| truncate_chars(value, 45))
+            })
+        })
+        .or_else(|| {
+            header_value_str(headers, "cf-connecting-ip").and_then(|value| {
                 let value = value.trim();
                 (!value.is_empty() && !value.eq_ignore_ascii_case("unknown"))
                     .then(|| truncate_chars(value, 45))
@@ -1143,6 +1192,45 @@ mod tests {
     }
 
     #[test]
+    fn effective_client_ip_accepts_cloudflare_connecting_ip_from_trusted_proxy() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cf-connecting-ip",
+            HeaderValue::from_static("198.51.100.44"),
+        );
+        let remote_addr = SocketAddr::new(Ipv4Addr::new(192, 168, 32, 1).into(), 8084);
+        let trusted_cidrs = vec!["192.168.32.1/32".to_string()];
+
+        assert_eq!(
+            effective_client_ip_with_cidrs(&headers, &remote_addr, &trusted_cidrs),
+            IpAddr::V4(Ipv4Addr::new(198, 51, 100, 44))
+        );
+        assert_eq!(
+            request_origin_from_trusted_headers(&headers)
+                .client_ip
+                .as_deref(),
+            Some("198.51.100.44")
+        );
+    }
+
+    #[test]
+    fn effective_client_ip_uses_original_xff_address_when_all_proxy_ranges_are_explicitly_trusted()
+    {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("198.51.100.45, 192.168.32.1"),
+        );
+        let remote_addr = SocketAddr::new(Ipv4Addr::new(192, 168, 32, 1).into(), 8084);
+        let trusted_cidrs = vec!["0.0.0.0/0".to_string(), "::/0".to_string()];
+
+        assert_eq!(
+            effective_client_ip_with_cidrs(&headers, &remote_addr, &trusted_cidrs),
+            IpAddr::V4(Ipv4Addr::new(198, 51, 100, 45))
+        );
+    }
+
+    #[test]
     fn request_origin_does_not_trust_forwarded_metadata_from_public_peer() {
         let headers = HeaderMap::new();
         let remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10)), 443);
@@ -1265,6 +1353,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.8"));
         headers.insert("x-real-ip", HeaderValue::from_static("203.0.113.8"));
+        headers.insert("cf-connecting-ip", HeaderValue::from_static("203.0.113.9"));
         let remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1)), 443);
         assert_eq!(
             effective_client_ip(&headers, &remote_addr),
