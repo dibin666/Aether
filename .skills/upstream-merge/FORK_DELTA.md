@@ -5,12 +5,105 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并提交） | `652363c33`（第十三轮，单批） |
-| upstream HEAD | `6bafef672` |
-| merge-base | `6bafef672` |
-| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 247，upstream-only 0 |
-| 本轮 upstream-only 路径 | 63 个，`+3142/-384` |
-| 快照日期 | 2026-10-10（第十三轮，合并后） |
+| fork code baseline（本轮合并提交） | `3b6134641`（第十四轮，单批） |
+| upstream HEAD | `042adb319` |
+| merge-base | `042adb319` |
+| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 249，upstream-only 0 |
+| 本轮 upstream-only 路径 | 50 个，`+2501/-211` |
+| 本轮直接重叠路径 | 30 个 |
+| 快照日期 | 2026-10-18（第十四轮，合并后） |
+
+### 第十四轮合并前快照与合并后结论（2026-10-18）
+
+| 项 | 值 |
+|---|---|
+| 合并前 fork HEAD | `62d1d4ef3` |
+| upstream 目标 | `upstream/main` / `042adb319d` |
+| merge-base | `6bafef672fcfeda669612403e607e071ea10e58a` |
+| 分叉计数（合并前） | fork-only 248，upstream-only 13 |
+| 合并状态 | 已完成：`3b61346417792cd161bcb0b3315dbdd420ff3199`；单批（13 提交 < 40） |
+
+待合入 upstream 提交（按拓扑顺序）：
+
+```text
+1165e81a4 fix(health): 健康监控历史状态条改用全窗口分段聚合
+2eaf2aa8a test(health): 抑制测试事件表的 clippy::type_complexity
+a458a35b2 style: 修复 main 上 63520c8c2 引入的 cargo fmt 回归
+077192cdf feat(usage): mark requests that actually triggered chat PII redaction
+bf418aa94 fix(usage): preserve PII redaction markers in lists and polling
+1d5752418 Merge pull request #884 from AAEE86/fix/health-monitor-history-timeline
+1bc8a2ade Merge main into feat/chat-pii-redaction-usage-marker
+b4de931bc Merge pull request #887 from AAEE86/feat/chat-pii-redaction-usage-marker
+21ca9a7bd fix(usage): evenly sample interval timeline across the full window
+6cab08c25 fix(usage): retain timeline endpoints when sampling
+ab2d9b08b Merge pull request #888 from Hao-IANWY/fix/interval-timeline-sampling
+767baf469 fix(gemini): preserve native function response IDs
+042adb319 Merge pull request #890 from zjm54321/fix/native-gemini-function-response-id-878
+```
+
+直接重叠路径（30 个，按合并前 `comm -12` 口径）：
+
+```text
+apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/payload.rs
+apps/aether-gateway/src/ai_serving/planner/passthrough/provider/family/request.rs
+apps/aether-gateway/src/ai_serving/planner/standard/family/payload.rs
+apps/aether-gateway/src/data/state/runtime.rs
+apps/aether-gateway/src/handlers/admin/provider/query/models/model_test.rs
+apps/aether-gateway/src/handlers/proxy/websocket/responses/session.rs
+apps/aether-gateway/src/handlers/public/support/user_me_usage.rs
+apps/aether-gateway/src/handlers/shared/mod.rs
+apps/aether-gateway/src/tests/control/admin/usage.rs
+crates/aether-admin/src/observability/usage.rs
+crates/aether-data/adapters/postgres/src/usage/mod.rs
+crates/aether-data/adapters/postgres/src/usage/queries/list_recent_usage_audits_prefix.sql
+crates/aether-data/adapters/postgres/src/usage/queries/list_usage_audits_prefix.sql
+crates/aether-data/adapters/postgres/src/usage/tests.rs
+crates/aether-data/contracts/src/repository/usage/metadata_policy.rs
+crates/aether-data/contracts/src/repository/usage/mod.rs
+crates/aether-data/contracts/src/repository/usage/types.rs
+crates/aether-data/runtime/src/repository/usage/memory.rs
+crates/aether-data/runtime/src/repository/usage/memory/tests.rs
+crates/aether-provider/transport/src/same_format_provider/mod.rs
+crates/aether-usage/runtime/src/request_metadata.rs
+frontend/src/api/dashboard.ts
+frontend/src/api/me.ts
+frontend/src/api/usageRecords.ts
+frontend/src/api/usage.ts
+frontend/src/features/usage/components/RequestDetailDrawer.vue
+frontend/src/features/usage/components/__tests__/UsageRecordsTable.spec.ts
+frontend/src/features/usage/components/UsageRecordsTable.vue
+frontend/src/features/usage/composables/useUsageData.ts
+frontend/src/views/shared/Usage.vue
+```
+
+upstream 本轮主题：健康监控历史时间线全窗口分段聚合、usage 时间线均匀采样并保留端点、请求实际触发 Chat PII 脱敏标记、Gemini 原生 function response ID 保留。
+
+冲突策略（用户确认）：`1H`，同一组 3 个 usage 元数据契约文件采用 manual hybrid：
+
+- `crates/aether-data/contracts/src/repository/usage/metadata_policy.rs`：同时导出 fork 的 `PROVIDER_ACTUAL_REASONING_EFFORT_METADATA_KEY` 与 upstream 的 `CHAT_PII_REDACTION_METADATA_KEY`。
+- `crates/aether-data/contracts/src/repository/usage/mod.rs`：同时保留 fork 的实际推理强度导出，以及 upstream 的 `StoredUsageHealthTimelineRow`、`UsageHealthTimelineGroupBy`、`UsageHealthTimelineQuery` 和 PII 常量。
+- `crates/aether-usage/runtime/src/request_metadata.rs`：保留两侧常量导入；函数主体两侧行为并存。
+
+合并后审计结论：
+
+- `3b6134641` 为 `--no-ff` 合并；合并后 merge-base 等于 upstream HEAD，`upstream-only` 为 0。
+- 30 个直接重叠路径已复核。fork 的 `client_ip`/`user_agent`、实际推理强度、usage 自助详情、音频转录、额度统计、账号事件、调度与纯构建部署契约均保留；本轮没有 fork 功能性 delta 变化。
+- upstream 的 PII 标记、健康时间线、usage 采样和 Gemini response ID 属于 upstream 能力，不加入 fork 特有功能清单。
+- upstream 新增 PII 前端测试与 fork 的现有 discovery/详情权限契约不完全匹配，已只修正测试 mock（初始 discovery 空响应、`canViewRequestDetail`），生产代码未改；最终 3/3 通过。
+- 本轮未改数据库迁移、`background_tasks` 白名单、`deploy.sh` 或 `.github`；upstream-only 迁移/部署风险未触发。
+- 合并后的待合入 upstream 提交：0。
+
+验证结果（2026-10-18，全部串行）：
+
+- `cd frontend && npm run build`：通过，1 分 10 秒；包含 VSCodex 构建。`caniuse-lite` 13 个月未更新，为非阻塞警告。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：通过，5 分 1 秒。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`：通过，10 分 49 秒。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-data-contracts --lib repository::usage`：87/87 通过。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-usage-runtime --lib request_metadata`：26/26 通过。
+- `cd frontend && npm run test:run -- src/views/shared/__tests__/Usage.pii-redaction.spec.ts`：修正 mock 后 3/3 通过。
+- `git diff --check`、未解决冲突检查通过。
+
+未运行（unverified）：完整前端测试、其余 upstream 健康监控/Gemini 行为测试；本轮编译和冲突相关定向测试均通过。
 
 ### 第十三轮合并前快照与合并后结论（2026-10-10）
 
