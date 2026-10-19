@@ -19,12 +19,28 @@ fn strip_cf_headers(headers: &mut http::HeaderMap) {
     }
 }
 
+fn strip_cf_request_headers(headers: &mut http::HeaderMap) {
+    let to_remove: Vec<_> = headers
+        .keys()
+        .filter(|name| {
+            should_strip_cf_header(name) && !name.as_str().eq_ignore_ascii_case("cf-connecting-ip")
+        })
+        .cloned()
+        .collect();
+    for name in to_remove {
+        headers.remove(name);
+    }
+}
+
 pub fn apply_cf_header_stripping(router: Router) -> Router {
     router.layer(axum::middleware::from_fn(strip_cf_headers_middleware))
 }
 
 pub async fn strip_cf_headers_middleware(mut request: Request, next: Next) -> Response {
-    strip_cf_headers(request.headers_mut());
+    // Keep Cloudflare's authenticated visitor-IP marker available to the
+    // gateway's trusted-proxy resolver. It is still removed from responses
+    // and blocked before provider passthrough by the request-header policy.
+    strip_cf_request_headers(request.headers_mut());
 
     let mut response = next.run(request).await;
     strip_cf_headers(response.headers_mut());
@@ -48,14 +64,23 @@ mod tests {
             any(|headers: http::HeaderMap| async move {
                 let leaked = headers.contains_key("cf-ipcity")
                     || headers.contains_key("cf-ray")
-                    || headers.contains_key("cf-connecting-ip")
                     || headers.contains_key("true-client-ip")
                     || headers.contains_key("cdn-loop");
-                let mut response =
-                    Response::new(Body::from(if leaked { "leaked" } else { "clean" }));
+                let body = if leaked {
+                    "leaked"
+                } else if headers.contains_key("cf-connecting-ip") {
+                    "client-ip-kept"
+                } else {
+                    "client-ip-missing"
+                };
+                let mut response = Response::new(Body::from(body));
                 response.headers_mut().insert(
                     http::header::HeaderName::from_static("cf-ipcity"),
                     HeaderValue::from_static("Shanghai"),
+                );
+                response.headers_mut().insert(
+                    http::header::HeaderName::from_static("cf-connecting-ip"),
+                    HeaderValue::from_static("203.0.113.10"),
                 );
                 response.headers_mut().insert(
                     http::header::HeaderName::from_static("cf-cache-status"),
@@ -89,6 +114,7 @@ mod tests {
             .expect("request should succeed");
 
         assert!(response.headers().get("cf-ipcity").is_none());
+        assert!(response.headers().get("cf-connecting-ip").is_none());
         assert!(response.headers().get("cf-cache-status").is_none());
         assert!(response.headers().get("cf-connecting-ip").is_none());
         assert!(response.headers().get("true-client-ip").is_none());
@@ -97,7 +123,7 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("body should be readable");
-        assert_eq!(body.as_ref(), b"clean");
+        assert_eq!(body.as_ref(), b"client-ip-kept");
     }
 
     #[tokio::test]

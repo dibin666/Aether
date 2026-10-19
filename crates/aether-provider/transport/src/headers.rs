@@ -81,8 +81,10 @@ pub fn should_skip_request_header(name: &str) -> bool {
 }
 
 fn is_untrusted_forwarding_metadata_header(normalized_name: &str) -> bool {
-    matches!(normalized_name, "forwarded" | "via" | "x-envoy-internal")
-        || normalized_name.starts_with("x-forwarded-")
+    matches!(
+        normalized_name,
+        "forwarded" | "via" | "x-envoy-internal" | "cf-connecting-ip"
+    ) || normalized_name.starts_with("x-forwarded-")
         || normalized_name.starts_with("x_forwarded_")
         || normalized_name.starts_with("x-real-")
         || normalized_name.starts_with("x_real_")
