@@ -21,6 +21,7 @@ mod provider_catalog;
 mod provider_key_task_events;
 mod proxy_nodes;
 mod quota;
+mod referrals;
 mod routing_profiles;
 mod settlement;
 mod tx;

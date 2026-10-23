@@ -23,6 +23,7 @@ pub mod provider_key_task_events;
 pub mod provider_oauth;
 pub mod proxy_nodes;
 pub mod quota;
+pub mod referrals;
 pub mod routing_profiles;
 pub mod settlement;
 pub mod system;
