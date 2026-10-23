@@ -936,10 +936,10 @@ async fn usage_cleanup_settings_clamp_destructive_retention_windows() {
 }
 
 #[tokio::test]
-async fn usage_cleanup_settings_keep_log_retention_after_redaction_windows() {
+async fn usage_cleanup_settings_shorter_delete_window_wins() {
     let data = GatewayDataState::disabled().with_system_config_values_for_tests([
         ("detail_log_retention_days".to_string(), json!(7)),
-        ("compressed_log_retention_days".to_string(), json!(30)),
+        ("compressed_log_retention_days".to_string(), json!(60)),
         ("header_retention_days".to_string(), json!(90)),
         ("log_retention_days".to_string(), json!(7)),
     ]);
@@ -947,7 +947,27 @@ async fn usage_cleanup_settings_keep_log_retention_after_redaction_windows() {
         .await
         .expect("usage cleanup settings should resolve");
 
-    assert_eq!(settings.log_retention_days, 90);
+    // Log retention keeps its 30-day floor but is never extended by later stages.
+    assert_eq!(settings.log_retention_days, 30);
+    assert_eq!(settings.compressed_retention_days, 30);
+    assert_eq!(settings.header_retention_days, 30);
+    assert_eq!(settings.detail_retention_days, 7);
+}
+
+#[tokio::test]
+async fn usage_cleanup_settings_body_delete_window_caps_detail_window() {
+    let data = GatewayDataState::disabled().with_system_config_values_for_tests([
+        ("detail_log_retention_days".to_string(), json!(30)),
+        ("compressed_log_retention_days".to_string(), json!(3)),
+    ]);
+    let settings = usage_cleanup_settings(&data)
+        .await
+        .expect("usage cleanup settings should resolve");
+
+    // Bodies must be deleted after 3 days even though the detail window says 30.
+    assert_eq!(settings.compressed_retention_days, 3);
+    assert_eq!(settings.detail_retention_days, 3);
+    assert_eq!(settings.log_retention_days, 365);
 }
 
 #[tokio::test]
@@ -1380,14 +1400,16 @@ async fn db_maintenance_continues_across_table_failures() {
     assert_eq!(
         summary,
         DbMaintenanceRunSummary {
-            attempted: 3,
-            succeeded: 2,
+            attempted: 5,
+            succeeded: 4,
         }
     );
     assert_eq!(
         *seen_tables.lock().expect("seen tables lock"),
         vec![
             "usage".to_string(),
+            "usage_body_blobs".to_string(),
+            "usage_http_audits".to_string(),
             "request_candidates".to_string(),
             "audit_logs".to_string(),
         ]

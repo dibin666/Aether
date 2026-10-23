@@ -98,22 +98,23 @@ pub(super) async fn pending_cleanup_batch_size(
 pub(super) async fn usage_cleanup_settings(
     data: &GatewayDataState,
 ) -> Result<UsageCleanupSettings, DataLayerError> {
-    let detail_retention_days = system_config_u64(data, "detail_log_retention_days", 7)
+    // The shorter deletion window always wins: a later stage never extends an earlier
+    // configured deletion. Only the absolute floors below may raise a value.
+    let log_retention_days = system_config_u64(data, "log_retention_days", 365)
         .await?
-        .max(MIN_DETAIL_RETENTION_DAYS);
+        .max(MIN_LOG_RETENTION_DAYS);
     let compressed_retention_days = system_config_u64(data, "compressed_log_retention_days", 30)
         .await?
         .max(MIN_COMPRESSED_RETENTION_DAYS)
-        .max(detail_retention_days);
+        .min(log_retention_days);
+    let detail_retention_days = system_config_u64(data, "detail_log_retention_days", 7)
+        .await?
+        .max(MIN_DETAIL_RETENTION_DAYS)
+        .min(compressed_retention_days);
     let header_retention_days = system_config_u64(data, "header_retention_days", 90)
         .await?
-        .max(MIN_HEADER_RETENTION_DAYS);
-    let log_retention_days = system_config_u64(data, "log_retention_days", 365)
-        .await?
-        .max(MIN_LOG_RETENTION_DAYS)
-        .max(detail_retention_days)
-        .max(compressed_retention_days)
-        .max(header_retention_days);
+        .max(MIN_HEADER_RETENTION_DAYS)
+        .min(log_retention_days);
 
     Ok(UsageCleanupSettings {
         detail_retention_days,

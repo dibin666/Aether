@@ -26,11 +26,16 @@ DELETE FROM usage AS usage_rows
 USING doomed
 WHERE usage_rows.id = doomed.id
 "#;
+// Every batch query below uses a keyset cursor `($2, $3)` over `(created_at, id)`.
+// Rows that were already cleaned stay inside the retention window, so restarting
+// each batch from the window start would rescan the whole cleaned prefix on every
+// batch (quadratic work) and starve the later cleanup stages on large tables.
 const SELECT_USAGE_LEGACY_BODY_REF_METADATA_BATCH_SQL: &str = r#"
-SELECT id, request_id, request_metadata
+SELECT id, request_id, request_metadata, created_at
 FROM usage
 WHERE created_at < $1
-  AND ($2::timestamptz IS NULL OR created_at >= $2)
+  AND created_at >= $2
+  AND (created_at > $2 OR id > $3)
   AND request_metadata IS NOT NULL
   AND (
     request_metadata::jsonb ? 'request_body_ref'
@@ -39,13 +44,14 @@ WHERE created_at < $1
     OR request_metadata::jsonb ? 'client_response_body_ref'
   )
 ORDER BY created_at ASC, id ASC
-LIMIT $3
+LIMIT $4
 "#;
 const SELECT_USAGE_HEADER_BATCH_SQL: &str = r#"
-SELECT id, request_id
+SELECT id, request_id, created_at
 FROM usage
 WHERE created_at < $1
-  AND ($2::timestamptz IS NULL OR created_at >= $2)
+  AND created_at >= $2
+  AND (created_at > $2 OR id > $3)
   AND (
     request_headers IS NOT NULL
     OR response_headers IS NOT NULL
@@ -64,7 +70,7 @@ WHERE created_at < $1
     )
   )
 ORDER BY created_at ASC, id ASC
-LIMIT $3
+LIMIT $4
 "#;
 const CLEAR_USAGE_HEADER_FIELDS_SQL: &str = r#"
 UPDATE usage
@@ -96,10 +102,11 @@ WHERE request_id = ANY($1)
   AND client_response_body_ref IS NULL
 "#;
 const SELECT_USAGE_STALE_BODY_BATCH_SQL: &str = r#"
-SELECT id, request_id
+SELECT id, request_id, created_at
 FROM usage
 WHERE created_at < $1
-  AND ($2::timestamptz IS NULL OR created_at >= $2)
+  AND created_at >= $2
+  AND (created_at > $2 OR id > $3)
   AND (
     request_body IS NOT NULL
     OR response_body IS NOT NULL
@@ -127,12 +134,14 @@ WHERE created_at < $1
     )
   )
 ORDER BY created_at ASC, id ASC
-LIMIT $3
+LIMIT $4
 "#;
 const SELECT_USAGE_RAW_BODY_BATCH_SQL: &str = r#"
-SELECT id, request_id
+SELECT id, request_id, created_at
 FROM usage
 WHERE created_at < $1
+  AND created_at >= $2
+  AND (created_at > $2 OR id > $3)
   AND (
     request_body IS NOT NULL
     OR response_body IS NOT NULL
@@ -140,7 +149,7 @@ WHERE created_at < $1
     OR client_response_body IS NOT NULL
   )
 ORDER BY created_at ASC, id ASC
-LIMIT $2
+LIMIT $4
 "#;
 const CLEAR_USAGE_RAW_BODY_FIELDS_SQL: &str = r#"
 UPDATE usage
@@ -151,9 +160,11 @@ SET request_body = NULL,
 WHERE id = ANY($1)
 "#;
 const SELECT_USAGE_COMPRESSED_BODY_BATCH_SQL: &str = r#"
-SELECT id, request_id
+SELECT id, request_id, created_at
 FROM usage
 WHERE created_at < $1
+  AND created_at >= $2
+  AND (created_at > $2 OR id > $3)
   AND (
     request_body_compressed IS NOT NULL
     OR response_body_compressed IS NOT NULL
@@ -177,7 +188,7 @@ WHERE created_at < $1
     )
   )
 ORDER BY created_at ASC, id ASC
-LIMIT $2
+LIMIT $4
 "#;
 const CLEAR_USAGE_COMPRESSED_BODY_FIELDS_SQL: &str = r#"
 UPDATE usage
@@ -215,10 +226,12 @@ WHERE request_id = ANY($1)
 "#;
 const SELECT_USAGE_BODY_COMPRESSION_BATCH_SQL: &str = r#"
 SELECT
-    id
+    id,
+    created_at
 FROM usage
 WHERE created_at < $1
-  AND ($2::timestamptz IS NULL OR created_at >= $2)
+  AND created_at >= $2
+  AND (created_at > $2 OR id > $3)
   AND (
     request_body IS NOT NULL
     OR request_body_compressed IS NOT NULL
@@ -230,7 +243,7 @@ WHERE created_at < $1
     OR client_response_body_compressed IS NOT NULL
   )
 ORDER BY created_at ASC, id ASC
-LIMIT $3
+LIMIT $4
 "#;
 const SELECT_USAGE_BODY_COMPRESSION_ROW_SQL: &str = r#"
 SELECT
@@ -336,6 +349,30 @@ pub struct UsageBodyExternalizationPlan {
 struct UsageBodyCleanupRow {
     id: String,
     request_id: String,
+    created_at: DateTime<Utc>,
+}
+
+/// Keyset position over `(created_at, id)` for retention batch scans.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UsageCleanupCursor {
+    created_at: DateTime<Utc>,
+    id: String,
+}
+
+impl UsageCleanupCursor {
+    /// Starts at `lower_bound` (inclusive) or the Unix epoch when the window is open-ended.
+    fn start(lower_bound: Option<DateTime<Utc>>) -> Self {
+        Self {
+            created_at: lower_bound.unwrap_or(DateTime::<Utc>::UNIX_EPOCH),
+            id: String::new(),
+        }
+    }
+
+    fn advance(&mut self, created_at: DateTime<Utc>, id: &str) {
+        self.created_at = created_at;
+        self.id.clear();
+        self.id.push_str(id);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -483,53 +520,77 @@ impl SqlxUsageReadRepository {
             });
         }
 
+        // Stages are independent: a failure in one must not starve the others, so each
+        // stage runs to completion and the first error is reported after all of them.
+        // Body stages run before headers because they reclaim most of the storage.
+        let mut first_error = None;
         let records_deleted = if targets.records {
-            delete_old_usage_records(&self.pool, window.log_cutoff, batch_size).await?
-        } else {
-            0
-        };
-        let header_cleaned = if targets.headers {
-            cleanup_usage_header_fields(
-                &self.pool,
-                window.header_cutoff,
-                batch_size,
-                targets.records.then_some(window.log_cutoff),
+            usage_cleanup_stage_result(
+                "records",
+                delete_old_usage_records(&self.pool, window.log_cutoff, batch_size).await,
+                &mut first_error,
             )
-            .await?
         } else {
             0
         };
         let body_cleaned = if targets.compressed_body {
-            cleanup_usage_stale_body_fields(
-                &self.pool,
-                window.compressed_cutoff,
-                batch_size,
-                targets.records.then_some(window.log_cutoff),
+            usage_cleanup_stage_result(
+                "compressed_body",
+                cleanup_usage_stale_body_fields(
+                    &self.pool,
+                    window.compressed_cutoff,
+                    batch_size,
+                    targets.records.then_some(window.log_cutoff),
+                )
+                .await,
+                &mut first_error,
             )
-            .await?
         } else {
             0
         };
         let detail_body_newer_than = detail_body_newer_than(window, targets);
         let legacy_body_refs_migrated = if targets.detail_body {
-            migrate_legacy_usage_body_ref_metadata(
-                &self.pool,
-                window.detail_cutoff,
-                batch_size,
-                detail_body_newer_than,
+            usage_cleanup_stage_result(
+                "legacy_body_refs",
+                migrate_legacy_usage_body_ref_metadata(
+                    &self.pool,
+                    window.detail_cutoff,
+                    batch_size,
+                    detail_body_newer_than,
+                )
+                .await,
+                &mut first_error,
             )
-            .await?
         } else {
             0
         };
         let body_externalized = if targets.detail_body {
-            compress_usage_body_fields(
-                &self.pool,
-                window.detail_cutoff,
-                batch_size,
-                detail_body_newer_than,
+            usage_cleanup_stage_result(
+                "detail_body",
+                compress_usage_body_fields(
+                    &self.pool,
+                    window.detail_cutoff,
+                    batch_size,
+                    detail_body_newer_than,
+                )
+                .await,
+                &mut first_error,
             )
-            .await?
+        } else {
+            0
+        };
+        let header_cleaned = if targets.headers {
+            usage_cleanup_stage_result(
+                "headers",
+                cleanup_usage_header_fields(
+                    &self.pool,
+                    window.header_cutoff,
+                    batch_size,
+                    targets.records.then_some(window.log_cutoff),
+                )
+                .await,
+                &mut first_error,
+            )
         } else {
             0
         };
@@ -544,6 +605,9 @@ impl SqlxUsageReadRepository {
         } else {
             0
         };
+        if let Some(err) = first_error {
+            return Err(err);
+        }
 
         Ok(UsageCleanupSummary {
             body_externalized,
@@ -555,6 +619,25 @@ impl SqlxUsageReadRepository {
             cost_reservations_deleted: 0,
             request_admissions_deleted: 0,
         })
+    }
+}
+
+fn usage_cleanup_stage_result(
+    stage: &'static str,
+    result: Result<usize, DataLayerError>,
+    first_error: &mut Option<DataLayerError>,
+) -> usize {
+    match result {
+        Ok(count) => count,
+        Err(err) => {
+            warn!(
+                stage,
+                error = %err,
+                "usage cleanup stage failed; continuing with remaining stages"
+            );
+            first_error.get_or_insert(err);
+            0
+        }
     }
 }
 
@@ -639,11 +722,13 @@ async fn cleanup_usage_raw_body_fields(
     batch_size: usize,
 ) -> Result<usize, DataLayerError> {
     let mut total_cleaned = 0usize;
+    let mut cursor = UsageCleanupCursor::start(None);
     loop {
         let rows = fetch_usage_body_cleanup_rows(
             pool,
             SELECT_USAGE_RAW_BODY_BATCH_SQL,
             cutoff_time,
+            &mut cursor,
             batch_size,
         )
         .await?;
@@ -713,11 +798,13 @@ async fn cleanup_usage_compressed_body_fields(
         );
     }
     let mut total_cleaned = 0usize;
+    let mut cursor = UsageCleanupCursor::start(None);
     loop {
         let rows = fetch_usage_body_cleanup_rows(
             pool,
             SELECT_USAGE_COMPRESSED_BODY_BATCH_SQL,
             cutoff_time,
+            &mut cursor,
             batch_size,
         )
         .await?;
@@ -760,14 +847,18 @@ async fn cleanup_usage_compressed_body_fields(
     Ok(total_cleaned)
 }
 
+/// Fetches the next keyset batch and advances `cursor` past the last returned row.
 async fn fetch_usage_body_cleanup_rows(
     pool: &PostgresPool,
     sql: &str,
     cutoff_time: DateTime<Utc>,
+    cursor: &mut UsageCleanupCursor,
     batch_size: usize,
 ) -> Result<Vec<UsageBodyCleanupRow>, DataLayerError> {
     let rows = sqlx::query(sql)
         .bind(cutoff_time)
+        .bind(cursor.created_at)
+        .bind(cursor.id.as_str())
         .bind(i64::try_from(batch_size).unwrap_or(i64::MAX))
         .fetch_all(pool)
         .await
@@ -779,9 +870,15 @@ async fn fetch_usage_body_cleanup_rows(
                 request_id: row
                     .try_get::<String, _>("request_id")
                     .map_err(postgres_error)?,
+                created_at: row
+                    .try_get::<DateTime<Utc>, _>("created_at")
+                    .map_err(postgres_error)?,
             })
         })
         .collect::<Result<Vec<_>, DataLayerError>>()?;
+    if let Some(last) = rows.last() {
+        cursor.advance(last.created_at, &last.id);
+    }
     Ok(rows)
 }
 
@@ -1035,33 +1132,41 @@ async fn migrate_legacy_usage_body_ref_metadata(
     }
 
     let mut total_migrated = 0usize;
+    let mut cursor = UsageCleanupCursor::start(newer_than);
     loop {
         let rows = sqlx::query(SELECT_USAGE_LEGACY_BODY_REF_METADATA_BATCH_SQL)
             .bind(cutoff_time)
-            .bind(newer_than)
+            .bind(cursor.created_at)
+            .bind(cursor.id.as_str())
             .bind(i64::try_from(batch_size).unwrap_or(i64::MAX))
             .fetch_all(pool)
             .await
             .map_err(postgres_error)?
             .into_iter()
             .map(|row| {
-                Ok(UsageLegacyBodyRefMetadataRow {
-                    id: row.try_get::<String, _>("id").map_err(postgres_error)?,
-                    request_id: row
-                        .try_get::<String, _>("request_id")
+                Ok((
+                    UsageLegacyBodyRefMetadataRow {
+                        id: row.try_get::<String, _>("id").map_err(postgres_error)?,
+                        request_id: row
+                            .try_get::<String, _>("request_id")
+                            .map_err(postgres_error)?,
+                        request_metadata: row
+                            .try_get::<Option<Value>, _>("request_metadata")
+                            .map_err(postgres_error)?,
+                    },
+                    row.try_get::<DateTime<Utc>, _>("created_at")
                         .map_err(postgres_error)?,
-                    request_metadata: row
-                        .try_get::<Option<Value>, _>("request_metadata")
-                        .map_err(postgres_error)?,
-                })
+                ))
             })
             .collect::<Result<Vec<_>, DataLayerError>>()?;
-        if rows.is_empty() {
+        let Some((last_row, last_created_at)) = rows.last() else {
             break;
-        }
+        };
+        cursor.advance(*last_created_at, &last_row.id);
+        let fetched = rows.len();
 
         let mut batch_migrated = 0usize;
-        for row in rows {
+        for (row, _) in rows {
             let mut tx = pool.begin().await.map_err(postgres_error)?;
             let current_metadata = sqlx::query_scalar::<_, Option<Value>>(
                 "SELECT request_metadata FROM usage WHERE id = $1 FOR UPDATE",
@@ -1101,7 +1206,9 @@ async fn migrate_legacy_usage_body_ref_metadata(
         }
 
         total_migrated += batch_migrated;
-        if batch_migrated == 0 || batch_migrated < batch_size {
+        // Stop on a short page, not on a batch with zero migrations: skipped rows are
+        // already behind the cursor and must not end the sweep early.
+        if fetched < batch_size {
             break;
         }
     }
@@ -1125,21 +1232,16 @@ async fn cleanup_usage_header_fields(
     }
 
     let mut total_cleaned = 0usize;
+    let mut cursor = UsageCleanupCursor::start(newer_than);
     loop {
-        let mut stream = sqlx::query(SELECT_USAGE_HEADER_BATCH_SQL)
-            .bind(cutoff_time)
-            .bind(newer_than)
-            .bind(i64::try_from(batch_size).unwrap_or(i64::MAX))
-            .fetch(pool);
-        let mut rows = Vec::new();
-        while let Some(row) = stream.try_next().await.map_err(postgres_error)? {
-            rows.push(UsageBodyCleanupRow {
-                id: row.try_get::<String, _>("id").map_err(postgres_error)?,
-                request_id: row
-                    .try_get::<String, _>("request_id")
-                    .map_err(postgres_error)?,
-            });
-        }
+        let rows = fetch_usage_body_cleanup_rows(
+            pool,
+            SELECT_USAGE_HEADER_BATCH_SQL,
+            cutoff_time,
+            &mut cursor,
+            batch_size,
+        )
+        .await?;
         if rows.is_empty() {
             break;
         }
@@ -1190,21 +1292,16 @@ async fn cleanup_usage_stale_body_fields(
     }
 
     let mut total_cleaned = 0usize;
+    let mut cursor = UsageCleanupCursor::start(newer_than);
     loop {
-        let mut stream = sqlx::query(SELECT_USAGE_STALE_BODY_BATCH_SQL)
-            .bind(cutoff_time)
-            .bind(newer_than)
-            .bind(i64::try_from(batch_size).unwrap_or(i64::MAX))
-            .fetch(pool);
-        let mut rows = Vec::new();
-        while let Some(row) = stream.try_next().await.map_err(postgres_error)? {
-            rows.push(UsageBodyCleanupRow {
-                id: row.try_get::<String, _>("id").map_err(postgres_error)?,
-                request_id: row
-                    .try_get::<String, _>("request_id")
-                    .map_err(postgres_error)?,
-            });
-        }
+        let rows = fetch_usage_body_cleanup_rows(
+            pool,
+            SELECT_USAGE_STALE_BODY_BATCH_SQL,
+            cutoff_time,
+            &mut cursor,
+            batch_size,
+        )
+        .await?;
         if rows.is_empty() {
             break;
         }
@@ -1260,21 +1357,30 @@ async fn compress_usage_body_fields(
     }
 
     let mut total_compressed = 0usize;
-    let mut no_progress_count = 0usize;
     let batch_size = batch_size.clamp(1, 25);
+    let mut cursor = UsageCleanupCursor::start(newer_than);
     loop {
         let mut stream = sqlx::query(SELECT_USAGE_BODY_COMPRESSION_BATCH_SQL)
             .bind(cutoff_time)
-            .bind(newer_than)
+            .bind(cursor.created_at)
+            .bind(cursor.id.as_str())
             .bind(i64::try_from(batch_size).unwrap_or(i64::MAX))
             .fetch(pool);
         let mut ids = Vec::new();
+        let mut last_created_at = None;
         while let Some(row) = stream.try_next().await.map_err(postgres_error)? {
             ids.push(row.try_get::<String, _>("id").map_err(postgres_error)?);
+            last_created_at = Some(
+                row.try_get::<DateTime<Utc>, _>("created_at")
+                    .map_err(postgres_error)?,
+            );
         }
-        if ids.is_empty() {
+        drop(stream);
+        let (Some(last_id), Some(last_created_at)) = (ids.last(), last_created_at) else {
             break;
-        }
+        };
+        cursor.advance(last_created_at, last_id);
+        let fetched = ids.len();
 
         let mut batch_success = 0usize;
         for id in ids {
@@ -1364,18 +1470,10 @@ async fn compress_usage_body_fields(
             }
         }
 
-        if batch_success == 0 {
-            no_progress_count += 1;
-            if no_progress_count >= 3 {
-                warn!(
-                    "usage cleanup body compression stopped after repeated zero-progress batches"
-                );
-                break;
-            }
-        } else {
-            no_progress_count = 0;
-        }
         total_compressed += batch_success;
+        if fetched < batch_size {
+            break;
+        }
     }
     Ok(total_compressed)
 }
@@ -1798,6 +1896,114 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(usage_count, 8);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires AETHER_TEST_DATABASE_URL and PostgreSQL migrations"]
+    async fn live_retention_keyset_sweeps_clean_every_row_sharing_a_timestamp() {
+        use aether_data_contracts::repository::usage::{usage_body_ref, UsageBodyField};
+        use chrono::{Duration, Utc};
+
+        let database_url = std::env::var("AETHER_TEST_DATABASE_URL")
+            .expect("AETHER_TEST_DATABASE_URL must point at the test database");
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&database_url)
+            .await
+            .expect("test database should connect");
+        crate::run_migrations(&pool)
+            .await
+            .expect("test database should migrate");
+        for table in ["usage", "usage_body_blobs", "usage_http_audits"] {
+            sqlx::query(&format!(
+                "CREATE TEMP TABLE {table} (LIKE public.{table} INCLUDING ALL)"
+            ))
+            .execute(&pool)
+            .await
+            .expect("isolated table should be created");
+        }
+        let now = Utc::now();
+        // Already-clean rows are interleaved before dirty rows with the exact same
+        // timestamp; batch size 1 forces the keyset tie-break on `id` for every page.
+        let stale_at = now - Duration::days(40);
+        let header_at = now - Duration::days(100);
+        for (index, dirty) in [false, true, false, true, true].into_iter().enumerate() {
+            for (prefix, created_at) in [("body", stale_at), ("header", header_at)] {
+                let request_id = format!("{prefix}-{index}");
+                sqlx::query(
+                    "INSERT INTO usage (id, request_id, provider_name, model, created_at) VALUES ($1, $2, 'test', 'test', $3)",
+                )
+                .bind(format!("{prefix}-id-{index}"))
+                .bind(&request_id)
+                .bind(created_at)
+                .execute(&pool)
+                .await
+                .expect("usage should be seeded");
+                if !dirty {
+                    continue;
+                }
+                if prefix == "body" {
+                    let field = UsageBodyField::RequestBody;
+                    sqlx::query(super::super::UPSERT_USAGE_BODY_BLOB_SQL)
+                        .bind(usage_body_ref(&request_id, field))
+                        .bind(&request_id)
+                        .bind(field.as_storage_field())
+                        .bind(compress_usage_json_value(&json!({"big": index})).unwrap())
+                        .execute(&pool)
+                        .await
+                        .expect("detached body should be seeded");
+                } else {
+                    sqlx::query("UPDATE usage SET request_headers = $1 WHERE request_id = $2")
+                        .bind(json!({"authorization": "redacted"}))
+                        .bind(&request_id)
+                        .execute(&pool)
+                        .await
+                        .expect("headers should be seeded");
+                }
+            }
+        }
+
+        let window = super::UsageCleanupWindow {
+            detail_cutoff: now - Duration::days(7),
+            compressed_cutoff: now - Duration::days(30),
+            header_cutoff: now - Duration::days(90),
+            log_cutoff: now - Duration::days(365),
+        };
+        let summary = super::SqlxUsageReadRepository::new(pool.clone())
+            .cleanup_usage(
+                &window,
+                1,
+                false,
+                super::UsageCleanupTargets::all_policy_targets(),
+                super::UsageCleanupExecutionMode::Policy,
+            )
+            .await
+            .expect("retention cleanup should succeed");
+        assert_eq!(summary.body_cleaned, 3);
+        assert_eq!(summary.header_cleaned, 3);
+        assert_eq!(summary.records_deleted, 0);
+
+        let blobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM usage_body_blobs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(blobs, 0);
+        let headers: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM usage WHERE request_headers IS NOT NULL")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(headers, 0);
+        let preview = super::preview_usage_cleanup_impl(
+            &pool,
+            &window,
+            super::UsageCleanupTargets::all_policy_targets(),
+            super::UsageCleanupExecutionMode::Policy,
+        )
+        .await
+        .expect("cleanup preview should succeed");
+        assert_eq!(preview.compressed, 0);
+        assert_eq!(preview.header, 0);
     }
 
     fn inflate_json(bytes: &[u8]) -> serde_json::Value {

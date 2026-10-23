@@ -164,7 +164,15 @@ const DB_MAINTENANCE_WEEKDAY: Weekday = Weekday::Sun;
 const DB_MAINTENANCE_HOUR: u32 = 5;
 const DB_MAINTENANCE_MINUTE: u32 = 0;
 const MAINTENANCE_DEFAULT_TIMEZONE: &str = "Asia/Shanghai";
-const DB_MAINTENANCE_TABLES: &[&str] = &["usage", "request_candidates", "audit_logs"];
+// usage_body_blobs/usage_http_audits hold the detached request/response bodies; vacuum them
+// so space freed by the retention sweeps becomes reusable promptly.
+const DB_MAINTENANCE_TABLES: &[&str] = &[
+    "usage",
+    "usage_body_blobs",
+    "usage_http_audits",
+    "request_candidates",
+    "audit_logs",
+];
 const MAX_ADMIN_STATS_REBUILD_BUCKETS: usize = 100_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

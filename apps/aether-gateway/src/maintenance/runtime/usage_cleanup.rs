@@ -3,6 +3,7 @@ use aether_data_contracts::repository::usage::{
 };
 use aether_data_contracts::DataLayerError;
 use chrono::Utc;
+use tracing::warn;
 
 use crate::data::GatewayDataState;
 
@@ -70,14 +71,36 @@ pub(super) async fn perform_usage_cleanup_once(
 pub(super) async fn perform_automatic_usage_cleanup_once(
     data: &GatewayDataState,
 ) -> Result<UsageCleanupSummary, DataLayerError> {
-    let mut summary = perform_usage_cleanup_once(data).await?;
-    cleanup_usage_policy_ledgers(data, &mut summary).await?;
+    // Each cleanup family is independent; a failure in one must not skip the others.
+    let mut first_error = None;
+    let mut summary = match perform_usage_cleanup_once(data).await {
+        Ok(summary) => summary,
+        Err(err) => {
+            warn!(error = %err, "automatic usage record cleanup failed; continuing");
+            first_error = Some(err);
+            UsageCleanupSummary::default()
+        }
+    };
+    if let Err(err) = cleanup_usage_policy_ledgers(data, &mut summary).await {
+        warn!(error = %err, "automatic usage policy ledger cleanup failed; continuing");
+        first_error.get_or_insert(err);
+    }
+    if let Err(err) = cleanup_provider_key_task_events(data).await {
+        warn!(error = %err, "automatic provider key task event cleanup failed");
+        first_error.get_or_insert(err);
+    }
+    match first_error {
+        Some(err) => Err(err),
+        None => Ok(summary),
+    }
+}
+
+async fn cleanup_provider_key_task_events(data: &GatewayDataState) -> Result<(), DataLayerError> {
     let window = compute_usage_cleanup_window(data, ManualUsageCleanupMode::Policy, None).await?;
     let cutoff_unix_secs = u64::try_from(window.log_cutoff.timestamp().max(0)).unwrap_or(0);
-    let _ = data
-        .delete_provider_key_task_events_before(cutoff_unix_secs)
+    data.delete_provider_key_task_events_before(cutoff_unix_secs)
         .await?;
-    Ok(summary)
+    Ok(())
 }
 
 pub(super) async fn perform_usage_cleanup_once_with_override(
