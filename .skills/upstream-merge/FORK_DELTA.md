@@ -772,7 +772,8 @@ frontend/src/views/admin/PoolManagement.vue
 5. **OAuth Token 自动刷新控制与可观测性**
    - 外部契约：全局配置（`enable_oauth_token_refresh` 等 6 键）与 Provider 覆盖、双层限流信号量、代理覆盖、每账号事件（refreshed/checked/skipped/failed）、后台任务事件 `order=desc`。
    - 关键文件：`apps/aether-gateway/src/maintenance/runtime/oauth_token_refresh.rs`、`state/oauth.rs`、`task_runtime/mod.rs`、`crates/aether-data/**/background_tasks.rs`。
-   - 合并规则：保持全局/Provider 扫描间隔与限流契约；后台任务事件 API 保持 `order=desc` 排序；账号事件详见第 7 项独立存储。
+   - 刷新可观测性（2026-10-23 `aeb063c36`）：任何路径成功持久化刷新（`auto` 后台续期、`request` 请求触发、`manual` 手动/额度查询/401 重试）都写 `upstream_metadata.aether_oauth_refresh {last_refreshed_at, source}`，号池 key payload 暴露 `oauth_last_refreshed_at/_source`，账号卡片显示"上次刷新"；扫描汇总拆分 `not_due`（未进入提前刷新窗口）、`deferred`（到期但超本轮上限，仍计数）、`skipped`（不可刷新），两个新计数已加入 `background_tasks` 纯计数白名单。
+   - 合并规则：保持全局/Provider 扫描间隔与限流契约；后台任务事件 API 保持 `order=desc` 排序；账号事件详见第 7 项独立存储；上游改 `persist_local_oauth_refresh_entry` 或 OAuth CAS 写入时必须保留 `aether_oauth_refresh` 元数据 patch。
 
 6. **号池调度不变量**
    - 外部契约：cache-affinity 命中提升 pool group priority 到最高、routed policy 继承 `keep_priority_on_conversion`、`probing_enabled` 关闭时不显示虚假热池指标、模型测试候选顺序 `scheduled.chain(skipped)`。
