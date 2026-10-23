@@ -489,6 +489,8 @@ pub(super) async fn maybe_build_local_admin_background_tasks_response(
                                     "eligible": summary.eligible,
                                     "resolved": summary.resolved,
                                     "refreshed": summary.refreshed,
+                                    "not_due": summary.not_due,
+                                    "deferred": summary.deferred,
                                     "skipped": summary.skipped,
                                     "failed": summary.failed,
                                 })

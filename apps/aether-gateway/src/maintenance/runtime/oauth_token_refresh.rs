@@ -242,6 +242,7 @@ async fn oauth_token_refresh_provider_scan_due(
     provider_config: &OAuthTokenRefreshProviderConfig,
     now_ts: u64,
     invocation: OAuthTokenRefreshInvocation,
+    record_scan: bool,
 ) -> bool {
     let Some(interval) = provider_config.scan_interval else {
         return true;
@@ -257,6 +258,9 @@ async fn oauth_token_refresh_provider_scan_due(
         .unwrap_or_default();
     if !oauth_token_refresh_scan_is_due(last_scan, interval, now_ts, invocation) {
         return false;
+    }
+    if !record_scan {
+        return true;
     }
     let ttl = interval
         .checked_mul(2)
@@ -289,8 +293,19 @@ pub(crate) struct OAuthTokenRefreshRunSummary {
     pub(crate) eligible: usize,
     pub(crate) refreshed: usize,
     pub(crate) resolved: usize,
+    /// Refreshable keys whose token is still outside the lookahead window.
+    pub(crate) not_due: usize,
+    /// Due keys left for a later run because the per-run/per-provider limit was reached.
+    pub(crate) deferred: usize,
+    /// Keys that cannot be refreshed (inactive, invalid, no refresh token) or whose refresh did not run.
     pub(crate) skipped: usize,
     pub(crate) failed: usize,
+}
+
+enum OAuthTokenRefreshInspection {
+    Candidate(Box<OAuthTokenRefreshCandidate>),
+    NotDue,
+    Ineligible,
 }
 
 struct OAuthTokenRefreshCandidate {
@@ -663,10 +678,7 @@ async fn collect_refresh_candidates(
     let mut remaining_this_run = config.max_per_run;
     let mut candidates = Vec::<OAuthTokenRefreshCandidate>::new();
 
-    'providers: for provider in &catalog.providers {
-        if remaining_this_run == 0 {
-            break;
-        }
+    for provider in &catalog.providers {
         let provider_config = OAuthTokenRefreshProviderConfig::from_provider_config(
             config,
             &provider.provider_type,
@@ -679,6 +691,9 @@ async fn collect_refresh_candidates(
                 &provider_config,
                 now_ts,
                 invocation,
+                // A provider reached after the run budget is spent is only counted;
+                // leave its cadence stamp untouched so the next run still refreshes it.
+                remaining_this_run > 0,
             )
             .await
         {
@@ -698,6 +713,8 @@ async fn collect_refresh_candidates(
         let provider_limit = provider_config.max_per_run.min(remaining_this_run);
         let mut provider_selected = 0usize;
 
+        // Keep scanning past the run limit so the summary reports every due key
+        // (selected now or deferred) instead of silently stopping the count.
         for key in provider_keys {
             summary.scanned = summary.scanned.saturating_add(1);
             match inspect_refresh_candidate(
@@ -710,19 +727,20 @@ async fn collect_refresh_candidates(
             )
             .await?
             {
-                Some(candidate) => {
+                OAuthTokenRefreshInspection::Candidate(candidate) => {
                     summary.eligible = summary.eligible.saturating_add(1);
-                    candidates.push(candidate);
+                    if remaining_this_run == 0 || provider_selected >= provider_limit {
+                        summary.deferred = summary.deferred.saturating_add(1);
+                        continue;
+                    }
+                    candidates.push(*candidate);
                     provider_selected = provider_selected.saturating_add(1);
                     remaining_this_run = remaining_this_run.saturating_sub(1);
-                    if remaining_this_run == 0 {
-                        break 'providers;
-                    }
-                    if provider_selected >= provider_limit {
-                        break;
-                    }
                 }
-                None => {
+                OAuthTokenRefreshInspection::NotDue => {
+                    summary.not_due = summary.not_due.saturating_add(1);
+                }
+                OAuthTokenRefreshInspection::Ineligible => {
                     summary.skipped = summary.skipped.saturating_add(1);
                 }
             }
@@ -739,16 +757,16 @@ async fn inspect_refresh_candidate(
     provider_config: &OAuthTokenRefreshProviderConfig,
     key: &StoredProviderCatalogKey,
     refresh_cutoff_unix_secs: u64,
-) -> Result<Option<OAuthTokenRefreshCandidate>, GatewayError> {
+) -> Result<OAuthTokenRefreshInspection, GatewayError> {
     if !oauth_refresh_candidate(provider, key) {
-        return Ok(None);
+        return Ok(OAuthTokenRefreshInspection::Ineligible);
     }
 
     let Some(endpoint) = provider_oauth_maintenance_endpoint_for_provider(
         &provider.provider_type,
         provider_endpoints,
     ) else {
-        return Ok(None);
+        return Ok(OAuthTokenRefreshInspection::Ineligible);
     };
 
     let transport = match state
@@ -756,7 +774,7 @@ async fn inspect_refresh_candidate(
         .await
     {
         Ok(Some(transport)) => transport,
-        Ok(None) => return Ok(None),
+        Ok(None) => return Ok(OAuthTokenRefreshInspection::Ineligible),
         Err(err) if is_nonfatal_legacy_catalog_credential_error(&err) => {
             // Keep malformed historical credentials untouched. They
             // are intentionally skipped while other keys continue.
@@ -769,7 +787,7 @@ async fn inspect_refresh_candidate(
                 reason = "invalid_stored_credential",
                 "gateway skipped oauth refresh for an invalid stored credential"
             );
-            return Ok(None);
+            return Ok(OAuthTokenRefreshInspection::Ineligible);
         }
         Err(err) => return Err(err),
     };
@@ -783,25 +801,27 @@ async fn inspect_refresh_candidate(
             key.oauth_invalid_reason.as_deref(),
         );
     if !needs_agent_task_recovery && !auth_config_has_refresh_token(decrypted_auth_config) {
-        return Ok(None);
+        return Ok(OAuthTokenRefreshInspection::Ineligible);
     }
     if !needs_agent_task_recovery
         && !oauth_refresh_due_for_cutoff(key, decrypted_auth_config, refresh_cutoff_unix_secs)
     {
-        return Ok(None);
+        return Ok(OAuthTokenRefreshInspection::NotDue);
     }
 
-    Ok(Some(OAuthTokenRefreshCandidate {
-        provider_id: provider.id.clone(),
-        provider_name: provider.name.clone(),
-        provider_type: provider.provider_type.clone(),
-        key_id: key.id.clone(),
-        key_name: key.name.clone(),
-        key: key.clone(),
-        transport,
-        proxy_node_id_override: provider_config.proxy_node_id_override.clone(),
-        provider_concurrency: provider_config.concurrency,
-    }))
+    Ok(OAuthTokenRefreshInspection::Candidate(Box::new(
+        OAuthTokenRefreshCandidate {
+            provider_id: provider.id.clone(),
+            provider_name: provider.name.clone(),
+            provider_type: provider.provider_type.clone(),
+            key_id: key.id.clone(),
+            key_name: key.name.clone(),
+            key: key.clone(),
+            transport,
+            proxy_node_id_override: provider_config.proxy_node_id_override.clone(),
+            provider_concurrency: provider_config.concurrency,
+        },
+    )))
 }
 
 async fn execute_refresh_candidates(
@@ -978,6 +998,8 @@ async fn record_run_completion(
         eligible = summary.eligible,
         refreshed = summary.refreshed,
         resolved = summary.resolved,
+        not_due = summary.not_due,
+        deferred = summary.deferred,
         skipped = summary.skipped,
         failed = summary.failed,
         "gateway completed oauth token auto refresh scan"
@@ -993,6 +1015,8 @@ async fn record_run_completion(
                 "eligible": summary.eligible,
                 "resolved": summary.resolved,
                 "refreshed": summary.refreshed,
+                "not_due": summary.not_due,
+                "deferred": summary.deferred,
                 "skipped": summary.skipped,
                 "failed": summary.failed,
                 "lookahead_seconds": config.lookahead_seconds,
@@ -1620,6 +1644,18 @@ mod tests {
         .expect("second refreshed api key should decrypt")
         .plaintext;
         assert_eq!(second_access_token, "scheduled-access-token-2");
+        let refresh_stamp = second_key
+            .upstream_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get(crate::state::OAUTH_REFRESH_METADATA_NAMESPACE))
+            .expect("successful refresh should stamp upstream metadata");
+        assert_eq!(refresh_stamp["source"], "auto");
+        assert!(
+            refresh_stamp["last_refreshed_at"]
+                .as_u64()
+                .is_some_and(|value| value > 0),
+            "refresh stamp should carry a unix timestamp"
+        );
 
         let runs = observer
             .list_background_task_runs(&BackgroundTaskListQuery {

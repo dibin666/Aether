@@ -7,6 +7,9 @@
  * - GET /api/admin/tasks/{task_key}/account-events 的最近一条账号事件，
  *   说明上一轮实际发生了什么。账号明细不在 background_tasks 里，上游加固会把
  *   标识符和自由文本剥掉，所以只能走 fork 自己的事件表。
+ * - 号池 key payload 的 oauth_last_refreshed_at / oauth_last_refresh_source，
+ *   记录任何路径（自动续期、请求触发、手动/额度查询/401 重试）最近一次成功刷新。
+ *   自动续期事件只覆盖后台扫描，不能单独代表“上次刷新”。
  */
 
 export type OAuthRefreshEnabledSource = 'explicit' | 'type_default'
@@ -22,6 +25,9 @@ export interface OAuthAutoRefreshInput {
   effectiveEnabled?: boolean | null
   enabledSource?: string | null
   latestEvent?: OAuthAutoRefreshEvent | null
+  /** 最近一次成功刷新（Unix 秒），来自 key payload。 */
+  lastRefreshedAt?: number | null
+  lastRefreshSource?: string | null
 }
 
 export type OAuthAutoRefreshTone = 'muted' | 'ok' | 'warn' | 'error'
@@ -49,12 +55,50 @@ const STATUS_TONES: Record<string, OAuthAutoRefreshTone> = {
   failed: 'error',
 }
 
+const REFRESH_SOURCE_LABELS: Record<string, string> = {
+  auto: '自动续期',
+  request: '请求触发',
+  manual: '手动/按需刷新',
+}
+
 /** 与 PoolManagement.vue 里账号行其他时间列保持同一格式（MM-DD hh:mm）。 */
-function formatEventTime(isoStr: string): string {
-  const date = new Date(isoStr)
+function formatDateTime(date: Date): string {
   if (Number.isNaN(date.getTime())) return ''
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function formatEventTime(isoStr: string): string {
+  return formatDateTime(new Date(isoStr))
+}
+
+function eventTimeMs(event: OAuthAutoRefreshEvent): number | null {
+  const ms = new Date(event.created_at).getTime()
+  return Number.isNaN(ms) ? null : ms
+}
+
+/** 取 payload 记录与“已刷新”事件里更新的一次，作为上次成功刷新。 */
+function resolveLastRefresh(
+  input: OAuthAutoRefreshInput,
+): { ms: number; source: string | null } | null {
+  const payloadMs = typeof input.lastRefreshedAt === 'number' && input.lastRefreshedAt > 0
+    ? input.lastRefreshedAt * 1000
+    : null
+  const event = input.latestEvent
+  const eventMs = event && event.status.trim().toLowerCase() === 'refreshed'
+    ? eventTimeMs(event)
+    : null
+  if (payloadMs !== null && (eventMs === null || payloadMs >= eventMs)) {
+    return { ms: payloadMs, source: input.lastRefreshSource ?? null }
+  }
+  if (eventMs !== null) return { ms: eventMs, source: 'auto' }
+  return null
+}
+
+function lastRefreshTitle(lastRefresh: { ms: number; source: string | null }): string {
+  const time = formatDateTime(new Date(lastRefresh.ms))
+  const source = lastRefresh.source ? REFRESH_SOURCE_LABELS[lastRefresh.source] : ''
+  return source ? `上次刷新 ${time}（${source}）` : `上次刷新 ${time}`
 }
 
 function disabledTitle(source: string | null | undefined): string {
@@ -78,17 +122,45 @@ export function buildOAuthAutoRefreshDisplay(
   }
 
   const source = input.enabledSource ?? null
+  const lastRefresh = resolveLastRefresh(input)
+  const lastRefreshText = lastRefresh ? `上次刷新 ${formatDateTime(new Date(lastRefresh.ms))}` : ''
 
   if (!input.effectiveEnabled) {
-    return { show: true, text: '自动续期关闭', title: disabledTitle(source), tone: 'muted' }
+    return {
+      show: true,
+      text: lastRefreshText ? `自动续期关闭 · ${lastRefreshText}` : '自动续期关闭',
+      title: [disabledTitle(source), lastRefresh ? lastRefreshTitle(lastRefresh) : '']
+        .filter(Boolean)
+        .join('；'),
+      tone: 'muted',
+    }
   }
 
   const event = input.latestEvent
+  const eventMs = event ? eventTimeMs(event) : null
+  const eventIsNewerFailure = Boolean(
+    event
+      && event.status.trim().toLowerCase() === 'failed'
+      && (!lastRefresh || (eventMs !== null && eventMs > lastRefresh.ms)),
+  )
+  // 成功刷新之后没有更新的失败时，直接显示上次刷新时间（不论由哪条路径刷新）。
+  if (lastRefresh && !eventIsNewerFailure) {
+    const detail = event ? [event.message, event.reason].filter(Boolean).join(' · ') : ''
+    return {
+      show: true,
+      text: `自动续期已开 · ${lastRefreshText}`,
+      title: [enabledTitle(source), lastRefreshTitle(lastRefresh), detail]
+        .filter(Boolean)
+        .join('；'),
+      tone: 'ok',
+    }
+  }
+
   if (!event) {
     return {
       show: true,
       text: '自动续期已开',
-      title: `${enabledTitle(source)}；暂无账号续期记录`,
+      title: `${enabledTitle(source)}；暂无刷新记录`,
       tone: 'muted',
     }
   }
@@ -101,7 +173,9 @@ export function buildOAuthAutoRefreshDisplay(
   return {
     show: true,
     text: time ? `${label} ${time}` : label,
-    title: [enabledTitle(source), detail].filter(Boolean).join('；'),
+    title: [enabledTitle(source), detail, lastRefresh ? lastRefreshTitle(lastRefresh) : '']
+      .filter(Boolean)
+      .join('；'),
     tone: STATUS_TONES[status] ?? 'muted',
   }
 }

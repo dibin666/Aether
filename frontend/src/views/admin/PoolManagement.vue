@@ -2230,6 +2230,8 @@ const keyUiStateMap = computed<Record<string, PoolKeyUiState>>(() => {
         effectiveEnabled: key.oauth_token_refresh_effective_enabled,
         enabledSource: key.oauth_token_refresh_enabled_source,
         latestEvent: latestRefreshEventMap.value[key.key_id] ?? null,
+        lastRefreshedAt: key.oauth_last_refreshed_at ?? null,
+        lastRefreshSource: key.oauth_last_refresh_source ?? null,
       }),
       statsDisplay: buildPoolStatsDisplay(key, selectedProviderType.value, 'current_cycle'),
       mobileTagItems: getMobileTagItems(key),

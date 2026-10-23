@@ -33,13 +33,13 @@ describe('buildOAuthAutoRefreshDisplay', () => {
       enabledSource: 'type_default',
     })
     expect(display.text).toBe('自动续期已开')
-    expect(display.title).toContain('暂无账号续期记录')
+    expect(display.title).toContain('暂无刷新记录')
   })
 
   it('maps the latest account event status to text and tone', () => {
     const at = '2026-09-09T02:05:00Z'
     const cases: Array<[string, string, string]> = [
-      ['refreshed', '已刷新', 'ok'],
+      ['refreshed', '自动续期已开 · 上次刷新', 'ok'],
       ['checked', '已检查', 'muted'],
       ['skipped', '已跳过', 'warn'],
       ['failed', '刷新失败', 'error'],
@@ -85,6 +85,62 @@ describe('buildOAuthAutoRefreshDisplay', () => {
       latestEvent: { status: 'refreshed', created_at: 'not-a-date' },
     })
     expect(display.text).toBe('已刷新')
+  })
+})
+
+describe('buildOAuthAutoRefreshDisplay last refresh', () => {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const localText = (unixSecs: number) => {
+    const d = new Date(unixSecs * 1000)
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+
+  it('shows the last refresh from any path even when the worker only checked', () => {
+    const refreshedAt = Date.UTC(2026, 9, 23, 6, 30) / 1000
+    const display = buildOAuthAutoRefreshDisplay({
+      effectiveEnabled: true,
+      enabledSource: 'type_default',
+      lastRefreshedAt: refreshedAt,
+      lastRefreshSource: 'request',
+      latestEvent: { status: 'checked', created_at: '2026-10-20T00:00:00Z' },
+    })
+    expect(display.text).toBe(`自动续期已开 · 上次刷新 ${localText(refreshedAt)}`)
+    expect(display.title).toContain('请求触发')
+    expect(display.tone).toBe('ok')
+  })
+
+  it('prefers a newer worker refresh event over an older payload stamp', () => {
+    const display = buildOAuthAutoRefreshDisplay({
+      effectiveEnabled: true,
+      lastRefreshedAt: Date.UTC(2026, 9, 1) / 1000,
+      lastRefreshSource: 'manual',
+      latestEvent: { status: 'refreshed', created_at: '2026-10-23T06:30:00Z' },
+    })
+    expect(display.text).toBe(
+      `自动续期已开 · 上次刷新 ${localText(Date.UTC(2026, 9, 23, 6, 30) / 1000)}`,
+    )
+    expect(display.title).toContain('自动续期')
+  })
+
+  it('surfaces a failure newer than the last successful refresh', () => {
+    const display = buildOAuthAutoRefreshDisplay({
+      effectiveEnabled: true,
+      lastRefreshedAt: Date.UTC(2026, 9, 1) / 1000,
+      latestEvent: { status: 'failed', created_at: '2026-10-23T06:30:00Z', reason: 'invalid_grant' },
+    })
+    expect(display.text.startsWith('刷新失败')).toBe(true)
+    expect(display.tone).toBe('error')
+    expect(display.title).toContain('上次刷新')
+  })
+
+  it('keeps the last refresh date when auto refresh is disabled', () => {
+    const refreshedAt = Date.UTC(2026, 9, 23, 6, 30) / 1000
+    const display = buildOAuthAutoRefreshDisplay({
+      effectiveEnabled: false,
+      enabledSource: 'explicit',
+      lastRefreshedAt: refreshedAt,
+    })
+    expect(display.text).toBe(`自动续期关闭 · 上次刷新 ${localText(refreshedAt)}`)
   })
 })
 

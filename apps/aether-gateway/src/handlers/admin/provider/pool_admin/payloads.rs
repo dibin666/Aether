@@ -1410,6 +1410,15 @@ pub(super) fn build_admin_pool_key_payload(
     );
     payload.insert("oauth_header_auth".to_string(), json!(oauth_header_auth));
     payload.insert("oauth_expires_at".to_string(), json!(oauth_expires_at));
+    let (oauth_last_refreshed_at, oauth_last_refresh_source) = admin_pool_oauth_last_refresh(key);
+    payload.insert(
+        "oauth_last_refreshed_at".to_string(),
+        json!(oauth_last_refreshed_at),
+    );
+    payload.insert(
+        "oauth_last_refresh_source".to_string(),
+        json!(oauth_last_refresh_source),
+    );
     payload.insert("oauth_invalid_at".to_string(), json!(oauth_invalid_at));
     payload.insert(
         "oauth_invalid_reason".to_string(),
@@ -1634,6 +1643,30 @@ pub(super) fn build_admin_pool_key_payload(
     serde_json::Value::Object(payload)
 }
 
+/// Last successful OAuth credential refresh recorded by any refresh path.
+fn admin_pool_oauth_last_refresh(key: &StoredProviderCatalogKey) -> (Option<u64>, Option<String>) {
+    let Some(bucket) = key
+        .upstream_metadata
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .and_then(|metadata| metadata.get(crate::state::OAUTH_REFRESH_METADATA_NAMESPACE))
+        .and_then(serde_json::Value::as_object)
+    else {
+        return (None, None);
+    };
+    let refreshed_at = bucket
+        .get("last_refreshed_at")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|value| *value > 0);
+    let source = bucket
+        .get("source")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| matches!(*value, "auto" | "manual" | "request"))
+        .map(ToOwned::to_owned);
+    (refreshed_at, refreshed_at.and(source))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1775,6 +1808,43 @@ mod tests {
         assert_eq!(
             admin_pool_build_account_quota("xai", Some(quota_snapshot)),
             Some("剩余 54.0%".to_string())
+        );
+    }
+
+    #[test]
+    fn oauth_last_refresh_reads_stamp_from_any_refresh_path() {
+        let mut key = StoredProviderCatalogKey::new(
+            "k1".to_string(),
+            "p1".to_string(),
+            "key1".to_string(),
+            "oauth".to_string(),
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(admin_pool_oauth_last_refresh(&key), (None, None));
+
+        key.upstream_metadata = Some(json!({
+            "codex": {"plan_type": "free"},
+            crate::state::OAUTH_REFRESH_METADATA_NAMESPACE: {
+                "last_refreshed_at": 1_761_200_000u64,
+                "source": "request",
+            }
+        }));
+        assert_eq!(
+            admin_pool_oauth_last_refresh(&key),
+            (Some(1_761_200_000), Some("request".to_string()))
+        );
+
+        key.upstream_metadata = Some(json!({
+            crate::state::OAUTH_REFRESH_METADATA_NAMESPACE: {
+                "last_refreshed_at": 1_761_200_000u64,
+                "source": "<script>",
+            }
+        }));
+        assert_eq!(
+            admin_pool_oauth_last_refresh(&key),
+            (Some(1_761_200_000), None)
         );
     }
 

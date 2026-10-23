@@ -44,6 +44,7 @@ pub use self::cors::FrontdoorCorsConfig;
 pub(crate) use self::oauth::{
     provider_transport_context_allows_credential_rotation, AgentIdentityAuthConfigFence,
     CodexRuntimeOAuthObservation, ProviderTransportCredentialFence,
+    OAUTH_REFRESH_METADATA_NAMESPACE,
 };
 pub(crate) use self::proxy::{
     decrypt_or_migrate_proxy_tunnel_psk, decrypt_or_migrate_proxy_tunnel_psk_binding,

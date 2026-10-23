@@ -792,6 +792,8 @@ function formatRefreshLogSummary(payload: Record<string, unknown>): string {
   appendPayloadCount(parts, payload, 'succeeded', '成功')
   appendPayloadCount(parts, payload, 'failed', '失败')
   appendPayloadCount(parts, payload, 'auto_removed', '自动删除')
+  appendPayloadCount(parts, payload, 'not_due', '未到期')
+  appendPayloadCount(parts, payload, 'deferred', '超上限顺延')
   appendPayloadCount(parts, payload, 'skipped', '跳过')
   return parts.join(' · ')
 }

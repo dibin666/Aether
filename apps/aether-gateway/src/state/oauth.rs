@@ -1647,10 +1647,11 @@ impl AppState {
                     return Ok(None);
                 }
                 if self
-                    .persist_local_oauth_refresh_entry(
+                    .persist_local_oauth_refresh_entry_with_source(
                         &current_transport,
                         &refreshed_entry,
                         expected_credential_fence.as_ref(),
+                        OAUTH_REFRESH_SOURCE_REQUEST,
                     )
                     .await
                     .is_err()
@@ -1906,10 +1907,11 @@ impl AppState {
                     return Ok(None);
                 }
                 if let Err(err) = self
-                    .persist_local_oauth_refresh_entry(
+                    .persist_local_oauth_refresh_entry_with_source(
                         &current_transport,
                         &refreshed_entry,
                         expected_credential_fence.as_ref(),
+                        refresh_context,
                     )
                     .await
                 {
@@ -2559,6 +2561,24 @@ impl AppState {
         entry: &provider_transport::CachedOAuthEntry,
         expected_credential_fence: Option<&ProviderTransportCredentialFence>,
     ) -> Result<(), GatewayError> {
+        self.persist_local_oauth_refresh_entry_with_source(
+            transport,
+            entry,
+            expected_credential_fence,
+            OAUTH_REFRESH_SOURCE_MANUAL,
+        )
+        .await
+    }
+
+    /// Persists a refreshed credential and stamps when/how it was refreshed, so every
+    /// refresh path (auto worker, request-time, manual/quota/retry) is visible to admins.
+    async fn persist_local_oauth_refresh_entry_with_source(
+        &self,
+        transport: &provider_transport::GatewayProviderTransportSnapshot,
+        entry: &provider_transport::CachedOAuthEntry,
+        expected_credential_fence: Option<&ProviderTransportCredentialFence>,
+        refresh_source: &str,
+    ) -> Result<(), GatewayError> {
         let key_id = transport.key.id.trim();
         if key_id.is_empty() {
             return Ok(());
@@ -2709,7 +2729,10 @@ impl AppState {
                         expires_at_unix_secs_update: None,
                         oauth_invalid_at_unix_secs: latest_key.oauth_invalid_at_unix_secs,
                         oauth_invalid_reason: latest_key.oauth_invalid_reason.clone(),
-                        upstream_metadata_patch: None,
+                        upstream_metadata_patch: Some(oauth_refresh_metadata_patch(
+                            latest_key.updated_at_unix_secs,
+                            refresh_source,
+                        )),
                         upstream_metadata_namespace_to_remove: None,
                         status_snapshot_patch: provider_key_oauth_status_snapshot_update(
                             &latest_key,
@@ -2825,7 +2848,10 @@ impl AppState {
                     expires_at_unix_secs_update: Some(entry.expires_at_unix_secs),
                     oauth_invalid_at_unix_secs: latest_key.oauth_invalid_at_unix_secs,
                     oauth_invalid_reason: latest_key.oauth_invalid_reason.clone(),
-                    upstream_metadata_patch: None,
+                    upstream_metadata_patch: Some(oauth_refresh_metadata_patch(
+                        latest_key.updated_at_unix_secs,
+                        refresh_source,
+                    )),
                     upstream_metadata_namespace_to_remove: None,
                     status_snapshot_patch: provider_key_oauth_status_snapshot_update(&latest_key)
                         .status_snapshot_patch,
@@ -3483,6 +3509,26 @@ impl AppState {
 
         Ok(None)
     }
+}
+
+/// `upstream_metadata` namespace recording the last successful OAuth credential refresh.
+pub(crate) const OAUTH_REFRESH_METADATA_NAMESPACE: &str = "aether_oauth_refresh";
+const OAUTH_REFRESH_SOURCE_REQUEST: &str = "request";
+const OAUTH_REFRESH_SOURCE_MANUAL: &str = "manual";
+
+fn oauth_refresh_metadata_patch(refreshed_at_unix_secs: Option<u64>, source: &str) -> Value {
+    let refreshed_at = refreshed_at_unix_secs.unwrap_or_else(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0)
+    });
+    json!({
+        OAUTH_REFRESH_METADATA_NAMESPACE: {
+            "last_refreshed_at": refreshed_at,
+            "source": source,
+        }
+    })
 }
 
 fn provider_key_oauth_status_snapshot_update(

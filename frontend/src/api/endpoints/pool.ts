@@ -133,6 +133,9 @@ export interface PoolKeyDetail {
   oauth_token_refresh_effective_enabled?: boolean
   oauth_token_refresh_enabled_source?: 'explicit' | 'type_default'
   oauth_expires_at?: number | null
+  /** 最近一次成功刷新 OAuth 凭证（Unix 秒），任何刷新路径都会更新 */
+  oauth_last_refreshed_at?: number | null
+  oauth_last_refresh_source?: 'auto' | 'request' | 'manual' | null
   oauth_invalid_at?: number | null  // 兼容字段；优先使用 status_snapshot.oauth
   oauth_invalid_reason?: string | null  // 兼容字段；优先使用 status_snapshot.oauth
   oauth_plan_type?: string | null
