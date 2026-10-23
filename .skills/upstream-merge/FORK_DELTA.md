@@ -5,13 +5,98 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并提交） | `3b6134641`（第十四轮，单批） |
-| upstream HEAD | `042adb319` |
-| merge-base | `042adb319` |
-| 分叉计数（含本轮合并提交，不含本轮文档提交） | fork-only 249，upstream-only 0 |
-| 本轮 upstream-only 路径 | 50 个，`+2501/-211` |
-| 本轮直接重叠路径 | 30 个 |
-| 快照日期 | 2026-10-18（第十四轮，合并后） |
+| fork code baseline（本轮合并提交） | `c2144483f`（第十五轮，单批） |
+| 合并后 fork 修复提交 | `32809c6eb`（usage 自动清理 keyset 修复） |
+| upstream HEAD | `1ecb779d6` |
+| merge-base | `1ecb779d6` |
+| 分叉计数（含本轮合并提交，不含修复与文档提交） | fork-only 253，upstream-only 0 |
+| 本轮 upstream-only 路径 | 141 个，`+11597/-2256` |
+| 本轮直接重叠路径 | 18 个 |
+| 快照日期 | 2026-10-23（第十五轮，合并后） |
+
+### 第十五轮合并前快照与合并后结论（2026-10-23）
+
+| 项 | 值 |
+|---|---|
+| 合并前 fork HEAD | `96b93f402` |
+| upstream 目标 | `upstream/main` / `1ecb779d6` |
+| merge-base | `042adb319d90923c31d1b1dc71f07aa99410c5ac` |
+| 分叉计数（合并前） | fork-only 252，upstream-only 19 |
+| 合并状态 | 已完成：`c2144483f1ab9cc3ce035409b490cd05b4748f6f`；单批（19 提交 < 40，无迁移/结构性重构） |
+
+待合入 upstream 提交（按拓扑顺序）：
+
+```text
+387b3cfc2 feat(frontend): add resizable navigation sidebar
+4221a51ee 修复邀请返利完整流程并重构相关页面
+f30534dfd 移除页面仓库入口及相关展示
+c10b6a7aa 撤销仓库展示移除改动
+ca9dfd164 merge: 合并上游 main 最新更新
+8e52365f3 允许修改和清空注册邀请码并移除锁定提示
+d039c1d56 Merge branch 'codex/referral-flow-and-admin-ui'
+b07af544e fix(referral): 修复退款冲回和测试初始化的 Clippy 警告
+ed8cfbec3 合并上游 main 最新更新
+57c2b1f09 feat(usage): compact and limit audit bodies
+9453e6b32 Merge pull request #755 from ChocoLZS/feat/audit-body-redaction-limit
+a1e1f9f92 Merge main into PR #886 and preserve settings regressions
+46b35525a fix(referral): unblock refund review and repair PostgreSQL fixtures
+f4d7ec1cf Merge pull request #886 from uepaz/main
+bd46a70ba Merge remote-tracking branch 'origin/main'
+e1f87220e fix(providers): refine model selection and explicit key testing
+96b0dec51 feat(providers): add collapsible policy panel with transitions
+fcc7c811f fix(referral): show navigation only when extension is enabled
+1ecb779d6 chore(testing): resolve capacity baseline clippy warning
+```
+
+直接重叠路径（18 个，按合并前 `comm -12` 口径）：
+
+```text
+apps/aether-gateway/src/control/route/public_support.rs
+apps/aether-gateway/src/control/tests/public_support.rs
+apps/aether-gateway/src/data/state/mod.rs
+apps/aether-gateway/src/data/state/runtime.rs
+apps/aether-gateway/src/handlers/admin/provider/query/models/model_test.rs
+apps/aether-gateway/src/handlers/admin/request/system/import.rs
+apps/aether-gateway/src/handlers/shared/mod.rs
+apps/aether-gateway/src/state/core.rs
+crates/aether-admin/src/system.rs
+crates/aether-data/adapters/postgres/src/lib.rs
+crates/aether-data/contracts/src/repository/mod.rs
+crates/aether-data/runtime/src/backend/mod.rs
+crates/aether-data/runtime/src/repository/mod.rs
+crates/aether-testing/integration/src/bin/capacity_curve_baseline.rs
+crates/aether-usage/runtime/src/request_metadata.rs
+frontend/src/api/auth.ts
+frontend/src/features/providers/components/provider-tabs/__tests__/model-test-request.spec.ts
+frontend/src/i18n/messages.ts
+```
+
+upstream 本轮主题：邀请返利完整流程重构（退款冲回、注册邀请码可改/可清空、扩展关闭时隐藏导航）、可拖拽导航侧栏、请求审计 body 压缩与限长（`REQUEST_RECORD_COMPACT_BASE64_IMAGES_KEY`、`UsageBodyCapturePolicy.compact_base64_images/max_body_bytes`）、显式选 Key 的模型测试可绕过 inactive endpoint/调度过滤、可折叠策略面板。
+
+冲突策略：1 处文本冲突，`crates/aether-admin/src/system.rs` 的布尔系统配置键列表；fork 的 `enable_oauth_token_refresh` 与 upstream 的 `REQUEST_RECORD_COMPACT_BASE64_IMAGES_KEY` 是互不相关的两个键，采用并集，无功能取舍，未向用户提问。
+
+合并后审计结论：
+
+- `c2144483f` 为 `--no-ff` 合并；合并后 merge-base 等于 upstream HEAD，`upstream-only` 为 0。
+- upstream 未删除任何 `pub` 符号；新增必填字段仅 `UsageBodyCapturePolicy.{compact_base64_images,max_body_bytes}`，全仓构造点已由 upstream 改为 `..Default::default()`（规则 4 静态扫描通过）。规则 10/11 未触发（未改 `UsageTimeSeriesQuery`、未改用户 usage payload）。
+- `model_test.rs`：upstream 在显式选 Key 时放开 inactive endpoint 与模型过滤、跳过号池排序；fork 的候选顺序 `scheduled.chain(skipped)` 保留（P0 第 6 项）。
+- 本轮未改数据库迁移、`background_tasks` 白名单、`deploy.sh` 或 `.github`。
+- P0/P1 存在性复核通过：`audio_duration_seconds`、`disable_circuit_breaker`、`provider_key_task_events`、`usage_request_detail`、`keep_priority_on_conversion`、`consumption-stats`、`account-events`、`detailScope`、`pool.quota.probe.worker` 均存在；`ignore_pool_cooldown` 应用层残留 0。
+- **合并本身没有 fork 功能性 delta 变化**；邀请返利、导航侧栏、审计 body 压缩属于 upstream 能力。
+- **合并后 fork 修复 `32809c6eb`（P1 第 9 项变更）**：usage 自动清理改为 keyset 分页，修复“请求体只清一部分”；详见第 2 节第 9 项与第 4 节规则 12。
+- 合并后的待合入 upstream 提交：0。
+
+验证结果（2026-10-23，全部串行）：
+
+- `cd frontend && npm run build`：合并树通过 1 分 57 秒；修复后复跑通过 1 分 48 秒。依赖已存在，未运行 `npm install`。
+- `CARGO_BUILD_JOBS=1 cargo check --workspace`：合并树通过，4 分 47 秒，0 警告。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-admin --lib system`：49/49（冲突文件）。
+- `AETHER_TEST_DATABASE_URL=... CARGO_BUILD_JOBS=1 cargo test -p aether-data-postgres --lib usage::cleanup -- --include-ignored`：8/8，含 2 个 live PostgreSQL 16 测试（临时 docker 容器，测完已停）。
+- `CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib maintenance::runtime`：118/118，15 分 6 秒。
+- 基准（同一 PG 16，52 万行，前 50 万行已清理）：旧查询每批 300 ms（随已清理行数线性增长、每批都付），keyset 每批 10.6 ms。
+- `cargo fmt --all -- --check`、`git diff --check`、未解决冲突检查通过。
+
+未运行（unverified）：`cargo check --workspace --all-targets`（gateway 与 postgres 测试目标已在上面定向测试中编译）、完整前端测试、upstream 邀请返利/模型测试行为测试。
 
 ### 第十四轮合并前快照与合并后结论（2026-10-18）
 
@@ -709,10 +794,11 @@ frontend/src/views/admin/PoolManagement.vue
    - 关键文件：`deploy.sh`、`Dockerfile.app.local`、`docker-compose.build.yml`、`.github/workflows/publish-image.yml`。
    - 合并规则：上游在已删除的 restart 尾块内的改动不构成恢复理由；保持纯构建契约，本地迁移使用 `DATABASE_MODE` 兼容。
 
-9. **清理任务保留期下限与定时探测**
-   - 外部契约：detail/compressed/header retention 下限 1 天，log retention 下限 30 天，避免配置 0 导致破坏性立即清理；`pool.quota.probe.worker` 注册为 scheduled interval task.
-   - 关键文件：`apps/aether-gateway/src/maintenance/runtime/config.rs`、`apps/aether-gateway/src/task_runtime/mod.rs`。
-   - 合并规则：上游清理配置重构时保留下限防呆；上游定时任务注册表变动时确保 quota probe worker 不漏注。
+9. **清理任务保留期下限、全量清理与定时探测**
+   - 外部契约：detail/compressed/header retention 下限 1 天，log retention 下限 30 天，避免配置 0 导致破坏性立即清理；**较短删除窗口优先**（第十五轮起）：compressed/header 不超过 log，detail 不超过 compressed，不再把 log/compressed 抬高到其它窗口；`pool.quota.probe.worker` 注册为 scheduled interval task.
+   - 自动清理完整性（第十五轮 `32809c6eb`）：所有 usage 保留期批处理（body 删除、detail 外置、legacy ref 迁移、header 清空、立即清理两类）按 `(created_at, id)` keyset 分页；阶段顺序 records → 压缩请求体 → 详细请求体 → 请求头；单阶段失败不跳过其它阶段（含 ledger 与 `provider_key_task_events`），最后返回首个错误；周维护 VACUUM 增加 `usage_body_blobs`、`usage_http_audits`。
+   - 关键文件：`apps/aether-gateway/src/maintenance/runtime/{config,usage_cleanup}.rs`、`apps/aether-gateway/src/maintenance/runtime.rs`、`crates/aether-data/adapters/postgres/src/usage/cleanup.rs`、`apps/aether-gateway/src/task_runtime/mod.rs`。
+   - 合并规则：上游清理配置重构时保留下限防呆与“短窗口优先”；上游改 `cleanup.rs` 批查询时必须保留 keyset 游标参数 `($2,$3)` 与阶段隔离；上游定时任务注册表变动时确保 quota probe worker 不漏注。
 
 ### P2 功能（上游有等价实现时优先让位）
 Chart.js 类型收窄（`ScatterChart.vue` 等）、`useEscapeKey` (`isContentEditable`)、`api/client.ts` 泛型、`.gitignore` 本地工具规则（`.cursor`、`.agents` 等）、`.mcp.json`、`.codegraph/`、`.skills/upstream-merge/**`。
@@ -739,6 +825,7 @@ Chart.js 类型收窄（`ScatterChart.vue` 等）、`useEscapeKey` (`isContentEd
 9. 第六轮冲突映射固定记录为 `1C, 2C`：`pool_scheduler.rs` 保留 stale-score 与 `ignore_pool_cooldown` 两组测试；`pool_admin/payloads.rs` 保留 xAI 额度与 OAuth 刷新状态两组契约。
 10. **`UsageTimeSeriesQuery` 是 fork 扩展过的上游结构**：fork 为号池消耗看板加了 `provider_id` 与 `provider_api_key_ids` 两个字段，upstream 侧没有。上游每次给该结构加必填字段（如第七轮的 `user_ids`），fork 的 `dashboard.rs` 构造点会断编译、而上游新写的测试构造点会因缺 fork 字段断编译，两类都只有 `cargo check --workspace --all-targets` 能一次性暴露。第七轮有一处测试构造点错误正是在 `cargo check --workspace` 通过之后才由 `--all-targets` 抓出，印证了规则 4。
 11. **自助详情 payload 自动继承用户列表 payload**：`build_users_me_usage_detail_payload` 以 `build_users_me_usage_record_payload` 为底再覆盖敏感字段。upstream 每次给用户 usage 列表 payload 加字段（如第八轮的 `response_model`），自助详情会无冲突地自动暴露该字段。合并时必须复核新字段对普通用户是否安全；若涉及 provider/成本/调度信息，要在 detail builder 中显式置 `Value::Null`。前端 `UsageRecordsTable` 的 `canViewDetail` 是 fork 必填 prop，upstream 新增的测试若绕过 `mountUsageRecordsTable` helper 直接挂载，需要补该 prop。
+12. **usage 清理批查询禁止“每批从窗口起点重扫”**：已清理的行仍落在保留窗口内，若批查询只靠 `WHERE ... IS NOT NULL` 过滤、从窗口起点 `ORDER BY created_at LIMIT n`，每批都要重扫已清理前缀，复杂度随表大小平方增长，大表上 header 阶段可跑数小时，后续请求体阶段永远轮不到（第十五轮用户报告“请求体只清一部分”的根因）。上游新增或改写清理批查询时，必须带 keyset 游标并按“取到不足一批”终止，不得用“本批零进展”终止。
 
 ## 5. 运维警告
 
@@ -913,3 +1000,5 @@ cd frontend && npm run test:run -- \
 | 2026-09-30 | `6691cce29` | `54fbcc25a` | 13 提交、0 文本冲突；接入 Claude Code 请求体伪装与 OAuth 账号 5H/周额度；6 个重叠路径复核无回归，前端构建与 `cargo check --workspace` 通过，fork P0/P1 功能无变化 |
 | 2026-10-09 | `9151a0fe2`<br>`d067cab4f` | `bad13237d` | 45 提交分两批合入、14 处冲突（全部 hybrid：plan kind 并集、request.rs、catalog 额度归一化、OAuth 刷新日志脱敏、测试并存）；前端构建与 `cargo check --workspace(--all-targets)` 通过，fork P0/P1 功能无变化 |
 | 2026-10-10 | `652363c33` | `6bafef672` | 4 提交、0 文本冲突；接入钱包兜底、概览图表计费对齐、耗尽账号开关恢复；13 个重叠路径复核无回归，前端构建与 `cargo check --workspace(--all-targets)` 通过，fork P0/P1 功能无变化 |
+| 2026-10-18 | `3b6134641` | `042adb319` | 13 提交、3 处冲突（`1H` usage 元数据契约并集）；接入 PII 标记、健康时间线、usage 采样、Gemini response ID；fork P0/P1 功能无变化 |
+| 2026-10-23 | `c2144483f` | `1ecb779d6` | 19 提交、1 处冲突（`system.rs` 配置键并集）；接入邀请返利重构、导航侧栏、审计 body 压缩限长；合并后修复 `32809c6eb` 让 usage 自动清理 keyset 分页、阶段隔离、短窗口优先（P1 第 9 项变更） |
