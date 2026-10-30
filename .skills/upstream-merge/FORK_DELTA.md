@@ -825,8 +825,9 @@ frontend/src/views/admin/PoolManagement.vue
    - 关键文件：`crates/aether-data/adapters/postgres/migrations/20260909000000_add_provider_key_task_events.sql`、`crates/aether-data/**/provider_key_task_events.rs`、`apps/aether-gateway/src/handlers/admin/features/background_tasks/routes.rs`。
    - 合并规则：`background_tasks` 事件白名单保持严格安全校验，账号事件全部写入独立表；迁移必须包含 `IF NOT EXISTS`，不进 generated baseline。
 
-### 本轮按用户要求退役的功能
+### 按用户要求退役的功能
 - `ignore_pool_cooldown`：2026-09-23 起从应用层、API 与 UI 移除；PostgreSQL bootstrap 列及两条历史迁移保留，不删除已有数据。
+- **私网 endpoint 放行（`private_network_access` / allowance 注册表）**：2026-10-30 `3c5b185de` 起整体删除——provider 执行路径、WebSocket、测试连接对私网/保留地址**一律放行**，不再需要逐端点开关。删除范围：`crates/aether-provider/transport/src/private_network.rs`、`apps/aether-gateway/src/private_upstream.rs`、`validate_execution_upstream_url_with_allowance`/`PrivateUpstreamOrigin`/`decision_private_upstream_allowance`、`private_network_allowed_origin` 响应字段、admin 端点保存校验、`EndpointFormDialog` 两处开关与 `endpoint-private-network.ts`、3 个 i18n key、2 个 spec。**保留**：`endpoint.config.private_network_access` 存量配置变为忽略字段（向后兼容）；URL 契约校验（scheme/host/凭据/片段）不变；payment/video/bark/tunnel 的 SSRF 守卫不受影响。后续合并时 upstream 若在其 SSRF 路径上改动，不得把私网拒绝重新引入 provider 执行路径。
 
 ### P1 功能
 
