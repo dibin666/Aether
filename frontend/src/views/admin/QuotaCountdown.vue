@@ -8,12 +8,12 @@
         <div class="flex items-center justify-between gap-3">
           <div class="flex items-center gap-2">
             <Timer class="h-5 w-5 text-primary" />
-            <h3 class="text-base font-semibold">额度重置倒计时</h3>
+            <h3 class="text-base font-semibold">{{ t('ui.quotaResetCountdown') }}</h3>
             <span
               v-if="totalKeysCount > 0"
               class="text-xs text-muted-foreground"
             >
-              {{ totalKeysCount }} 个账号
+              {{ t('ui.accountsCount', { count: totalKeysCount }) }}
             </span>
           </div>
           <div class="flex items-center gap-2">
@@ -22,9 +22,9 @@
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部倒计时</SelectItem>
-                <SelectItem value="urgent">紧急 (≤30%)</SelectItem>
-                <SelectItem value="critical">危险 (≤10%)</SelectItem>
+                <SelectItem value="all">{{ t('ui.allCountdowns') }}</SelectItem>
+                <SelectItem value="urgent">{{ t('ui.urgentLe30') }}</SelectItem>
+                <SelectItem value="critical">{{ t('ui.criticalLe10') }}</SelectItem>
               </SelectContent>
             </Select>
             <RefreshButton
@@ -51,7 +51,7 @@
           class="mt-3 text-xs text-primary underline hover:no-underline"
           @click="refreshAll"
         >
-          重试
+          {{ t('ui.retry') }}
         </button>
       </div>
 
@@ -60,7 +60,7 @@
         class="flex flex-col items-center justify-center py-20 text-muted-foreground"
       >
         <Timer class="mb-3 h-10 w-10 opacity-30" />
-        <p class="text-sm">暂无正在倒计时的账号</p>
+        <p class="text-sm">{{ t('ui.noAccountsCountingDown') }}</p>
       </div>
 
       <div
@@ -84,7 +84,7 @@
               {{ group.providerType }}
             </Badge>
             <span class="text-[11px] text-muted-foreground">
-              {{ group.keys.length }} 个账号
+              {{ t('ui.accountsCount', { count: group.keys.length }) }}
             </span>
           </div>
 
@@ -106,14 +106,14 @@
                   variant="secondary"
                   class="shrink-0 bg-green-100 text-[9px] text-green-700 dark:bg-green-900/30 dark:text-green-400"
                 >
-                  活跃
+                  {{ t('ui.active') }}
                 </Badge>
                 <Badge
                   v-else
                   variant="secondary"
                   class="shrink-0 bg-gray-100 text-[9px] text-gray-500 dark:bg-gray-800 dark:text-gray-400"
                 >
-                  停用
+                  {{ t('ui.inactive') }}
                 </Badge>
               </div>
 
@@ -160,7 +160,7 @@
           v-if="filteredProviderGroups.length === 0 && countdownProviderGroups.length > 0"
           class="flex flex-col items-center justify-center py-16 text-muted-foreground"
         >
-          <p class="text-sm">没有符合筛选条件的账号</p>
+          <p class="text-sm">{{ t('ui.noAccountsMatchFilter') }}</p>
         </div>
       </div>
     </Card>
@@ -183,6 +183,7 @@ import RefreshButton from '@/components/ui/refresh-button.vue'
 import { getPoolOverview, listAllPoolKeys } from '@/api/endpoints/pool'
 import type { PoolKeyDetail, PoolOverviewItem } from '@/api/endpoints/pool'
 import { useCountdownTimer } from '@/composables/useCountdownTimer'
+import { useI18n } from '@/i18n'
 import { parseApiError } from '@/utils/errorParser'
 import {
   getQuotaCountdownProgressPercent,
@@ -227,6 +228,7 @@ const providerGroups = ref<ProviderGroup[]>([])
 const filterLevel = ref<'all' | 'urgent' | 'critical'>('all')
 
 const { tick: countdownTick, start: startCountdown, stop: stopCountdown } = useCountdownTimer()
+const { t } = useI18n()
 
 const countdownProviderGroups = computed<CountdownProviderGroup[]>(() => {
   const tick = countdownTick.value

@@ -1,7 +1,7 @@
 import type { PoolKeyDetail } from '@/api/endpoints/pool'
 import type { QuotaStatusSnapshot, QuotaWindowSnapshot } from '@/api/endpoints/types'
 import { getCodexResetCountdown } from '@/composables/useCountdownTimer'
-import { getLegacyAccountQuotaText } from '@/utils/providerKeyQuota'
+import { getLegacyAccountQuotaText } from '@/features/providers/utils/providerKeyQuota'
 
 const DEFAULT_QUOTA_COUNTDOWN_WINDOW_SECONDS = 24 * 60 * 60
 

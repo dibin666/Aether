@@ -10,14 +10,14 @@
       class="space-y-1 border-b border-border/40 pb-1 last:border-b-0 last:pb-0"
     >
       <div class="flex items-center justify-between gap-2 text-[10px] font-semibold text-foreground">
-        <span>{{ group.label }}重置周期</span>
-        <span class="text-[9px] font-normal text-muted-foreground">本账号</span>
+        <span>{{ group.label }}{{ t('ui.resetCycle') }}</span>
+        <span class="text-[9px] font-normal text-muted-foreground">{{ t('ui.thisAccount') }}</span>
       </div>
       <div
         v-for="row in group.metrics"
         :key="`${group.code}-${row.key}-${variant}-cycle-row`"
         class="grid grid-cols-[64px_minmax(0,1fr)] items-baseline gap-2"
-        :title="`${group.label}重置周期 · ${row.label} ${row.value}`"
+        :title="`${group.label}${t('ui.resetCycle')} · ${row.label} ${row.value}`"
       >
         <span class="truncate text-muted-foreground">{{ row.label }}</span>
         <span
@@ -68,6 +68,8 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from '@/i18n'
+
 import { computed } from 'vue'
 import type {
   PoolCodexCycleStatsGroup,
@@ -84,11 +86,13 @@ const props = withDefaults(defineProps<{
   variant: 'desktop',
 })
 
+const { t } = useI18n()
+
 const CYCLE_METRIC_KEYS: PoolStatsMetricKey[] = ['request_count', 'total_tokens', 'total_cost_usd']
 const CYCLE_METRIC_LABELS: Record<PoolStatsMetricKey, string> = {
-  request_count: '请求',
+  get request_count() { return t('ui.request') },
   total_tokens: 'Token',
-  total_cost_usd: '费用',
+  get total_cost_usd() { return t('ui.cost7fe8603') },
 }
 
 function missingMetric(key: PoolStatsMetricKey): PoolStatsMetric {

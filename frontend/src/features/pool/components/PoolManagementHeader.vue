@@ -4,7 +4,7 @@
       <div class="min-w-0">
         <div class="flex min-w-0 items-center gap-2">
           <h3 class="text-base font-semibold">
-            {{ legacyT('号池管理') }}
+            {{ t('nav.pool') }}
           </h3>
           <span
             v-if="selectedCount > 0"
@@ -32,7 +32,7 @@
             class="h-9 text-xs border-border/60"
             :disabled="providerSelectDisabled"
           >
-            <SelectValue :placeholder="legacyT('选择 Provider')" />
+            <SelectValue :placeholder="t('ui.selectProvider295f215')" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem
@@ -45,14 +45,14 @@
               <span
                 v-if="!item.pool_enabled"
                 class="ml-1 text-[10px] text-amber-600"
-              >{{ legacyT('未启用') }}</span>
+              >{{ t('ui.disabled') }}</span>
             </SelectItem>
           </SelectContent>
         </Select>
 
         <Select v-model="statusModel">
           <SelectTrigger class="h-9 w-full text-xs border-border/60">
-            <SelectValue :placeholder="legacyT('状态')" />
+            <SelectValue :placeholder="t('ui.status6320b4a')" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem
@@ -60,7 +60,7 @@
               :key="`mobile-${item.value}`"
               :value="item.value"
             >
-              {{ legacyT(item.label) }}
+              {{ item.label }}
             </SelectItem>
           </SelectContent>
         </Select>
@@ -70,7 +70,7 @@
           <Input
             v-model="searchModel"
             type="text"
-            :placeholder="legacyT('搜索账号...')"
+            :placeholder="t('ui.searchAccounts')"
             class="w-full pl-8 pr-3 h-9 text-sm bg-background/50 border-border/60"
           />
         </div>
@@ -122,7 +122,7 @@
             :class="isAllFilteredSelected ? 'bg-primary/10 text-primary' : ''"
             :disabled="selectionDisabled"
             :aria-pressed="isAllFilteredSelected"
-            :title="legacyT(isAllFilteredSelected ? '取消全选' : '全选')"
+            :title="isAllFilteredSelected ? t('ui.deselectAll') : t('ui.selectAll')"
             data-testid="pool-select-all-mobile"
             @click="emit('toggleSelectAll')"
           >
@@ -141,8 +141,8 @@
                 size="icon"
                 class="h-8 w-8 shrink-0"
                 :disabled="batchActionsDisabled"
-                :title="legacyT('选择执行动作')"
-                :aria-label="legacyT('选择执行动作')"
+                :title="t('ui.selectActionToExecute')"
+                :aria-label="t('ui.selectActionToExecute')"
                 data-testid="pool-batch-actions-mobile"
               >
                 <ListChecks class="h-3.5 w-3.5" />
@@ -159,7 +159,7 @@
                 :data-testid="`pool-batch-action-${action.value}-mobile`"
                 @select="emit('batchAction', action.value)"
               >
-                {{ legacyT(action.label) }}
+                {{ action.label }}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -178,7 +178,7 @@
     <div class="hidden xl:flex items-center justify-between gap-4">
       <div class="flex items-center gap-2">
         <h3 class="text-base font-semibold">
-          {{ legacyT('号池管理') }}
+          {{ t('nav.pool') }}
           <span
             v-if="metaText"
             class="ml-2 text-xs font-normal text-muted-foreground"
@@ -200,7 +200,7 @@
             class="w-36 h-8 text-xs border-border/60"
             :disabled="providerSelectDisabled"
           >
-            <SelectValue :placeholder="legacyT('选择 Provider')" />
+            <SelectValue :placeholder="t('ui.selectProvider295f215')" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem
@@ -213,7 +213,7 @@
               <span
                 v-if="!item.pool_enabled"
                 class="ml-1 text-[10px] text-amber-600"
-              >{{ legacyT('未启用') }}</span>
+              >{{ t('ui.disabled') }}</span>
             </SelectItem>
           </SelectContent>
         </Select>
@@ -228,7 +228,7 @@
           <Input
             v-model="searchModel"
             type="text"
-            :placeholder="legacyT('搜索账号...')"
+            :placeholder="t('ui.searchAccounts')"
             class="w-40 pl-8 pr-2 h-8 text-xs bg-background/50 border-border/60"
           />
         </div>
@@ -242,10 +242,10 @@
           v-if="hasSelectedProvider"
           class="group inline-flex items-center gap-1.5 px-2.5 h-8 rounded-md border border-border/50 bg-muted/20 hover:bg-muted/40 hover:border-primary/40 transition-all duration-200 text-xs"
           type="button"
-          :title="legacyT('点击调整号池调度')"
+          :title="t('ui.editPoolScheduling')"
           @click="emit('scheduling')"
         >
-          <span class="text-muted-foreground/80 hidden lg:inline">{{ legacyT('调度:') }}</span>
+          <span class="text-muted-foreground/80 hidden lg:inline">{{ t('ui.scheduling2875a4c') }}</span>
           <span class="font-medium text-foreground/90">{{ poolSchedulingLabel }}</span>
           <ChevronDown class="w-3 h-3 text-muted-foreground/70 group-hover:text-foreground transition-colors" />
         </button>
@@ -294,7 +294,7 @@
           :class="isAllFilteredSelected ? 'bg-primary/10 text-primary' : ''"
           :disabled="selectionDisabled"
           :aria-pressed="isAllFilteredSelected"
-          :title="legacyT(isAllFilteredSelected ? '取消全选' : '全选')"
+          :title="isAllFilteredSelected ? t('ui.deselectAll') : t('ui.selectAll')"
           data-testid="pool-select-all-desktop"
           @click="emit('toggleSelectAll')"
         >
@@ -314,8 +314,8 @@
               size="icon"
               class="h-8 w-8"
               :disabled="batchActionsDisabled"
-              :title="legacyT('选择执行动作')"
-              :aria-label="legacyT('选择执行动作')"
+              :title="t('ui.selectActionToExecute')"
+              :aria-label="t('ui.selectActionToExecute')"
               data-testid="pool-batch-actions-desktop"
             >
               <ListChecks class="h-3.5 w-3.5" />
@@ -332,7 +332,7 @@
               :data-testid="`pool-batch-action-${action.value}-desktop`"
               @select="emit('batchAction', action.value)"
             >
-              {{ legacyT(action.label) }}
+              {{ action.label }}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -377,7 +377,7 @@ import {
   SelectValue,
 } from '@/components/ui'
 import RefreshButton from '@/components/ui/refresh-button.vue'
-import ProviderProxyPopover from '@/features/pool/components/ProviderProxyPopover.vue'
+import ProviderProxyPopover from '@/features/pool/components/PoolKeyProxyPopover.vue'
 import { useI18n } from '@/i18n'
 import type { PoolOverviewItem } from '@/api/endpoints/pool'
 import {
@@ -488,7 +488,7 @@ function triggerAction(event: HeaderActionEvent) {
   handlers[event]()
 }
 
-const { legacyT } = useI18n()
+const { t } = useI18n()
 
 const providerModel = computed({
   get: () => props.providerId,
@@ -507,39 +507,39 @@ const searchModel = computed({
 
 const hasSelectedProvider = computed(() => Boolean(props.providerId))
 
-const selectedCountLabel = computed(() => legacyT(`已选 ${Math.max(0, props.selectedCount)} 个`))
+const selectedCountLabel = computed(() => t('models.management.selectedCount', { count: Math.max(0, props.selectedCount) }))
 
 const mobileActions = computed<HeaderAction[]>(() => {
   const actions: HeaderAction[] = [
-    { key: 'viewProvider', title: legacyT('查看详情'), event: 'viewProvider', icon: Eye },
-    { key: 'import', title: legacyT('导入账号'), event: 'import', icon: Upload },
-    { key: 'accountBatch', title: legacyT('账号批量操作'), event: 'accountBatch', icon: Users },
-    { key: 'scheduling', title: legacyT('号池调度'), event: 'scheduling', icon: SlidersHorizontal },
-    { key: 'refreshWorker', title: legacyT('自动刷新配置和日志'), event: 'refreshWorker', icon: History },
+    { key: 'viewProvider', title: t('ui.viewDetails'), event: 'viewProvider', icon: Eye },
+    { key: 'import', title: t('ui.importAccounts'), event: 'import', icon: Upload },
+    { key: 'accountBatch', title: t('ui.accountBatchActions'), event: 'accountBatch', icon: Users },
+    { key: 'scheduling', title: t('ui.poolScheduling'), event: 'scheduling', icon: SlidersHorizontal },
+    { key: 'refreshWorker', title: t('ui.autoRefreshConfigAndLogs'), event: 'refreshWorker', icon: History },
   ]
   if (props.showAdaptiveHotPoolMetricsButton) {
-    actions.push({ key: 'demandMetrics', title: legacyT('查看自适应热池指标'), event: 'demandMetrics', icon: Activity })
+    actions.push({ key: 'demandMetrics', title: t('ui.viewAdaptiveWarmPoolMetrics'), event: 'demandMetrics', icon: Activity })
   }
   actions.push(
     { key: 'toggleProvider', title: props.providerToggleButtonTitle, event: 'toggleProvider', icon: Power },
-    { key: 'advanced', title: legacyT('高级设置'), event: 'advanced', icon: Settings2 },
+    { key: 'advanced', title: t('ui.advancedSettings'), event: 'advanced', icon: Settings2 },
   )
   return actions
 })
 
 const desktopActions = computed<HeaderAction[]>(() => {
   const actions: HeaderAction[] = [
-    { key: 'viewProvider', title: legacyT('查看详情'), event: 'viewProvider', icon: Eye },
-    { key: 'import', title: legacyT('导入账号'), event: 'import', icon: Upload },
-    { key: 'accountBatch', title: legacyT('账号批量操作'), event: 'accountBatch', icon: Users },
-    { key: 'refreshWorker', title: legacyT('自动刷新配置和日志'), event: 'refreshWorker', icon: History },
+    { key: 'viewProvider', title: t('ui.viewDetails'), event: 'viewProvider', icon: Eye },
+    { key: 'import', title: t('ui.importAccounts'), event: 'import', icon: Upload },
+    { key: 'accountBatch', title: t('ui.accountBatchActions'), event: 'accountBatch', icon: Users },
+    { key: 'refreshWorker', title: t('ui.autoRefreshConfigAndLogs'), event: 'refreshWorker', icon: History },
   ]
   if (props.showAdaptiveHotPoolMetricsButton) {
-    actions.push({ key: 'demandMetrics', title: legacyT('查看自适应热池指标'), event: 'demandMetrics', icon: Activity })
+    actions.push({ key: 'demandMetrics', title: t('ui.viewAdaptiveWarmPoolMetrics'), event: 'demandMetrics', icon: Activity })
   }
   actions.push(
     { key: 'toggleProvider', title: props.providerToggleButtonTitle, event: 'toggleProvider', icon: Power },
-    { key: 'advanced', title: legacyT('高级设置'), event: 'advanced', icon: Settings2 },
+    { key: 'advanced', title: t('ui.advancedSettings'), event: 'advanced', icon: Settings2 },
   )
   return actions
 })

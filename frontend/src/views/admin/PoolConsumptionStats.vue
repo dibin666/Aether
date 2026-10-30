@@ -4,10 +4,10 @@
     <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
       <div>
         <h1 class="text-lg font-semibold text-foreground">
-          账号消耗统计
+          {{ t('ui.accountConsumptionStats') }}
         </h1>
         <p class="text-xs text-muted-foreground">
-          按账号池、时间窗口和调用状态查看实际使用情况与额度监控
+          {{ t('ui.accountConsumptionSubtitle') }}
         </p>
       </div>
 
@@ -18,7 +18,7 @@
           @update:model-value="selectProvider"
         >
           <SelectTrigger class="h-8 w-full sm:w-[200px] border-border/60 text-xs font-medium focus:ring-2 focus:ring-primary/20">
-            <SelectValue placeholder="选择账号池" />
+            <SelectValue :placeholder="t('ui.selectAccountPool')" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem
@@ -51,7 +51,7 @@
 
         <RefreshButton
           :loading="refreshing"
-          title="刷新账号消耗数据"
+          :title="t('ui.refreshConsumptionData')"
           @click="refreshAll"
         />
       </div>
@@ -66,12 +66,12 @@
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex items-center gap-2">
             <Search class="h-4 w-4 text-primary" />
-            <span class="text-sm font-semibold text-foreground">账号筛选与检索</span>
+            <span class="text-sm font-semibold text-foreground">{{ t('ui.accountFilterSearch') }}</span>
           </div>
 
           <div class="flex flex-wrap items-center gap-3">
             <div class="flex items-center gap-2 text-xs">
-              <span class="font-medium text-muted-foreground whitespace-nowrap">排序</span>
+              <span class="font-medium text-muted-foreground whitespace-nowrap">{{ t('ui.sortBy') }}</span>
               <Select
                 :model-value="`${filters.sort_by}:${filters.sort_order}`"
                 @update:model-value="setSortPreset"
@@ -80,11 +80,11 @@
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="cost:desc">费用最高</SelectItem>
-                  <SelectItem value="requests:desc">请求最多</SelectItem>
-                  <SelectItem value="tokens:desc">Token 最多</SelectItem>
-                  <SelectItem value="quota:asc">剩余额度最低</SelectItem>
-                  <SelectItem value="last_used:desc">最近使用</SelectItem>
+                  <SelectItem value="cost:desc">{{ t('ui.highestCost') }}</SelectItem>
+                  <SelectItem value="requests:desc">{{ t('ui.mostRequests') }}</SelectItem>
+                  <SelectItem value="tokens:desc">{{ t('ui.mostTokens') }}</SelectItem>
+                  <SelectItem value="quota:asc">{{ t('ui.lowestRemainingQuota') }}</SelectItem>
+                  <SelectItem value="last_used:desc">{{ t('ui.recentlyUsed') }}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -95,7 +95,7 @@
               class="h-8 px-2.5 text-xs text-muted-foreground hover:text-foreground"
               @click="resetListFilters"
             >
-              清除筛选
+              {{ t('ui.clearFilters') }}
             </Button>
           </div>
         </div>
@@ -112,15 +112,15 @@
                 v-model="searchInput"
                 type="search"
                 class="h-8 w-full rounded-md border-border/60 bg-background/50 pl-9 pr-8 text-xs focus-visible:ring-2 focus-visible:ring-primary/20"
-                placeholder="搜索账号名、邮箱或认证方式..."
-                aria-label="搜索账号"
+                :placeholder="t('ui.searchAccountPlaceholder')"
+                :aria-label="t('ui.searchAccount')"
                 @input="scheduleSearch"
               />
               <button
                 v-if="searchInput"
                 type="button"
                 class="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground hover:text-foreground transition-colors"
-                aria-label="清空搜索"
+                :aria-label="t('ui.clearSearch')"
                 @click="searchInput = ''; scheduleSearch()"
               >
                 <X class="h-3.5 w-3.5" />
@@ -135,11 +135,11 @@
               @update:model-value="val => { filters.usage = val as any; applyFilters() }"
             >
               <SelectTrigger class="h-8 border-border/60 bg-background/50 text-xs focus:ring-2 focus:ring-primary/20">
-                <SelectValue placeholder="使用情况" />
+                <SelectValue :placeholder="t('ui.usageStatus')" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部已调用账号</SelectItem>
-                <SelectItem value="used">有请求</SelectItem>
+                <SelectItem value="all">{{ t('ui.allCalledAccounts') }}</SelectItem>
+                <SelectItem value="used">{{ t('ui.hasRequests') }}</SelectItem>
               </SelectContent>
             </Select>
 
@@ -148,15 +148,15 @@
               @update:model-value="val => { filters.risk = val as any; applyFilters() }"
             >
               <SelectTrigger class="h-8 border-border/60 bg-background/50 text-xs focus:ring-2 focus:ring-primary/20">
-                <SelectValue placeholder="额度状态" />
+                <SelectValue :placeholder="t('ui.quotaStatus')" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部额度状态</SelectItem>
-                <SelectItem value="healthy">额度充足</SelectItem>
-                <SelectItem value="warning">额度偏低</SelectItem>
-                <SelectItem value="critical">可能提前用完</SelectItem>
-                <SelectItem value="exhausted">额度已用完</SelectItem>
-                <SelectItem value="unknown">暂未知</SelectItem>
+                <SelectItem value="all">{{ t('ui.allQuotaStatuses') }}</SelectItem>
+                <SelectItem value="healthy">{{ t('ui.quotaHealthy') }}</SelectItem>
+                <SelectItem value="warning">{{ t('ui.quotaLow') }}</SelectItem>
+                <SelectItem value="critical">{{ t('ui.mayRunOutEarly') }}</SelectItem>
+                <SelectItem value="exhausted">{{ t('ui.quotaExhausted') }}</SelectItem>
+                <SelectItem value="unknown">{{ t('ui.unknown') }}</SelectItem>
               </SelectContent>
             </Select>
 
@@ -165,13 +165,13 @@
               @update:model-value="val => { filters.freshness = val as any; applyFilters() }"
             >
               <SelectTrigger class="h-8 border-border/60 bg-background/50 text-xs focus:ring-2 focus:ring-primary/20">
-                <SelectValue placeholder="额度同步" />
+                <SelectValue :placeholder="t('ui.quotaSync')" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部同步状态</SelectItem>
-                <SelectItem value="fresh">最近已同步</SelectItem>
-                <SelectItem value="stale">同步较早</SelectItem>
-                <SelectItem value="unknown">无同步记录</SelectItem>
+                <SelectItem value="all">{{ t('ui.allSyncStatuses') }}</SelectItem>
+                <SelectItem value="fresh">{{ t('ui.recentlySynced') }}</SelectItem>
+                <SelectItem value="stale">{{ t('ui.syncedEarlier') }}</SelectItem>
+                <SelectItem value="unknown">{{ t('ui.noSyncRecord') }}</SelectItem>
               </SelectContent>
             </Select>
 
@@ -180,13 +180,13 @@
               @update:model-value="val => { filters.active = val as any; applyFilters() }"
             >
               <SelectTrigger class="h-8 border-border/60 bg-background/50 text-xs focus:ring-2 focus:ring-primary/20">
-                <SelectValue placeholder="账号状态" />
+                <SelectValue :placeholder="t('ui.accountStatus')" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部状态</SelectItem>
-                <SelectItem value="active">已启用</SelectItem>
-                <SelectItem value="inactive">已停用</SelectItem>
-                <SelectItem value="blocked">不可用</SelectItem>
+                <SelectItem value="all">{{ t('ui.allStatuses') }}</SelectItem>
+                <SelectItem value="active">{{ t('ui.enableddfb8022') }}</SelectItem>
+                <SelectItem value="inactive">{{ t('ui.disableda8c3698') }}</SelectItem>
+                <SelectItem value="blocked">{{ t('ui.unavailable460b357') }}</SelectItem>
               </SelectContent>
             </Select>
 
@@ -195,12 +195,12 @@
               @update:model-value="val => { filters.result = val as any; applyFilters() }"
             >
               <SelectTrigger class="h-8 border-border/60 bg-background/50 text-xs focus:ring-2 focus:ring-primary/20">
-                <SelectValue placeholder="请求结果" />
+                <SelectValue :placeholder="t('ui.requestResult')" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部结果</SelectItem>
-                <SelectItem value="success">有成功</SelectItem>
-                <SelectItem value="failed">有失败</SelectItem>
+                <SelectItem value="all">{{ t('ui.allResults') }}</SelectItem>
+                <SelectItem value="success">{{ t('ui.hasSuccess') }}</SelectItem>
+                <SelectItem value="failed">{{ t('ui.hasFailed') }}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -212,21 +212,21 @@
           class="flex flex-wrap items-center gap-2.5 rounded-lg border border-border/40 bg-muted/20 p-2.5"
         >
           <label class="flex items-center gap-2 text-xs">
-            <span class="font-medium text-muted-foreground">开始</span>
+            <span class="font-medium text-muted-foreground">{{ t('ui.start') }}</span>
             <input
               v-model="filters.start_date"
               type="date"
-              aria-label="开始日期"
+              :aria-label="t('ui.startDate')"
               class="h-8 rounded-md border border-border/60 bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-primary/20"
             >
           </label>
-          <span class="text-xs text-muted-foreground">至</span>
+          <span class="text-xs text-muted-foreground">{{ t('ui.to') }}</span>
           <label class="flex items-center gap-2 text-xs">
-            <span class="font-medium text-muted-foreground">结束</span>
+            <span class="font-medium text-muted-foreground">{{ t('ui.end') }}</span>
             <input
               v-model="filters.end_date"
               type="date"
-              aria-label="结束日期"
+              :aria-label="t('ui.endDate')"
               class="h-8 rounded-md border border-border/60 bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-primary/20"
             >
           </label>
@@ -236,7 +236,7 @@
             class="h-8 text-xs"
             @click="applyFilters"
           >
-            应用日期
+            {{ t('ui.applyDate') }}
           </Button>
         </div>
       </div>
@@ -247,23 +247,23 @@
       v-if="overviewLoading && poolProviders.length === 0"
       class="py-16"
     >
-      <LoadingState message="正在读取账号池…" />
+      <LoadingState :message="t('ui.loadingAccountPools')" />
     </div>
 
     <EmptyState
       v-else-if="overviewError && poolProviders.length === 0"
       type="error"
-      title="加载账号池失败"
+      :title="t('ui.loadPoolsFailed')"
       :description="overviewError"
-      action-text="重试"
+      :action-text="t('ui.retry')"
       @action="refreshAll"
     />
 
     <EmptyState
       v-else-if="poolProviders.length === 0"
       :icon="Gauge"
-      title="暂无可统计的账号池"
-      description="请先在账号管理中启用一个包含账号的账号池。"
+      :title="t('ui.noPoolsForStats')"
+      :description="t('ui.enablePoolWithAccountsFirst')"
     />
 
     <template v-if="poolProviders.length > 0">
@@ -272,15 +272,15 @@
         v-if="statsLoading && !dashboard"
         class="py-20"
       >
-        <LoadingState message="正在读取账号消耗数据…" />
+        <LoadingState :message="t('ui.loadingConsumptionData')" />
       </div>
 
       <EmptyState
         v-else-if="statsError && !dashboard"
         type="error"
-        title="加载账号消耗失败"
+        :title="t('ui.loadConsumptionFailed')"
         :description="statsError"
-        action-text="重试"
+        :action-text="t('ui.retry')"
         @action="loadDashboard(true)"
       />
 
@@ -288,7 +288,7 @@
         <!-- 汇总 KPI 卡片组 (严格对齐主程序 '运维总览' 规范) -->
         <section
           class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5"
-          aria-label="账号池汇总"
+          :aria-label="t('ui.poolSummary')"
         >
           <!-- 账号 KPI 卡片 -->
           <Card class="p-4 border-border/60 bg-card hover:shadow-sm transition-all relative overflow-hidden min-h-[110px]">
@@ -296,7 +296,7 @@
             <div class="flex items-start justify-between gap-3 pl-1">
               <div class="min-w-0">
                 <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  账号
+                  {{ t('ui.account') }}
                 </p>
                 <div class="mt-2 text-2xl font-bold tabular-nums text-foreground">
                   {{ formatInteger(dashboard.summary.account_count) }}
@@ -307,7 +307,7 @@
               </div>
             </div>
             <p class="mt-2 text-xs text-muted-foreground truncate pl-1">
-              {{ formatInteger(dashboard.summary.used_account_count) }} 个有请求
+              {{ t('ui.accountsWithRequests', { count: formatInteger(dashboard.summary.used_account_count) }) }}
             </p>
           </Card>
 
@@ -316,7 +316,7 @@
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
                 <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  请求
+                  {{ t('ui.requests') }}
                 </p>
                 <div class="mt-2 text-2xl font-bold tabular-nums text-foreground">
                   {{ formatInteger(dashboard.summary.request_count) }}
@@ -327,7 +327,7 @@
               </div>
             </div>
             <p class="mt-2 text-xs text-muted-foreground truncate">
-              {{ formatPercent(dashboard.summary.success_rate) }} 成功率
+              {{ t('ui.successRate') }} {{ formatPercent(dashboard.summary.success_rate) }}
             </p>
           </Card>
 
@@ -336,7 +336,7 @@
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
                 <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Token 消耗
+                  {{ t('ui.tokenConsumption') }}
                 </p>
                 <div class="mt-2 text-2xl font-bold tabular-nums text-foreground">
                   {{ formatToken(dashboard.summary.total_tokens) }}
@@ -347,7 +347,7 @@
               </div>
             </div>
             <p class="mt-2 text-xs text-muted-foreground truncate">
-              输入 {{ formatToken(dashboard.summary.input_tokens) }} · 输出 {{ formatToken(dashboard.summary.output_tokens) }}
+              {{ t('ui.inputOutputTokens', { input: formatToken(dashboard.summary.input_tokens), output: formatToken(dashboard.summary.output_tokens) }) }}
             </p>
           </Card>
 
@@ -356,7 +356,7 @@
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
                 <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  费用统计
+                  {{ t('ui.costStats') }}
                 </p>
                 <div class="mt-2 text-2xl font-bold tabular-nums text-foreground">
                   {{ formatUsd(dashboard.summary.total_cost_usd) }}
@@ -367,7 +367,7 @@
               </div>
             </div>
             <p class="mt-2 text-xs text-muted-foreground truncate">
-              实际消耗 {{ formatUsd(dashboard.summary.actual_total_cost_usd) }}
+              {{ t('ui.actualConsumption', { cost: formatUsd(dashboard.summary.actual_total_cost_usd) }) }}
             </p>
           </Card>
 
@@ -376,7 +376,7 @@
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
                 <p class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  缓存命中
+                  {{ t('ui.cacheHit') }}
                 </p>
                 <div class="mt-2 text-2xl font-bold tabular-nums text-foreground">
                   {{ formatPercent(dashboard.summary.cache_hit_rate) }}
@@ -387,7 +387,7 @@
               </div>
             </div>
             <p class="mt-2 text-xs text-muted-foreground truncate">
-              P95 响应延迟 {{ formatLatency(dashboard.summary.p95_response_time_ms) }}
+              {{ t('ui.p95Latency', { value: formatLatency(dashboard.summary.p95_response_time_ms) }) }}
             </p>
           </Card>
         </section>
@@ -402,10 +402,10 @@
               id="account-list-title"
               class="shrink-0 text-base font-semibold text-foreground"
             >
-              账号明细
+              {{ t('ui.accountDetails') }}
             </h3>
             <span class="truncate text-xs text-muted-foreground">
-              {{ dashboard.range.label }} · {{ dashboard.pagination.total }} 个账号
+              {{ dashboard.range.label }} · {{ t('ui.accountsCount', { count: dashboard.pagination.total }) }}
             </span>
           </div>
 
@@ -413,7 +413,7 @@
             to="/admin/pool"
             class="ml-auto inline-flex shrink-0 items-center gap-1 rounded-md border border-border/60 px-2.5 py-1.5 text-xs font-medium text-primary hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 transition-colors"
           >
-            前往账号管理
+            {{ t('ui.goToAccountManagement') }}
             <ArrowRight class="h-3 w-3" />
           </RouterLink>
         </section>
@@ -486,14 +486,14 @@
               <div class="md:col-span-5 flex flex-col justify-center min-w-0">
                 <div class="flex items-center justify-between gap-2">
                   <h4 class="text-xs font-semibold text-foreground">
-                    额度与重置周期
+                    {{ t('ui.quotaAndResetCycle') }}
                   </h4>
                   <Badge
                     v-if="account.quota.windows.length"
                     variant="outline"
                     class="text-[10px] font-normal text-muted-foreground bg-muted/40"
                   >
-                    {{ account.quota.windows.length }} 个窗口
+                    {{ t('ui.windowsCount', { count: account.quota.windows.length }) }}
                   </Badge>
                 </div>
 
@@ -513,7 +513,7 @@
                       >
                         {{ windowDisplayLabel(window) }}
                       </span>
-                      <strong class="text-foreground font-bold">{{ quotaWindowRemainingText(window) }} 可用</strong>
+                      <strong class="text-foreground font-bold">{{ t('ui.remainingAvailable', { value: quotaWindowRemainingText(window) }) }}</strong>
                     </div>
                     <!-- 进度条 -->
                     <div
@@ -544,7 +544,7 @@
               <div class="border-t border-border/60 pt-2.5 md:col-span-7 md:border-l md:border-t-0 md:pl-4 md:pt-0">
                 <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center md:text-left">
                   <div class="min-w-0">
-                    <span class="text-[10px] font-medium text-muted-foreground block truncate">请求</span>
+                    <span class="text-[10px] font-medium text-muted-foreground block truncate">{{ t('ui.requests') }}</span>
                     <strong
                       :data-testid="`account-window-requests-${account.key_id}`"
                       class="text-sm font-bold text-foreground block mt-0.5 tabular-nums"
@@ -562,7 +562,7 @@
                     </strong>
                   </div>
                   <div class="min-w-0">
-                    <span class="text-[10px] font-medium text-muted-foreground block truncate">成功率</span>
+                    <span class="text-[10px] font-medium text-muted-foreground block truncate">{{ t('ui.successRate') }}</span>
                     <strong
                       class="text-sm font-bold block mt-0.5 tabular-nums"
                       :class="rateClass(account.success_rate)"
@@ -571,19 +571,19 @@
                     </strong>
                   </div>
                   <div class="min-w-0">
-                    <span class="text-[10px] font-medium text-muted-foreground block truncate">P95 响应</span>
+                    <span class="text-[10px] font-medium text-muted-foreground block truncate">{{ t('ui.p95Response') }}</span>
                     <strong class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">
                       {{ formatLatency(account.p95_response_time_ms) }}
                     </strong>
                   </div>
                   <div class="min-w-0">
-                    <span class="text-[10px] font-medium text-muted-foreground block truncate">缓存命中</span>
+                    <span class="text-[10px] font-medium text-muted-foreground block truncate">{{ t('ui.cacheHit') }}</span>
                     <strong class="text-sm font-bold text-foreground block mt-0.5 tabular-nums">
                       {{ formatPercent(account.cache_hit_rate) }}
                     </strong>
                   </div>
                   <div class="min-w-0">
-                    <span class="text-[10px] font-medium text-muted-foreground block truncate">费用</span>
+                    <span class="text-[10px] font-medium text-muted-foreground block truncate">{{ t('ui.cost') }}</span>
                     <strong
                       :data-testid="`account-window-cost-${account.key_id}`"
                       class="text-sm font-bold text-foreground block mt-0.5 tabular-nums"
@@ -603,7 +603,7 @@
                 class="text-xs font-semibold text-primary hover:text-primary/80 inline-flex items-center gap-1 transition-colors group"
                 @click="openAccount(account)"
               >
-                <span>查看详情</span>
+                <span>{{ t('ui.viewDetails') }}</span>
                 <ArrowRight class="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
               </button>
             </div>
@@ -614,9 +614,9 @@
         <EmptyState
           v-else
           type="filter"
-          title="当前筛选没有账号"
-          description="可以清空搜索或放宽筛选条件后重试。"
-          action-text="清空筛选"
+          :title="t('ui.noAccountsForFilter')"
+          :description="t('ui.clearSearchOrWidenFilters')"
+          :action-text="t('ui.clearFilters')"
           @action="resetListFilters"
         />
 
@@ -648,7 +648,7 @@
           <!-- 磨砂半透明背景遮罩 -->
           <div
             class="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity"
-            aria-label="关闭账号详情"
+            :aria-label="t('ui.closeAccountDetail')"
             @click="closeDrawer"
           />
 
@@ -658,7 +658,7 @@
             <div class="sticky top-0 z-10 flex items-center justify-between border-b border-border/60 bg-background/95 backdrop-blur px-5 py-3.5 sm:px-6 flex-shrink-0">
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
-                  <span class="text-[10px] font-bold uppercase tracking-wider text-primary">账号诊断</span>
+                  <span class="text-[10px] font-bold uppercase tracking-wider text-primary">{{ t('ui.accountDiagnostics') }}</span>
                   <Badge
                     v-if="selectedAccount?.quota?.plan_type"
                     variant="outline"
@@ -680,7 +680,7 @@
                 variant="ghost"
                 size="icon"
                 class="h-8 w-8 text-muted-foreground hover:text-foreground"
-                aria-label="关闭"
+                :aria-label="t('ui.close')"
                 @click="closeDrawer"
               >
                 <X class="h-4 w-4" />
@@ -693,15 +693,15 @@
                 v-if="detailLoading"
                 class="py-20"
               >
-                <LoadingState message="正在读取账号详情…" />
+                <LoadingState :message="t('ui.loadingAccountDetail')" />
               </div>
 
               <EmptyState
                 v-else-if="detailError"
                 type="error"
-                title="加载账号详情失败"
+                :title="t('ui.loadAccountDetailFailed')"
                 :description="detailError"
-                action-text="重试"
+                :action-text="t('ui.retry')"
                 @action="retryAccountDetail"
               />
 
@@ -709,7 +709,7 @@
                 <!-- 5 栏诊断核心指标网格 -->
                 <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                   <div class="rounded-xl border border-border/60 bg-card/70 p-3">
-                    <span class="block text-[11px] font-medium text-muted-foreground">请求</span>
+                    <span class="block text-[11px] font-medium text-muted-foreground">{{ t('ui.requests') }}</span>
                     <strong class="block mt-1 text-base font-bold text-foreground tabular-nums truncate">
                       {{ formatInteger(accountDetail.account.request_count) }}
                     </strong>
@@ -721,7 +721,7 @@
                     </strong>
                   </div>
                   <div class="rounded-xl border border-border/60 bg-card/70 p-3">
-                    <span class="block text-[11px] font-medium text-muted-foreground">成功率</span>
+                    <span class="block text-[11px] font-medium text-muted-foreground">{{ t('ui.successRate') }}</span>
                     <strong
                       class="block mt-1 text-base font-bold tabular-nums truncate"
                       :class="rateClass(accountDetail.account.success_rate)"
@@ -730,13 +730,13 @@
                     </strong>
                   </div>
                   <div class="rounded-xl border border-border/60 bg-card/70 p-3">
-                    <span class="block text-[11px] font-medium text-muted-foreground">P95 响应</span>
+                    <span class="block text-[11px] font-medium text-muted-foreground">{{ t('ui.p95Response') }}</span>
                     <strong class="block mt-1 text-base font-bold text-foreground tabular-nums truncate">
                       {{ formatLatency(accountDetail.performance.p95_response_time_ms) }}
                     </strong>
                   </div>
                   <div class="col-span-2 sm:col-span-1 rounded-xl border border-border/60 bg-card/70 p-3">
-                    <span class="block text-[11px] font-medium text-muted-foreground">费用</span>
+                    <span class="block text-[11px] font-medium text-muted-foreground">{{ t('ui.cost') }}</span>
                     <strong class="block mt-1 text-base font-bold text-foreground tabular-nums truncate">
                       {{ formatUsd(accountDetail.account.total_cost_usd) }}
                     </strong>
@@ -749,7 +749,7 @@
                     <div class="flex items-center gap-2">
                       <BarChart3 class="h-4 w-4 text-primary" />
                       <h3 class="text-xs font-semibold text-foreground">
-                        Token 与费用趋势
+                        {{ t('ui.tokenAndCostTrend') }}
                       </h3>
                     </div>
                     <span
@@ -766,7 +766,7 @@
                       v-if="detailRefreshing"
                       class="py-12"
                     >
-                      <LoadingState message="正在更新图表…" />
+                      <LoadingState :message="t('ui.updatingChart')" />
                     </div>
                     <div
                       v-else-if="detailTimeline.length"
@@ -776,7 +776,7 @@
                         <div class="flex items-center justify-between">
                           <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <span class="h-2.5 w-2.5 rounded bg-primary/80" />
-                            <span>Token 使用量</span>
+                            <span>{{ t('ui.tokenUsage') }}</span>
                           </div>
                           <strong class="text-xs font-bold text-foreground tabular-nums">{{ formatToken(detailTotalTokens) }}</strong>
                         </div>
@@ -793,7 +793,7 @@
                         <div class="flex items-center justify-between">
                           <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <span class="h-2.5 w-2.5 rounded bg-emerald-500/80" />
-                            <span>费用趋势</span>
+                            <span>{{ t('ui.costTrend') }}</span>
                           </div>
                           <strong class="text-xs font-bold text-foreground tabular-nums">{{ formatUsd(detailTotalCost) }}</strong>
                         </div>
@@ -813,8 +813,8 @@
                       <EmptyState
                         :icon="Coins"
                         size="sm"
-                        title="暂无图表记录"
-                        description="该时间段内暂无 Token 或费用消耗明细"
+                        :title="t('ui.noChartRecords')"
+                        :description="t('ui.noTokenCostInPeriod')"
                       />
                     </div>
                   </div>
@@ -826,7 +826,7 @@
                     <div class="flex items-center gap-2">
                       <Gauge class="h-4 w-4 text-primary" />
                       <h3 class="text-xs font-semibold text-foreground">
-                        额度与重置周期
+                        {{ t('ui.quotaAndResetCycle') }}
                       </h3>
                     </div>
                     <Badge
@@ -843,14 +843,14 @@
                       <!-- 周期步进导航条 -->
                       <div
                         class="flex items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/15 p-2.5"
-                        aria-label="额度窗口导航"
+                        :aria-label="t('ui.quotaWindowNav')"
                       >
                         <Button
                           variant="outline"
                           size="icon"
                           class="h-7 w-7 rounded-lg border-border/60"
                           :disabled="!hasOlderDetailQuotaCycle || detailRefreshing"
-                          aria-label="查看更早的额度窗口"
+                          :aria-label="t('ui.viewOlderQuotaWindow')"
                           @click="shiftDetailQuotaCycle(1)"
                         >
                           <ChevronLeft class="h-3.5 w-3.5" />
@@ -876,7 +876,7 @@
                           size="icon"
                           class="h-7 w-7 rounded-lg border-border/60"
                           :disabled="!hasNewerDetailQuotaCycle || detailRefreshing"
-                          aria-label="查看更新的额度窗口"
+                          :aria-label="t('ui.viewNewerQuotaWindow')"
                           @click="shiftDetailQuotaCycle(-1)"
                         >
                           <ChevronRight class="h-3.5 w-3.5" />
@@ -924,9 +924,9 @@
                         </div>
 
                         <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/60 pt-2.5 text-xs text-muted-foreground">
-                          <span>本窗口请求 <strong class="text-foreground font-semibold">{{ formatInteger(activeDetailQuotaCycle.startUnixSecs == null ? activeDetailQuotaCycle.window.local_request_count : accountDetail.account.request_count) }}</strong></span>
+                          <span>{{ t('ui.thisWindowRequests') }} <strong class="text-foreground font-semibold">{{ formatInteger(activeDetailQuotaCycle.startUnixSecs == null ? activeDetailQuotaCycle.window.local_request_count : accountDetail.account.request_count) }}</strong></span>
                           <span>Token <strong class="text-foreground font-semibold">{{ formatToken(activeDetailQuotaCycle.startUnixSecs == null ? activeDetailQuotaCycle.window.local_total_tokens : accountDetail.account.total_tokens) }}</strong></span>
-                          <span>费用 <strong class="text-foreground font-semibold">{{ formatUsd(activeDetailQuotaCycle.startUnixSecs == null ? activeDetailQuotaCycle.window.local_cost_usd : accountDetail.account.total_cost_usd) }}</strong></span>
+                          <span>{{ t('ui.cost') }} <strong class="text-foreground font-semibold">{{ formatUsd(activeDetailQuotaCycle.startUnixSecs == null ? activeDetailQuotaCycle.window.local_cost_usd : accountDetail.account.total_cost_usd) }}</strong></span>
                         </div>
                       </div>
                     </template>
@@ -939,7 +939,7 @@
                         :icon="Gauge"
                         size="sm"
                         :title="quotaMessage(accountDetail.account.quota)"
-                        description="当前没有可展示的额度窗口"
+                        :description="t('ui.noQuotaWindowsToShow')"
                       />
                     </div>
                   </div>
@@ -951,7 +951,7 @@
                     <div class="border-b border-border/60 bg-muted/20 px-4 py-3 flex items-center gap-2">
                       <Layers class="h-4 w-4 text-primary" />
                       <h3 class="text-xs font-semibold text-foreground">
-                        模型使用
+                        {{ t('ui.modelUsage') }}
                       </h3>
                     </div>
                     <div class="p-4">
@@ -979,7 +979,7 @@
                         v-else
                         class="py-4 text-center text-xs text-muted-foreground"
                       >
-                        暂无模型调用数据
+                        {{ t('ui.noModelUsageData') }}
                       </p>
                     </div>
                   </Card>
@@ -988,7 +988,7 @@
                     <div class="border-b border-border/60 bg-muted/20 px-4 py-3 flex items-center gap-2">
                       <AlertCircle class="h-4 w-4 text-destructive" />
                       <h3 class="text-xs font-semibold text-foreground">
-                        失败请求
+                        {{ t('ui.failedRequests') }}
                       </h3>
                     </div>
                     <div class="p-4">
@@ -1016,7 +1016,7 @@
                         v-else
                         class="py-4 text-center text-xs text-muted-foreground"
                       >
-                        暂无失败请求记录
+                        {{ t('ui.noFailedRequests') }}
                       </p>
                     </div>
                   </Card>
@@ -1079,6 +1079,7 @@ import {
   type QuotaWindowObservation,
 } from '@/api/endpoints/pool'
 import { parseApiError } from '@/utils/errorParser'
+import { useI18n } from '@/i18n'
 
 type FilterState = Required<Pick<PoolConsumptionDashboardQuery,
   'range' | 'granularity' | 'usage' | 'active' | 'risk' | 'freshness' | 'result' | 'sort_by' | 'sort_order'>> & {
@@ -1094,6 +1095,8 @@ interface DetailQuotaCycle {
   startUnixSecs: number | null
   endUnixSecs: number | null
 }
+
+const { t } = useI18n()
 
 const SORT_STORAGE_KEY = 'pool_consumption_sort_pref'
 const SORT_PRESETS = ['cost:desc', 'requests:desc', 'tokens:desc', 'quota:asc', 'last_used:desc']

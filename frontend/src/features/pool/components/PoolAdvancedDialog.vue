@@ -1,8 +1,8 @@
 <template>
   <Dialog
     :model-value="modelValue"
-    title="高级设置"
-    description="冷却、热池与其他高级参数"
+    :title="t('ui.advancedSettings')"
+    :description="t('ui.cooldownsWarmPoolAndOtherAdvancedSettings')"
     size="3xl"
     @update:model-value="emit('update:modelValue', $event)"
   >
@@ -11,14 +11,12 @@
         <div class="space-y-1">
           <div class="flex flex-wrap items-center gap-2">
             <h3 class="text-sm font-semibold">
-              冷却与热池
+              {{ t('ui.cooldownsAndWarmPool') }}
             </h3>
-            <span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-              核心策略
-            </span>
+            <span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"> {{ t('ui.corePolicies') }} </span>
           </div>
           <p class="text-xs leading-5 text-muted-foreground">
-            控制冷却时间、自适应热池和异常清理。
+            {{ t('ui.configureCooldownsAdaptiveWarmPoolsAndInvalidAccountCleanup') }}
           </p>
         </div>
 
@@ -39,7 +37,7 @@
                       <button
                         type="button"
                         :title="item.description"
-                        :aria-label="`${item.label} 说明`"
+                        :aria-label="t('ui.valueHelpa3a0066', { value: item.label })"
                         class="hidden lg:inline-flex items-center justify-center rounded-sm p-0.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
                       >
                         <CircleHelp class="h-3.5 w-3.5" />
@@ -70,7 +68,7 @@
         <div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-muted/30 p-4">
           <div class="min-w-0 space-y-1">
             <div class="flex items-center gap-2">
-              <span class="text-sm font-medium">OAuth 自动续期</span>
+              <span class="text-sm font-medium">{{ t('ui.oauthAutoRenewal') }}</span>
               <span
                 class="rounded-full px-2 py-0.5 text-[11px]"
                 :class="oauthRefreshEffective
@@ -106,9 +104,7 @@
         >
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="space-y-1.5">
-              <Label>
-                自检间隔
-                <span class="text-xs text-muted-foreground">(分钟)</span>
+              <Label> {{ t('ui.selfCheckInterval') }} <span class="text-xs text-muted-foreground">{{ t('ui.minutes') }}</span>
               </Label>
               <Input
                 :model-value="form.account_self_check_interval_minutes ?? ''"
@@ -120,9 +116,7 @@
               />
             </div>
             <div class="space-y-1.5">
-              <Label>
-                自检并发
-              </Label>
+              <Label> {{ t('ui.selfCheckConcurrency') }} </Label>
               <Input
                 :model-value="form.account_self_check_concurrency ?? ''"
                 type="number"
@@ -140,9 +134,7 @@
           :class="cooldownFieldLayout.desktopColumnsClass"
         >
           <div class="space-y-1.5">
-            <Label>
-              429 冷却
-              <span class="text-xs text-muted-foreground">(秒)</span>
+            <Label> {{ t('ui.429Cooldown') }} <span class="text-xs text-muted-foreground">{{ t('ui.seconds') }}</span>
             </Label>
             <Input
               :model-value="form.rate_limit_cooldown_seconds ?? ''"
@@ -154,9 +146,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>
-              529 冷却
-              <span class="text-xs text-muted-foreground">(秒)</span>
+            <Label> {{ t('ui.529Cooldown') }} <span class="text-xs text-muted-foreground">{{ t('ui.seconds') }}</span>
             </Label>
             <Input
               :model-value="form.overload_cooldown_seconds ?? ''"
@@ -175,22 +165,18 @@
         <div class="space-y-1">
           <div class="flex flex-wrap items-center gap-2">
             <h3 class="text-sm font-semibold">
-              批量操作
+              {{ t('ui.batchActions') }}
             </h3>
-            <span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-              任务效率
-            </span>
+            <span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"> {{ t('ui.taskThroughput') }} </span>
           </div>
           <p class="text-xs leading-5 text-muted-foreground">
-            控制刷新 OAuth、自适应热池和批量额度处理时的并行请求数。
+            {{ t('ui.controlParallelRequestsForOauthRefreshAdaptiveWarmPoolsAnd') }}
           </p>
         </div>
 
         <div class="grid gap-3 rounded-xl bg-muted/30 p-4 sm:grid-cols-2 xl:grid-cols-4">
           <div class="space-y-1.5">
-            <Label>
-              并发数
-            </Label>
+            <Label> {{ t('ui.concurrency') }} </Label>
             <Input
               :model-value="form.batch_concurrency ?? ''"
               type="number"
@@ -200,13 +186,11 @@
               @update:model-value="(v) => form.batch_concurrency = parseNum(v)"
             />
             <p class="text-[11px] leading-5 text-muted-foreground">
-              为空时沿用默认值；数值越大，批量操作越快，但会增加瞬时请求压力。
+              {{ t('ui.leaveEmptyToUseDefaultsHigherValuesSpeedUpBulk') }}
             </p>
           </div>
           <div class="space-y-1.5">
-            <Label>
-              探测并发
-            </Label>
+            <Label> {{ t('ui.probeConcurrency') }} </Label>
             <Input
               :model-value="form.probe_concurrency ?? ''"
               type="number"
@@ -217,9 +201,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>
-              评分 Top-N
-            </Label>
+            <Label> {{ t('ui.scoringTopN') }} </Label>
             <Input
               :model-value="form.score_top_n ?? ''"
               type="number"
@@ -230,9 +212,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>
-              回退扫描
-            </Label>
+            <Label> {{ t('ui.fallbackScan') }} </Label>
             <Input
               :model-value="form.score_fallback_scan_limit ?? ''"
               type="number"
@@ -249,20 +229,18 @@
         <div class="space-y-1">
           <div class="flex flex-wrap items-center gap-2">
             <h3 class="text-sm font-semibold">
-              分数规则
+              {{ t('ui.scoringRules') }}
             </h3>
-            <span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-              候选排序
-            </span>
+            <span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"> {{ t('ui.candidateOrdering') }} </span>
           </div>
           <p class="text-xs leading-5 text-muted-foreground">
-            调整探测结果、健康、额度、延迟和使用成本进入号池候选排序时的权重。
+            {{ t('ui.adjustTheWeightsOfProbeResultsHealthQuotaLatencyAnd') }}
           </p>
         </div>
 
         <div class="grid gap-3 lg:grid-cols-3">
           <div class="space-y-1.5">
-            <Label>优先级权重</Label>
+            <Label>{{ t('ui.priorityWeight') }}</Label>
             <Input
               :model-value="form.score_weight_manual_priority ?? ''"
               type="number"
@@ -274,7 +252,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>健康权重</Label>
+            <Label>{{ t('ui.healthWeight') }}</Label>
             <Input
               :model-value="form.score_weight_health ?? ''"
               type="number"
@@ -286,7 +264,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>探测新鲜度权重</Label>
+            <Label>{{ t('ui.probeFreshnessWeight') }}</Label>
             <Input
               :model-value="form.score_weight_probe_freshness ?? ''"
               type="number"
@@ -298,7 +276,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>额度剩余权重</Label>
+            <Label>{{ t('ui.remainingQuotaWeight') }}</Label>
             <Input
               :model-value="form.score_weight_quota_remaining ?? ''"
               type="number"
@@ -310,7 +288,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>延迟权重</Label>
+            <Label>{{ t('ui.latencyWeight') }}</Label>
             <Input
               :model-value="form.score_weight_latency ?? ''"
               type="number"
@@ -322,7 +300,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>成本/LRU 权重</Label>
+            <Label>{{ t('ui.costLruWeight') }}</Label>
             <Input
               :model-value="form.score_weight_cost_lru ?? ''"
               type="number"
@@ -337,9 +315,7 @@
 
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div class="space-y-1.5">
-            <Label>
-              探测新鲜度 TTL
-              <span class="text-xs text-muted-foreground">(秒)</span>
+            <Label> {{ t('ui.probeFreshnessTtl') }} <span class="text-xs text-muted-foreground">{{ t('ui.seconds') }}</span>
             </Label>
             <Input
               :model-value="form.probe_freshness_ttl_seconds ?? ''"
@@ -351,7 +327,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>探测失败惩罚</Label>
+            <Label>{{ t('ui.probeFailurePenalty') }}</Label>
             <Input
               :model-value="form.probe_failure_penalty ?? ''"
               type="number"
@@ -363,7 +339,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>请求失败惩罚</Label>
+            <Label>{{ t('ui.requestFailurePenalty') }}</Label>
             <Input
               :model-value="form.request_failure_penalty ?? ''"
               type="number"
@@ -375,7 +351,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>探测失败冷却阈值</Label>
+            <Label>{{ t('ui.probeFailureCooldownThreshold') }}</Label>
             <Input
               :model-value="form.probe_failure_cooldown_threshold ?? ''"
               type="number"
@@ -386,7 +362,7 @@
             />
           </div>
           <div class="space-y-1.5">
-            <Label>不可调度分数上限</Label>
+            <Label>{{ t('ui.unschedulableScoreCeiling') }}</Label>
             <Input
               :model-value="form.unschedulable_score_cap ?? ''"
               type="number"
@@ -409,21 +385,19 @@
             <h3 class="text-sm font-semibold">
               Claude Code
             </h3>
-            <span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-              请求约束
-            </span>
+            <span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"> {{ t('ui.requestConstraints') }} </span>
           </div>
           <p class="text-xs leading-5 text-muted-foreground">
-            管理 CLI 请求限制、会话控制和 metadata / cache 相关的兼容行为。
+            {{ t('ui.manageCliRequestRestrictionsSessionsAndMetadataOrCacheCompatibility') }}
           </p>
         </div>
 
         <div class="grid gap-3 lg:grid-cols-2">
           <div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-muted/30 p-4 sm:flex-row sm:items-start sm:justify-between">
             <div class="space-y-1">
-              <span class="text-sm font-medium">Session ID 伪装</span>
+              <span class="text-sm font-medium">{{ t('ui.sessionIdMasking') }}</span>
               <p class="text-xs leading-5 text-muted-foreground">
-                固定 metadata.user_id 中 session 片段。
+                {{ t('ui.useAFixedSessionSegmentInMetadataUserId') }}
               </p>
             </div>
             <Switch
@@ -435,9 +409,9 @@
 
           <div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-muted/30 p-4 sm:flex-row sm:items-start sm:justify-between">
             <div class="space-y-1">
-              <span class="text-sm font-medium">仅限 CLI 客户端</span>
+              <span class="text-sm font-medium">{{ t('ui.cliClientsOnly') }}</span>
               <p class="text-xs leading-5 text-muted-foreground">
-                仅允许 Claude Code CLI 格式请求。
+                {{ t('ui.allowOnlyClaudeCodeCliRequestFormats') }}
               </p>
             </div>
             <Switch
@@ -449,9 +423,9 @@
 
           <div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-muted/30 p-4 sm:flex-row sm:items-start sm:justify-between">
             <div class="space-y-1">
-              <span class="text-sm font-medium">Cache TTL 统一</span>
+              <span class="text-sm font-medium">{{ t('ui.unifiedCacheTtl') }}</span>
               <p class="text-xs leading-5 text-muted-foreground">
-                强制所有 cache_control 使用同一种 TTL 类型。
+                {{ t('ui.requireAllCacheControlValuesToUseTheSameTtl') }}
               </p>
             </div>
             <Switch
@@ -463,9 +437,9 @@
 
           <div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-muted/30 p-4 sm:flex-row sm:items-start sm:justify-between">
             <div class="space-y-1">
-              <span class="text-sm font-medium">会话数量控制</span>
+              <span class="text-sm font-medium">{{ t('ui.sessionCountLimit') }}</span>
               <p class="text-xs leading-5 text-muted-foreground">
-                限制单 Key 同时活跃会话数，降低长期占用风险。
+                {{ t('ui.limitActiveSessionsPerKeyToReduceProlongedResourceUse') }}
               </p>
             </div>
             <Switch
@@ -481,7 +455,7 @@
           class="rounded-xl border border-dashed border-primary/25 bg-primary/5 p-4"
         >
           <div class="space-y-1.5">
-            <Label>TTL 类型</Label>
+            <Label>{{ t('ui.ttlType') }}</Label>
             <div class="flex w-fit gap-0.5 rounded-md bg-muted/40 p-0.5">
               <button
                 v-for="opt in ['ephemeral']"
@@ -507,22 +481,18 @@
         >
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="space-y-1.5">
-              <Label>
-                最大会话数
-              </Label>
+              <Label> {{ t('ui.maximumSessions') }} </Label>
               <Input
                 :model-value="claudeForm.max_sessions ?? ''"
                 type="number"
                 min="1"
                 max="100"
-                placeholder="留空 = 不限"
+                :placeholder="t('ui.emptyUnlimited')"
                 @update:model-value="(v) => claudeForm.max_sessions = parseNum(v)"
               />
             </div>
             <div class="space-y-1.5">
-              <Label>
-                空闲超时
-                <span class="text-xs text-muted-foreground">(分钟)</span>
+              <Label> {{ t('ui.idleTimeout') }} <span class="text-xs text-muted-foreground">{{ t('ui.minutes') }}</span>
               </Label>
               <Input
                 :model-value="claudeForm.session_idle_timeout_minutes ?? ''"
@@ -545,20 +515,22 @@
         :disabled="loading"
         @click="emit('update:modelValue', false)"
       >
-        取消
+        {{ t('common.cancel') }}
       </Button>
       <Button
         class="min-w-[96px] flex-1 sm:flex-none"
         :disabled="loading"
         @click="handleSave"
       >
-        {{ loading ? '保存中...' : '保存' }}
+        {{ loading ? t('ui.saving') : t('ui.save') }}
       </Button>
     </template>
   </Dialog>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from '@/i18n'
+
 import { computed, ref, watch } from 'vue'
 import { CircleHelp } from 'lucide-vue-next'
 import { Dialog, Button, Input, Label, Switch, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui'
@@ -598,6 +570,8 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   saved: [provider: ProviderWithEndpointsSummary]
 }>()
+
+const { t } = useI18n()
 
 const { success, error: showError } = useToast()
 const loading = ref(false)
@@ -846,7 +820,7 @@ async function handleSave() {
     }
     const updatedProvider = await updateProvider(providerId, payload)
     if (!props.modelValue || props.providerId !== providerId || dialogRevision !== revision) return
-    success('高级设置已保存')
+    success(t('ui.advancedSettingsSaved'))
     emit('saved', updatedProvider)
     emit('update:modelValue', false)
   } catch (err) {
@@ -857,4 +831,5 @@ async function handleSave() {
     }
   }
 }
+
 </script>

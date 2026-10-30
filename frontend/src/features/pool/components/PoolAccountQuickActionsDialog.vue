@@ -1,7 +1,7 @@
 <template>
   <Dialog
     :model-value="modelValue"
-    title="账号批量操作"
+    :title="t('ui.accountBatchActions')"
     :description="dialogDescription"
     size="3xl"
     persistent
@@ -10,7 +10,7 @@
     <div class="max-h-[calc(100dvh-13rem)] space-y-4 overflow-y-auto overscroll-contain pr-1 sm:max-h-[min(72vh,44rem)] sm:pr-2">
       <div class="space-y-3 rounded-lg border bg-muted/20 px-3 py-2.5">
         <div class="flex items-center justify-between gap-2">
-          <span class="text-xs font-medium text-foreground">快捷多选</span>
+          <span class="text-xs font-medium text-foreground">{{ t('ui.quickMultiSelect') }}</span>
           <Button
             variant="ghost"
             size="sm"
@@ -18,7 +18,7 @@
             :disabled="loading || executing || !hasActiveFilters"
             @click="clearFilters"
           >
-            重置筛选
+            {{ t('ui.resetFilters') }}
           </Button>
         </div>
 
@@ -41,7 +41,7 @@
           <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_11rem_auto]">
             <Input
               :model-value="searchText"
-              placeholder="搜索账号名 / 套餐 / 额度 / 代理状态"
+              :placeholder="t('ui.searchAccountFullPlaceholder')"
               class="h-8 min-w-0"
               @update:model-value="(v) => searchText = String(v || '')"
             />
@@ -50,7 +50,7 @@
                 class="h-8 min-w-0 text-xs"
                 data-testid="pool-quick-action-status-filter"
               >
-                <SelectValue placeholder="区分账号状态" />
+                <SelectValue :placeholder="t('ui.filterByAccountStatus')" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem
@@ -78,7 +78,7 @@
 
           <div class="flex flex-col gap-2 text-xs lg:flex-row lg:items-center lg:justify-between">
             <div class="text-muted-foreground">
-              共 {{ filteredTotal }} 个匹配账号，当前页 {{ pageKeyRows.length }} 个，已选 {{ selectedCount }} 个
+              {{ t('ui.matchedAccountsSummary', { total: filteredTotal, page: pageKeyRows.length, selected: selectedCount }) }}
             </div>
             <div class="flex flex-wrap items-center gap-1">
               <div class="mr-1 flex items-center gap-2">
@@ -88,7 +88,7 @@
                   :disabled="filteredTotal === 0 || loading || executing"
                   @update:checked="toggleSelectFiltered"
                 />
-                <span class="text-muted-foreground">全选筛选结果</span>
+                <span class="text-muted-foreground">{{ t('ui.selectAllFiltered') }}</span>
               </div>
               <Button
                 variant="ghost"
@@ -106,7 +106,7 @@
                 :disabled="!canClearSelection || loading || executing"
                 @click="clearSelection"
               >
-                清空选择
+                {{ t('ui.clearSelection') }}
               </Button>
             </div>
           </div>
@@ -120,13 +120,13 @@
               v-if="loading"
               class="py-10 text-center text-sm text-muted-foreground"
             >
-              正在加载账号列表...
+              {{ t('ui.loadingAccountList') }}
             </div>
             <div
               v-else-if="pageKeyRows.length === 0"
               class="py-10 text-center text-sm text-muted-foreground"
             >
-              无匹配账号
+              {{ t('ui.noMatchingAccounts') }}
             </div>
             <label
               v-for="row in pageKeyRows"
@@ -166,7 +166,7 @@
                 <div class="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
                   <span :class="row.key.is_active ? '' : 'text-destructive'">{{ row.key.is_active ? '启用' : '禁用' }}</span>
                   <span v-if="row.quotaText">{{ row.quotaTextShort }}</span>
-                  <span v-if="row.key.proxy?.node_id">独立代理</span>
+                  <span v-if="row.key.proxy?.node_id">{{ t('ui.dedicatedProxy') }}</span>
                   <span
                     v-if="row.lastUsedRelative"
                     class="ml-auto shrink-0"
@@ -180,7 +180,7 @@
             v-if="totalPages > 1"
             class="flex items-center justify-between text-xs text-muted-foreground"
           >
-            <span>第 {{ currentPage }} / {{ totalPages }} 页</span>
+            <span>{{ t('ui.pageOf', { current: currentPage, total: totalPages }) }}</span>
             <div class="flex items-center gap-1">
               <Button
                 variant="ghost"
@@ -225,7 +225,7 @@
         <div class="space-y-3 lg:sticky lg:top-1 lg:self-start">
           <div class="space-y-2 rounded-lg border bg-background px-3 py-3">
             <div class="text-xs font-medium text-foreground">
-              执行动作
+              {{ t('ui.executeAction') }}
             </div>
             <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
               <Button
@@ -245,7 +245,7 @@
               class="space-y-2 border-t border-border/60 pt-3"
             >
               <div class="text-[11px] text-muted-foreground">
-                选择要绑定的代理节点
+                {{ t('ui.selectProxyNodeToBind') }}
               </div>
               <ProxyNodeSelect
                 :model-value="proxyNodeIdForAction"
@@ -257,7 +257,7 @@
                 :disabled="!canExecuteSpecifiedAction('set_proxy')"
                 @click="confirmAndExecuteAction('set_proxy')"
               >
-                应用代理设置
+                {{ t('ui.applyProxySettings') }}
               </Button>
             </div>
           </div>
@@ -271,17 +271,17 @@
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div>
             <h3 class="text-sm font-semibold">
-              更多设置
+              {{ t('ui.moreSettings') }}
             </h3>
             <p class="text-[11px] text-muted-foreground">
-              仅更新已勾选字段，未勾选配置保持不变
+              {{ t('ui.onlyUpdateCheckedFields') }}
             </p>
           </div>
           <Badge
             variant="outline"
             class="tabular-nums"
           >
-            已选 {{ selectedSettingsCount }} 项
+            {{ t('ui.selectedCountItems', { count: selectedSettingsCount }) }}
           </Badge>
         </div>
 
@@ -292,7 +292,7 @@
                 :checked="settingsSelection.internal_priority"
                 @update:checked="settingsSelection.internal_priority = $event === true"
               />
-              <Label class="text-xs">优先级</Label>
+              <Label class="text-xs">{{ t('ui.priority') }}</Label>
             </div>
             <Input
               v-model.number="settingsDraft.internal_priority"
@@ -309,7 +309,7 @@
                 :checked="settingsSelection.rpm_limit"
                 @update:checked="settingsSelection.rpm_limit = $event === true"
               />
-              <Label class="text-xs">RPM 限制</Label>
+              <Label class="text-xs">{{ t('ui.rpmLimit') }}</Label>
             </div>
             <Input
               :model-value="settingsDraft.rpm_limit ?? ''"
@@ -317,7 +317,7 @@
               min="1"
               max="10000"
               class="h-9"
-              placeholder="留空为自适应"
+              :placeholder="t('ui.blankForAdaptive')"
               :disabled="!settingsSelection.rpm_limit"
               @update:model-value="settingsDraft.rpm_limit = parseNullableNumberInput($event, { min: 1, max: 10000 })"
             />
@@ -329,14 +329,14 @@
                 :checked="settingsSelection.concurrent_limit"
                 @update:checked="settingsSelection.concurrent_limit = $event === true"
               />
-              <Label class="text-xs">并发请求上限</Label>
+              <Label class="text-xs">{{ t('ui.concurrencyLimit') }}</Label>
             </div>
             <Input
               :model-value="settingsDraft.concurrent_limit ?? ''"
               type="number"
               min="0"
               class="h-9"
-              placeholder="留空为不限制"
+              :placeholder="t('ui.blankForNoLimit')"
               :disabled="!settingsSelection.concurrent_limit"
               @update:model-value="settingsDraft.concurrent_limit = parseNullableNumberInput($event, { min: 0 })"
             />
@@ -348,7 +348,7 @@
                 :checked="settingsSelection.cache_ttl_minutes"
                 @update:checked="settingsSelection.cache_ttl_minutes = $event === true"
               />
-              <Label class="text-xs">缓存 TTL（分钟）</Label>
+              <Label class="text-xs">{{ t('ui.cacheTtlMinutes') }}</Label>
             </div>
             <Input
               :model-value="settingsDraft.cache_ttl_minutes"
@@ -367,7 +367,7 @@
                 :checked="settingsSelection.max_probe_interval_minutes"
                 @update:checked="settingsSelection.max_probe_interval_minutes = $event === true"
               />
-              <Label class="text-xs">熔断探测（分钟）</Label>
+              <Label class="text-xs">{{ t('ui.circuitProbeMinutes') }}</Label>
             </div>
             <Input
               :model-value="settingsDraft.max_probe_interval_minutes"
@@ -386,7 +386,7 @@
                 :checked="settingsSelection.is_active"
                 @update:checked="settingsSelection.is_active = $event === true"
               />
-              <Label class="text-xs">启用状态</Label>
+              <Label class="text-xs">{{ t('ui.enabledStatus') }}</Label>
             </div>
             <Select
               v-model="settingsStatus"
@@ -397,10 +397,10 @@
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="enabled">
-                  启用
+                  {{ t('ui.enable') }}
                 </SelectItem>
                 <SelectItem value="disabled">
-                  停用
+                  {{ t('ui.inactive') }}
                 </SelectItem>
               </SelectContent>
             </Select>
@@ -412,7 +412,7 @@
                 :checked="settingsSelection.proxy_node_id"
                 @update:checked="settingsSelection.proxy_node_id = $event === true"
               />
-              <Label class="text-xs">账号代理</Label>
+              <Label class="text-xs">{{ t('ui.accountProxy') }}</Label>
             </div>
             <div class="grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
               <Select
@@ -424,10 +424,10 @@
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="set">
-                    设置节点
+                    {{ t('ui.setNode') }}
                   </SelectItem>
                   <SelectItem value="clear">
-                    清除代理
+                    {{ t('ui.clearProxy') }}
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -442,7 +442,7 @@
                 v-else
                 class="flex h-9 items-center rounded-md border bg-muted/30 px-3 text-xs text-muted-foreground"
               >
-                回退到 Provider 默认代理
+                {{ t('ui.fallbackToProviderProxy') }}
               </div>
             </div>
           </div>
@@ -453,12 +453,12 @@
                 :checked="settingsSelection.note"
                 @update:checked="settingsSelection.note = $event === true"
               />
-              <Label class="text-xs">备注</Label>
+              <Label class="text-xs">{{ t('ui.note') }}</Label>
             </div>
             <Input
               v-model="settingsDraft.note"
               class="h-9"
-              placeholder="留空清除备注"
+              :placeholder="t('ui.blankToClearNote')"
               :disabled="!settingsSelection.note"
             />
           </div>
@@ -473,7 +473,7 @@
             :disabled="!canExecuteSpecifiedAction('update_settings')"
             @click="confirmAndExecuteAction('update_settings')"
           >
-            应用更多设置
+            {{ t('ui.applyAdditionalSettings') }}
           </Button>
         </div>
       </section>
@@ -507,7 +507,7 @@
         :disabled="executing"
         @click="emit('update:modelValue', false)"
       >
-        关闭
+        {{ t('ui.close') }}
       </Button>
     </template>
   </Dialog>
@@ -531,6 +531,7 @@ import {
 import ProxyNodeSelect from '@/features/providers/components/ProxyNodeSelect.vue'
 import { RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-vue-next'
 import { useToast } from '@/composables/useToast'
+import { useI18n } from '@/i18n'
 import { useConfirm } from '@/composables/useConfirm'
 import { parseApiError } from '@/utils/errorParser'
 import {
@@ -545,20 +546,20 @@ import {
 import { exportKey, refreshProviderQuota } from '@/api/endpoints/keys'
 import { refreshProviderOAuth } from '@/api/endpoints/provider_oauth'
 import { useProxyNodesStore } from '@/stores/proxy-nodes'
-import { getOAuthOrgBadge } from '@/utils/oauthIdentity'
-import { formatOAuthPlanType } from '@/utils/oauthPlanType'
+import { getOAuthOrgBadge } from '@/features/providers/utils/oauthIdentity'
+import { formatOAuthPlanType } from '@/features/providers/utils/oauthPlanType'
 import {
   canExportOAuthCredential,
   canRefreshOAuthCredential,
   getProviderAuthLabel,
-} from '@/utils/providerKeyAuth'
+} from '@/features/providers/utils/providerKeyAuth'
 import {
   getAccountStatusDisplay,
   getAccountStatusTitle,
   getOAuthStatusDisplay,
   getOAuthStatusTitle,
-} from '@/utils/providerKeyStatus'
-import { getQuotaDisplayText } from '@/utils/providerKeyQuota'
+} from '@/features/providers/utils/providerKeyStatus'
+import { getQuotaDisplayText } from '@/features/providers/utils/providerKeyQuota'
 import { runChunkedBatchAction } from '@/utils/batchAction'
 import { parseNullableNumberInput, parseNumberInput } from '@/utils/form'
 import {
@@ -674,6 +675,7 @@ const ACTION_OPTIONS: BatchActionOption[] = [
 
 const { success, warning, error: showError } = useToast()
 const { confirm } = useConfirm()
+const { t } = useI18n()
 const proxyNodesStore = useProxyNodesStore()
 
 const loading = ref(false)
@@ -1318,10 +1320,10 @@ async function executeAction(actionOverride?: BatchActionValue): Promise<void> {
           progressLabel.value = `正在${actionLabel}...（第 ${batchIndex}/${totalBatches} 批）`
         }
 
-        const payload = selectedAction.value === 'set_proxy'
+        const payload: Record<string, unknown> | undefined = selectedAction.value === 'set_proxy'
           ? { node_id: proxyNodeIdForAction.value, enabled: true }
           : selectedAction.value === 'update_settings'
-            ? buildPoolKeySettingsPatch(settingsSelection, settingsDraft)
+            ? buildPoolKeySettingsPatch(settingsSelection, settingsDraft) as Record<string, unknown>
             : undefined
 
         try {

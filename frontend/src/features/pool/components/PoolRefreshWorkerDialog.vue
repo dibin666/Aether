@@ -1,8 +1,8 @@
 <template>
   <Dialog
     :model-value="isOpen"
-    title="自动刷新"
-    description="管理 OAuth Token 自动续期，并查看 OAuth 与额度刷新记录"
+    :title="t('ui.autoRefresh')"
+    :description="t('ui.manageOAuthRefresh')"
     size="4xl"
     @update:model-value="handleDialogUpdate"
   >
@@ -39,13 +39,13 @@
                     </Badge>
                   </div>
                   <p class="mt-1 text-xs leading-5 text-muted-foreground">
-                    定期扫描即将过期的 OAuth 账号并刷新凭证。
+                    {{ t('ui.oauthRefreshDesc') }}
                   </p>
                 </div>
                 <Switch
                   :model-value="form.enabled"
                   :disabled="loadingSettings || savingSettings"
-                  aria-label="启用 OAuth Token 自动续期"
+                  :aria-label="t('ui.enableOAuthRefresh')"
                   @update:model-value="form.enabled = $event"
                 />
               </div>
@@ -85,17 +85,17 @@
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-center gap-2">
                 <h3 class="text-sm font-semibold text-foreground">
-                  账号额度
+                  {{ t('ui.accountQuota') }}
                 </h3>
                 <Badge
                   variant="outline"
                   class="border-primary/20 bg-primary/[0.07] px-2 py-0 text-[11px] text-primary"
                 >
-                  按号池策略运行
+                  {{ t('ui.runsByPoolPolicy') }}
                 </Badge>
               </div>
               <p class="mt-1 text-xs leading-5 text-muted-foreground">
-                按热池需求和额度有效期，探测并更新账号额度。
+                {{ t('ui.quotaProbeDesc') }}
               </p>
 
               <div class="mt-4 flex items-center justify-between gap-3 border-t border-border/50 pt-3">
@@ -129,10 +129,10 @@
         <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h3 class="text-sm font-semibold text-foreground">
-              OAuth 自动续期设置
+              {{ t('ui.oauthRefreshSettings') }}
             </h3>
             <p class="mt-1 text-xs leading-5 text-muted-foreground">
-              设置保存后，后台任务会在下一轮扫描时读取新值。
+              {{ t('ui.settingsApplyNextScan') }}
             </p>
           </div>
           <Button
@@ -146,15 +146,15 @@
               class="mr-1.5 h-3.5 w-3.5"
               :class="{ 'animate-spin': loadingSettings }"
             />
-            重新读取
+            {{ t('ui.reread') }}
           </Button>
         </div>
 
         <div class="grid gap-x-4 gap-y-4 sm:grid-cols-2">
           <div class="space-y-1.5">
             <Label for="lookahead-seconds">
-              提前刷新
-              <span class="font-normal text-muted-foreground">（秒）</span>
+              {{ t('ui.refreshAhead') }}
+              <span class="font-normal text-muted-foreground">{{ t('ui.secondsUnit') }}</span>
             </Label>
             <Input
               id="lookahead-seconds"
@@ -167,14 +167,14 @@
               @update:model-value="form.lookaheadSeconds = parseNum($event)"
             />
             <p class="text-[11px] leading-4 text-muted-foreground">
-              Token 到期前多久进入刷新队列，0 表示到期时刷新。
+              {{ t('ui.refreshAheadHint') }}
             </p>
           </div>
 
           <div class="space-y-1.5">
             <Label for="interval-seconds">
-              扫描间隔
-              <span class="font-normal text-muted-foreground">（秒）</span>
+              {{ t('ui.scanInterval') }}
+              <span class="font-normal text-muted-foreground">{{ t('ui.secondsUnit') }}</span>
             </Label>
             <Input
               id="interval-seconds"
@@ -187,12 +187,12 @@
               @update:model-value="form.intervalSeconds = parseNum($event)"
             />
             <p class="text-[11px] leading-4 text-muted-foreground">
-              每两轮自动扫描之间的等待时间，最短 15 秒。
+              {{ t('ui.scanIntervalHint') }}
             </p>
           </div>
 
           <div class="space-y-1.5">
-            <Label for="concurrency">并发账号数</Label>
+            <Label for="concurrency">{{ t('ui.concurrentAccounts') }}</Label>
             <Input
               id="concurrency"
               :model-value="form.concurrency"
@@ -204,12 +204,12 @@
               @update:model-value="form.concurrency = parseNum($event)"
             />
             <p class="text-[11px] leading-4 text-muted-foreground">
-              同时处理的账号数量，可设置为 1–64。
+              {{ t('ui.concurrentAccountsHint') }}
             </p>
           </div>
 
           <div class="space-y-1.5">
-            <Label for="max-per-run">单轮账号上限</Label>
+            <Label for="max-per-run">{{ t('ui.maxAccountsPerRun') }}</Label>
             <Input
               id="max-per-run"
               :model-value="form.maxPerRun"
@@ -221,25 +221,25 @@
               @update:model-value="form.maxPerRun = parseNum($event)"
             />
             <p class="text-[11px] leading-4 text-muted-foreground">
-              一轮扫描最多处理的账号数量，可设置为 1–10000。
+              {{ t('ui.maxAccountsPerRunHint') }}
             </p>
           </div>
 
           <div class="space-y-1.5 sm:col-span-2">
-            <Label for="oauth-proxy">刷新请求代理</Label>
+            <Label for="oauth-proxy">{{ t('ui.refreshRequestProxy') }}</Label>
             <Select
               v-model="proxySelectValue"
               :disabled="loadingSettings || savingSettings"
             >
               <SelectTrigger id="oauth-proxy">
-                <SelectValue placeholder="选择代理节点" />
+                <SelectValue :placeholder="t('ui.selectProxyNode')" />
               </SelectTrigger>
               <SelectContent :disable-portal="false">
                 <SelectItem :value="OAUTH_PROXY_AUTO_VALUE">
-                  跟随账号、端点或系统设置
+                  {{ t('ui.followAccountEndpointOrSystem') }}
                 </SelectItem>
                 <SelectItem :value="OAUTH_PROXY_DIRECT_VALUE">
-                  直连（不使用代理）
+                  {{ t('ui.directNoProxy') }}
                 </SelectItem>
                 <SelectItem
                   v-for="node in proxyNodesOptions"
@@ -258,7 +258,7 @@
           class="flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5 text-xs leading-5 text-foreground"
         >
           <Info class="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-          <span>设置尚未保存。保存前无法手动运行 OAuth 扫描，避免使用旧配置执行。</span>
+          <span>{{ t('ui.settingsUnsavedHint') }}</span>
         </div>
       </section>
 
@@ -266,10 +266,10 @@
         <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h3 class="text-sm font-semibold text-foreground">
-              运行记录
+              {{ t('ui.runRecords') }}
             </h3>
             <p class="mt-1 text-xs text-muted-foreground">
-              展示实际扫描、账号处理和手动运行结果；启动占位记录不会混入列表。
+              {{ t('ui.runRecordsDesc') }}
             </p>
           </div>
           <div class="flex items-center gap-2 self-start sm:self-auto">
@@ -292,8 +292,8 @@
               size="icon"
               class="h-8 w-8"
               :disabled="loadingLogs"
-              title="刷新运行记录"
-              aria-label="刷新运行记录"
+              :title="t('ui.refreshRunRecords')"
+              :aria-label="t('ui.refreshRunRecords')"
               @click="handleLoadLogs"
             >
               <RefreshCw
@@ -328,7 +328,7 @@
           >
             <AlertCircle class="h-8 w-8 text-destructive/80" />
             <p class="mt-3 text-sm font-medium text-foreground">
-              运行记录加载失败
+              {{ t('ui.runRecordsLoadFailed') }}
             </p>
             <p class="mt-1 max-w-md text-xs leading-5 text-muted-foreground">
               {{ logError }}
@@ -339,7 +339,7 @@
               class="mt-4"
               @click="handleLoadLogs"
             >
-              重试
+              {{ t('ui.retry') }}
             </Button>
           </div>
 
@@ -349,10 +349,10 @@
           >
             <History class="h-8 w-8 text-muted-foreground/50" />
             <p class="mt-3 text-sm font-medium text-foreground">
-              暂无实际运行记录
+              {{ t('ui.noActualRunRecords') }}
             </p>
             <p class="mt-1 max-w-md text-xs leading-5 text-muted-foreground">
-              点击上方“立即扫描”验证任务，或等待下一轮后台自动扫描。
+              {{ t('ui.clickScanOrWait') }}
             </p>
           </div>
 
@@ -411,7 +411,7 @@
         :disabled="savingSettings"
         @click="handleDialogUpdate(false)"
       >
-        关闭
+        {{ t('ui.close') }}
       </Button>
       <Button
         class="min-w-[112px] flex-1 sm:flex-none"
@@ -462,6 +462,7 @@ import {
 } from '@/api/async-tasks'
 import { useProxyNodesStore } from '@/stores/proxy-nodes'
 import { useToast } from '@/composables/useToast'
+import { useI18n } from '@/i18n'
 import { parseApiError } from '@/utils/errorParser'
 import { formatRegion } from '@/utils/region'
 
@@ -541,6 +542,7 @@ const logFilters: Array<{ value: LogFilter; label: string }> = [
 ]
 
 const { success, error: showError } = useToast()
+const { t } = useI18n()
 const proxyNodesStore = useProxyNodesStore()
 
 const loadingSettings = ref(false)
