@@ -5,14 +5,54 @@
 | 项 | 值 |
 |---|---|
 | fork 分支 | `rust` |
-| fork code baseline（本轮合并提交） | `c2144483f`（第十五轮，单批） |
-| 合并后 fork 修复提交 | `32809c6eb`（usage 自动清理 keyset 修复） |
-| upstream HEAD | `1ecb779d6` |
-| merge-base | `1ecb779d6` |
-| 分叉计数（含本轮合并提交，不含修复与文档提交） | fork-only 253，upstream-only 0 |
-| 本轮 upstream-only 路径 | 141 个，`+11597/-2256` |
-| 本轮直接重叠路径 | 18 个 |
-| 快照日期 | 2026-10-23（第十五轮，合并后） |
+| fork code baseline（本轮合并提交） | `9dd9f2a81`（第十六轮，单批） |
+| upstream HEAD | `0eb323390` |
+| merge-base | `0eb323390` |
+| 分叉计数（含本轮合并提交） | fork-only 258，upstream-only 0 |
+| 本轮 upstream-only 路径 | 448 个，`+38997/-36009`（全部前端） |
+| 本轮直接重叠路径 | 21 个（全部前端） |
+| 快照日期 | 2026-10-30（第十六轮，合并后） |
+
+### 第十六轮合并前快照与合并后结论（2026-10-30）
+
+| 项 | 值 |
+|---|---|
+| 合并前 fork HEAD | `32809c6eb` |
+| upstream 目标 | `upstream/main` / `0eb323390` |
+| merge-base（合并前） | `1ecb779d6` |
+| 分叉计数（合并前） | fork-only 257，upstream-only 18 |
+| 合并状态 | 已完成：`9dd9f2a81`；单批（18 提交 < 40，纯前端） |
+
+本轮 upstream 18 个提交**全部纯前端**（469 路径 `+38997/-36009`，零 Cargo/backend）：组件抽取、composable 模块化、feature 模块迁出 views、删除未引用组件、**完成 legacy i18n 迁移（删除 `legacyT`）**。448 路径 upstream-only 快进吸收。
+
+**冲突 6 文件（全部 `1H-4H` manual hybrid，用户确认）**：
+
+| 文件 | 决策 |
+|---|---|
+| `PoolManagement.vue` | upstream 抽取结构 + fork 批量账号操作/自动刷新/切换提供商/`quota_available` 筛选 |
+| `PoolManagementHeader.vue` | 同上：upstream Dialog/Popover 原语 + fork 按钮区、proxy popover 状态提升 |
+| `EndpointFormDialog.vue` | fork `getEndpointPrivateNetwork*` 私网放行块保留；upstream `endpoint-rule-editing.ts` 已吸收旧规则逻辑；`legacyT` 删除后错误文案直填 `t()` |
+| `UsageRecordsTable.vue` | upstream `UsageRecordMobileCard`/`RequestDetailDrawer` 抽取 + fork `canViewDetail`/`detailScope`/`isAdminDetail` 门控、`actualReasoningEffort` 透传 |
+| `RequestDetailDrawer.vue` | 同上：upstream Drawer 壳层 + fork 完整详情面板（音频时长/任务事件/cost 明细） |
+| `CleanupPolicySection.vue` | upstream i18n + fork“最少 30 天”“短窗口优先”说明 |
+
+**合并后定向修复**（合并提交内含）：
+
+- `ProviderProxyPopover.vue` → `PoolKeyProxyPopover.vue` 改名断链：fork 已有同名组件，扩展其 props（`anchor`/`compact`/`nodeId` 可为空）兼容 upstream 用法
+- 6 处 fork 文件仍 import `@/utils/*`（upstream 已迁入 `features/providers/utils`）：`PoolAccountQuickActionsDialog.vue`、`quotaCountdown.ts` 等改指新路径
+- **fork i18n 合规**：upstream `migration.spec.ts` 强制模板零中文；fork 特有 204 条文案全部迁移至新文件 `frontend/src/i18n/fork-messages.ts`（160 key，`ui.*` 命名空间，zh+en 双语），由 `messages.ts` 展开合并；用户决策“全部迁移 i18n key”而非 `data-i18n-skip`
+- 4 处既存 vue-tsc 类型债顺手修复（fork 从不跑 `vue-tsc`）：`capabilities ?? undefined`（×2）、`payload as Record`（`PoolKeySettingsPatch` 无索引签名）、`poolKeySelectionFilters.status` 经 `resolvePoolKeyApiStatus` 映射（`quota_available` 是视图态非 API 态）、`TimeScatterChartData` 断言
+- `PoolKeyProxyPopover` `nodeId ?? ''` 修复本轮拓宽类型引入的回归
+
+第十六轮验证结果：
+
+- `cd frontend && npm run build`：通过 59 秒。
+- `cd frontend && npm run type-check`（vue-tsc）：0 错误。
+- `cargo check --workspace`：通过。
+- 前端定向测试全绿：`migration.spec` + `translation-coverage`（5/5）、`endpoint-private-network`×2 + `providerI18n`（24/24）、`UsageRecordsTable`（72/72）、`RequestDetailDrawer.pricing`（18/18）、`Usage.pii-redaction`（3/3）、`EndpointFormDialog.save` + `endpoint-form-dialog-layout` + `poolManagementState`（13/13）、`PoolManagement.codex-cycle-stats`（22/22）。
+- `merge-base == upstream HEAD`、`upstream-only = 0`、无 `UU` 文件、`git diff --check` 干净。
+
+未运行（unverified）：完整前端测试套件、Rust 各 crate 测试（本轮零 Cargo 改动）、`cargo check --all-targets`。
 
 ### 第十五轮合并前快照与合并后结论（2026-10-23）
 
@@ -893,6 +933,20 @@ cd frontend && npm run test:run -- \
   src/features/usage/components/__tests__/RequestDetailDrawer.pricing.spec.ts
 ```
 
+第十六轮实际验证结果（2026-10-30）：
+
+- `cd frontend && npm run build`：通过 59 秒（含 i18n 修复后复跑）。
+- `cd frontend && npm run type-check`（`vue-tsc -b --force`）：0 错误（修复 4 处既存类型债 + 1 处本轮回归后）。
+- `cargo check --workspace`：通过（本轮零 Cargo 改动，作基线验证）。
+- 前端定向测试全绿：`migration.spec` + `translation-coverage`（5/5）、`endpoint-private-network` + `EndpointFormDialog.private-network` + `providerI18n`（24/24）、`UsageRecordsTable`（72/72）、`RequestDetailDrawer.pricing`（18/18）、`Usage.pii-redaction`（3/3）、`EndpointFormDialog.save` + `endpoint-form-dialog-layout` + `poolManagementState`（13/13）、`PoolManagement.codex-cycle-stats`（22/22）。
+- `merge-base == upstream HEAD`（`0eb323390`）、`upstream-only = 0`、无 `UU` 文件、`git diff --cached --check` 干净。
+
+第十六轮未运行项目（unverified）：
+
+- 完整前端测试套件（本轮改动面大，仅跑了冲突域定向 spec）。
+- 全部 Rust 定向测试（本轮 upstream 零 Cargo/backend 改动，fork Rust 侧无变化）。
+- `cargo check --workspace --all-targets`。
+
 第八轮实际验证结果（2026-09-23）：
 
 - `cd frontend && npm run build`：通过，1 分 11 秒；包含 VSCodex sync/build 和主前端 Vite build。两个依赖目录已存在，因此未运行 `npm install`。
@@ -1003,3 +1057,4 @@ cd frontend && npm run test:run -- \
 | 2026-10-10 | `652363c33` | `6bafef672` | 4 提交、0 文本冲突；接入钱包兜底、概览图表计费对齐、耗尽账号开关恢复；13 个重叠路径复核无回归，前端构建与 `cargo check --workspace(--all-targets)` 通过，fork P0/P1 功能无变化 |
 | 2026-10-18 | `3b6134641` | `042adb319` | 13 提交、3 处冲突（`1H` usage 元数据契约并集）；接入 PII 标记、健康时间线、usage 采样、Gemini response ID；fork P0/P1 功能无变化 |
 | 2026-10-23 | `c2144483f` | `1ecb779d6` | 19 提交、1 处冲突（`system.rs` 配置键并集）；接入邀请返利重构、导航侧栏、审计 body 压缩限长；合并后修复 `32809c6eb` 让 usage 自动清理 keyset 分页、阶段隔离、短窗口优先（P1 第 9 项变更） |
+| 2026-10-30 | `9dd9f2a81` | `0eb323390` | 18 提交（全纯前端）、6 处冲突（全部 manual hybrid）；接入前端模块化解耦与完整 i18n 迁移；合并后修复 3 类回归（`ProviderProxyPopover` 改名断链、`@/utils` 断链、fork 204 条模板文案迁移至新 `fork-messages.ts`）；build/type-check/cargo check 与 13 个定向 spec 全绿，fork P0/P1 功能无变化 |
