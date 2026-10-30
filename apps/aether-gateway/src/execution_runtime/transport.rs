@@ -55,8 +55,7 @@ use crate::execution_runtime::windsurf::maybe_execute_windsurf_sync;
 use crate::frontdoor_loop_guard::{
     configured_gateway_frontdoor_base_url, gateway_frontdoor_self_loop_guard_error,
 };
-use crate::private_upstream::private_upstream_allowance;
-use crate::provider_transport::private_network::PrivateUpstreamOrigin;
+
 use crate::stage_metrics::observe_gateway_stage_ms;
 use crate::tunnel::{self, tunnel_protocol};
 use crate::upstream_admission::UpstreamTargetAdmissionPermit;
@@ -2324,9 +2323,7 @@ fn direct_h2c_sender_prewarm_cache_keys(
     let mut failed = 0;
     let mut first_error = None;
     for url in urls {
-        // Prewarm targets come from the process environment, not from a saved
-        // provider endpoint, so they never carry a private allowance.
-        match direct_h2c_client_cache_key(url, timeouts, None) {
+        match direct_h2c_client_cache_key(url, timeouts) {
             Ok(key) => {
                 if seen.insert(key.clone()) {
                     keys.push(key);
@@ -2366,9 +2363,8 @@ fn direct_h2c_prewarm_ready_required() -> bool {
 async fn cached_direct_h2c_sender(
     request_url: &str,
     timeouts: Option<&aether_contracts::ExecutionTimeouts>,
-    private_upstream_allowance: Option<PrivateUpstreamOrigin>,
 ) -> Result<DirectHyperH2cSenderLease, ExecutionRuntimeTransportError> {
-    let cache_key = direct_h2c_client_cache_key(request_url, timeouts, private_upstream_allowance)?;
+    let cache_key = direct_h2c_client_cache_key(request_url, timeouts)?;
     let cell = direct_h2c_sender_cache_cell(&cache_key);
     let entry = cell
         .get_or_try_init(|| async {
@@ -2441,7 +2437,6 @@ fn direct_h2c_sender_cache_cell(
 fn direct_h2c_client_cache_key(
     request_url: &str,
     timeouts: Option<&aether_contracts::ExecutionTimeouts>,
-    private_upstream_allowance: Option<PrivateUpstreamOrigin>,
 ) -> Result<DirectHyperH2cClientCacheKey, ExecutionRuntimeTransportError> {
     if reqwest::Url::parse(request_url).is_err() {
         return Err(ExecutionRuntimeTransportError::UpstreamRequest(
@@ -2450,7 +2445,7 @@ fn direct_h2c_client_cache_key(
     }
     // The fast path builds and caches a connection keyed by origin, so it
     // revalidates instead of trusting the caller's earlier check.
-    validate_execution_upstream_url_with_allowance(request_url, || private_upstream_allowance)?;
+    validate_execution_upstream_url(request_url)?;
     let upstream_origin = direct_reqwest_upstream_origin(request_url).ok_or_else(|| {
         ExecutionRuntimeTransportError::UpstreamRequest("invalid h2c upstream origin".to_string())
     })?;
@@ -2585,7 +2580,7 @@ fn cached_direct_h2c_client(
     request_url: &str,
     timeouts: Option<&aether_contracts::ExecutionTimeouts>,
 ) -> Result<DirectHyperH2cClient, ExecutionRuntimeTransportError> {
-    let cache_key = direct_h2c_client_cache_key(request_url, timeouts, None)?;
+    let cache_key = direct_h2c_client_cache_key(request_url, timeouts)?;
 
     let cache_lock_started_at = Instant::now();
     if let Ok(mut cache) = DIRECT_H2C_CLIENT_CACHE.lock() {
@@ -2754,12 +2749,7 @@ async fn send_via_direct_h2c_fast_path(
     stream_first_byte_timeout: Option<Duration>,
 ) -> Result<hyper::Response<HyperIncomingBody>, ExecutionRuntimeTransportError> {
     let client_select_started_at = Instant::now();
-    let sender = cached_direct_h2c_sender(
-        &plan.url,
-        plan.timeouts.as_ref(),
-        private_upstream_allowance(&plan.endpoint_id, &plan.key_id),
-    )
-    .await?;
+    let sender = cached_direct_h2c_sender(&plan.url, plan.timeouts.as_ref()).await?;
     observe_gateway_stage_ms(
         "direct_h2c_client_select",
         client_select_started_at.elapsed().as_millis() as u64,
@@ -5224,34 +5214,13 @@ fn execution_log_url_host(url: &str) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
+/// Validate the upstream URL an execution plan is about to request.
+///
+/// fork：provider 执行路径默认允许任意上游地址（含私网/保留地址）。
+/// 私网/保留地址检查已整体删除；URL 基本契约（scheme/host/凭据/片段）保留。
 pub(crate) fn validate_execution_upstream_url(
     raw_url: &str,
 ) -> Result<url::Url, ExecutionRuntimeTransportError> {
-    validate_execution_upstream_url_with_allowance(raw_url, || None)
-}
-
-/// Validate the upstream URL an execution plan is about to request.
-///
-/// Identical to [`validate_execution_upstream_url`], except that a private or
-/// reserved target is accepted when the plan's endpoint and key carry an
-/// administrator-granted allowance for exactly that origin. The allowance is
-/// resolved lazily so the common public-target request never touches the
-/// registry.
-pub(crate) fn validate_execution_plan_upstream_url(
-    plan: &ExecutionPlan,
-) -> Result<url::Url, ExecutionRuntimeTransportError> {
-    validate_execution_upstream_url_with_allowance(plan.url.as_str(), || {
-        private_upstream_allowance(&plan.endpoint_id, &plan.key_id)
-    })
-}
-
-pub(crate) fn validate_execution_upstream_url_with_allowance<F>(
-    raw_url: &str,
-    private_upstream_allowance: F,
-) -> Result<url::Url, ExecutionRuntimeTransportError>
-where
-    F: FnOnce() -> Option<PrivateUpstreamOrigin>,
-{
     let url = url::Url::parse(raw_url).map_err(|_| {
         ExecutionRuntimeTransportError::UpstreamRequest("invalid upstream URL".to_string())
     })?;
@@ -5270,22 +5239,14 @@ where
             "upstream URL must not include a fragment".to_string(),
         ));
     }
-    let literal_ip = match url.host() {
-        Some(url::Host::Ipv4(address)) => Some(IpAddr::V4(address)),
-        Some(url::Host::Ipv6(address)) => Some(IpAddr::V6(address)),
-        _ => None,
-    };
-    // The credential, fragment, and scheme checks above stay unconditional: an
-    // allowance opens up one origin, never the rest of the URL contract.
-    if literal_ip.is_some_and(|ip| {
-        is_private_or_reserved_ip(ip) && !(url.scheme() == "http" && ip.is_loopback())
-    }) && !private_upstream_allowance().is_some_and(|allowance| allowance.allows(&url))
-    {
-        return Err(ExecutionRuntimeTransportError::UpstreamRequest(
-            "upstream URL must not target a private or reserved address".to_string(),
-        ));
-    }
     Ok(url)
+}
+
+/// 与 [`validate_execution_upstream_url`] 完全一致的 plan 便捷入口。
+pub(crate) fn validate_execution_plan_upstream_url(
+    plan: &ExecutionPlan,
+) -> Result<url::Url, ExecutionRuntimeTransportError> {
+    validate_execution_upstream_url(plan.url.as_str())
 }
 
 pub(crate) fn decode_response_body_bytes<'a>(
@@ -5464,7 +5425,7 @@ mod tests {
         reqwest_urls_have_same_origin, resolve_execution_transport_controls,
         resolve_non_stream_total_timeout, resolve_proxy_url, resolve_stream_first_byte_timeout,
         response_body_is_json, safe_redirect_decision, validate_execution_plan_upstream_url,
-        validate_execution_upstream_url, validate_execution_upstream_url_with_allowance,
+        validate_execution_upstream_url,
         validate_relay_target_url, with_upstream_response_body_limit, DirectSyncExecutionRuntime,
         ExecutionRuntimeTransportError, ExecutionTransportControls, RelayRequestMeta,
         SafeRedirectDecision, UpstreamResponseBodyPhase, DEFAULT_SCOPED_RESPONSE_BODY_LIMIT_BYTES,
@@ -5495,6 +5456,12 @@ mod tests {
             "http://localhost:8080/v1/responses",
             "http://127.42.0.1:8080/v1/responses",
             "http://[::1]:8080/v1/responses",
+            // fork：私网/保留地址一律放行
+            "http://10.0.0.1/v1/responses",
+            "http://0.0.0.0:8080/v1/responses",
+            "http://[::ffff:127.0.0.1]:8080/v1/responses",
+            "https://127.0.0.1:8443/v1/responses",
+            "https://10.0.0.1:8443/v1/responses",
         ] {
             assert!(
                 validate_execution_upstream_url(allowed).is_ok(),
@@ -5503,11 +5470,6 @@ mod tests {
         }
 
         for rejected in [
-            "http://10.0.0.1/v1/responses",
-            "http://0.0.0.0:8080/v1/responses",
-            "http://[::ffff:127.0.0.1]:8080/v1/responses",
-            "https://127.0.0.1:8443/v1/responses",
-            "https://10.0.0.1:8443/v1/responses",
             "https://token@example.test/v1/responses",
             "https://example.test/v1/responses#secret",
             "http://token@example.test/v1/responses",
@@ -5519,17 +5481,6 @@ mod tests {
                 "URL should be rejected: {rejected}"
             );
         }
-    }
-
-    fn private_endpoint_allowance(
-        base_url: &str,
-    ) -> crate::provider_transport::private_network::PrivateUpstreamOrigin {
-        crate::provider_transport::private_network::resolve_endpoint_private_upstream_origin(
-            base_url,
-            Some(&json!({"private_network_access": {"enabled": true}})),
-        )
-        .expect("a private literal endpoint should resolve")
-        .expect("an enabled section should grant an allowance")
     }
 
     fn private_upstream_plan(endpoint_id: &str, key_id: &str, url: &str) -> ExecutionPlan {
@@ -5557,85 +5508,42 @@ mod tests {
     }
 
     #[test]
-    fn execution_upstream_url_refuses_private_targets_without_an_allowance() {
-        for rejected in [
+    fn execution_upstream_url_accepts_private_and_reserved_targets() {
+        // fork：私网/保留地址默认放行，不再要求管理员授权。
+        for accepted in [
             "http://10.0.0.106:8317/v1/messages",
             "http://192.168.1.10:8080/v1/messages",
             "http://169.254.169.254/latest/meta-data",
             "http://[fd00::1]:8443/v1/messages",
         ] {
             assert!(
-                validate_execution_upstream_url(rejected).is_err(),
-                "URL should be rejected without an allowance: {rejected}"
+                validate_execution_upstream_url(accepted).is_ok(),
+                "private/reserved upstream should be accepted: {accepted}"
             );
         }
     }
 
     #[test]
-    fn execution_upstream_url_accepts_the_exact_allowed_private_origin() {
-        let allowance = private_endpoint_allowance("http://10.0.0.106:8317/v1");
-
-        for allowed in [
-            "http://10.0.0.106:8317/v1/messages",
-            "http://10.0.0.106:8317/v1/models?limit=1",
-        ] {
-            assert!(
-                validate_execution_upstream_url_with_allowance(allowed, || Some(allowance)).is_ok(),
-                "allowed private endpoint should be accepted: {allowed}"
-            );
-        }
-    }
-
-    #[test]
-    fn execution_upstream_allowance_does_not_widen_to_other_targets_or_url_shapes() {
-        let allowance = private_endpoint_allowance("http://10.0.0.106:8317/v1");
-
+    fn execution_upstream_url_contract_checks_still_apply() {
         for rejected in [
-            // A neighbouring host, port, or scheme is a different target.
-            "http://10.0.0.107:8317/v1/messages",
-            "http://10.0.0.106:8318/v1/messages",
-            "http://10.0.0.106/v1/messages",
-            "https://10.0.0.106:8317/v1/messages",
-            // The classic SSRF pivots stay closed.
-            "http://169.254.169.254/latest/meta-data",
-            "http://[fd00::1]:8317/v1/messages",
-            // An allowance opens one origin, not the rest of the URL contract.
             "http://token@10.0.0.106:8317/v1/messages",
             "http://user:secret@10.0.0.106:8317/v1/messages",
             "http://10.0.0.106:8317/v1/messages#fragment",
             "ftp://10.0.0.106:8317/v1/messages",
         ] {
             assert!(
-                validate_execution_upstream_url_with_allowance(rejected, || Some(allowance))
-                    .is_err(),
-                "allowance must not cover: {rejected}"
+                validate_execution_upstream_url(rejected).is_err(),
+                "URL contract violation should still reject: {rejected}"
             );
         }
     }
 
     #[test]
-    fn execution_plans_only_reach_private_targets_their_own_endpoint_was_granted() {
+    fn execution_plans_accept_private_targets_unconditionally() {
         let endpoint_id = "ep-private-plan";
         let key_id = "key-private-plan";
         let allowed_url = "http://10.0.0.106:8317/v1/messages";
 
-        // Default deny: nothing has been loaded for this endpoint yet.
-        assert!(
-            validate_execution_plan_upstream_url(&private_upstream_plan(
-                endpoint_id,
-                key_id,
-                allowed_url
-            ))
-            .is_err(),
-            "an unregistered endpoint must not reach a private target"
-        );
-
-        crate::private_upstream::sync_endpoint_private_upstream_allowance(
-            endpoint_id,
-            key_id,
-            "http://10.0.0.106:8317/v1",
-            Some(&json!({"private_network_access": {"enabled": true}})),
-        );
         assert!(
             validate_execution_plan_upstream_url(&private_upstream_plan(
                 endpoint_id,
@@ -5643,39 +5551,7 @@ mod tests {
                 allowed_url
             ))
             .is_ok(),
-            "the granted endpoint should reach its own saved origin"
-        );
-
-        // A plan that borrows the granted endpoint id but drifts to another
-        // internal target gains nothing.
-        assert!(validate_execution_plan_upstream_url(&private_upstream_plan(
-            endpoint_id,
-            key_id,
-            "http://169.254.169.254/latest/meta-data",
-        ))
-        .is_err());
-        // Neither does a plan that reuses the granted URL under a different key.
-        assert!(validate_execution_plan_upstream_url(&private_upstream_plan(
-            endpoint_id,
-            "key-private-plan-other",
-            allowed_url,
-        ))
-        .is_err());
-
-        crate::private_upstream::sync_endpoint_private_upstream_allowance(
-            endpoint_id,
-            key_id,
-            "http://10.0.0.106:8317/v1",
-            Some(&json!({"private_network_access": {"enabled": false}})),
-        );
-        assert!(
-            validate_execution_plan_upstream_url(&private_upstream_plan(
-                endpoint_id,
-                key_id,
-                allowed_url
-            ))
-            .is_err(),
-            "revoking the allowance must close the target again"
+            "a private target should be accepted without any registration"
         );
     }
 
@@ -5683,12 +5559,6 @@ mod tests {
     fn public_execution_plans_keep_their_existing_validation() {
         let endpoint_id = "ep-public-plan";
         let key_id = "key-public-plan";
-        crate::private_upstream::sync_endpoint_private_upstream_allowance(
-            endpoint_id,
-            key_id,
-            "http://10.0.0.106:8317/v1",
-            Some(&json!({"private_network_access": {"enabled": true}})),
-        );
 
         for allowed in [
             "https://api.example.test/v1/messages",
@@ -5709,7 +5579,6 @@ mod tests {
             "https://token@api.example.test/v1/messages",
             "https://api.example.test/v1/messages#secret",
             "ftp://api.example.test/v1/messages",
-            "https://10.0.0.106:8317/v1/messages",
         ] {
             assert!(
                 validate_execution_plan_upstream_url(&private_upstream_plan(
@@ -5724,15 +5593,12 @@ mod tests {
     }
 
     #[test]
-    fn private_allowances_do_not_survive_a_redirect_off_their_origin() {
-        let allowance = private_endpoint_allowance("http://10.0.0.106:8317/v1");
+    fn redirects_off_origin_still_stop() {
         let granted = reqwest::Url::parse("http://10.0.0.106:8317/v1/messages").unwrap();
 
-        // Same-origin redirects are the only ones the client follows, and they
-        // stay inside the origin the administrator opened up.
+        // Same-origin redirects are the only ones the client follows.
         let same_origin = reqwest::Url::parse("http://10.0.0.106:8317/v1/messages/retry").unwrap();
         assert!(reqwest_urls_have_same_origin(&granted, &same_origin));
-        assert!(allowance.allows(&same_origin));
 
         for drifted in [
             "http://10.0.0.107:8317/v1/messages",
@@ -5749,10 +5615,6 @@ mod tests {
                 safe_redirect_decision(1, false),
                 SafeRedirectDecision::Stop,
                 "cross-origin redirects must stop"
-            );
-            assert!(
-                !allowance.allows(&drifted),
-                "allowance must not cover redirect target: {drifted}"
             );
         }
     }

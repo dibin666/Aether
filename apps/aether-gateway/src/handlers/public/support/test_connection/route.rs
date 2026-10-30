@@ -11,9 +11,8 @@ use axum::{
 use serde_json::json;
 
 use crate::execution_runtime::transport::{
-    validate_execution_upstream_url_with_allowance, ExecutionSafeDnsResolver,
+    validate_execution_upstream_url, ExecutionSafeDnsResolver,
 };
-use crate::provider_transport::private_network::resolve_endpoint_private_upstream_origin;
 
 use super::test_connection_shared::select_test_connection_provider;
 use super::{
@@ -307,16 +306,8 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
         );
     }
 
-    // The allowance is derived from the same snapshot rows that built the URL,
-    // so a per-key local auth config that rewrote the base URL is honoured.
-    let upstream_url = match validate_execution_upstream_url_with_allowance(&upstream_url, || {
-        resolve_endpoint_private_upstream_origin(
-            &transport.endpoint.base_url,
-            transport.endpoint.config.as_ref(),
-        )
-        .ok()
-        .flatten()
-    }) {
+    // fork：私网/保留地址一律放行，与执行路径一致。
+    let upstream_url = match validate_execution_upstream_url(&upstream_url) {
         Ok(url) => url,
         Err(reason) => {
             tracing::warn!(
@@ -423,10 +414,7 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_test_connection_client, resolve_endpoint_private_upstream_origin,
-        validate_execution_upstream_url_with_allowance,
-    };
+    use super::build_test_connection_client;
     use crate::execution_runtime::transport::validate_execution_upstream_url;
     use axum::{
         body::Body,
@@ -500,7 +488,8 @@ mod tests {
     }
 
     #[test]
-    fn test_connection_target_rejects_private_literals_like_provider_requests() {
+    fn test_connection_target_accepts_private_literals_like_provider_requests() {
+        // fork：私网/保留地址一律放行。
         for raw_url in [
             "http://10.0.0.1/v1/chat/completions",
             "http://169.254.169.254/v1/chat/completions",
@@ -510,8 +499,8 @@ mod tests {
             "https://198.18.78.41/v1/chat/completions",
         ] {
             assert!(
-                validate_execution_upstream_url(raw_url).is_err(),
-                "private provider target should be rejected: {raw_url}"
+                validate_execution_upstream_url(raw_url).is_ok(),
+                "private provider target should be accepted: {raw_url}"
             );
         }
     }
@@ -566,34 +555,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_connection_target_honours_only_the_endpoints_own_private_allowance() {
-        let endpoint_base_url = "http://10.0.0.106:8317/v1";
-        let endpoint_config = serde_json::json!({"private_network_access": {"enabled": true}});
-        let allowance = || {
-            resolve_endpoint_private_upstream_origin(endpoint_base_url, Some(&endpoint_config))
-                .ok()
-                .flatten()
-        };
-
-        assert!(
-            validate_execution_upstream_url_with_allowance(
-                "http://10.0.0.106:8317/v1/chat/completions",
-                allowance,
-            )
-            .is_ok(),
-            "the endpoint's own saved origin should be reachable from the connection test"
-        );
-        for raw_url in [
-            "http://10.0.0.107:8317/v1/chat/completions",
-            "http://10.0.0.106:8318/v1/chat/completions",
-            "http://169.254.169.254/latest/meta-data",
-            "https://10.0.0.106:8317/v1/chat/completions",
-        ] {
-            assert!(
-                validate_execution_upstream_url_with_allowance(raw_url, allowance).is_err(),
-                "connection test must not drift off the allowed origin: {raw_url}"
-            );
-        }
-    }
 }

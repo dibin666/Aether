@@ -1645,7 +1645,6 @@ mod tests {
         let url = websocket_upstream_url(
             "https://example.test/v1/responses?x=1",
             "responses_upstream_url_invalid",
-            None,
         )
         .expect("URL should convert");
         assert_eq!(url.as_str(), "wss://example.test/v1/responses?x=1");
@@ -1656,7 +1655,6 @@ mod tests {
         assert!(websocket_upstream_url(
             "https://token@example.test/responses",
             "responses_upstream_url_invalid",
-            None,
         )
         .is_err());
     }

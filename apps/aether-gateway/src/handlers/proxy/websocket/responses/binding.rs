@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use super::adapter::ResponsesWebSocketProtocolAdapter;
 use crate::ai_serving::AiExecutionDecision;
 use crate::handlers::proxy::websocket::transport::{
-    decision_private_upstream_allowance, websocket_handshake_headers, websocket_upstream_url,
+    websocket_handshake_headers, websocket_upstream_url,
 };
 use crate::orchestration::ResponsesWebSocketAdapter;
 
@@ -66,15 +66,10 @@ impl UpstreamBindingIdentity {
             .as_deref()
             .filter(|value| !value.trim().is_empty())
             .ok_or(UpstreamBindingIdentityError::MissingUpstreamUrl)?;
-        // The identity has to normalize the same URLs the transport will accept,
-        // so it resolves the decision's allowance the same way the handshake does.
-        let upstream_url = websocket_upstream_url(
-            raw_url,
-            "invalid",
-            decision_private_upstream_allowance(decision),
-        )
-        .map_err(|_| UpstreamBindingIdentityError::InvalidUpstreamUrl)?
-        .to_string();
+        // The identity has to normalize the same URLs the transport will accept.
+        let upstream_url = websocket_upstream_url(raw_url, "invalid")
+            .map_err(|_| UpstreamBindingIdentityError::InvalidUpstreamUrl)?
+            .to_string();
 
         let adapter_kind = adapter.kind();
         let headers = websocket_handshake_headers(&decision.provider_request_headers, "invalid")

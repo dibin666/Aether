@@ -161,10 +161,6 @@ export const forkMessages = {
     'ui.noActualRunRecords': '暂无实际运行记录',
     'ui.clickScanOrWait': '点击上方“立即扫描”验证任务，或等待下一轮后台自动扫描。',
 
-    // EndpointFormDialog.vue —— 私网放行（fork）
-    'ui.allowPrivateNetworkAccess': '允许访问私网地址',
-    'ui.privateNetworkAccessHint': '仅放行本端点 Base URL 对应的那一个地址和端口。只支持字面 IP 的 http/https 私网或保留地址；主机名、公网地址，以及带用户名密码或 # 片段的 URL 会被后端拒绝。',
-    'ui.willAllow': '将放行：',
 
     // KeyFormDialog.vue —— 永不熔断（fork P0#4）
     'ui.neverCircuitBreak': '永不熔断',
@@ -336,9 +332,6 @@ export const forkMessages = {
     'ui.noActualRunRecords': 'No actual run records yet',
     'ui.clickScanOrWait': 'Click "Scan now" above to verify the task, or wait for the next background scan.',
 
-    'ui.allowPrivateNetworkAccess': 'Allow private network access',
-    'ui.privateNetworkAccessHint': 'Only allows the exact host and port of this endpoint\'s Base URL. Only literal-IP http/https private or reserved addresses are supported; hostnames, public addresses, and URLs with credentials or # fragments are rejected by the backend.',
-    'ui.willAllow': 'Will allow:',
 
     'ui.neverCircuitBreak': 'Never circuit-break',
     'ui.neverCircuitBreakHint': 'Errors never trigger the circuit breaker for this key, suitable for queue-type providers',

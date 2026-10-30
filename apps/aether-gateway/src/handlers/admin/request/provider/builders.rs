@@ -264,13 +264,6 @@ impl<'a> AdminAppState<'a> {
         )
         .map_err(|_| "无效的 Anthropic compatibility profile".to_string())?;
         let base_url = normalize_admin_base_url(&payload.base_url)?;
-        // Reject a private-network allowance the execution path would refuse to
-        // honour, so the endpoint never persists a setting that silently does
-        // nothing.
-        crate::provider_transport::private_network::resolve_endpoint_private_upstream_origin(
-            &base_url,
-            payload.config.as_ref(),
-        )?;
 
         let existing_endpoints = self
             .list_provider_catalog_endpoints_by_provider_ids(std::slice::from_ref(&provider.id))
@@ -386,14 +379,6 @@ impl<'a> AdminAppState<'a> {
             .map_err(|_| "无效的 Anthropic compatibility profile".to_string())?;
         }
 
-        // A base URL edit can invalidate an allowance just as easily as a config
-        // edit, so both entry points are rechecked against the merged record.
-        if fields.contains("config") || fields.contains("base_url") {
-            crate::provider_transport::private_network::resolve_endpoint_private_upstream_origin(
-                &updated.base_url,
-                updated.config.as_ref(),
-            )?;
-        }
 
         if provider_type == "codex"
             && crate::ai_serving::is_openai_responses_format(&existing_endpoint.api_format)
