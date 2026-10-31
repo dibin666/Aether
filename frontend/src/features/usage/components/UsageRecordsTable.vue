@@ -609,6 +609,12 @@
                 :title="t('ui.thisRequestWasRetried')"
                 :aria-label="t('ui.retried')"
               />
+              <span
+                v-if="(record.retry_count ?? 0) > 0"
+                data-usage-retry-count
+                class="text-[10px] font-medium leading-none text-blue-600 dark:text-blue-400"
+                :title="t('ui.requestRetriedTimes', { count: record.retry_count ?? 0 })"
+              >×{{ record.retry_count }}</span>
             </div>
           </TableCell>
           <TableCell

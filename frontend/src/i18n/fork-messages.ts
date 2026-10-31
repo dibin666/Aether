@@ -176,6 +176,16 @@ export const forkMessages = {
 
     // PoolAdvancedDialog.vue —— OAuth 自动续期生效状态（fork P0#5）
     'ui.oauthAutoRenewal': 'OAuth 自动续期',
+
+    // Provider 无限重试（fork P0）
+    'ui.unlimitedRetryMode': '无限重试',
+    'ui.unlimitedRetryModeHint': '此提供商的失败请求会立即在同一密钥上重试（遵循上游 Retry-After），直到成功。客户端断开或命中停止规则时结束',
+    'ui.enableUnlimitedRetry': '开启无限重试',
+    'ui.disableUnlimitedRetry': '关闭无限重试',
+    'ui.unlimitedRetryBadge': '无限重试',
+    'ui.unlimitedRetryEnabledToast': '已开启 {name} 的无限重试',
+    'ui.unlimitedRetryDisabledToast': '已关闭 {name} 的无限重试',
+    'ui.requestRetriedTimes': '本次请求已重试 {count} 次',
   },
   'en-US': {
     'ui.quotaResetCountdown': 'Quota reset countdown',
@@ -343,5 +353,14 @@ export const forkMessages = {
     'ui.thisAccount': 'This account',
 
     'ui.oauthAutoRenewal': 'OAuth auto-renewal',
+
+    'ui.unlimitedRetryMode': 'Unlimited retry',
+    'ui.unlimitedRetryModeHint': 'Failed requests to this provider are retried immediately on the same key (honoring upstream Retry-After) until one succeeds. Stops when the client disconnects or a stop rule matches',
+    'ui.enableUnlimitedRetry': 'Enable unlimited retry',
+    'ui.disableUnlimitedRetry': 'Disable unlimited retry',
+    'ui.unlimitedRetryBadge': 'Unlimited retry',
+    'ui.unlimitedRetryEnabledToast': 'Unlimited retry enabled for {name}',
+    'ui.unlimitedRetryDisabledToast': 'Unlimited retry disabled for {name}',
+    'ui.requestRetriedTimes': 'This request was retried {count} times',
   },
 } as const

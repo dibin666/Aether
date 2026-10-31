@@ -93,6 +93,8 @@ fn apply_admin_usage_status_filter(query: &mut UsageAuditListQuery, status: Opti
 struct AdminUsageAttemptFlags {
     has_fallback: bool,
     has_retry: bool,
+    /// 同一候选槽位（candidate_index + key_id）上的重复发起次数。
+    retry_count: u64,
     /// 是否存在"被调度跳过"的候选（调度阶段判定本次不可用，从未向上游发起请求）。
     ///
     /// 这是与 has_fallback 正交的信号：has_fallback 表示"更靠前的候选真的失败并被换掉"，
@@ -150,6 +152,21 @@ fn admin_usage_final_candidate_index(
     })
 }
 
+/// 同一 (candidate_index, key_id) 槽位上每多发起一次，即多一次重试。
+/// 按 key 区分，因此池化 key 的编码 retry_index 与无限重试都不影响计数。
+fn admin_usage_retry_count(candidates: &[StoredRequestCandidate]) -> u64 {
+    let attempted = candidates
+        .iter()
+        .filter(|candidate| candidate.status.is_attempted(candidate.started_at_unix_ms));
+    let mut attempts = 0u64;
+    let mut slots = BTreeSet::new();
+    for candidate in attempted {
+        attempts += 1;
+        slots.insert((candidate.candidate_index, candidate.key_id.as_deref()));
+    }
+    attempts.saturating_sub(slots.len() as u64)
+}
+
 fn admin_usage_attempt_flags_from_candidates(
     item: &StoredRequestUsageAudit,
     candidates: &[StoredRequestCandidate],
@@ -161,12 +178,14 @@ fn admin_usage_attempt_flags_from_candidates(
                 && admin_usage_candidate_failed_before_fallback(candidate)
         })
     });
-    let has_retry = candidates.iter().any(admin_usage_candidate_was_retried);
+    let retry_count = admin_usage_retry_count(candidates);
+    let has_retry = retry_count > 0 || candidates.iter().any(admin_usage_candidate_was_retried);
     let skipped_candidate_reasons = admin_usage_skipped_candidate_reasons(candidates);
 
     AdminUsageAttemptFlags {
         has_fallback,
         has_retry,
+        retry_count,
         has_skipped_candidate: !skipped_candidate_reasons.is_empty(),
         skipped_candidate_reasons,
     }
@@ -206,6 +225,7 @@ fn admin_usage_attempt_flags_for_item(
             AdminUsageAttemptFlags {
                 has_fallback: admin_usage_has_fallback(item),
                 has_retry: false,
+                retry_count: 0,
                 has_skipped_candidate: false,
                 skipped_candidate_reasons: Vec::new(),
             }
@@ -549,6 +569,7 @@ fn build_admin_usage_records_response_with_attempt_flags(
             );
             record["has_fallback"] = json!(flags.has_fallback);
             record["has_retry"] = json!(flags.has_retry);
+            record["retry_count"] = json!(flags.retry_count);
             // 被跳过的候选：前端据此提示"这次没用某个提供商，是因为它在调度阶段就被排除了"。
             record["has_skipped_candidate"] = json!(flags.has_skipped_candidate);
             record["skipped_candidate_reasons"] = json!(flags.skipped_candidate_reasons);
@@ -1326,6 +1347,47 @@ mod tests {
             flags.skipped_candidate_reasons,
             vec!["key_rpm_exhausted".to_string()]
         );
+    }
+
+    fn retried_candidate(
+        candidate_index: u32,
+        retry_index: u32,
+        key_id: &str,
+        status: RequestCandidateStatus,
+    ) -> StoredRequestCandidate {
+        let mut candidate = sample_candidate(0, status, None, None, None);
+        candidate.id = format!("candidate-{candidate_index}-{retry_index}-{key_id}");
+        candidate.candidate_index = candidate_index;
+        candidate.retry_index = retry_index;
+        candidate.key_id = Some(key_id.to_string());
+        candidate
+    }
+
+    #[test]
+    fn attempt_flags_count_same_key_retries_per_slot() {
+        let candidates = vec![
+            retried_candidate(0, 0, "key-a", RequestCandidateStatus::Failed),
+            retried_candidate(0, 1, "key-a", RequestCandidateStatus::Failed),
+            retried_candidate(0, 2, "key-a", RequestCandidateStatus::Success),
+            retried_candidate(1, 0, "key-b", RequestCandidateStatus::Unused),
+        ];
+
+        let flags = admin_usage_attempt_flags_from_candidates(&sample_usage_audit(), &candidates);
+
+        assert_eq!(flags.retry_count, 2);
+        assert!(flags.has_retry);
+    }
+
+    #[test]
+    fn attempt_flags_do_not_count_pool_key_failover_as_retry() {
+        let candidates = vec![
+            retried_candidate(0, 0, "key-a", RequestCandidateStatus::Failed),
+            retried_candidate(0, 100, "key-b", RequestCandidateStatus::Success),
+        ];
+
+        let flags = admin_usage_attempt_flags_from_candidates(&sample_usage_audit(), &candidates);
+
+        assert_eq!(flags.retry_count, 0);
     }
 
     #[test]

@@ -27,6 +27,13 @@
           >
             {{ provider.is_active ? t('ui.enableGlobally') : t('ui.disableGlobally') }}
           </Badge>
+          <Badge
+            v-if="provider.unlimited_retry_enabled"
+            variant="outline"
+            class="text-xs shrink-0"
+          >
+            {{ t('ui.unlimitedRetryBadge') }}
+          </Badge>
         </div>
         <!-- 内联编辑备注 (移动端) -->
         <div
@@ -110,6 +117,17 @@
           @click="$emit('toggleStatus', provider)"
         >
           <Power class="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-7 w-7"
+          :class="provider.unlimited_retry_enabled ? 'text-primary' : ''"
+          :title="provider.unlimited_retry_enabled ? t('ui.disableUnlimitedRetry') : t('ui.enableUnlimitedRetry')"
+          :aria-label="provider.unlimited_retry_enabled ? t('ui.disableUnlimitedRetry') : t('ui.enableUnlimitedRetry')"
+          @click="$emit('toggleUnlimitedRetry', provider)"
+        >
+          <InfinityIcon class="h-3.5 w-3.5" />
         </Button>
         <Button
           variant="ghost"
@@ -238,6 +256,7 @@ import {
   Check,
   X,
   Loader2,
+  Infinity as InfinityIcon,
 } from 'lucide-vue-next'
 import Button from '@/components/ui/button.vue'
 import Badge from '@/components/ui/badge.vue'
@@ -272,6 +291,7 @@ const emit = defineEmits<{
   'editProvider': [provider: ProviderWithEndpointsSummary]
   'openOpsConfig': [provider: ProviderWithEndpointsSummary]
   'toggleStatus': [provider: ProviderWithEndpointsSummary]
+  'toggleUnlimitedRetry': [provider: ProviderWithEndpointsSummary]
   'deleteProvider': [provider: ProviderWithEndpointsSummary]
   'startEditDescription': [event: Event, provider: ProviderWithEndpointsSummary]
   'saveDescription': [event: Event, provider: ProviderWithEndpointsSummary, value: string]

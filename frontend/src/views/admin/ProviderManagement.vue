@@ -135,6 +135,7 @@
                 @edit-provider="openEditProviderDialog"
                 @open-ops-config="openOpsConfigDialog"
                 @toggle-status="toggleProviderStatus"
+                @toggle-unlimited-retry="toggleProviderUnlimitedRetry"
                 @delete-provider="handleDeleteProvider"
                 @start-edit-description="startEditDescription"
                 @save-description="saveDescription"
@@ -205,6 +206,7 @@
             @edit-provider="openEditProviderDialog"
             @open-ops-config="openOpsConfigDialog"
             @toggle-status="toggleProviderStatus"
+            @toggle-unlimited-retry="toggleProviderUnlimitedRetry"
             @delete-provider="handleDeleteProvider"
             @start-edit-description="startEditDescription"
             @save-description="saveDescription"
@@ -900,6 +902,29 @@ async function toggleProviderStatus(provider: ProviderWithEndpointsSummary) {
     providerRevision.value += 1
 
     showSuccess(newStatus ? t('ui.providerEnabled') : t('ui.providerDisabled793b685'))
+  } catch (err: unknown) {
+    showLegacyError(err, t('ui.operationFailed'))
+  }
+}
+
+async function toggleProviderUnlimitedRetry(provider: ProviderWithEndpointsSummary) {
+  try {
+    const nextEnabled = !provider.unlimited_retry_enabled
+    await updateProvider(provider.id, { unlimited_retry_enabled: nextEnabled })
+
+    provider.unlimited_retry_enabled = nextEnabled
+
+    const targetProvider = providers.value.find(p => p.id === provider.id)
+    if (targetProvider) {
+      targetProvider.unlimited_retry_enabled = nextEnabled
+    }
+    providerRevision.value += 1
+
+    showSuccess(
+      nextEnabled
+        ? t('ui.unlimitedRetryEnabledToast', { name: provider.name })
+        : t('ui.unlimitedRetryDisabledToast', { name: provider.name }),
+    )
   } catch (err: unknown) {
     showLegacyError(err, t('ui.operationFailed'))
   }

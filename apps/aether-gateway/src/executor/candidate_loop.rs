@@ -285,8 +285,15 @@ where
         Ok(())
     }
 
-    async fn next_same_key_retry(&self, attempt: &T) -> Result<Option<T>, Self::Error> {
-        Ok(crate::orchestration::next_same_key_retry_attempt(attempt))
+    async fn next_same_key_retry(
+        &self,
+        attempt: &T,
+        scope: AiAttemptRetryScope,
+    ) -> Result<Option<T>, Self::Error> {
+        Ok(
+            crate::orchestration::resolve_next_same_key_retry_attempt(self.state, attempt, scope)
+                .await,
+        )
     }
 
     async fn record_attempt_failed(&self, attempt: &T) -> Result<(), Self::Error> {
@@ -1147,9 +1154,7 @@ where
                 if attempt_fallback_response.is_some() {
                     fallback_response = attempt_fallback_response;
                 }
-                if scope == AiAttemptRetryScope::Candidate {
-                    pending_same_key_retry = port.next_same_key_retry(&attempt).await?;
-                }
+                pending_same_key_retry = port.next_same_key_retry(&attempt, scope).await?;
                 apply_attempt_retry_scope(source, &attempt, scope).await?;
             }
         }
@@ -1263,8 +1268,15 @@ where
         Ok(())
     }
 
-    async fn next_same_key_retry(&self, attempt: &T) -> Result<Option<T>, Self::Error> {
-        Ok(crate::orchestration::next_same_key_retry_attempt(attempt))
+    async fn next_same_key_retry(
+        &self,
+        attempt: &T,
+        scope: AiAttemptRetryScope,
+    ) -> Result<Option<T>, Self::Error> {
+        Ok(
+            crate::orchestration::resolve_next_same_key_retry_attempt(self.state, attempt, scope)
+                .await,
+        )
     }
 
     async fn record_attempt_failed(&self, attempt: &T) -> Result<(), Self::Error> {

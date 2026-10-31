@@ -303,6 +303,29 @@
           />
         </div>
 
+        <div
+          class="flex items-center justify-between p-3 border rounded-lg bg-muted/50"
+          data-testid="unlimited-retry-setting"
+        >
+          <div class="space-y-0.5">
+            <Label
+              for="unlimited-retry-enabled"
+              class="text-sm font-medium"
+            >
+              {{ t('ui.unlimitedRetryMode') }}
+            </Label>
+            <p class="text-xs text-muted-foreground leading-relaxed">
+              {{ t('ui.unlimitedRetryModeHint') }}
+            </p>
+          </div>
+          <Switch
+            id="unlimited-retry-enabled"
+            :model-value="form.unlimited_retry_enabled"
+            :aria-label="t('ui.unlimitedRetryMode')"
+            @update:model-value="(v: boolean) => form.unlimited_retry_enabled = v"
+          />
+        </div>
+
         <div class="flex items-center justify-between gap-4 p-3 border rounded-lg bg-muted/50">
           <div class="space-y-0.5">
             <span class="text-sm font-medium">{{ t('ui.sensitiveInformationProtection') }}</span>
@@ -426,6 +449,8 @@ const form = ref({
   kiro_simulated_cache_enabled: false,
   // Responses WebSocket 配置
   responses_websocket_enabled: false,
+  // 无限重试配置
+  unlimited_retry_enabled: false,
 })
 
 // 重置表单
@@ -454,6 +479,8 @@ function resetForm() {
     kiro_simulated_cache_enabled: false,
     // Responses WebSocket 配置
     responses_websocket_enabled: false,
+    // 无限重试配置
+    unlimited_retry_enabled: false,
   }
 }
 
@@ -486,6 +513,8 @@ function loadProviderData() {
     kiro_simulated_cache_enabled: props.provider.kiro_simulated_cache_enabled ?? false,
     // Responses WebSocket 配置
     responses_websocket_enabled: props.provider.responses_websocket_enabled ?? false,
+    // 无限重试配置
+    unlimited_retry_enabled: props.provider.unlimited_retry_enabled ?? false,
   }
 }
 
@@ -523,6 +552,7 @@ const handleSubmit = async () => {
       description: form.value.description || undefined,
       website: form.value.website || undefined,
       responses_websocket_enabled: form.value.responses_websocket_enabled,
+      unlimited_retry_enabled: form.value.unlimited_retry_enabled,
       is_active: form.value.is_active,
       // 请求配置
       max_retries: form.value.max_retries ?? undefined,

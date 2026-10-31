@@ -368,6 +368,20 @@ pub(crate) fn remove_responses_websocket_enabled(
     }
 }
 
+pub(crate) fn set_unlimited_retry_enabled(
+    config: &mut serde_json::Map<String, serde_json::Value>,
+    enabled: bool,
+) {
+    if enabled {
+        config.insert(
+            crate::orchestration::UNLIMITED_RETRY_CONFIG_KEY.to_string(),
+            serde_json::json!({"enabled": true}),
+        );
+    } else {
+        config.remove(crate::orchestration::UNLIMITED_RETRY_CONFIG_KEY);
+    }
+}
+
 pub(crate) fn validate_responses_websocket_config(
     config: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
@@ -510,6 +524,19 @@ mod tests {
 
         remove_responses_websocket_enabled(&mut config);
         assert!(config.get("responses_websocket").is_none());
+    }
+
+    #[test]
+    fn unlimited_retry_setting_sets_and_removes_config_key() {
+        let mut config = serde_json::Map::new();
+        super::set_unlimited_retry_enabled(&mut config, true);
+        assert_eq!(
+            config.get("unlimited_retry"),
+            Some(&json!({"enabled": true}))
+        );
+
+        super::set_unlimited_retry_enabled(&mut config, false);
+        assert!(config.get("unlimited_retry").is_none());
     }
 
     #[test]

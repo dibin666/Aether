@@ -98,13 +98,13 @@ where
         Ok(())
     }
 
-    /// After `attempt` failed with candidate scope, return the next attempt on
-    /// the same key, or `None` once the sticky-key budget is used up. Retries
-    /// are derived here on demand so no attempt is materialized before it is
-    /// actually needed.
+    /// After `attempt` failed with `scope`, return the next attempt on the same
+    /// key, or `None` once no same-key retry remains. Retries are derived here
+    /// on demand so no attempt is materialized before it is actually needed.
     async fn next_same_key_retry(
         &self,
         _attempt: &Attempt,
+        _scope: AiAttemptRetryScope,
     ) -> Result<Option<Attempt>, Self::Error> {
         Ok(None)
     }
@@ -133,10 +133,11 @@ where
     let mut fallback_response = None;
 
     loop {
+        let is_same_key_retry = pending_same_key_retry.is_some();
         let Some(attempt) = pending_same_key_retry.take().or_else(|| remaining.next()) else {
             break;
         };
-        if retry_filters.iter().any(|filter| filter.matches(&attempt))
+        if (!is_same_key_retry && retry_filters.iter().any(|filter| filter.matches(&attempt)))
             || port.should_skip_attempt(&attempt).await?
         {
             port.mark_unused_attempts(vec![attempt]).await?;
@@ -163,11 +164,10 @@ where
                 if attempt_fallback_response.is_some() {
                     fallback_response = attempt_fallback_response;
                 }
-                if scope == AiAttemptRetryScope::Candidate {
-                    pending_same_key_retry = port.next_same_key_retry(&attempt).await?;
-                } else {
+                if scope != AiAttemptRetryScope::Candidate {
                     retry_filters.push(AiAttemptRetryFilter::new(&attempt, scope));
                 }
+                pending_same_key_retry = port.next_same_key_retry(&attempt, scope).await?;
             }
         }
 
@@ -564,6 +564,89 @@ mod tests {
             outcome,
             super::AiAttemptLoopOutcome::Deferred("provider-error")
         ));
+        assert_eq!(
+            *port.unused.lock().expect("unused attempts should lock"),
+            vec!["same-provider"]
+        );
+    }
+
+    struct UnlimitedRetryPort {
+        executions: Mutex<usize>,
+        unused: Mutex<Vec<&'static str>>,
+    }
+
+    #[async_trait]
+    impl AiAttemptLoopPort<TestAttempt> for UnlimitedRetryPort {
+        type Response = &'static str;
+        type Exhaustion = ();
+        type Error = &'static str;
+
+        async fn execute_attempt(
+            &self,
+            attempt: &TestAttempt,
+        ) -> Result<AiAttemptExecutionOutcome<Self::Response>, Self::Error> {
+            let execution_count = {
+                let mut executions = self.executions.lock().expect("executions should lock");
+                *executions += 1;
+                *executions
+            };
+            Ok(if execution_count == 1 {
+                AiAttemptExecutionOutcome::retry(AiAttemptRetryScope::Provider)
+            } else {
+                AiAttemptExecutionOutcome::Responded(attempt.id)
+            })
+        }
+
+        async fn next_same_key_retry(
+            &self,
+            attempt: &TestAttempt,
+            scope: AiAttemptRetryScope,
+        ) -> Result<Option<TestAttempt>, Self::Error> {
+            Ok((scope == AiAttemptRetryScope::Provider).then(|| attempt.clone()))
+        }
+
+        async fn mark_unused_attempts(
+            &self,
+            attempts: Vec<TestAttempt>,
+        ) -> Result<(), Self::Error> {
+            self.unused
+                .lock()
+                .expect("unused attempts should lock")
+                .extend(attempts.into_iter().map(|attempt| attempt.id));
+            Ok(())
+        }
+
+        async fn build_exhaustion(
+            &self,
+            _last_plan: aether_contracts::ExecutionPlan,
+            _last_report_context: Option<serde_json::Value>,
+        ) -> Result<Self::Exhaustion, Self::Error> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn same_key_retry_bypasses_scope_filter_it_was_issued_for() {
+        let port = UnlimitedRetryPort {
+            executions: Mutex::new(0),
+            unused: Mutex::new(Vec::new()),
+        };
+
+        let outcome = run_ai_attempt_loop(
+            &port,
+            vec![
+                routed_attempt("provider-failure", "provider-a", "endpoint-a", "key-a"),
+                routed_attempt("same-provider", "provider-a", "endpoint-b", "key-b"),
+            ],
+        )
+        .await
+        .expect("same-key retry loop should succeed");
+
+        assert!(matches!(
+            outcome,
+            super::AiAttemptLoopOutcome::Responded("provider-failure")
+        ));
+        assert_eq!(*port.executions.lock().expect("executions should lock"), 2);
         assert_eq!(
             *port.unused.lock().expect("unused attempts should lock"),
             vec!["same-provider"]

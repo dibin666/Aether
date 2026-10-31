@@ -27,9 +27,10 @@ use tokio::sync::Mutex as TokioMutex;
 use tracing::warn;
 
 use super::{
-    classify_failure_disposition, local_failover_error_message, project_local_adaptive_rate_limit,
-    project_local_adaptive_success, project_local_failure_health, project_local_key_circuit_closed,
-    project_local_key_circuit_failure, project_local_success_health,
+    classify_failure_disposition, local_failover_error_message, parse_upstream_retry_after,
+    project_local_adaptive_rate_limit, project_local_adaptive_success,
+    project_local_failure_health, project_local_key_circuit_closed,
+    project_local_key_circuit_failure, project_local_success_health, record_upstream_retry_hint,
     resolve_local_failover_analysis_for_attempt, FailureScope, LocalFailoverAnalysis,
     LocalFailoverClassification,
 };
@@ -393,6 +394,13 @@ pub(crate) async fn apply_local_execution_effect(
             record_attempt_failure_effect(state, context, effect).await;
         }
         LocalExecutionEffect::AdaptiveRateLimit(effect) => {
+            if let (Some(headers), Some(candidate_id)) =
+                (effect.headers, context.plan.candidate_id.as_deref())
+            {
+                if let Some(retry_after) = parse_upstream_retry_after(headers) {
+                    record_upstream_retry_hint(candidate_id, retry_after);
+                }
+            }
             record_adaptive_rate_limit_effect(state, context, effect).await;
         }
         LocalExecutionEffect::HealthFailure(effect) => {

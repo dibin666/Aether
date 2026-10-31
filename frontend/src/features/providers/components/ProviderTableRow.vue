@@ -155,6 +155,13 @@
         >
           {{ provider.is_active ? t('ui.enableGlobally') : t('ui.disableGlobally') }}
         </Badge>
+        <Badge
+          v-if="provider.unlimited_retry_enabled"
+          variant="outline"
+          class="whitespace-nowrap text-xs"
+        >
+          {{ t('ui.unlimitedRetryBadge') }}
+        </Badge>
       </div>
     </TableCell>
     <TableCell
@@ -202,6 +209,18 @@
         <Button
           variant="ghost"
           size="icon"
+          class="h-7 w-7 hover:text-foreground"
+          :class="provider.unlimited_retry_enabled ? 'text-primary' : 'text-muted-foreground/70'"
+          data-testid="provider-unlimited-retry-toggle"
+          :title="provider.unlimited_retry_enabled ? t('ui.disableUnlimitedRetry') : t('ui.enableUnlimitedRetry')"
+          :aria-label="provider.unlimited_retry_enabled ? t('ui.disableUnlimitedRetry') : t('ui.enableUnlimitedRetry')"
+          @click="$emit('toggleUnlimitedRetry', provider)"
+        >
+          <InfinityIcon class="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
           class="h-7 w-7 text-muted-foreground/70 hover:text-destructive"
           :title="t('ui.deleteProvider')"
           @click="$emit('deleteProvider', provider)"
@@ -225,6 +244,7 @@ import {
   Pencil,
   Check,
   X,
+  Infinity as InfinityIcon,
 } from 'lucide-vue-next'
 import Button from '@/components/ui/button.vue'
 import Badge from '@/components/ui/badge.vue'
@@ -266,6 +286,7 @@ const emit = defineEmits<{
   'editProvider': [provider: ProviderWithEndpointsSummary]
   'openOpsConfig': [provider: ProviderWithEndpointsSummary]
   'toggleStatus': [provider: ProviderWithEndpointsSummary]
+  'toggleUnlimitedRetry': [provider: ProviderWithEndpointsSummary]
   'deleteProvider': [provider: ProviderWithEndpointsSummary]
   'startEditDescription': [event: Event, provider: ProviderWithEndpointsSummary]
   'saveDescription': [event: Event, provider: ProviderWithEndpointsSummary, value: string]

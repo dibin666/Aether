@@ -9,6 +9,7 @@ use crate::handlers::admin::provider::write::normalize::normalize_oauth_token_re
 use crate::handlers::admin::provider::write::normalize::normalize_pool_advanced_config;
 use crate::handlers::admin::provider::write::normalize::normalize_provider_type_input;
 use crate::handlers::admin::provider::write::normalize::set_responses_websocket_enabled;
+use crate::handlers::admin::provider::write::normalize::set_unlimited_retry_enabled;
 use crate::handlers::admin::provider::write::normalize::validate_responses_websocket_config;
 use crate::handlers::admin::request::AdminAppState;
 use crate::handlers::admin::shared::normalize_json_object;
@@ -389,6 +390,12 @@ pub(crate) async fn build_admin_update_provider_record(
             .ok_or_else(|| "responses_websocket_enabled 必须是布尔值".to_string())?;
         set_responses_websocket_enabled(&mut config_map, enabled)?;
     }
+    if fields.contains("unlimited_retry_enabled") {
+        let enabled = payload
+            .unlimited_retry_enabled
+            .ok_or_else(|| "unlimited_retry_enabled 必须是布尔值".to_string())?;
+        set_unlimited_retry_enabled(&mut config_map, enabled);
+    }
     validate_responses_websocket_config(&config_map)?;
 
     updated.config = (!config_map.is_empty()).then_some(serde_json::Value::Object(config_map));
@@ -484,6 +491,51 @@ mod tests {
                 "interval_seconds": 30
             }))
         );
+    }
+
+    #[tokio::test]
+    async fn update_provider_unlimited_retry_toggles_config_key() {
+        let app = crate::AppState::new().expect("state should build");
+        let admin_state = crate::handlers::admin::request::AdminAppState::new(&app);
+        let existing = aether_data_contracts::repository::provider_catalog::StoredProviderCatalogProvider::new(
+            "p-test".to_string(),
+            "Unlimited Retry Test".to_string(),
+            None,
+            "custom".to_string(),
+        )
+        .unwrap();
+
+        let enable = super::AdminProviderUpdatePatch::from_object(
+            serde_json::from_value(json!({"unlimited_retry_enabled": true})).unwrap(),
+        )
+        .unwrap();
+        let enabled = super::build_admin_update_provider_record(&admin_state, &existing, enable)
+            .await
+            .expect("enable should succeed");
+        assert_eq!(
+            enabled.config,
+            Some(json!({"unlimited_retry": {"enabled": true}}))
+        );
+
+        let disable = super::AdminProviderUpdatePatch::from_object(
+            serde_json::from_value(json!({"unlimited_retry_enabled": false})).unwrap(),
+        )
+        .unwrap();
+        let disabled = super::build_admin_update_provider_record(&admin_state, &enabled, disable)
+            .await
+            .expect("disable should succeed");
+        assert_eq!(disabled.config, None);
+
+        let invalid = super::AdminProviderUpdatePatch::from_object(
+            serde_json::from_value(json!({"unlimited_retry_enabled": null})).unwrap(),
+        )
+        .unwrap();
+        let Err(error) =
+            super::build_admin_update_provider_record(&admin_state, &existing, invalid).await
+        else {
+            panic!("null unlimited_retry_enabled should be rejected");
+        };
+        assert_eq!(error, "unlimited_retry_enabled 必须是布尔值");
     }
 
     #[tokio::test]

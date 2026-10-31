@@ -73,6 +73,7 @@ export interface UsageRecord {
   response_time_updated_at?: string | null
   has_fallback?: boolean
   has_retry?: boolean
+  retry_count?: number
   /** 请求体实际发生过敏感信息脱敏（上游收到的是占位符）。 */
   chat_pii_redaction?: boolean
   /**

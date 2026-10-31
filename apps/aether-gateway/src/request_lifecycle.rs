@@ -17,6 +17,7 @@ use crate::GatewayError;
 tokio::task_local! {
     static CANCEL_ON_CLIENT_DISCONNECT: Arc<AtomicBool>;
     static REQUEST_ACTIVITY: Arc<Mutex<Option<aether_runtime::AdmissionPermit>>>;
+    static CLIENT_DISCONNECTED: Arc<AtomicBool>;
 }
 
 /// Begin observing only after routing chose local AI execution. The surrounding
@@ -36,6 +37,15 @@ pub(crate) fn configure_client_disconnect(policy: RoutingExecutionPolicy) {
 pub(crate) fn cancel_on_client_disconnect() -> bool {
     CANCEL_ON_CLIENT_DISCONNECT
         .try_with(|cancel| cancel.load(Ordering::Acquire))
+        .unwrap_or(false)
+}
+
+/// True once the client left while the request future was still pending. The
+/// future may keep running in the background, so long-lived loops poll this to
+/// stop.
+pub(crate) fn client_disconnected() -> bool {
+    CLIENT_DISCONNECTED
+        .try_with(|disconnected| disconnected.load(Ordering::Acquire))
         .unwrap_or(false)
 }
 
@@ -65,6 +75,7 @@ where
     F: Future<Output = Result<Response<Body>, GatewayError>> + Send + 'static,
 {
     let cancel = Arc::new(AtomicBool::new(true));
+    let client_disconnected = Arc::new(AtomicBool::new(false));
     let diagnostics = Arc::new(RequestDiagnostics::default());
     let cancel_for_response = Arc::clone(&cancel);
     let producer_for_request = producer.clone();
@@ -74,33 +85,37 @@ where
         activity,
         CANCEL_ON_CLIENT_DISCONNECT.scope(
             Arc::clone(&cancel),
-            scope_request_diagnostics_with(Some(Arc::clone(&diagnostics)), async move {
-                let response = future.await?;
-                let complete_on_disconnect = !cancel_for_response.load(Ordering::Acquire);
-                if !complete_on_disconnect
-                    && producer.is_none()
-                    && activity_for_response
-                        .lock()
-                        .unwrap_or_else(|error| error.into_inner())
-                        .is_none()
-                {
-                    return Ok(response);
-                }
-                Ok(response.map(|body| {
-                    Body::new(CompleteOnDisconnectBody {
-                        body: Some(body),
-                        diagnostics,
-                        complete_on_disconnect,
-                        producer,
-                        activity: Some(activity_for_response),
-                    })
-                }))
-            }),
+            CLIENT_DISCONNECTED.scope(
+                Arc::clone(&client_disconnected),
+                scope_request_diagnostics_with(Some(Arc::clone(&diagnostics)), async move {
+                    let response = future.await?;
+                    let complete_on_disconnect = !cancel_for_response.load(Ordering::Acquire);
+                    if !complete_on_disconnect
+                        && producer.is_none()
+                        && activity_for_response
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .is_none()
+                    {
+                        return Ok(response);
+                    }
+                    Ok(response.map(|body| {
+                        Body::new(CompleteOnDisconnectBody {
+                            body: Some(body),
+                            diagnostics,
+                            complete_on_disconnect,
+                            producer,
+                            activity: Some(activity_for_response),
+                        })
+                    }))
+                }),
+            ),
         ),
     );
     CompleteOnDisconnectRequest {
         future: Some(Box::pin(future)),
         cancel,
+        client_disconnected,
         producer: producer_for_request,
     }
     .await
@@ -112,6 +127,7 @@ where
 {
     future: Option<Pin<Box<F>>>,
     cancel: Arc<AtomicBool>,
+    client_disconnected: Arc<AtomicBool>,
     producer: Option<Arc<UsageProducerGuard>>,
 }
 
@@ -140,6 +156,9 @@ where
     F: Future<Output = Result<Response<Body>, GatewayError>> + Send + 'static,
 {
     fn drop(&mut self) {
+        if self.future.is_some() {
+            self.client_disconnected.store(true, Ordering::Release);
+        }
         if self.cancel.load(Ordering::Acquire) {
             return;
         }
@@ -467,6 +486,31 @@ mod tests {
             usage.shutdown(Duration::from_secs(1)).await.unwrap();
             assert_eq!(activity.active(), 0);
         }
+    }
+
+    #[tokio::test]
+    async fn client_disconnected_flag_is_observed_by_background_continuation() {
+        assert!(!client_disconnected());
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel::<()>();
+        let (observed_tx, observed_rx) = oneshot::channel();
+        let request = tokio::spawn(run_request(async move {
+            configure_client_disconnect(RoutingExecutionPolicy::default());
+            assert!(!client_disconnected());
+            started_tx.send(()).unwrap();
+            release_rx.await.unwrap();
+            observed_tx.send(client_disconnected()).unwrap();
+            Ok(Response::new(Body::empty()))
+        }));
+        started_rx.await.unwrap();
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        release_tx.send(()).unwrap();
+        let observed = tokio::time::timeout(Duration::from_secs(1), observed_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(observed);
     }
 
     #[tokio::test]

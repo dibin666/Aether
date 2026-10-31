@@ -898,6 +898,14 @@ describe('UsageRecordsTable', () => {
     expect(root.querySelector('[data-usage-attempt-marker="retry"]')).not.toBeNull()
   })
 
+  it('shows the retry count only for requests that were retried', () => {
+    const retried = mountUsageRecordsTable([buildRecord({ has_retry: true, retry_count: 3 })])
+    expect(retried.querySelector('[data-usage-retry-count]')?.textContent?.trim()).toBe('×3')
+
+    const notRetried = mountUsageRecordsTable([buildRecord({ has_retry: false, retry_count: 0 })])
+    expect(notRetried.querySelector('[data-usage-retry-count]')).toBeNull()
+  })
+
   it('shows the PII redaction marker in both admin and user layouts', () => {
     const adminRoot = mountUsageRecordsTable([buildRecord({ chat_pii_redaction: true })])
     const adminMarkers = [...adminRoot.querySelectorAll('[data-usage-attempt-marker="pii-redaction"]')]

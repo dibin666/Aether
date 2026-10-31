@@ -9,6 +9,7 @@ use crate::handlers::admin::provider::write::normalize::normalize_oauth_token_re
 use crate::handlers::admin::provider::write::normalize::normalize_pool_advanced_config;
 use crate::handlers::admin::provider::write::normalize::normalize_provider_type_input;
 use crate::handlers::admin::provider::write::normalize::set_responses_websocket_enabled;
+use crate::handlers::admin::provider::write::normalize::set_unlimited_retry_enabled;
 use crate::handlers::admin::provider::write::normalize::validate_responses_websocket_config;
 use crate::handlers::admin::request::AdminAppState;
 use crate::handlers::admin::shared::normalize_json_object;
@@ -188,6 +189,9 @@ pub(crate) async fn build_admin_create_provider_record(
     if let Some(enabled) = payload.responses_websocket_enabled {
         set_responses_websocket_enabled(&mut config_map, enabled)?;
     }
+    if payload.unlimited_retry_enabled == Some(true) {
+        set_unlimited_retry_enabled(&mut config_map, true);
+    }
     validate_responses_websocket_config(&config_map)?;
     let config = (!config_map.is_empty()).then_some(serde_json::Value::Object(config_map));
     crate::provider_transport::validate_anthropic_compatibility_profile_config(config.as_ref())
@@ -311,6 +315,27 @@ mod tests {
                 "max_per_run": 10000,
                 "proxy_node_id": null
             }))
+        );
+    }
+
+    #[tokio::test]
+    async fn create_provider_unlimited_retry_enabled_sets_config() {
+        let app = crate::AppState::new().expect("state should build");
+        let admin_state = crate::handlers::admin::request::AdminAppState::new(&app);
+        let payload = serde_json::from_value(json!({
+            "name": "Unlimited Retry Create",
+            "provider_type": "custom",
+            "unlimited_retry_enabled": true
+        }))
+        .unwrap();
+
+        let (provider, _) = super::build_admin_create_provider_record(&admin_state, payload)
+            .await
+            .expect("create should succeed");
+
+        assert_eq!(
+            provider.config,
+            Some(json!({"unlimited_retry": {"enabled": true}}))
         );
     }
 }

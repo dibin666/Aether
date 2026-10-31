@@ -978,6 +978,7 @@ export interface ProviderWithEndpointsSummary {
   codex_fingerprint_convergence_enabled?: boolean
   kiro_simulated_cache_enabled?: boolean
   responses_websocket_enabled?: boolean
+  unlimited_retry_enabled?: boolean
   ops_quota_alert_enabled?: boolean
   created_at: string
   updated_at: string
