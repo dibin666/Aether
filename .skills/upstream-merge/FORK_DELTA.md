@@ -825,6 +825,11 @@ frontend/src/views/admin/PoolManagement.vue
    - 关键文件：`crates/aether-data/adapters/postgres/migrations/20260909000000_add_provider_key_task_events.sql`、`crates/aether-data/**/provider_key_task_events.rs`、`apps/aether-gateway/src/handlers/admin/features/background_tasks/routes.rs`。
    - 合并规则：`background_tasks` 事件白名单保持严格安全校验，账号事件全部写入独立表；迁移必须包含 `IF NOT EXISTS`，不进 generated baseline。
 
+8. **Provider 无限重试**
+   - 外部契约：Provider `config.unlimited_retry.enabled=true` 时，任一失败上游尝试都在同一 Key 上立即重试直到成功；上游 `Retry-After`/`retry-after-ms` 作为延迟（上限 60s）；客户端断开或命中 `StopLocalFailover` 规则时停止；usage 列表返回 `retry_count`（同一候选槽位+key 的重复发起次数）。
+   - 关键文件：`crates/aether-ai/serving/src/attempt_loop.rs`（`next_same_key_retry(attempt, scope)` 与 pending 重试绕过 scope 过滤）、`apps/aether-gateway/src/orchestration/unlimited_retry.rs`、`orchestration/effects.rs`（Retry-After 记录）、`request_lifecycle.rs`（`client_disconnected()`）、`handlers/admin/provider/write/provider/{create,update}.rs`、`handlers/admin/observability/usage/summary_routes.rs`、`frontend/src/features/providers/components/ProviderFormDialog.vue`、`ProviderTableRow.vue`、`ProviderMobileCard.vue`、`features/usage/components/UsageRecordsTable.vue`。
+   - 合并规则：上游重写 attempt loop 时保留 `next_same_key_retry(attempt, scope)` 签名与“pending 同 key 重试不受 retry filter 拦截”的语义；`resolve_next_same_key_retry_attempt` 必须保留 `client_disconnected()` 守卫，否则后台续跑的请求会永不结束。池化 key 的单 key 重试上限为 `POOL_KEY_RETRY_INDEX_STRIDE - 1`（99 次），超出后走正常故障转移。
+
 ### 按用户要求退役的功能
 - `ignore_pool_cooldown`：2026-09-23 起从应用层、API 与 UI 移除；PostgreSQL bootstrap 列及两条历史迁移保留，不删除已有数据。
 - **私网 endpoint 放行（`private_network_access` / allowance 注册表）**：2026-10-30 `3c5b185de` 起整体删除——provider 执行路径、WebSocket、测试连接对私网/保留地址**一律放行**，不再需要逐端点开关。删除范围：`crates/aether-provider/transport/src/private_network.rs`、`apps/aether-gateway/src/private_upstream.rs`、`validate_execution_upstream_url_with_allowance`/`PrivateUpstreamOrigin`/`decision_private_upstream_allowance`、`private_network_allowed_origin` 响应字段、admin 端点保存校验、`EndpointFormDialog` 两处开关与 `endpoint-private-network.ts`、3 个 i18n key、2 个 spec。**保留**：`endpoint.config.private_network_access` 存量配置变为忽略字段（向后兼容）；URL 契约校验（scheme/host/凭据/片段）不变；payment/video/bark/tunnel 的 SSRF 守卫不受影响。后续合并时 upstream 若在其 SSRF 路径上改动，不得把私网拒绝重新引入 provider 执行路径。
@@ -859,7 +864,7 @@ Chart.js 类型收窄（`ScatterChart.vue` 等）、`useEscapeKey` (`isContentEd
 1. 默认禁止整文件 `ours`/`theirs`，优先语义混合 (manual hybrid)。
 2. 安全加固 `579f2c7cc` 引入的边界/信封/校验结构属于 upstream baseline，后续冲突不得用旧版整文件覆盖。
 3. **`background_tasks` 事件白名单不得放宽**：`sanitize_background_task_event_type` 和 `SAFE_BACKGROUND_TASK_METADATA_FIELDS` 只放行 fork 的 8 个事件类型和纯计数字段；标识符与自由文本走 `provider_key_task_events` 表。上游的 `run_sanitization_removes_sensitive_and_nested_metadata` 和 `event_sanitization_canonicalizes_type_message_and_payload` 两个测试**永远不要改**。
-4. `cargo check --workspace` 不编译 `#[cfg(test)]`，上游改了 fork 测试构造的公共结构体时必须补跑 `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`。
+4. （只编译一次：下述 `--all-targets` 是**替换**而非追加 `cargo check --workspace`；若同时要跑行为测试，则改用第 7 节方案 B 的单条 `cargo test --workspace --tests -- …`。）`cargo check --workspace` 不编译 `#[cfg(test)]`，上游改了 fork 测试构造的公共结构体时必须补跑 `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`。
 5. `deploy.sh` 的纯构建契约是 P1，上游在已删除的 restart 尾块内的改动不构成恢复理由。
 6. fork 的迁移只放 `migrations/` 目录、不进 generated baseline，且必须 `IF NOT EXISTS`。
 7. **零冲突不等于零风险，重叠路径必须逐个语义复核**。上游删除某个符号、而 fork 仍有调用方时，git 会静默取上游侧且不产生任何冲突标记。实例：2026-09-09 第一轮，上游删了 `PoolManagementHeader.vue` 里三个按钮的 `triggerAction` handler、fork 保留了按钮，自动合并后按钮点击直接抛 TypeError，全程无冲突提示。合并后必须对 `comm -12` 得出的重叠路径逐个 `git diff --cached` 复核，重点看「上游删了什么、fork 还在不在用」。前端同类问题靠 `npm run test:run` 全量跑才能兜住。
@@ -888,6 +893,7 @@ Provider config:
   pool_advanced.ignore_exhausted_accounts (upstream；默认 false=耗尽账号阻断，true=放行；skip_exhausted_accounts 由其反推，hard-block 与最低额度预留仍阻断)
   pool_advanced.reserve_minimum_quota   (upstream Codex-only; default false; remaining quota <= 1% is reserved)
   oauth_token_refresh.{enabled,lookahead_seconds,interval_seconds,concurrency,max_per_run,proxy_node_id}
+  unlimited_retry.enabled               (fork P0 第 8 项；默认 false；失败后同 Key 无限重试直到成功)
 
 Key capability:
   disable_circuit_breaker=true (兼容读取: circuit_breaker_disabled, never_circuit_break)
@@ -903,33 +909,35 @@ Task keys:
 ## 7. 合并后验证清单
 
 ```sh
-# 1. 编译基线（只允许一个 rust 编译进程，串行执行）
+# 只编译一次：整个验证只发起一次 Cargo 调用（见根目录 AGENTS.md）。
+# 下面 A/B 二选一，按本轮需要从菜单里挑 crate 与过滤词合并进同一条命令。
+
+# 0. 前端依赖与构建
 cd aether-vscodex/web && npm install
 cd frontend && npm run build
-CARGO_BUILD_JOBS=1 cargo check --workspace
+
+# A. 不跑 Rust 行为测试：只跑一条（触发冲突规则 4 时用 --all-targets，它已包含 --workspace，二者不要都跑）
+CARGO_BUILD_JOBS=1 cargo check --workspace            # 或：
 CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets
 
-# 2. 定向功能与冲突回归测试
-CARGO_BUILD_JOBS=1 cargo test -p aether-data-contracts background_task
-CARGO_BUILD_JOBS=1 cargo test -p aether-data provider_key_task_events
-CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib handlers::admin::provider::pool::runtime::writes
-CARGO_BUILD_JOBS=1 cargo test -p aether-gateway --lib maintenance::runtime::pool_quota_probe
-CARGO_BUILD_JOBS=1 cargo test -p aether-ai-formats transcription
-CARGO_BUILD_JOBS=1 cargo test -p aether-scheduler-core disable_circuit_breaker
-CARGO_BUILD_JOBS=1 RUST_MIN_STACK=8388608 cargo test -p aether-gateway users_me_usage
+# B. 需要 Rust 行为测试：一条命令同时完成工作区编译基线与全部定向测试（不再另跑 cargo check）
+#    菜单（按需删减过滤词）：功能回归 background_task / provider_key_task_events /
+#    pool::runtime::writes / pool_quota_probe / transcription / disable_circuit_breaker /
+#    users_me_usage / unlimited_retry；usage 重叠回归 repository::usage / request_metadata /
+#    observability::usage
+CARGO_BUILD_JOBS=1 RUST_MIN_STACK=8388608 cargo test --workspace --tests -- \
+  background_task provider_key_task_events \
+  handlers::admin::provider::pool::runtime::writes \
+  maintenance::runtime::pool_quota_probe transcription disable_circuit_breaker \
+  users_me_usage unlimited_retry \
+  repository::usage request_metadata observability::usage
 
-# 3. 前端定向测试
+# C. 前端定向测试：所有 spec 合并为一次调用
 cd frontend && npm run test:run -- \
   src/features/pool/components/__tests__/PoolKeyDisplayPanels.spec.ts \
   src/views/admin/__tests__/PoolConsumptionStats.spec.ts \
   src/features/pool/components/__tests__/PoolSchedulingDialog.cache-affinity.spec.ts \
-  src/features/usage/conversation/__tests__/openai.spec.ts
-
-# 4. usage 重叠路径回归（usage 元数据/记录 payload 与自助详情前端契约重叠时选用）
-CARGO_BUILD_JOBS=1 cargo test -p aether-data-contracts --lib repository::usage
-CARGO_BUILD_JOBS=1 cargo test -p aether-usage-runtime --lib request_metadata
-CARGO_BUILD_JOBS=1 cargo test -p aether-admin --lib observability::usage
-cd frontend && npm run test:run -- \
+  src/features/usage/conversation/__tests__/openai.spec.ts \
   src/features/usage/components/__tests__/UsageRecordsTable.spec.ts \
   src/features/usage/components/__tests__/RequestDetailDrawer.pricing.spec.ts
 ```

@@ -52,6 +52,10 @@ CARGO_BUILD_JOBS=1 cargo check --workspace
 - Run behavior tests only for the files and contracts that actually conflicted or required a merge-regression fix. Choose the smallest focused command; a frontend-only conflict should not trigger unrelated Rust suites.
 - Never run multiple Cargo build/check/test processes concurrently. Cargo shares package-cache and artifact locks, and parallel invocations can serialize behind expensive duplicate compilation. Run at most one targeted Cargo command at a time.
 - “只允许一个rust编译进程”：全程禁止并行 Rust 编译；所有 Cargo build/check/test 命令必须串行执行，并设置 `CARGO_BUILD_JOBS=1`，确认上一条命令已退出后才能启动下一条。
+- “只编译一次”（见仓库根 `AGENTS.md`）：仓库与 `target/` 在机械硬盘上，每次 Cargo 调用都会重新链接巨大的测试二进制。一次验证只允许发起**一次** Cargo 调用：
+  - 不跑行为测试时：只跑一条 `CARGO_BUILD_JOBS=1 cargo check --workspace`；若触发 `FORK_DELTA.md` 冲突规则 4，则改为只跑一条 `CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets`（它已包含前者，二者不要都跑）。
+  - 需要行为测试时：把所有要测的 crate 与所有过滤词合并成一条 `CARGO_BUILD_JOBS=1 cargo test -p A -p B --tests -- 过滤词1 过滤词2`（libtest 支持多个过滤词）。它本身就是编译，不再另跑 `cargo check`；若还需要工作区编译基线，用 `CARGO_BUILD_JOBS=1 cargo test --workspace --tests -- 过滤词…` 一条命令同时完成基线与测试。
+  - 过滤词必须非空（否则跑全量测试）；只编译不跑用 `--no-run`。前端 spec 同样合并为一次 `npm run test:run -- spec1 spec2 ...`。
 - Treat the behavior commands in `FORK_DELTA.md` as a reference menu, not an automatic batch. Record any command not run as unverified; if the user stops jobs, cancel them immediately and continue only with evidence already obtained.
 - If either build fails, classify whether it is a merge-resolution regression or an environment/dependency issue. Fix merge regressions in scope; do not claim completion until both compile successfully.
 - Commit the merge only after both builds pass. Do not push unless the user explicitly requests it.
