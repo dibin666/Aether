@@ -829,6 +829,7 @@ frontend/src/views/admin/PoolManagement.vue
    - 外部契约：Provider `config.unlimited_retry.enabled=true` 时，任一失败上游尝试都在同一 Key 上立即重试直到成功；上游 `Retry-After`/`retry-after-ms` 作为延迟（上限 60s）；客户端断开或命中 `StopLocalFailover` 规则时停止；usage 列表返回 `retry_count`（同一候选槽位+key 的重复发起次数）。
    - 关键文件：`crates/aether-ai/serving/src/attempt_loop.rs`（`next_same_key_retry(attempt, scope)` 与 pending 重试绕过 scope 过滤）、`apps/aether-gateway/src/orchestration/unlimited_retry.rs`、`orchestration/effects.rs`（Retry-After 记录）、`request_lifecycle.rs`（`client_disconnected()`）、`handlers/admin/provider/write/provider/{create,update}.rs`、`handlers/admin/observability/usage/summary_routes.rs`、`frontend/src/features/providers/components/ProviderFormDialog.vue`、`ProviderTableRow.vue`、`ProviderMobileCard.vue`、`features/usage/components/UsageRecordsTable.vue`。
    - 合并规则：上游重写 attempt loop 时保留 `next_same_key_retry(attempt, scope)` 签名与“pending 同 key 重试不受 retry filter 拦截”的语义；`resolve_next_same_key_retry_attempt` 必须保留 `client_disconnected()` 守卫，否则后台续跑的请求会永不结束。池化 key 的单 key 重试上限为 `POOL_KEY_RETRY_INDEX_STRIDE - 1`（99 次），超出后走正常故障转移。
+   - 流内错误前置条件（2026-10-31）：上游以 HTTP 200 SSE 返回、`response.created`/`response.in_progress`（回显 instructions/tools，agent 请求约 25KB/条）之后才出现 `error` 事件时，只有预提交闸门尚未提交才能重试。fork 把通用 SSE 闸门预算从共享的 `MAX_STREAM_PREFETCH_BYTES`（16KB）改为 `commit_policy.rs::GENERIC_SSE_PRECOMMIT_MAX_BYTES`（1 MiB），并让 `stream/execution.rs` 预读循环在有界闸门未提交时不受 16KB 检查前缀截断。合并规则：上游改动 `StreamCommitPolicy::for_response` 或预读 `while` 条件时，不得把通用 SSE 预算退回 16KB；回归测试 `generic_sse_error_after_large_responses_setup_retries_before_client_output`、`generic_sse_reads_past_large_responses_setup_to_an_error` 必须保持通过。
 
 ### 按用户要求退役的功能
 - `ignore_pool_cooldown`：2026-09-23 起从应用层、API 与 UI 移除；PostgreSQL bootstrap 列及两条历史迁移保留，不删除已有数据。
@@ -923,13 +924,13 @@ CARGO_BUILD_JOBS=1 cargo check --workspace --all-targets
 # B. 需要 Rust 行为测试：一条命令同时完成工作区编译基线与全部定向测试（不再另跑 cargo check）
 #    菜单（按需删减过滤词）：功能回归 background_task / provider_key_task_events /
 #    pool::runtime::writes / pool_quota_probe / transcription / disable_circuit_breaker /
-#    users_me_usage / unlimited_retry；usage 重叠回归 repository::usage / request_metadata /
+#    users_me_usage / unlimited_retry / large_responses_setup / prefetch_handoff；usage 重叠回归 repository::usage / request_metadata /
 #    observability::usage
 CARGO_BUILD_JOBS=1 RUST_MIN_STACK=8388608 cargo test --workspace --tests -- \
   background_task provider_key_task_events \
   handlers::admin::provider::pool::runtime::writes \
   maintenance::runtime::pool_quota_probe transcription disable_circuit_breaker \
-  users_me_usage unlimited_retry \
+  users_me_usage unlimited_retry large_responses_setup prefetch_handoff \
   repository::usage request_metadata observability::usage
 
 # C. 前端定向测试：所有 spec 合并为一次调用

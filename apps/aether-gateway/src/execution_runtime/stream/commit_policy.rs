@@ -6,6 +6,12 @@ use crate::execution_runtime::MAX_STREAM_PREFETCH_BYTES;
 
 const ANTHROPIC_PRECOMMIT_MAX_WAIT: Duration = Duration::from_millis(750);
 const GEMINI_PRECOMMIT_MAX_WAIT: Duration = Duration::from_millis(750);
+/// OpenAI Responses setup events (`response.created`, `response.in_progress`)
+/// echo the request's instructions and tools, about 25 KiB each for agent
+/// clients. The generic gate has to read past them; with the shared prefetch
+/// budget it committed inside the first setup event, so an error event right
+/// after setup reached the client and could no longer fail over or retry.
+pub(super) const GENERIC_SSE_PRECOMMIT_MAX_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum StreamCommitPolicy {
@@ -72,7 +78,7 @@ impl StreamCommitPolicy {
                 };
             }
             return Self::FirstSseSemanticEvent {
-                max_bytes: MAX_STREAM_PREFETCH_BYTES,
+                max_bytes: GENERIC_SSE_PRECOMMIT_MAX_BYTES,
                 max_wait: Duration::from_secs(30),
             };
         }
@@ -757,6 +763,75 @@ mod tests {
                 super::StreamPrecommitObservation::UpstreamError { .. }
             ));
         }
+    }
+
+    #[test]
+    fn generic_sse_reads_past_large_responses_setup_to_an_error() {
+        let policy = super::StreamCommitPolicy::for_response(
+            true,
+            Some("text/event-stream"),
+            "openai:responses",
+            "openai:responses",
+            false,
+            false,
+            false,
+        );
+        let setup = ["response.created", "response.in_progress"]
+            .into_iter()
+            .map(|event_type| {
+                format!(
+                    "event: {event_type}\ndata: {}\n\n",
+                    serde_json::json!({"type": event_type, "response": {
+                        "status": "in_progress", "instructions": "x".repeat(25 * 1024),
+                    }})
+                )
+            })
+            .collect::<String>();
+        let error = b"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"too_many_requests\",\"code\":\"rate_limit_exceeded\",\"message\":\"exceeded token rate limit\"}}\n\n";
+        let mut gate = super::StreamCommitGate::new(policy);
+        for chunk in setup.as_bytes().chunks(4096) {
+            assert_eq!(
+                gate.observe_provider_bytes(chunk),
+                super::StreamPrecommitObservation::Pending
+            );
+        }
+        match gate.observe_provider_bytes(error) {
+            super::StreamPrecommitObservation::UpstreamError { status_code, .. } => {
+                assert_eq!(status_code, 429);
+            }
+            observation => panic!("setup must not commit before the error: {observation:?}"),
+        }
+    }
+
+    #[test]
+    fn generic_sse_setup_beyond_its_byte_budget_still_commits() {
+        let policy = super::StreamCommitPolicy::for_response(
+            true,
+            Some("text/event-stream"),
+            "openai:responses",
+            "openai:responses",
+            false,
+            false,
+            false,
+        );
+        let oversized = format!(
+            "event: response.created\ndata: {}\n\n",
+            serde_json::json!({"type": "response.created", "response": {
+                "instructions": "x".repeat(super::GENERIC_SSE_PRECOMMIT_MAX_BYTES),
+            }})
+        );
+        let (head, tail) = oversized
+            .as_bytes()
+            .split_at(super::GENERIC_SSE_PRECOMMIT_MAX_BYTES - 1);
+        let mut gate = super::StreamCommitGate::new(policy);
+        assert_eq!(
+            gate.observe_provider_bytes(head),
+            super::StreamPrecommitObservation::Pending
+        );
+        assert_eq!(
+            gate.observe_provider_bytes(tail),
+            super::StreamPrecommitObservation::Commit
+        );
     }
 
     #[test]

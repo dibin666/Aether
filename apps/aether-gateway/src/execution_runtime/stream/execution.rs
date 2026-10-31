@@ -6662,9 +6662,14 @@ async fn execute_stream_from_frame_stream_with_retry_scope(
         .as_ref()
         .filter(|_| !skip_direct_finalize_prefetch)
     {
+        // The inspection prefix stops growing at MAX_STREAM_PREFETCH_BYTES; a
+        // bounded gate still looking for its first semantic event owns its own
+        // byte and time budget, so the prefix size must not end that wait.
         while (stream_commit_policy.requires_bounded_frame_wait()
             || prefetched_chunks.len() < MAX_STREAM_PREFETCH_FRAMES)
-            && prefetched_inspection_body.len() < MAX_STREAM_PREFETCH_BYTES
+            && (prefetched_inspection_body.len() < MAX_STREAM_PREFETCH_BYTES
+                || (stream_commit_policy.requires_bounded_frame_wait()
+                    && stream_commit_gate.is_uncommitted()))
         {
             let next_frame_result = if limit_direct_finalize_prefetch {
                 let prefetch_timeout = stream_commit_policy
@@ -9294,22 +9299,31 @@ mod tests {
 
     #[tokio::test]
     async fn prefetch_handoff_preserves_large_responses_setup_event() {
-        let event = format!(
-            "event: response.created\ndata: {}\n\n",
-            json!({"type":"response.created", "response": {
-                "id":"resp-large-setup", "status":"in_progress", "output":[],
-                "tools":[{"name":"write", "description":"x".repeat(64 * 1024)}]
-            }})
-        );
+        let budget = super::super::commit_policy::GENERIC_SSE_PRECOMMIT_MAX_BYTES;
+        let setup_event = |description_len: usize| {
+            format!(
+                "event: response.created\ndata: {}\n\n",
+                json!({"type":"response.created", "response": {
+                    "id":"resp-large-setup", "status":"in_progress", "output":[],
+                    "tools":[{"name":"write", "description":"x".repeat(description_len)}]
+                }})
+            )
+        };
+        let large = setup_event(64 * 1024);
+        let oversized = setup_event(budget);
         let done = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-large-setup\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":7,\"output_tokens\":2}}}\n\n";
-        // Include the two observed transport boundaries, exact/near budget
-        // boundaries, and multiple prefetch chunks crossing the budget.
-        for cuts in [
-            vec![16_383],
-            vec![16_384],
-            vec![17_735],
-            vec![17_741],
-            vec![8_192, 17_735],
+        // Include the two observed transport boundaries, exact/near shared
+        // prefetch budget boundaries, multiple prefetch chunks crossing it, and
+        // a setup event that outgrows the generic gate budget and commits there.
+        for (event, cuts) in [
+            (&large, vec![16_383]),
+            (&large, vec![16_384]),
+            (&large, vec![17_735]),
+            (&large, vec![17_741]),
+            (&large, vec![8_192, 17_735]),
+            (&oversized, vec![budget - 1]),
+            (&oversized, vec![budget]),
+            (&oversized, vec![8_192, budget + 1]),
         ] {
             let mut chunks = Vec::new();
             let mut start = 0;
@@ -9321,11 +9335,11 @@ mod tests {
             chunks.push(done);
             let response = execute_generic_sse_precommit(chunks, json!({}), None, false)
                 .await
-                .expect("large setup should commit at the bounded prefetch limit");
+                .expect("large setup should be forwarded once the stream commits");
             let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
             let body = String::from_utf8(body.to_vec()).unwrap();
             assert!(
-                body.starts_with(&event),
+                body.starts_with(event.as_str()),
                 "setup bytes lost or duplicated at split {start}"
             );
             let events: Vec<Value> = body
@@ -9514,6 +9528,42 @@ mod tests {
             "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"error\":{\"type\":\"server_error\",\"message\":\"capacity exhausted\"}}}\n\n",
         ], json!({}), None, false).await;
         assert!(response.is_none());
+    }
+
+    #[tokio::test]
+    async fn generic_sse_error_after_large_responses_setup_retries_before_client_output() {
+        // Agent requests echo ~25 KiB of instructions/tools in each setup
+        // event, so the error lands well past the shared 16 KiB prefetch budget.
+        let setup = ["response.created", "response.in_progress"]
+            .into_iter()
+            .enumerate()
+            .map(|(sequence_number, event_type)| {
+                format!(
+                    "event: {event_type}\ndata: {}\n\n",
+                    json!({"type": event_type, "sequence_number": sequence_number, "response": {
+                        "id": "resp-large-setup", "status": "in_progress", "output": [],
+                        "instructions": "x".repeat(25 * 1024),
+                    }})
+                )
+            })
+            .collect::<String>();
+        let error = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"too_many_requests\",\"code\":\"rate_limit_exceeded\",\"message\":\"Your requests have exceeded token rate limit.\"},\"sequence_number\":2}\n\n";
+        for cuts in [vec![16_383], vec![16_384], vec![8_192, 30_000, 50_000]] {
+            let mut chunks = Vec::new();
+            let mut start = 0;
+            for end in cuts {
+                chunks.push(&setup[start..end]);
+                start = end;
+            }
+            chunks.push(&setup[start..]);
+            chunks.push(error);
+            assert!(
+                execute_generic_sse_precommit(chunks, json!({}), None, false)
+                    .await
+                    .is_none(),
+                "an error after large setup events must retry before commit (split {start})"
+            );
+        }
     }
 
     #[tokio::test]
