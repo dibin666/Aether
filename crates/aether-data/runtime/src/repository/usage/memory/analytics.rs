@@ -234,23 +234,11 @@ fn metrics(
             first_bytes.push(value);
             metrics.first_byte_sum_ms += value as f64;
         }
-        let upstream_is_stream = row
-            .request_metadata
-            .as_ref()
-            .and_then(|metadata| metadata.get("upstream_is_stream"))
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(row.is_stream);
-        if upstream_is_stream
-            && available(row, USAGE_AVAILABLE_METADATA_KEY)
-            && row.output_tokens > 0
-        {
-            if let (Some(duration), Some(first_byte)) =
-                (row.response_time_ms, row.first_byte_time_ms)
-            {
-                if duration > first_byte {
+        if available(row, USAGE_AVAILABLE_METADATA_KEY) && row.output_tokens > 0 {
+            if let Some(duration) = row.response_time_ms {
+                if duration > 0 {
                     metrics.output_tps_sample_count += 1;
-                    metrics.output_tps_sum +=
-                        row.output_tokens as f64 * 1000.0 / (duration - first_byte) as f64;
+                    metrics.output_tps_sum += row.output_tokens as f64 * 1000.0 / duration as f64;
                 }
             }
         }

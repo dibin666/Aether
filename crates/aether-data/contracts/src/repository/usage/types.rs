@@ -2793,6 +2793,25 @@ pub trait UsageWriteRepository: Send + Sync {
         Ok(())
     }
 
+    /// Overwrite the recorded first-byte observation on a finalized usage row.
+    ///
+    /// Post-hoc upstream-timing enrichment (for example aligning the stored
+    /// first-byte metric to an intermediate proxy's upstream TTFB) rewrites the
+    /// column after the lifecycle upserts finished. `request_metadata_patch` is
+    /// merged into `request_metadata` when present. Returns `true` only when an
+    /// existing terminal row was updated; pending/streaming rows must keep their
+    /// lifecycle-managed value so enrichment cannot race earlier upserts. The
+    /// default no-op keeps adapters without a native update path compiling.
+    async fn update_usage_first_byte_time_ms(
+        &self,
+        request_id: &str,
+        first_byte_time_ms: u64,
+        request_metadata_patch: Option<&Value>,
+    ) -> Result<bool, crate::DataLayerError> {
+        let _ = (request_id, first_byte_time_ms, request_metadata_patch);
+        Ok(false)
+    }
+
     async fn upsert_pending_many(
         &self,
         usages: Vec<UpsertUsageRecord>,

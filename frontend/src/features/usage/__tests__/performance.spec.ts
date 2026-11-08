@@ -19,13 +19,13 @@ describe('usage performance metrics', () => {
     })).toBe(750)
   })
 
-  it('calculates stream output tokens per generated second after first byte', () => {
+  it('calculates stream output tokens per total response second', () => {
     expect(calculateOutputRate({
       output_tokens: 50,
       response_time_ms: 1000,
       first_byte_time_ms: 500,
       upstream_is_stream: true,
-    })).toBe(100)
+    })).toBe(50)
   })
 
   it('calculates standard output tokens per total response second', () => {
@@ -49,16 +49,16 @@ describe('usage performance metrics', () => {
     })).toBeNull()
   })
 
-  it('does not calculate output rate when first byte is not before completion', () => {
+  it('calculates output rate even when first byte equals completion', () => {
     expect(calculateOutputRate({
       output_tokens: 50,
       response_time_ms: 1000,
       first_byte_time_ms: 1000,
       upstream_is_stream: true,
-    })).toBeNull()
+    })).toBe(50)
   })
 
-  it('hides implausible rates from very short generation tails', () => {
+  it('keeps rates from very short generation tails visible under total-time formula', () => {
     const timing = {
       output_tokens: 300,
       response_time_ms: 1000,
@@ -67,9 +67,9 @@ describe('usage performance metrics', () => {
     }
     const rate = calculateOutputRate(timing)
 
-    expect(rate).toBe(6000)
-    expect(shouldHideOutputRate(rate, timing)).toBe(true)
-    expect(getDisplayOutputRate(timing)).toBeNull()
+    expect(rate).toBe(300)
+    expect(shouldHideOutputRate(rate, timing)).toBe(false)
+    expect(getDisplayOutputRate(timing)).toBe(300)
   })
 
   it('keeps normal output rates visible', () => {
@@ -80,7 +80,7 @@ describe('usage performance metrics', () => {
       upstream_is_stream: true,
     }
 
-    expect(getDisplayOutputRate(timing)).toBe(100)
+    expect(getDisplayOutputRate(timing)).toBe(50)
   })
 
   it('calculates standard output rate without first byte timing', () => {

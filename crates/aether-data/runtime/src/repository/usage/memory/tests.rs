@@ -138,7 +138,8 @@ async fn overview_model_performance_merges_provider_samples_without_pagination()
     assert_eq!(metrics.latency_sample_count, 3);
     assert_eq!(metrics.latency_sum_ms, 4900.0);
     assert_eq!(metrics.output_tps_sample_count, 3);
-    assert_eq!(metrics.output_tps_sum, 500.0);
+    // 输出/总耗时口径：100000/1100 + 200000/1300 + 400000/2500
+    assert!((metrics.output_tps_sum - 404.755_245).abs() < 0.001);
     assert_eq!(result.model_rows[1].metrics.first_byte_sample_count, 0);
     assert_eq!(result.model_rows[1].metrics.in_flight_request_count, 1);
     assert_eq!(
@@ -3502,7 +3503,7 @@ async fn summarize_usage_provider_performance_computes_tps_and_top_provider_time
 
     assert_eq!(summary.summary.request_count, 4);
     assert_eq!(summary.summary.success_count, 3);
-    assert!((summary.summary.avg_output_tps.expect("summary tps") - 19.117_647).abs() < 0.001);
+    assert!((summary.summary.avg_output_tps.expect("summary tps") - 18.571_429).abs() < 0.001);
     assert_eq!(summary.summary.avg_first_byte_time_ms, Some(150.0));
     assert!(
         (summary
@@ -3520,7 +3521,7 @@ async fn summarize_usage_provider_performance_computes_tps_and_top_provider_time
     assert_eq!(provider.request_count, 3);
     assert_eq!(provider.success_count, 2);
     assert_eq!(provider.output_tokens, 1099);
-    assert!((provider.avg_output_tps.expect("provider tps") - 26.315_789).abs() < 0.001);
+    assert!((provider.avg_output_tps.expect("provider tps") - 25.0).abs() < 0.001);
     assert_eq!(provider.avg_first_byte_time_ms, Some(150.0));
     assert_eq!(provider.avg_response_time_ms, Some(2000.0));
     assert_eq!(provider.p90_response_time_ms, None);
@@ -3530,7 +3531,7 @@ async fn summarize_usage_provider_performance_computes_tps_and_top_provider_time
     assert_eq!(summary.timeline.len(), 1);
     assert_eq!(summary.timeline[0].date, "2024-03-21T05:00:00+00:00");
     assert_eq!(summary.timeline[0].provider_id, "provider-1");
-    assert!((summary.timeline[0].avg_output_tps.expect("timeline tps") - 26.315_789).abs() < 0.001);
+    assert!((summary.timeline[0].avg_output_tps.expect("timeline tps") - 25.0).abs() < 0.001);
 
     let mut without_timeline_query = query;
     without_timeline_query.include_timeline = false;

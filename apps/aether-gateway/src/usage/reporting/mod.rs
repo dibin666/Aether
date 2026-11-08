@@ -91,6 +91,14 @@ pub(crate) async fn submit_sync_report(
     state: &AppState,
     mut payload: GatewaySyncReportRequest,
 ) -> Result<(), GatewayError> {
+    super::upstream_first_byte_enrichment::spawn_upstream_first_byte_enrichment(
+        state,
+        payload.report_context.as_ref(),
+        payload
+            .telemetry
+            .as_ref()
+            .and_then(|telemetry| telemetry.ttfb_ms),
+    );
     let original_report_context = payload.report_context.take();
     if let Some(report_context) =
         resolve_locally_actionable_report_context(state, original_report_context.as_ref()).await
@@ -171,6 +179,14 @@ pub(crate) async fn submit_stream_report(
     state: &AppState,
     mut payload: GatewayStreamReportRequest,
 ) -> Result<(), GatewayError> {
+    super::upstream_first_byte_enrichment::spawn_upstream_first_byte_enrichment(
+        state,
+        payload.report_context.as_ref(),
+        payload
+            .telemetry
+            .as_ref()
+            .and_then(|telemetry| telemetry.ttfb_ms),
+    );
     let original_report_context = payload.report_context.take();
     if let Some(report_context) =
         resolve_locally_actionable_report_context(state, original_report_context.as_ref()).await

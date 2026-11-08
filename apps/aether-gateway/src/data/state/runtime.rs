@@ -1599,6 +1599,36 @@ impl GatewayDataState {
         .await
     }
 
+    /// Post-hoc rewrite of the recorded first-byte observation on a finalized
+    /// usage row (upstream-timing enrichment). Returns `true` when a terminal
+    /// row existed and was updated.
+    pub(crate) async fn update_usage_first_byte_time_ms(
+        &self,
+        request_id: &str,
+        first_byte_time_ms: u64,
+        request_metadata_patch: Option<&serde_json::Value>,
+    ) -> Result<bool, DataLayerError> {
+        crate::request_diagnostics::observe_db_operation(
+            "usage_first_byte_observation_update",
+            self.database_pool_summary(),
+            async {
+                match &self.usage_writer {
+                    Some(repository) => {
+                        repository
+                            .update_usage_first_byte_time_ms(
+                                request_id,
+                                first_byte_time_ms,
+                                request_metadata_patch,
+                            )
+                            .await
+                    }
+                    None => Ok(false),
+                }
+            },
+        )
+        .await
+    }
+
     pub(crate) async fn upsert_pending_usage_many(
         &self,
         usages: Vec<UpsertUsageRecord>,

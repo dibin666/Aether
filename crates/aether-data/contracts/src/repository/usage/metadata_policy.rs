@@ -240,9 +240,14 @@ pub fn sanitize_usage_request_metadata_object(source: &Map<String, Value>) -> Op
         "client_response_body_base64_bytes",
         "end_to_end_time_ms",
         "end_to_end_first_byte_time_ms",
+        "cliproxy_ttft_ms",
+        "measured_first_byte_time_ms",
+        "measured_end_to_end_first_byte_time_ms",
     ] {
         insert_u64(source, &mut target, key);
     }
+    insert_token(source, &mut target, "first_byte_time_ms_source", 32);
+    insert_token(source, &mut target, "cliproxy_request_id", 64);
     insert_bounded_u64(source, &mut target, "client_response_status_code", 599);
     if let Some(body_size) = source.get("body_size").and_then(project_body_size) {
         target.insert("body_size".to_string(), body_size);

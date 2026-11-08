@@ -22,10 +22,6 @@ export function isOutputRateUsingGenerationTime(timing: UsagePerformanceTiming):
 }
 
 export function getOutputRateDurationMs(timing: UsagePerformanceTiming): number | null {
-  if (isOutputRateUsingGenerationTime(timing)) {
-    return getGenerationTimeMs(timing)
-  }
-
   const responseTimeMs = timing.response_time_ms
   if (responseTimeMs == null || !Number.isFinite(responseTimeMs) || responseTimeMs <= 0) return null
   return responseTimeMs

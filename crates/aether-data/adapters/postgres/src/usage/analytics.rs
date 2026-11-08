@@ -87,8 +87,8 @@ count(*) FILTER (WHERE response_time_ms >= {slow_threshold_ms})::bigint AS slow_
 COALESCE(sum(response_time_ms),0)::double precision AS latency_sum_ms,
 count(first_byte_time_ms)::bigint AS first_byte_sample_count,
 COALESCE(sum(first_byte_time_ms),0)::double precision AS first_byte_sum_ms,
-count(*) FILTER (WHERE upstream_is_stream AND output_tokens > 0 AND response_time_ms > first_byte_time_ms)::bigint AS output_tps_sample_count,
-COALESCE(sum(output_tokens::double precision * 1000 / NULLIF(response_time_ms - first_byte_time_ms, 0)) FILTER (WHERE upstream_is_stream AND output_tokens > 0 AND response_time_ms > first_byte_time_ms),0)::double precision AS output_tps_sum,
+count(*) FILTER (WHERE output_tokens > 0 AND response_time_ms > 0)::bigint AS output_tps_sample_count,
+COALESCE(sum(output_tokens::double precision * 1000 / NULLIF(response_time_ms, 0)) FILTER (WHERE output_tokens > 0 AND response_time_ms > 0),0)::double precision AS output_tps_sum,
 sum(rated_amount)::text AS rated_amount,
 sum(billable_amount)::text AS billable_amount,
 sum(quota_covered_amount)::text AS quota_covered_amount,
@@ -544,7 +544,9 @@ impl SqlxUsageReadRepository {
             result.total = result.rows.len() as u64;
         }
         if query.view == UsageAnalyticsView::Performance {
-            let mut providers = QueryBuilder::<Postgres>::new("SELECT COALESCE(jsonb_agg(jsonb_build_object('id',provider_id,'label',provider_label,'bucket_start',NULL,'metrics',to_jsonb(m)-'provider_id'-'provider_label')), '[]'::jsonb) AS items FROM (SELECT provider_id, max(provider_name) AS provider_label, ");
+            let mut providers = QueryBuilder::<Postgres>::new(
+                "SELECT COALESCE(jsonb_agg(jsonb_build_object('id',provider_id,'label',provider_label,'bucket_start',NULL,'metrics',to_jsonb(m)-'provider_id'-'provider_label')), '[]'::jsonb) AS items FROM (SELECT provider_id, max(provider_name) AS provider_label, ",
+            );
             providers.push(&metrics_sql);
             push_analytics_filter(&mut providers, query);
             providers.push(" GROUP BY provider_id ORDER BY count(*) DESC,provider_id");
@@ -560,7 +562,9 @@ impl SqlxUsageReadRepository {
             // Aggregate requested models across providers in the same read snapshot.
             // Like provider rows, retain raw samples for exact percentiles even when
             // the summary combines verified hourly projections and raw gaps.
-            let mut models = QueryBuilder::<Postgres>::new("SELECT COALESCE(jsonb_agg(jsonb_build_object('id',model,'label',model,'bucket_start',NULL,'metrics',to_jsonb(m)-'model')), '[]'::jsonb) AS items FROM (SELECT model, ");
+            let mut models = QueryBuilder::<Postgres>::new(
+                "SELECT COALESCE(jsonb_agg(jsonb_build_object('id',model,'label',model,'bucket_start',NULL,'metrics',to_jsonb(m)-'model')), '[]'::jsonb) AS items FROM (SELECT model, ",
+            );
             models.push(&metrics_sql);
             push_analytics_filter(&mut models, query);
             models.push(" GROUP BY model ORDER BY count(*) DESC,model NULLS LAST) m");
@@ -585,7 +589,9 @@ impl SqlxUsageReadRepository {
                 .await
                 .map_postgres_err()?;
             result.provider_timeline_rows = decode(row.try_get("items").map_postgres_err()?)?;
-            let mut errors = QueryBuilder::<Postgres>::new("SELECT COALESCE(jsonb_agg(to_jsonb(m)), '[]'::jsonb) AS items FROM (SELECT COALESCE(failure_reason,error_category,'unknown') AS reason,count(*)::bigint AS count");
+            let mut errors = QueryBuilder::<Postgres>::new(
+                "SELECT COALESCE(jsonb_agg(to_jsonb(m)), '[]'::jsonb) AS items FROM (SELECT COALESCE(failure_reason,error_category,'unknown') AS reason,count(*)::bigint AS count",
+            );
             push_analytics_filter(&mut errors, query);
             errors.push(" AND status='failed' GROUP BY COALESCE(failure_reason,error_category,'unknown') ORDER BY count(*) DESC) m");
             let row = errors

@@ -1,5 +1,6 @@
 pub(crate) mod http;
 pub(crate) mod reporting;
+mod upstream_first_byte_enrichment;
 mod worker;
 pub(crate) mod write;
 

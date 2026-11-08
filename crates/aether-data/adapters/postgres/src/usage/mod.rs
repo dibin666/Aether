@@ -2136,6 +2136,8 @@ const LIST_RECENT_USAGE_AUDITS_PREFIX: &str =
 
 const UPSERT_SQL: &str = include_str!("queries/upsert_sql.sql");
 const UPSERT_FIRST_BYTE_SQL: &str = include_str!("queries/upsert_first_byte_sql.sql");
+const UPDATE_FIRST_BYTE_TIME_MS_SQL: &str =
+    include_str!("queries/update_first_byte_time_ms_sql.sql");
 const PENDING_USAGE_BATCH_SIZE: usize = 128;
 const INSERT_PENDING_USAGE_BATCH_PREFIX_SQL: &str = r#"
 INSERT INTO "usage" (
@@ -10209,6 +10211,28 @@ removed_last_used_at_unix_secs, usage_created_at_unix_secs
         Ok(())
     }
 
+    /// Overwrite the recorded first-byte observation on a terminal usage row.
+    ///
+    /// Rows still in `pending`/`streaming` keep their lifecycle-managed value
+    /// so post-hoc enrichment cannot race earlier upserts.
+    pub async fn update_usage_first_byte_time_ms(
+        &self,
+        request_id: &str,
+        first_byte_time_ms: u64,
+        request_metadata_patch: Option<&Value>,
+    ) -> Result<bool, DataLayerError> {
+        let first_byte_time_ms = to_i32(first_byte_time_ms)?;
+        let patch = json_bind_text(request_metadata_patch)?.unwrap_or_else(|| "{}".to_string());
+        let result = sqlx::query(UPDATE_FIRST_BYTE_TIME_MS_SQL)
+            .bind(request_id)
+            .bind(first_byte_time_ms)
+            .bind(patch)
+            .execute(&self.pool)
+            .await
+            .map_postgres_err()?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn upsert_first_byte_many(
         &self,
         usages: Vec<UpsertUsageRecord>,
@@ -11255,6 +11279,21 @@ impl UsageWriteRepository for SqlxUsageReadRepository {
         usages: Vec<UpsertUsageRecord>,
     ) -> Result<(), DataLayerError> {
         Self::upsert_first_byte_many(self, usages).await
+    }
+
+    async fn update_usage_first_byte_time_ms(
+        &self,
+        request_id: &str,
+        first_byte_time_ms: u64,
+        request_metadata_patch: Option<&Value>,
+    ) -> Result<bool, DataLayerError> {
+        Self::update_usage_first_byte_time_ms(
+            self,
+            request_id,
+            first_byte_time_ms,
+            request_metadata_patch,
+        )
+        .await
     }
 
     async fn upsert_pending_many(

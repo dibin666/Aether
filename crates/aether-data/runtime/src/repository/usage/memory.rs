@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use aether_ai_formats::UPSTREAM_IS_STREAM_KEY;
 use aether_data_contracts::repository::usage::{
     canonical_usage_body_ref_for, parse_usage_body_ref, preserve_usage_routing_group_snapshot,
     sanitize_usage_request_metadata, usage_body_ref, StoredUsageAuditAggregation,
@@ -1245,30 +1244,12 @@ fn usage_is_success(item: &StoredRequestUsageAudit) -> bool {
     ) && item.status_code.is_none_or(|code| code < 400)
 }
 
-fn usage_output_tps_uses_generation_time(item: &StoredRequestUsageAudit) -> bool {
-    item.request_metadata
-        .as_ref()
-        .and_then(Value::as_object)
-        .and_then(|metadata| metadata.get(UPSTREAM_IS_STREAM_KEY))
-        .and_then(Value::as_bool)
-        .unwrap_or(item.is_stream)
-}
-
 fn usage_output_tps_duration_ms(item: &StoredRequestUsageAudit) -> Option<u64> {
     let response_time_ms = item.response_time_ms?;
     if response_time_ms == 0 {
         return None;
     }
-
-    if !usage_output_tps_uses_generation_time(item) {
-        return Some(response_time_ms);
-    }
-
-    let first_byte_time_ms = item.first_byte_time_ms?;
-    if first_byte_time_ms >= response_time_ms {
-        return None;
-    }
-    Some(response_time_ms - first_byte_time_ms)
+    Some(response_time_ms)
 }
 
 fn usage_provider_display_name(item: &StoredRequestUsageAudit) -> Option<String> {
@@ -3279,6 +3260,33 @@ impl UsageWriteRepository for InMemoryUsageReadRepository {
         // lightweight path, whose metadata contract is backend-specific and would replace a
         // pending row's full audit snapshot with a slim first-byte payload.
         false
+    }
+
+    async fn update_usage_first_byte_time_ms(
+        &self,
+        request_id: &str,
+        first_byte_time_ms: u64,
+        request_metadata_patch: Option<&Value>,
+    ) -> Result<bool, DataLayerError> {
+        let mut by_request_id = self.by_request_id.write().expect("usage repository lock");
+        let Some(existing) = by_request_id.get_mut(request_id) else {
+            return Ok(false);
+        };
+        if !usage_status_is_finalized(&existing.status) {
+            return Ok(false);
+        }
+        existing.first_byte_time_ms = Some(first_byte_time_ms);
+        if let Some(patch) = request_metadata_patch.and_then(Value::as_object) {
+            let metadata = existing
+                .request_metadata
+                .get_or_insert_with(|| Value::Object(serde_json::Map::new()));
+            if let Value::Object(map) = metadata {
+                for (key, value) in patch {
+                    map.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        Ok(true)
     }
 
     async fn upsert(
