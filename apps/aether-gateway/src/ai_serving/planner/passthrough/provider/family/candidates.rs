@@ -49,7 +49,7 @@ async fn list_provider_candidates(
     ),
     GatewayError,
 > {
-    if aether_ai_formats::formats::matrix::is_decisions_api_format(spec.api_format) {
+    if crate::ai_serving::is_decisions_api_format(spec.api_format) {
         let outcome = preselect_local_execution_candidates_with_serving(
             state,
             &input.model_directive_policy,

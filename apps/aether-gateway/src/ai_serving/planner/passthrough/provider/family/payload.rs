@@ -181,22 +181,21 @@ pub(crate) async fn maybe_build_local_same_format_provider_decision_payload_for_
         provider_api_format.as_str(),
     );
     let effective_headers = input.effective_headers(&parts.headers);
-    let needs_conversion =
-        aether_ai_formats::formats::matrix::is_decisions_api_format(spec.api_format)
-            && !crate::ai_serving::api_format_alias_matches(spec.api_format, &provider_api_format);
+    let needs_conversion = crate::ai_serving::is_decisions_api_format(spec.api_format)
+        && !crate::ai_serving::api_format_alias_matches(spec.api_format, &provider_api_format);
     if needs_conversion {
-        let canonical = aether_ai_formats::formats::registry::parse_request(
+        let canonical = crate::ai_serving::parse_format_request(
             spec.api_format,
             body_json,
-            &aether_ai_formats::FormatContext::default(),
+            &crate::ai_serving::FormatContext::default(),
         )
         .map_err(|error| GatewayError::Client {
             status: http::StatusCode::BAD_REQUEST,
             message: format!("Decisions conversion: {error}"),
         })?;
         extra_fields.insert(
-            aether_ai_formats::formats::decisions::REQUEST_METADATA.to_string(),
-            aether_ai_formats::formats::decisions::request_metadata(&canonical),
+            crate::ai_serving::DECISIONS_REQUEST_METADATA.to_string(),
+            crate::ai_serving::decisions_request_metadata(&canonical),
         );
     }
     mark_chat_pii_redaction(&mut extra_fields, parts, request_redacted);

@@ -1,4 +1,4 @@
-use aether_ai_formats::formats::registry::{convert_request, FormatContext};
+use crate::ai_serving::{convert_request, FormatContext};
 
 use super::{
     resolve_native_provider_candidate_payload_parts, AppState, GatewayError,

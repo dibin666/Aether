@@ -138,7 +138,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
     attempt: &LocalSameFormatProviderCandidateAttempt,
     spec: LocalSameFormatProviderSpec,
 ) -> Result<Option<LocalSameFormatProviderCandidatePayloadParts>, GatewayError> {
-    if aether_ai_formats::formats::matrix::is_decisions_api_format(spec.api_format)
+    if crate::ai_serving::is_decisions_api_format(spec.api_format)
         && !crate::ai_serving::api_format_alias_matches(
             spec.api_format,
             &attempt.eligible.provider_api_format,

@@ -181,6 +181,11 @@ pub(crate) use aether_ai_formats::api::{
     OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND, OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
+pub(crate) use aether_ai_formats::formats::decisions::{
+    request_metadata as decisions_request_metadata, REQUEST_METADATA as DECISIONS_REQUEST_METADATA,
+};
+pub(crate) use aether_ai_formats::formats::matrix::is_decisions_api_format;
+pub(crate) use aether_ai_formats::formats::registry::parse_request as parse_format_request;
 pub(crate) use aether_ai_formats::{
     api_format_defaults_to_client_error_failover, api_format_defaults_to_non_stream,
     api_format_permission_covers, codex_responses_lite_tool_is_client_executed,
