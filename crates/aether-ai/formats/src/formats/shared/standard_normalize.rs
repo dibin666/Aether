@@ -453,6 +453,7 @@ pub fn build_cross_format_openai_responses_request_body_with_model_directives_an
             mapped_model,
             upstream_is_stream,
         )?,
+        RequestConversionKind::ToDecisions => return None,
     };
     let mut provider_request_body = with_model_directive_overrides(
         provider_request_body,

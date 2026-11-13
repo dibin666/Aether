@@ -2,6 +2,7 @@ pub mod aliyun;
 pub mod claude;
 pub mod context;
 pub mod conversion;
+pub mod decisions;
 pub mod doubao;
 pub mod gemini;
 pub mod id;

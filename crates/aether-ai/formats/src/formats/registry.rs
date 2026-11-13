@@ -25,6 +25,9 @@ pub fn parse_request(
     ctx: &FormatContext,
 ) -> Result<CanonicalRequest, FormatError> {
     let source = parse_format(source_format)?;
+    if crate::formats::decisions::is_decisions(source) {
+        return crate::formats::decisions::parse_request(source, body, ctx);
+    }
     match source {
         FormatId::OpenAiChat => openai_chat::request::from(body, ctx),
         FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact => {
@@ -67,6 +70,14 @@ fn emit_request_inner(
     ctx: &FormatContext,
 ) -> Result<Value, FormatError> {
     let target = parse_format(target_format)?;
+    if crate::formats::decisions::is_decisions(target) {
+        return crate::formats::decisions::emit_request(target, request, ctx);
+    }
+    if request.extensions.contains_key("decisions") {
+        return Err(FormatError::RequestEmitFailed {
+            format: target.as_str().to_string(),
+        });
+    }
     match target {
         FormatId::OpenAiChat => openai_chat::request::to(request, ctx),
         FormatId::OpenAiResponses => openai_responses::request::to(request, ctx),
@@ -384,6 +395,9 @@ pub fn parse_response(
     ctx: &FormatContext,
 ) -> Result<CanonicalResponse, FormatError> {
     let source = parse_format(source_format)?;
+    if crate::formats::decisions::is_decisions(source) {
+        return crate::formats::decisions::parse_response(source, body, ctx);
+    }
     match source {
         FormatId::OpenAiChat => openai_chat::response::from(body, ctx),
         FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact => {
@@ -430,6 +444,14 @@ fn emit_response_inner(
     ctx: &FormatContext,
 ) -> Result<Value, FormatError> {
     let target = parse_format(target_format)?;
+    if crate::formats::decisions::is_decisions(target) {
+        return crate::formats::decisions::emit_response(target, response, ctx);
+    }
+    if response.extensions.contains_key("decisions") {
+        return Err(FormatError::ResponseEmitFailed {
+            format: target.as_str().to_string(),
+        });
+    }
     match target {
         FormatId::OpenAiChat => openai_chat::response::to(response, ctx),
         FormatId::OpenAiResponses => openai_responses::response::to(response, ctx),
