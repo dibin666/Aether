@@ -619,6 +619,15 @@ fn provider_query_build_test_request_body_for_api_format_with_search_session(
     let message = provider_query_extract_message(payload)
         .unwrap_or_else(|| DEFAULT_PROVIDER_QUERY_TEST_MESSAGE.to_string());
     match client_api_format.as_str() {
+        "gemini:decisions" | "openai:decisions" | "systemone:decisions" => {
+            let mut body = json!({"model": model});
+            provider_query_insert_default_test_conversation(
+                body.as_object_mut().expect("object"),
+                &client_api_format,
+                payload,
+            );
+            body
+        }
         "openai:embedding" => json!({
             "model": model,
             "input": message,
@@ -693,6 +702,21 @@ fn provider_query_insert_default_test_conversation(
     let message = provider_query_extract_message(payload)
         .unwrap_or_else(|| DEFAULT_PROVIDER_QUERY_TEST_MESSAGE.to_string());
     match client_api_format {
+        "gemini:decisions" | "openai:decisions" | "systemone:decisions" => {
+            let input_field = if client_api_format == "systemone:decisions" {
+                "state"
+            } else {
+                "input"
+            };
+            object.insert(input_field.to_string(), Value::String(message));
+            object.entry("questions".to_string()).or_insert_with(|| {
+                if client_api_format == "openai:decisions" {
+                    json!([{"type": "predicate", "name": "is_test_message", "instructions": "Is this a test message?"}])
+                } else {
+                    json!({"is_test_message": {"type": "noul", "instructions": "Is this a test message?"}})
+                }
+            });
+        }
         "openai:embedding" => {
             object.insert("input".to_string(), Value::String(message));
         }
@@ -836,6 +860,8 @@ fn provider_query_request_body_has_conversation_for_api_format(
     client_api_format: &str,
 ) -> bool {
     match provider_query_normalize_api_format_alias(client_api_format).as_str() {
+        "gemini:decisions" | "openai:decisions" => value_has_non_empty_text(body.get("input")),
+        "systemone:decisions" => value_has_non_empty_text(body.get("state")),
         "openai:responses" | "openai:responses:compact" | "openai:search" => {
             value_has_non_empty_text(body.get("input"))
                 || value_has_non_empty_text(body.get("prompt"))
@@ -897,6 +923,12 @@ fn provider_query_resolve_standard_test_upstream_is_stream(
     provider_type: &str,
     provider_api_format: &str,
 ) -> bool {
+    if matches!(
+        provider_query_normalize_api_format_alias(provider_api_format).as_str(),
+        "gemini:decisions" | "openai:decisions" | "systemone:decisions"
+    ) {
+        return false;
+    }
     crate::ai_serving::resolve_upstream_is_stream_for_provider(
         endpoint_config,
         provider_type,
@@ -1743,16 +1775,27 @@ fn provider_query_standard_execution_response_body(
     result: &aether_contracts::ExecutionResult,
     report_context: Option<&Value>,
 ) -> Option<Value> {
-    let body = provider_query_execution_json_body(result).or_else(|| {
-        provider_query_decode_execution_body(result).and_then(|body| {
-            provider_query_aggregate_standard_stream_sync_response(provider_api_format, &body)
-        })
-    })?;
-    let body = report_context
-        .and_then(|context| {
-            crate::ai_serving::api::normalize_provider_private_response_value(body.clone(), context)
-        })
-        .unwrap_or(body);
+    let body = provider_query_standard_response_body(provider_api_format, result, report_context)?;
+    let normalized_api_format = provider_query_normalize_api_format_alias(provider_api_format);
+    let has_decisions_answers = match normalized_api_format.as_str() {
+        "openai:decisions" => Some(
+            body.get("answers")
+                .and_then(Value::as_array)
+                .is_some_and(|answers| !answers.is_empty()),
+        ),
+        "gemini:decisions" | "systemone:decisions" => Some(
+            body.get("answers")
+                .and_then(Value::as_object)
+                .is_some_and(|answers| !answers.is_empty()),
+        ),
+        _ => None,
+    };
+    if result.status_code < 400
+        && has_decisions_answers
+            .is_some_and(|has_answers| !has_answers || body.get("error").is_some())
+    {
+        return None;
+    }
     if result.status_code < 400
         && provider_query_normalize_api_format_alias(provider_api_format)
             == "gemini:generate_content"
@@ -1769,6 +1812,24 @@ fn provider_query_standard_execution_response_body(
     {
         return None;
     }
+    Some(body)
+}
+
+fn provider_query_standard_response_body(
+    provider_api_format: &str,
+    result: &aether_contracts::ExecutionResult,
+    report_context: Option<&Value>,
+) -> Option<Value> {
+    let body = provider_query_execution_json_body(result).or_else(|| {
+        provider_query_decode_execution_body(result).and_then(|body| {
+            provider_query_aggregate_standard_stream_sync_response(provider_api_format, &body)
+        })
+    })?;
+    let body = report_context
+        .and_then(|context| {
+            crate::ai_serving::api::normalize_provider_private_response_value(body.clone(), context)
+        })
+        .unwrap_or(body);
     Some(body)
 }
 
@@ -3329,7 +3390,7 @@ async fn provider_query_execute_standard_test_candidate(
         crate::ai_serving::normalize_api_format_alias(provider_api_format);
     let client_api_format =
         provider_query_standard_test_client_api_format(normalized_provider_api_format.as_str());
-    let original_request_body =
+    let mut original_request_body =
         provider_query_build_test_request_body_for_api_format_with_search_session(
             payload,
             &candidate.effective_model,
@@ -3337,6 +3398,11 @@ async fn provider_query_execute_standard_test_candidate(
             client_api_format,
             Some(trace_id),
         );
+    if normalized_provider_api_format == "gemini:generate_content"
+        && provider_query_extract_request_body(payload).is_none()
+    {
+        original_request_body["max_tokens"] = json!(8192);
+    }
     if crate::provider_transport::is_windsurf_provider_transport(&transport)
         && provider_query_normalize_api_format_alias(candidate.endpoint.api_format.as_str())
             == "openai:chat"
@@ -3382,6 +3448,22 @@ async fn provider_query_execute_standard_test_candidate(
         transport.endpoint.config.as_ref(),
     );
     let mut provider_request_body = match normalized_provider_api_format.as_str() {
+        "gemini:decisions" | "openai:decisions" | "systemone:decisions" => {
+            let mut body = request_body.clone();
+            body["model"] = json!(request_model);
+            if !crate::provider_transport::apply_local_body_rules_with_request_headers(
+                &mut body,
+                transport.endpoint.body_rules.as_ref(),
+                Some(&request_body),
+                Some(&incoming_request_headers),
+            ) {
+                return Ok(provider_query_skipped_execution_outcome(
+                    request_body.clone(),
+                    format!("Provider request body rules rejected {provider_api_format}"),
+                ));
+            }
+            body
+        }
         "openai:chat" => {
             let Some(mut provider_request_body) =
                 crate::ai_serving::build_local_openai_chat_request_body(
@@ -3693,6 +3775,9 @@ async fn provider_query_execute_standard_test_candidate(
             | "openai:responses"
             | "openai:responses:compact"
             | "openai:search"
+            | "openai:decisions"
+            | "systemone:decisions"
+            | "gemini:decisions"
             | "claude:messages"
             | "gemini:generate_content"
             | "openai:embedding"
@@ -3709,6 +3794,8 @@ async fn provider_query_execute_standard_test_candidate(
         | "openai:responses"
         | "openai:responses:compact"
         | "openai:search"
+        | "openai:decisions"
+        | "systemone:decisions"
         | "openai:embedding"
         | "jina:embedding"
         | "doubao:embedding"
@@ -3721,7 +3808,7 @@ async fn provider_query_execute_standard_test_candidate(
         "claude:messages" => {
             crate::provider_transport::auth::resolve_local_standard_auth(&transport).or(oauth_auth)
         }
-        "gemini:generate_content" | "gemini:embedding" => {
+        "gemini:generate_content" | "gemini:embedding" | "gemini:decisions" => {
             if uses_vertex_query_auth {
                 oauth_auth
             } else {
@@ -3961,8 +4048,14 @@ async fn provider_query_execute_standard_test_candidate(
         request_url,
         request_headers,
         request_body: provider_request_body,
+        response_body: response_body.or_else(|| {
+            provider_query_standard_response_body(
+                provider_api_format,
+                &result,
+                private_report_context.as_ref(),
+            )
+        }),
         response_headers: result.headers,
-        response_body,
     })
 }
 
