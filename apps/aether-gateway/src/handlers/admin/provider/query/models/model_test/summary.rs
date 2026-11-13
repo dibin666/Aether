@@ -229,6 +229,13 @@ pub(super) fn provider_query_success_response_body(
 pub(super) fn provider_query_test_response_body(
     execution: &ProviderQueryExecutionOutcome,
 ) -> Option<Value> {
+    if execution.status != "success"
+        && !execution
+            .status_code
+            .is_some_and(|code| (200..300).contains(&code))
+    {
+        return None;
+    }
     let sensitive_values = provider_query_execution_sensitive_values(execution);
     execution
         .response_body

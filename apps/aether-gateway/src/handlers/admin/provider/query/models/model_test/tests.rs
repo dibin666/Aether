@@ -36,6 +36,12 @@ fn provider_query_decisions_tests_use_native_request_shapes() {
             body["questions"].is_array(),
             api_format == "openai:decisions"
         );
+        let expected_questions = if api_format == "openai:decisions" {
+            json!([{"type": "predicate", "name": "is_test_message", "instructions": "Is this a test message?"}])
+        } else {
+            json!({"is_test_message": {"type": "noul", "instructions": "Is this a test message?"}})
+        };
+        assert_eq!(body["questions"], expected_questions);
         let custom =
             json!({"model": "custom", (field): "custom input", "questions": body["questions"]});
         assert_eq!(
@@ -60,6 +66,59 @@ fn provider_query_decisions_tests_use_native_request_shapes() {
             "custom",
             api_format,
         ));
+    }
+}
+
+#[test]
+fn provider_query_decisions_tests_accept_documented_answers_without_generated_text() {
+    for api_format in [
+        "gemini:decisions",
+        "openai:decisions",
+        "systemone:decisions",
+    ] {
+        let answers = if api_format == "openai:decisions" {
+            json!([{"type": "predicate", "name": "is_test_message", "probability": 0.99}])
+        } else if api_format == "gemini:decisions" {
+            json!({"is_test_message": {"type": "noul", "noul": 0.99, "confidence": 0.99}})
+        } else {
+            json!({"is_test_message": {"type": "noul", "noul": 0.99}})
+        };
+        let mut body = json!({"answers": answers});
+        if api_format == "gemini:decisions" {
+            body["usage"] = json!({"total_input_tokens": 100, "input_tokens_by_modality": [{"modality": "text", "tokens": 100}], "total_output_tokens": 0, "total_tokens": 100});
+        } else if api_format == "systemone:decisions" {
+            body["usage"] =
+                json!({"input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 0});
+        }
+        let mut result = aether_contracts::ExecutionResult {
+            request_id: "test".to_string(),
+            candidate_id: None,
+            status_code: 200,
+            headers: BTreeMap::new(),
+            response_observation: None,
+            body: Some(aether_contracts::ResponseBody {
+                json_body: Some(body.clone()),
+                body_bytes_b64: None,
+            }),
+            telemetry: None,
+            error: None,
+        };
+        assert_eq!(
+            provider_query_standard_execution_response_body(api_format, &result, None),
+            Some(body)
+        );
+        for invalid in [
+            json!({}),
+            json!({"answers": {}}),
+            json!({"answers": []}),
+            json!({"error": {"message": "invalid request"}}),
+        ] {
+            result.body.as_mut().expect("body").json_body = Some(invalid);
+            assert!(
+                provider_query_standard_execution_response_body(api_format, &result, None)
+                    .is_none()
+            );
+        }
     }
 }
 

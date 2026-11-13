@@ -1776,6 +1776,26 @@ fn provider_query_standard_execution_response_body(
     report_context: Option<&Value>,
 ) -> Option<Value> {
     let body = provider_query_standard_response_body(provider_api_format, result, report_context)?;
+    let normalized_api_format = provider_query_normalize_api_format_alias(provider_api_format);
+    let has_decisions_answers = match normalized_api_format.as_str() {
+        "openai:decisions" => Some(
+            body.get("answers")
+                .and_then(Value::as_array)
+                .is_some_and(|answers| !answers.is_empty()),
+        ),
+        "gemini:decisions" | "systemone:decisions" => Some(
+            body.get("answers")
+                .and_then(Value::as_object)
+                .is_some_and(|answers| !answers.is_empty()),
+        ),
+        _ => None,
+    };
+    if result.status_code < 400
+        && has_decisions_answers
+            .is_some_and(|has_answers| !has_answers || body.get("error").is_some())
+    {
+        return None;
+    }
     if result.status_code < 400
         && provider_query_normalize_api_format_alias(provider_api_format)
             == "gemini:generate_content"
