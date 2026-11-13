@@ -307,7 +307,7 @@ export function buildDefaultModelTestRequestBody(
         content: DEFAULT_MODEL_TEST_MESSAGE,
       },
     ],
-    max_tokens: 30,
+    max_tokens: normalizedApiFormat === 'gemini:generate_content' ? 8192 : 30,
     stream: true,
   }, null, 2)
 }

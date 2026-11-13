@@ -32,7 +32,13 @@ pub(super) fn provider_query_standard_test_client_api_format(
     provider_api_format: &str,
 ) -> &'static str {
     let normalized_api_format = crate::ai_serving::normalize_api_format_alias(provider_api_format);
-    if normalized_api_format == "openai:responses:compact" {
+    if normalized_api_format == "gemini:decisions" {
+        "gemini:decisions"
+    } else if normalized_api_format == "openai:decisions" {
+        "openai:decisions"
+    } else if normalized_api_format == "systemone:decisions" {
+        "systemone:decisions"
+    } else if normalized_api_format == "openai:responses:compact" {
         "openai:responses:compact"
     } else if normalized_api_format == "openai:search" {
         "openai:search"
@@ -75,6 +81,8 @@ pub(super) fn provider_query_standard_test_unsupported_reason(
         "openai:responses"
         | "openai:responses:compact"
         | "openai:search"
+        | "openai:decisions"
+        | "systemone:decisions"
         | "openai:transcription"
         | "claude:messages"
         | "openai:embedding"

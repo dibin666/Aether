@@ -3,6 +3,128 @@ use crate::handlers::admin::request::AdminGatewayProviderTransportSnapshot;
 use base64::Engine as _;
 use serde_json::json;
 
+#[test]
+fn provider_query_decisions_tests_use_native_request_shapes() {
+    for api_format in [
+        "gemini:decisions",
+        "openai:decisions",
+        "systemone:decisions",
+    ] {
+        assert_eq!(
+            provider_query_standard_test_client_api_format(api_format),
+            api_format
+        );
+        assert_eq!(
+            provider_query_test_adapter_for_provider_api_format("custom", api_format),
+            Some(ProviderQueryTestAdapter::Standard),
+        );
+        let body = provider_query_build_test_request_body_for_api_format(
+            &json!({}),
+            "decision-model",
+            "/test-model",
+            api_format,
+        );
+        let field = if api_format == "systemone:decisions" {
+            "state"
+        } else {
+            "input"
+        };
+        assert_eq!(body[field], DEFAULT_PROVIDER_QUERY_TEST_MESSAGE);
+        assert!(body.get("messages").is_none());
+        assert!(body.get("stream").is_none());
+        assert_eq!(
+            body["questions"].is_array(),
+            api_format == "openai:decisions"
+        );
+        let custom =
+            json!({"model": "custom", (field): "custom input", "questions": body["questions"]});
+        assert_eq!(
+            provider_query_build_test_request_body_for_api_format(
+                &json!({"request_body": custom}),
+                "fallback",
+                "/test-model",
+                api_format,
+            ),
+            custom
+        );
+        let completed = provider_query_build_test_request_body_for_api_format(
+            &json!({"request_body": {"model": "custom"}}),
+            "fallback",
+            "/test-model",
+            api_format,
+        );
+        assert_eq!(completed[field], DEFAULT_PROVIDER_QUERY_TEST_MESSAGE);
+        assert!(completed.get("questions").is_some());
+        assert!(!provider_query_resolve_standard_test_upstream_is_stream(
+            Some(&json!({"upstream_stream_policy": "force_stream"})),
+            "custom",
+            api_format,
+        ));
+    }
+}
+
+#[test]
+fn provider_query_gemini_tests_accept_visible_json_and_stream_output() {
+    let body = json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "Hello!"}]}, "finishReason": "STOP"}]});
+    let mut result = aether_contracts::ExecutionResult {
+        request_id: "test".to_string(),
+        candidate_id: None,
+        status_code: 200,
+        headers: BTreeMap::new(),
+        response_observation: None,
+        body: Some(aether_contracts::ResponseBody {
+            json_body: Some(body.clone()),
+            body_bytes_b64: None,
+        }),
+        telemetry: None,
+        error: None,
+    };
+    assert_eq!(
+        provider_query_standard_execution_response_body("gemini:generate_content", &result, None),
+        Some(body.clone())
+    );
+    result.body = Some(aether_contracts::ResponseBody {
+        json_body: None,
+        body_bytes_b64: Some(
+            base64::engine::general_purpose::STANDARD.encode(format!("data: {body}\n\n")),
+        ),
+    });
+    let aggregated =
+        provider_query_standard_execution_response_body("gemini:generate_content", &result, None)
+            .expect("visible Gemini stream");
+    assert_eq!(
+        aggregated["candidates"][0]["content"]["parts"][0]["text"],
+        "Hello!"
+    );
+}
+
+#[test]
+fn provider_query_failed_test_response_body_remains_available_and_redacted() {
+    let mut execution = ProviderQueryExecutionOutcome {
+        status: "failed",
+        skip_reason: None,
+        error_message: Some("HTTP 200".to_string()),
+        status_code: Some(200),
+        latency_ms: None,
+        request_url: String::new(),
+        request_headers: BTreeMap::from([(
+            "authorization".to_string(),
+            "Bearer private-test-key".to_string(),
+        )]),
+        request_body: json!({}),
+        response_headers: BTreeMap::new(),
+        response_body: Some(
+            json!({"error": {"message": "private-test-key", "api_key": "secret"}, "candidates": []}),
+        ),
+    };
+    let body = summary::provider_query_test_response_body(&execution).expect("failure diagnostics");
+    assert!(!body.to_string().contains("private-test-key"));
+    assert!(!body.to_string().contains("secret"));
+    assert!(provider_query_success_response_body(&execution).is_none());
+    execution.response_body = None;
+    assert!(summary::provider_query_test_response_body(&execution).is_none());
+}
+
 fn sample_openai_image_transport(provider_type: &str) -> AdminGatewayProviderTransportSnapshot {
     let base_url = if provider_type == "custom" {
         "https://grok.com/v1/"
@@ -784,6 +906,10 @@ fn provider_query_standard_test_rejects_gemini_success_without_visible_output() 
         None
     )
     .is_none());
+    assert_eq!(
+        provider_query_standard_response_body("gemini:generate_content", &result, None),
+        result.body.as_ref().and_then(|body| body.json_body.clone()),
+    );
 }
 
 #[test]

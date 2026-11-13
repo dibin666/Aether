@@ -18,6 +18,12 @@ import {
 } from '../model-test-request'
 
 describe('buildDefaultModelTestRequestBody', () => {
+  it('allows Gemini thinking models enough output tokens to produce an answer', () => {
+    const body = JSON.parse(buildDefaultModelTestRequestBody('gemini-4-hydrogen', 'gemini:generate_content'))
+
+    expect(body.max_tokens).toBe(8192)
+    expect(body.messages).toEqual([{ role: 'user', content: 'Hello! This is a test message.' }])
+  })
   it.each([
     'openai:embedding',
     'gemini:embedding',
