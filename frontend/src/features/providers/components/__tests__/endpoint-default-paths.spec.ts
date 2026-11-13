@@ -6,6 +6,9 @@ const apiFormats = [
   { value: 'openai:chat', default_path: '/v1/chat/completions' },
   { value: 'gemini:generate_content', default_path: '/v1beta/models/{model}:{action}' },
   { value: 'gemini:interactions', default_path: '/v1/interactions' },
+  { value: 'gemini:decisions', default_path: '/v1beta/decisions' },
+  { value: 'openai:decisions', default_path: '/v1/decisions' },
+  { value: 'systemone:decisions', default_path: '/v1/systemone' },
   { value: 'gemini:embedding', default_path: '/v1beta/models/{model}:embedContent' },
   { value: 'gemini:video', default_path: '/v1beta/models/{model}:predictLongRunning' },
   { value: 'openai:responses', default_path: '/v1/responses' },
@@ -40,6 +43,24 @@ describe('endpoint default paths', () => {
       providerType: 'custom',
       apiFormats,
     })).toBe('/interactions')
+
+    expect(getDefaultEndpointPath({
+      apiFormat: 'gemini:decisions',
+      providerType: 'custom',
+      apiFormats,
+    })).toBe('/decisions')
+
+    expect(getDefaultEndpointPath({
+      apiFormat: 'openai:decisions',
+      providerType: 'custom',
+      apiFormats,
+    })).toBe('/decisions')
+
+    expect(getDefaultEndpointPath({
+      apiFormat: 'systemone:decisions',
+      providerType: 'custom',
+      apiFormats,
+    })).toBe('/systemone')
 
     expect(getDefaultEndpointPath({
       apiFormat: 'gemini:video',
@@ -299,6 +320,21 @@ describe('endpoint default paths', () => {
       apiFormat: 'gemini:interactions',
       baseUrl: 'https://generativelanguage.googleapis.com',
     })).toBe('https://generativelanguage.googleapis.com/v1')
+
+    expect(getDefaultEndpointBaseUrl({
+      apiFormat: 'gemini:decisions',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+    })).toBe('https://generativelanguage.googleapis.com/v1beta')
+
+    expect(getDefaultEndpointBaseUrl({
+      apiFormat: 'openai:decisions',
+      baseUrl: 'https://api.openai.com',
+    })).toBe('https://api.openai.com/v1')
+
+    expect(getDefaultEndpointBaseUrl({
+      apiFormat: 'systemone:decisions',
+      baseUrl: 'https://router.requesty.ai',
+    })).toBe('https://router.requesty.ai/v1')
 
     expect(getDefaultEndpointBaseUrl({
       apiFormat: 'gemini:video',

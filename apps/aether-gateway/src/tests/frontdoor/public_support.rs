@@ -10233,7 +10233,7 @@ async fn gateway_returns_service_unavailable_when_turnstile_keys_are_incomplete(
 }
 
 #[tokio::test]
-async fn gateway_ignores_spoofed_cf_ip_during_successful_turnstile_verification() {
+async fn gateway_forwards_cf_ip_for_trusted_peer_during_successful_turnstile_verification() {
     let (siteverify_url, turnstile_requests, turnstile_handle) = start_turnstile_siteverify_server(
         json!({
             "success": true,
@@ -10294,7 +10294,9 @@ async fn gateway_ignores_spoofed_cf_ip_during_successful_turnstile_verification(
     );
     assert_eq!(
         requests[0].get("remoteip").map(String::as_str),
-        Some("127.0.0.1")
+        // Loopback peers are trusted proxies by default (AETHER_TRUSTED_PROXY_CIDRS),
+        // so the forwarded CF-Connecting-IP is honored as the real client address.
+        Some("203.0.113.10")
     );
     assert!(requests[0].contains_key("idempotency_key"));
     drop(requests);

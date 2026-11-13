@@ -6,12 +6,13 @@ use crate::contracts::{
     ClientSurface, CLAUDE_CHAT_STREAM_PLAN_KIND, CLAUDE_CHAT_SYNC_PLAN_KIND,
     CLAUDE_CLI_STREAM_PLAN_KIND, CLAUDE_CLI_SYNC_PLAN_KIND, CLAUDE_COUNT_TOKENS_SYNC_PLAN_KIND,
     CODEX_LIVE_STREAM_PLAN_KIND, GEMINI_CHAT_STREAM_PLAN_KIND, GEMINI_CHAT_SYNC_PLAN_KIND,
-    GEMINI_CLI_STREAM_PLAN_KIND, GEMINI_CLI_SYNC_PLAN_KIND, GEMINI_EMBEDDING_SYNC_PLAN_KIND,
-    GEMINI_FILES_DELETE_PLAN_KIND, GEMINI_FILES_DOWNLOAD_PLAN_KIND, GEMINI_FILES_GET_PLAN_KIND,
-    GEMINI_FILES_LIST_PLAN_KIND, GEMINI_FILES_UPLOAD_PLAN_KIND,
-    GEMINI_INTERACTIONS_STREAM_PLAN_KIND, GEMINI_INTERACTIONS_SYNC_PLAN_KIND,
-    GEMINI_VIDEO_CANCEL_SYNC_PLAN_KIND, GEMINI_VIDEO_CREATE_SYNC_PLAN_KIND,
-    OPENAI_CHAT_STREAM_PLAN_KIND, OPENAI_CHAT_SYNC_PLAN_KIND, OPENAI_EMBEDDING_SYNC_PLAN_KIND,
+    GEMINI_CLI_STREAM_PLAN_KIND, GEMINI_CLI_SYNC_PLAN_KIND, GEMINI_DECISIONS_SYNC_PLAN_KIND,
+    GEMINI_EMBEDDING_SYNC_PLAN_KIND, GEMINI_FILES_DELETE_PLAN_KIND,
+    GEMINI_FILES_DOWNLOAD_PLAN_KIND, GEMINI_FILES_GET_PLAN_KIND, GEMINI_FILES_LIST_PLAN_KIND,
+    GEMINI_FILES_UPLOAD_PLAN_KIND, GEMINI_INTERACTIONS_STREAM_PLAN_KIND,
+    GEMINI_INTERACTIONS_SYNC_PLAN_KIND, GEMINI_VIDEO_CANCEL_SYNC_PLAN_KIND,
+    GEMINI_VIDEO_CREATE_SYNC_PLAN_KIND, OPENAI_CHAT_STREAM_PLAN_KIND, OPENAI_CHAT_SYNC_PLAN_KIND,
+    OPENAI_DECISIONS_SYNC_PLAN_KIND, OPENAI_EMBEDDING_SYNC_PLAN_KIND,
     OPENAI_IMAGE_STREAM_PLAN_KIND, OPENAI_IMAGE_SYNC_PLAN_KIND, OPENAI_MEMORIES_SYNC_PLAN_KIND,
     OPENAI_REALTIME_STREAM_PLAN_KIND, OPENAI_RERANK_SYNC_PLAN_KIND,
     OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND, OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND,
@@ -20,6 +21,7 @@ use crate::contracts::{
     OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND, OPENAI_VIDEO_CANCEL_SYNC_PLAN_KIND,
     OPENAI_VIDEO_CONTENT_PLAN_KIND, OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND, OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
+    SYSTEMONE_DECISIONS_SYNC_PLAN_KIND,
 };
 use crate::formats::openai::image::request::is_openai_image_stream_request;
 use crate::formats::openai::transcription::parse_openai_transcription_request;
@@ -279,6 +281,28 @@ pub fn resolve_execution_runtime_sync_plan_kind_with_client_surface(
         && matches!(path, "/v1/interactions" | "/v1beta/interactions")
     {
         return Some(GEMINI_INTERACTIONS_SYNC_PLAN_KIND);
+    }
+
+    if route_family == Some("gemini")
+        && route_kind == Some("decisions")
+        && *method == Method::POST
+        && path == "/v1beta/decisions"
+    {
+        return Some(GEMINI_DECISIONS_SYNC_PLAN_KIND);
+    }
+    if route_family == Some("openai")
+        && route_kind == Some("decisions")
+        && *method == Method::POST
+        && path == "/v1/decisions"
+    {
+        return Some(OPENAI_DECISIONS_SYNC_PLAN_KIND);
+    }
+    if route_family == Some("systemone")
+        && route_kind == Some("decisions")
+        && *method == Method::POST
+        && path == "/v1/systemone"
+    {
+        return Some(SYSTEMONE_DECISIONS_SYNC_PLAN_KIND);
     }
 
     if route_family == Some("openai")
@@ -642,6 +666,9 @@ pub fn supports_sync_execution_decision_kind(plan_kind: &str) -> bool {
             | GEMINI_CLI_SYNC_PLAN_KIND
             | GEMINI_EMBEDDING_SYNC_PLAN_KIND
             | GEMINI_INTERACTIONS_SYNC_PLAN_KIND
+            | GEMINI_DECISIONS_SYNC_PLAN_KIND
+            | OPENAI_DECISIONS_SYNC_PLAN_KIND
+            | SYSTEMONE_DECISIONS_SYNC_PLAN_KIND
             | GEMINI_FILES_UPLOAD_PLAN_KIND
             | OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND
             | OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND
@@ -690,14 +717,16 @@ mod tests {
         CLAUDE_CHAT_STREAM_PLAN_KIND, CLAUDE_CHAT_SYNC_PLAN_KIND, CLAUDE_CLI_STREAM_PLAN_KIND,
         CLAUDE_CLI_SYNC_PLAN_KIND, CODEX_LIVE_STREAM_PLAN_KIND, GEMINI_CHAT_STREAM_PLAN_KIND,
         GEMINI_CHAT_SYNC_PLAN_KIND, GEMINI_CLI_STREAM_PLAN_KIND, GEMINI_CLI_SYNC_PLAN_KIND,
-        GEMINI_EMBEDDING_SYNC_PLAN_KIND, GEMINI_INTERACTIONS_STREAM_PLAN_KIND,
-        GEMINI_INTERACTIONS_SYNC_PLAN_KIND, OPENAI_CHAT_STREAM_PLAN_KIND,
-        OPENAI_CHAT_SYNC_PLAN_KIND, OPENAI_EMBEDDING_SYNC_PLAN_KIND, OPENAI_IMAGE_STREAM_PLAN_KIND,
+        GEMINI_DECISIONS_SYNC_PLAN_KIND, GEMINI_EMBEDDING_SYNC_PLAN_KIND,
+        GEMINI_INTERACTIONS_STREAM_PLAN_KIND, GEMINI_INTERACTIONS_SYNC_PLAN_KIND,
+        OPENAI_CHAT_STREAM_PLAN_KIND, OPENAI_CHAT_SYNC_PLAN_KIND, OPENAI_DECISIONS_SYNC_PLAN_KIND,
+        OPENAI_EMBEDDING_SYNC_PLAN_KIND, OPENAI_IMAGE_STREAM_PLAN_KIND,
         OPENAI_IMAGE_SYNC_PLAN_KIND, OPENAI_REALTIME_STREAM_PLAN_KIND,
         OPENAI_RERANK_SYNC_PLAN_KIND, OPENAI_RESPONSES_COMPACT_STREAM_PLAN_KIND,
         OPENAI_RESPONSES_COMPACT_SYNC_PLAN_KIND, OPENAI_RESPONSES_STREAM_PLAN_KIND,
         OPENAI_RESPONSES_SYNC_PLAN_KIND, OPENAI_SEARCH_SYNC_PLAN_KIND,
         OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND, OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND,
+        SYSTEMONE_DECISIONS_SYNC_PLAN_KIND,
     };
 
     #[test]
@@ -1256,6 +1285,86 @@ mod tests {
         assert!(supports_sync_execution_decision_kind(
             GEMINI_EMBEDDING_SYNC_PLAN_KIND
         ));
+    }
+
+    #[test]
+    fn gemini_decisions_routes_only_beta_post_to_sync_execution() {
+        for (method, path, expected) in [
+            (
+                Method::POST,
+                "/v1beta/decisions",
+                Some(GEMINI_DECISIONS_SYNC_PLAN_KIND),
+            ),
+            (Method::GET, "/v1beta/decisions", None),
+            (Method::POST, "/v1/decisions", None),
+        ] {
+            assert_eq!(
+                resolve_execution_runtime_sync_plan_kind(
+                    Some("ai_public"),
+                    Some("gemini"),
+                    Some("decisions"),
+                    Some("api_key"),
+                    &method,
+                    path
+                ),
+                expected
+            );
+            assert_eq!(
+                resolve_execution_runtime_stream_plan_kind(
+                    Some("ai_public"),
+                    Some("gemini"),
+                    Some("decisions"),
+                    Some("api_key"),
+                    &method,
+                    path
+                ),
+                None
+            );
+        }
+        assert!(supports_sync_execution_decision_kind(
+            GEMINI_DECISIONS_SYNC_PLAN_KIND
+        ));
+        assert!(supports_sync_execution_decision_kind(
+            OPENAI_DECISIONS_SYNC_PLAN_KIND
+        ));
+        assert!(supports_sync_execution_decision_kind(
+            SYSTEMONE_DECISIONS_SYNC_PLAN_KIND
+        ));
+        for (family, path, expected) in [
+            (
+                "openai",
+                "/v1/decisions",
+                Some(OPENAI_DECISIONS_SYNC_PLAN_KIND),
+            ),
+            (
+                "systemone",
+                "/v1/systemone",
+                Some(SYSTEMONE_DECISIONS_SYNC_PLAN_KIND),
+            ),
+        ] {
+            assert_eq!(
+                resolve_execution_runtime_sync_plan_kind(
+                    Some("ai_public"),
+                    Some(family),
+                    Some("decisions"),
+                    None,
+                    &Method::POST,
+                    path,
+                ),
+                expected
+            );
+            assert_eq!(
+                resolve_execution_runtime_stream_plan_kind(
+                    Some("ai_public"),
+                    Some(family),
+                    Some("decisions"),
+                    None,
+                    &Method::POST,
+                    path,
+                ),
+                None
+            );
+        }
     }
 
     #[test]

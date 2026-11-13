@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use super::{
     augment_sync_report_context, build_ai_execution_plan_from_decision,
-    generic_decision_missing_exact_provider_request, resolve_ai_passthrough_request_body,
+    generic_decision_missing_exact_provider_request, resolve_ai_passthrough_sync_request_body,
     take_ai_decision_plan_core, take_ai_upstream_auth_pair, take_non_empty_string,
     AiExecutionPlanFromDecisionParts, AiStreamAttempt, AiSyncAttempt,
 };
@@ -59,7 +59,7 @@ pub(crate) fn build_gemini_sync_plan_from_decision(
         &provider_request_headers,
         &provider_request_body_value,
     )?;
-    let request_body = resolve_ai_passthrough_request_body(
+    let request_body = resolve_ai_passthrough_sync_request_body(
         Some(provider_request_body_value),
         payload.provider_request_body_base64.take(),
     );
@@ -131,7 +131,7 @@ pub(crate) fn build_gemini_stream_plan_from_decision(
         &provider_request_headers,
         &provider_request_body_value,
     )?;
-    let request_body = resolve_ai_passthrough_request_body(
+    let request_body = resolve_ai_passthrough_sync_request_body(
         Some(provider_request_body_value),
         payload.provider_request_body_base64.take(),
     );

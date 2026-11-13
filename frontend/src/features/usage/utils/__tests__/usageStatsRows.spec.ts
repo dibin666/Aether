@@ -12,7 +12,7 @@ describe('usageStatsRows', () => {
       expect(PROVIDER_STATS_COLUMNS.map(column => column.header)).toEqual(['成功率', '平均响应'])
       setI18nLocale('en-US')
       expect(MODEL_STATS_COLUMNS[0].header).toBe('Efficiency')
-      expect(PROVIDER_STATS_COLUMNS.map(column => column.header)).toEqual(['success rate', 'Average response'])
+      expect(PROVIDER_STATS_COLUMNS.map(column => column.header)).toEqual(['Success rate', 'Average response'])
       expect(API_FORMAT_STATS_COLUMNS[0].header).toBe('Average response')
     } finally {
       setI18nLocale(previousLocale)

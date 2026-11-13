@@ -66,6 +66,15 @@ pub fn request_candidate_api_format_preference(
     if is_gemini_interactions_api_format(client_api_format.as_str()) {
         return (provider_api_format == "gemini:interactions").then_some((0, 0));
     }
+    if is_gemini_decisions_api_format(client_api_format.as_str()) {
+        return (provider_api_format == "gemini:decisions").then_some((0, 0));
+    }
+    if is_openai_decisions_api_format(client_api_format.as_str()) {
+        return (provider_api_format == "openai:decisions").then_some((0, 0));
+    }
+    if is_systemone_decisions_api_format(client_api_format.as_str()) {
+        return (provider_api_format == "systemone:decisions").then_some((0, 0));
+    }
     if is_embedding_api_format(client_api_format.as_str()) {
         return is_embedding_api_format(provider_api_format.as_str()).then_some((
             if client_api_format == provider_api_format {
@@ -109,7 +118,7 @@ pub fn request_candidate_api_format_preference(
 
 pub fn request_candidate_api_formats(
     client_api_format: &str,
-    _require_streaming: bool,
+    require_streaming: bool,
 ) -> Vec<&'static str> {
     let client_api_format = normalize_api_format_alias(client_api_format);
     if client_api_format == "openai:responses:compact" {
@@ -126,6 +135,27 @@ pub fn request_candidate_api_formats(
     }
     if is_gemini_interactions_api_format(client_api_format.as_str()) {
         return GEMINI_INTERACTIONS_CANDIDATE_API_FORMATS.to_vec();
+    }
+    if is_gemini_decisions_api_format(client_api_format.as_str()) {
+        return if require_streaming {
+            Vec::new()
+        } else {
+            vec!["gemini:decisions"]
+        };
+    }
+    if is_openai_decisions_api_format(client_api_format.as_str()) {
+        return if require_streaming {
+            Vec::new()
+        } else {
+            vec!["openai:decisions"]
+        };
+    }
+    if is_systemone_decisions_api_format(client_api_format.as_str()) {
+        return if require_streaming {
+            Vec::new()
+        } else {
+            vec!["systemone:decisions"]
+        };
     }
     if is_embedding_api_format(client_api_format.as_str()) {
         let mut candidate_api_formats = EMBEDDING_CANDIDATE_API_FORMATS.to_vec();
@@ -280,6 +310,18 @@ pub fn is_gemini_interactions_api_format(api_format: &str) -> bool {
     normalize_api_format_alias(api_format) == "gemini:interactions"
 }
 
+pub fn is_gemini_decisions_api_format(api_format: &str) -> bool {
+    normalize_api_format_alias(api_format) == "gemini:decisions"
+}
+
+pub fn is_openai_decisions_api_format(api_format: &str) -> bool {
+    normalize_api_format_alias(api_format) == "openai:decisions"
+}
+
+pub fn is_systemone_decisions_api_format(api_format: &str) -> bool {
+    normalize_api_format_alias(api_format) == "systemone:decisions"
+}
+
 pub fn parse_non_compact_standard_api_format(
     api_format: &str,
 ) -> Option<(&'static str, &'static str)> {
@@ -297,6 +339,9 @@ pub fn api_data_format_id(api_format: &str) -> Option<&'static str> {
         "claude:messages" => Some("claude"),
         "gemini:generate_content" => Some("gemini"),
         "gemini:interactions" => Some("gemini_interactions"),
+        "gemini:decisions" => Some("gemini_decisions"),
+        "openai:decisions" => Some("openai_decisions"),
+        "systemone:decisions" => Some("systemone_decisions"),
         "openai:chat" => Some("openai_chat"),
         "openai:responses" | "openai:responses:compact" => Some("openai_responses"),
         "openai:embedding"
@@ -340,8 +385,9 @@ fn rerank_api_format_priority(api_format: &str) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{
-        api_data_format_id, is_embedding_api_format, is_gemini_interactions_api_format,
-        is_rerank_api_format, request_candidate_api_format_preference,
+        api_data_format_id, is_embedding_api_format, is_gemini_decisions_api_format,
+        is_gemini_interactions_api_format, is_openai_decisions_api_format, is_rerank_api_format,
+        is_systemone_decisions_api_format, request_candidate_api_format_preference,
         request_candidate_api_formats, request_conversion_kind,
         request_conversion_requires_enable_flag, sync_chat_response_conversion_kind,
         sync_cli_response_conversion_kind, RequestConversionKind, SyncChatResponseConversionKind,
@@ -630,6 +676,74 @@ mod tests {
                     None
                 );
             }
+        }
+    }
+
+    #[test]
+    fn gemini_decisions_stays_native_and_sync_only() {
+        assert!(is_gemini_decisions_api_format("gemini_decisions"));
+        assert!(is_openai_decisions_api_format("openai_decision"));
+        assert!(is_systemone_decisions_api_format("systemone"));
+        assert_eq!(
+            request_candidate_api_formats("gemini:decisions", false),
+            vec!["gemini:decisions"]
+        );
+        assert!(request_candidate_api_formats("gemini:decisions", true).is_empty());
+        assert_eq!(
+            request_candidate_api_format_preference("gemini:decision", "gemini:decisions"),
+            Some((0, 0))
+        );
+        assert_eq!(
+            api_data_format_id("gemini:decisions"),
+            Some("gemini_decisions")
+        );
+        for (client, provider, expected) in [
+            ("openai:decision", "openai:decisions", true),
+            ("systemone", "systemone:decisions", true),
+            ("openai:decisions", "gemini:decisions", false),
+            ("systemone:decisions", "openai:decisions", false),
+        ] {
+            assert_eq!(
+                request_candidate_api_format_preference(client, provider).is_some(),
+                expected
+            );
+        }
+        assert_eq!(
+            request_candidate_api_formats("openai:decisions", false),
+            vec!["openai:decisions"]
+        );
+        assert!(request_candidate_api_formats("openai:decisions", true).is_empty());
+        assert_eq!(
+            request_candidate_api_formats("systemone:decisions", false),
+            vec!["systemone:decisions"]
+        );
+        assert!(request_candidate_api_formats("systemone:decisions", true).is_empty());
+        assert_eq!(
+            api_data_format_id("openai:decisions"),
+            Some("openai_decisions")
+        );
+        assert_eq!(
+            api_data_format_id("systemone:decisions"),
+            Some("systemone_decisions")
+        );
+        for format in [
+            "openai:chat",
+            "openai:responses",
+            "claude:messages",
+            "gemini:generate_content",
+            "gemini:interactions",
+            "gemini:embedding",
+        ] {
+            assert_eq!(
+                request_candidate_api_format_preference("gemini:decisions", format),
+                None
+            );
+            assert_eq!(
+                request_candidate_api_format_preference(format, "gemini:decisions"),
+                None
+            );
+            assert_eq!(request_conversion_kind("gemini:decisions", format), None);
+            assert_eq!(request_conversion_kind(format, "gemini:decisions"), None);
         }
     }
 

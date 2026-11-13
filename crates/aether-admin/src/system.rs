@@ -1041,6 +1041,29 @@ const ADMIN_API_FORMAT_DEFINITIONS: &[AdminApiFormatDefinition] = &[
         aliases: &["gemini_interactions", "interactions"],
     },
     AdminApiFormatDefinition {
+        value: "gemini:decisions",
+        label: "Gemini Decisions",
+        default_path: "/v1beta/decisions",
+        aliases: &["gemini_decisions", "gemini_decision"],
+    },
+    AdminApiFormatDefinition {
+        value: "openai:decisions",
+        label: "OpenAI Decisions",
+        default_path: "/v1/decisions",
+        aliases: &["openai_decisions", "openai_decision"],
+    },
+    AdminApiFormatDefinition {
+        value: "systemone:decisions",
+        label: "System One Decisions",
+        default_path: "/v1/systemone",
+        aliases: &[
+            "systemone",
+            "system_one",
+            "systemone_decisions",
+            "typesafe:systemone",
+        ],
+    },
+    AdminApiFormatDefinition {
         value: "gemini:embedding",
         label: "Gemini Embedding",
         default_path: "/v1beta/models/{model}:{action}",

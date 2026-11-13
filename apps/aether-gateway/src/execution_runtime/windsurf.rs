@@ -4253,6 +4253,18 @@ fn absolute_runtime_path(path: PathBuf) -> io::Result<PathBuf> {
 
 fn ensure_private_directory(path: &Path) -> io::Result<()> {
     validate_runtime_path_components(path)?;
+    // Create the directory already private: a permissive process umask would
+    // otherwise leave a group-writable window between create_dir_all and the
+    // mode check below, and the second validation would reject our own leaf.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)?;
+    }
+    #[cfg(not(unix))]
     fs::create_dir_all(path)?;
     validate_runtime_path_components(path)?;
 
@@ -4564,8 +4576,14 @@ mod tests {
     fn windsurf_language_server_binary_must_be_trusted_and_already_executable() {
         use std::os::unix::fs::{symlink, PermissionsExt};
 
-        let root = std::env::current_dir()
-            .expect("current directory")
+        // The validator rejects binaries under world-writable ancestors, so
+        // temp_dir (usually 1777) cannot host the fixture. $HOME is private
+        // and typically on a filesystem with accurate hard-link counts; the
+        // repository checkout may live on ntfs-3g where nlink is unreliable.
+        let root = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .filter(|home| home.is_absolute())
+            .unwrap_or_else(|| std::env::current_dir().expect("current directory"))
             .join(format!(
                 ".aether-windsurf-binary-test-{}",
                 uuid::Uuid::new_v4()

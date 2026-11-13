@@ -287,7 +287,13 @@ fn merge_claude_usage_projection(target: &mut Value, incoming: &serde_json::Map<
 }
 
 fn usage_integer_or_null(value: &Value) -> Value {
-    value.as_i64().map(Value::from).unwrap_or(Value::Null)
+    // Negative or overflowing counters carry no usable signal; project them as
+    // null so the mapper's positive-value merge semantics stay consistent.
+    value
+        .as_i64()
+        .filter(|number| *number >= 0)
+        .map(Value::from)
+        .unwrap_or(Value::Null)
 }
 
 #[derive(Default, Deserialize)]

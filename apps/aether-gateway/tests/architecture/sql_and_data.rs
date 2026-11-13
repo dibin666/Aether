@@ -1449,7 +1449,7 @@ fn usage_repositories_are_owned_by_contracts_and_driver_adapters() {
             "sql"
         )
         .len(),
-        29,
+        32,
         "all PostgreSQL usage SQL fragments should be owned by the adapter crate"
     );
 }

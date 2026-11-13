@@ -175,6 +175,15 @@ pub fn infer_internal_finalize_signature(payload: &GatewaySyncReportRequest) -> 
     if report_kind.starts_with("gemini_cli_") {
         return Some("gemini:generate_content".to_string());
     }
+    if report_kind.starts_with("gemini_decisions_") {
+        return Some("gemini:decisions".to_string());
+    }
+    if report_kind.starts_with("openai_decisions_") {
+        return Some("openai:decisions".to_string());
+    }
+    if report_kind.starts_with("systemone_decisions_") {
+        return Some("systemone:decisions".to_string());
+    }
     if report_kind.starts_with("gemini_video_") {
         return Some("gemini:video".to_string());
     }
@@ -222,6 +231,21 @@ pub fn resolve_internal_finalize_route(signature: &str) -> Option<InternalFinali
             public_path: "/v1beta/models",
             route_family: "gemini",
             route_kind: "generate_content",
+        }),
+        "openai:decisions" => Some(InternalFinalizeRoute {
+            public_path: "/v1/decisions",
+            route_family: "openai",
+            route_kind: "decisions",
+        }),
+        "systemone:decisions" => Some(InternalFinalizeRoute {
+            public_path: "/v1/systemone",
+            route_family: "systemone",
+            route_kind: "decisions",
+        }),
+        "gemini:decisions" => Some(InternalFinalizeRoute {
+            public_path: "/v1beta/decisions",
+            route_family: "gemini",
+            route_kind: "decisions",
         }),
         "gemini:video" => Some(InternalFinalizeRoute {
             public_path: "/v1beta/models",

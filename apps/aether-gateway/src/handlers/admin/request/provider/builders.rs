@@ -379,7 +379,6 @@ impl<'a> AdminAppState<'a> {
             .map_err(|_| "无效的 Anthropic compatibility profile".to_string())?;
         }
 
-
         if provider_type == "codex"
             && crate::ai_serving::is_openai_responses_format(&existing_endpoint.api_format)
         {

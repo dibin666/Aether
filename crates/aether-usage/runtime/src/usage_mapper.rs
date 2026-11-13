@@ -36,6 +36,12 @@ impl UsageMapper {
         let family = api_family(api_format);
         let mut usage = StandardizedUsage::new();
         visit_response_usage(response, family.as_str(), &mut |raw_usage| {
+            // A present null is an explicit barrier: it clears usage collected
+            // from older or nested values instead of letting them leak through.
+            if raw_usage.is_null() {
+                usage = StandardizedUsage::new();
+                return;
+            }
             merge_usage_snapshot(&mut usage, Self::map(raw_usage, api_format, None));
         });
         if is_openai_transcription_api(api_format) {
@@ -69,6 +75,25 @@ fn apply_openai_cache_write_tokens(
 
 pub fn map_usage(raw_usage: &serde_json::Value, api_format: &str) -> StandardizedUsage {
     UsageMapper::map(raw_usage, api_format, None)
+}
+
+/// Whether the response carries a real (object) usage value anywhere the
+/// family lookup walks. A present null barrier does not count, and a null
+/// barrier after a real object resets this to false.
+pub fn response_reports_usage_object(response: &serde_json::Value, api_format: &str) -> bool {
+    let mut reported = false;
+    visit_response_usage(
+        response,
+        api_family(api_format).as_str(),
+        &mut |raw_usage| {
+            if raw_usage.is_null() {
+                reported = false;
+                return;
+            }
+            reported |= raw_usage.is_object();
+        },
+    );
+    reported
 }
 
 pub fn map_usage_from_response(
@@ -382,6 +407,11 @@ fn visit_response_usage<'a>(
 ) {
     if let Some(usage) = direct_usage_value(response, family) {
         visit(usage);
+        // A present null is an explicit barrier: it stops the search through
+        // nested or older usage instead of letting deeper values leak in.
+        if usage.is_null() {
+            return;
+        }
     }
 
     for nested_key in ["response", "message", "item"] {

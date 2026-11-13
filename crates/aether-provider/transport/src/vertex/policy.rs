@@ -326,6 +326,24 @@ mod tests {
     }
 
     #[test]
+    fn rejects_gemini_decisions_until_vertex_offers_the_api() {
+        let mut transport = sample_transport();
+        transport.endpoint.api_format = "gemini:decisions".to_string();
+        transport.endpoint.endpoint_kind = Some("decisions".to_string());
+        transport.key.api_formats = Some(vec!["gemini:decisions".to_string()]);
+
+        // The Decisions API is Gemini Developer API-only today; Vertex support is
+        // announced as coming soon, so the transport must fail closed.
+        assert_eq!(
+            local_vertex_gemini_transport_unsupported_reason_with_network(&transport),
+            Some("transport_api_format_mismatch")
+        );
+        assert!(!supports_local_vertex_gemini_transport_with_network(
+            &transport
+        ));
+    }
+
+    #[test]
     fn allows_network_passthrough_for_custom_path_with_local_proxy_support() {
         let mut transport = sample_transport();
         transport.endpoint.custom_path =

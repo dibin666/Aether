@@ -8,6 +8,7 @@ export const API_FORMATS = {
   OPENAI_RESPONSES_COMPACT: 'openai:responses:compact',
   OPENAI_REALTIME: 'openai:realtime',
   OPENAI_SEARCH: 'openai:search',
+  OPENAI_DECISIONS: 'openai:decisions',
   OPENAI_IMAGE: 'openai:image',
   OPENAI_TRANSCRIPTION: 'openai:transcription',
   OPENAI_VIDEO: 'openai:video',
@@ -17,6 +18,7 @@ export const API_FORMATS = {
   GEMINI: 'gemini:generate_content',
   GEMINI_GENERATE_CONTENT: 'gemini:generate_content',
   GEMINI_INTERACTIONS: 'gemini:interactions',
+  GEMINI_DECISIONS: 'gemini:decisions',
   GEMINI_VIDEO: 'gemini:video',
   GEMINI_FILES: 'gemini:files',
   GEMINI_EMBEDDING: 'gemini:embedding',
@@ -24,6 +26,7 @@ export const API_FORMATS = {
   JINA_RERANK: 'jina:rerank',
   DOUBAO_EMBEDDING: 'doubao:embedding',
   ALIYUN_MULTIMODAL_EMBEDDING: 'aliyun:multimodal_embedding',
+  SYSTEMONE_DECISIONS: 'systemone:decisions',
 } as const
 
 export type APIFormat = typeof API_FORMATS[keyof typeof API_FORMATS]
@@ -36,6 +39,7 @@ export const API_FORMAT_LABELS: Record<string, string> = {
   [API_FORMATS.OPENAI_RESPONSES_COMPACT]: 'OpenAI Responses Compact',
   [API_FORMATS.OPENAI_REALTIME]: 'OpenAI Realtime',
   [API_FORMATS.OPENAI_SEARCH]: 'OpenAI Search',
+  [API_FORMATS.OPENAI_DECISIONS]: 'OpenAI Decisions',
   [API_FORMATS.OPENAI_IMAGE]: 'OpenAI Image',
   [API_FORMATS.OPENAI_TRANSCRIPTION]: 'OpenAI Transcription',
   [API_FORMATS.OPENAI_VIDEO]: 'OpenAI Video',
@@ -44,6 +48,7 @@ export const API_FORMAT_LABELS: Record<string, string> = {
   [API_FORMATS.CODEX_LIVE]: 'OpenAI Live',
   [API_FORMATS.GEMINI_GENERATE_CONTENT]: 'Gemini Generate Content',
   [API_FORMATS.GEMINI_INTERACTIONS]: 'Gemini Interactions',
+  [API_FORMATS.GEMINI_DECISIONS]: 'Gemini Decisions',
   [API_FORMATS.GEMINI_VIDEO]: 'Gemini Video',
   [API_FORMATS.GEMINI_FILES]: 'Gemini Files',
   [API_FORMATS.GEMINI_EMBEDDING]: 'Gemini Embedding',
@@ -51,6 +56,7 @@ export const API_FORMAT_LABELS: Record<string, string> = {
   [API_FORMATS.JINA_RERANK]: 'Jina Rerank',
   [API_FORMATS.DOUBAO_EMBEDDING]: 'Doubao Embedding',
   [API_FORMATS.ALIYUN_MULTIMODAL_EMBEDDING]: 'Aliyun Multimodal Embedding',
+  [API_FORMATS.SYSTEMONE_DECISIONS]: 'System One Decisions',
   CLAUDE: 'Claude Messages',
   CLAUDE_MESSAGES: 'Claude Messages',
   OPENAI: 'OpenAI Chat',
@@ -59,6 +65,7 @@ export const API_FORMAT_LABELS: Record<string, string> = {
   OPENAI_REALTIME: 'OpenAI Realtime',
   REALTIME: 'OpenAI Realtime',
   OPENAI_SEARCH: 'OpenAI Search',
+  OPENAI_DECISIONS: 'OpenAI Decisions',
   OPENAI_IMAGE: 'OpenAI Image',
   OPENAI_TRANSCRIPTION: 'OpenAI Transcription',
   OPENAI_VIDEO: 'OpenAI Video',
@@ -69,6 +76,7 @@ export const API_FORMAT_LABELS: Record<string, string> = {
   GEMINI: 'Gemini Generate Content',
   GEMINI_GENERATE_CONTENT: 'Gemini Generate Content',
   GEMINI_INTERACTIONS: 'Gemini Interactions',
+  GEMINI_DECISIONS: 'Gemini Decisions',
   GEMINI_VIDEO: 'Gemini Video',
   GEMINI_FILES: 'Gemini Files',
   GEMINI_EMBEDDING: 'Gemini Embedding',
@@ -76,6 +84,7 @@ export const API_FORMAT_LABELS: Record<string, string> = {
   JINA_RERANK: 'Jina Rerank',
   DOUBAO_EMBEDDING: 'Doubao Embedding',
   ALIYUN_MULTIMODAL_EMBEDDING: 'Aliyun Multimodal Embedding',
+  SYSTEMONE_DECISIONS: 'System One Decisions',
 }
 
 // API 格式缩写映射（用于空间紧凑的显示场景）
@@ -85,6 +94,7 @@ export const API_FORMAT_SHORT: Record<string, string> = {
   [API_FORMATS.OPENAI_RESPONSES_COMPACT]: 'ORC',
   [API_FORMATS.OPENAI_REALTIME]: 'ORT',
   [API_FORMATS.OPENAI_SEARCH]: 'OS',
+  [API_FORMATS.OPENAI_DECISIONS]: 'OD',
   [API_FORMATS.OPENAI_IMAGE]: 'OI',
   [API_FORMATS.OPENAI_TRANSCRIPTION]: 'OT',
   [API_FORMATS.OPENAI_VIDEO]: 'OV',
@@ -94,6 +104,7 @@ export const API_FORMAT_SHORT: Record<string, string> = {
   [API_FORMATS.CLAUDE_MESSAGES]: 'CM',
   [API_FORMATS.GEMINI_GENERATE_CONTENT]: 'G',
   [API_FORMATS.GEMINI_INTERACTIONS]: 'GI',
+  [API_FORMATS.GEMINI_DECISIONS]: 'GD',
   [API_FORMATS.GEMINI_VIDEO]: 'GV',
   [API_FORMATS.GEMINI_FILES]: 'GF',
   [API_FORMATS.GEMINI_EMBEDDING]: 'GE',
@@ -101,12 +112,14 @@ export const API_FORMAT_SHORT: Record<string, string> = {
   [API_FORMATS.JINA_RERANK]: 'JR',
   [API_FORMATS.DOUBAO_EMBEDDING]: 'DE',
   [API_FORMATS.ALIYUN_MULTIMODAL_EMBEDDING]: 'AE',
+  [API_FORMATS.SYSTEMONE_DECISIONS]: 'S1D',
   OPENAI: 'O',
   OPENAI_RESPONSES: 'OR',
   OPENAI_RESPONSES_COMPACT: 'ORC',
   OPENAI_REALTIME: 'ORT',
   REALTIME: 'ORT',
   OPENAI_SEARCH: 'OS',
+  OPENAI_DECISIONS: 'OD',
   OPENAI_IMAGE: 'OI',
   OPENAI_TRANSCRIPTION: 'OT',
   OPENAI_VIDEO: 'OV',
@@ -119,6 +132,7 @@ export const API_FORMAT_SHORT: Record<string, string> = {
   GEMINI: 'G',
   GEMINI_GENERATE_CONTENT: 'G',
   GEMINI_INTERACTIONS: 'GI',
+  GEMINI_DECISIONS: 'GD',
   GEMINI_VIDEO: 'GV',
   GEMINI_FILES: 'GF',
   GEMINI_EMBEDDING: 'GE',
@@ -126,6 +140,7 @@ export const API_FORMAT_SHORT: Record<string, string> = {
   JINA_RERANK: 'JR',
   DOUBAO_EMBEDDING: 'DE',
   ALIYUN_MULTIMODAL_EMBEDDING: 'AE',
+  SYSTEMONE_DECISIONS: 'S1D',
 }
 
 // API 格式排序顺序（统一的显示顺序）
@@ -135,6 +150,7 @@ export const API_FORMAT_ORDER: string[] = [
   API_FORMATS.OPENAI_RESPONSES_COMPACT,
   API_FORMATS.OPENAI_REALTIME,
   API_FORMATS.OPENAI_SEARCH,
+  API_FORMATS.OPENAI_DECISIONS,
   API_FORMATS.OPENAI_EMBEDDING,
   API_FORMATS.OPENAI_RERANK,
   API_FORMATS.OPENAI_IMAGE,
@@ -144,6 +160,7 @@ export const API_FORMAT_ORDER: string[] = [
   API_FORMATS.CLAUDE_MESSAGES,
   API_FORMATS.GEMINI_GENERATE_CONTENT,
   API_FORMATS.GEMINI_INTERACTIONS,
+  API_FORMATS.GEMINI_DECISIONS,
   API_FORMATS.GEMINI_EMBEDDING,
   API_FORMATS.GEMINI_VIDEO,
   API_FORMATS.GEMINI_FILES,
@@ -151,6 +168,7 @@ export const API_FORMAT_ORDER: string[] = [
   API_FORMATS.JINA_RERANK,
   API_FORMATS.DOUBAO_EMBEDDING,
   API_FORMATS.ALIYUN_MULTIMODAL_EMBEDDING,
+  API_FORMATS.SYSTEMONE_DECISIONS,
 ]
 
 // Family 显示名称映射
@@ -162,6 +180,7 @@ export const API_FORMAT_FAMILY_LABELS: Record<string, string> = {
   jina: 'Jina',
   doubao: 'Doubao',
   aliyun: 'Aliyun',
+  systemone: 'System One',
 }
 
 // Kind 显示名称映射
@@ -175,6 +194,7 @@ export const API_FORMAT_KIND_LABELS: Record<string, string> = {
   messages: 'Messages',
   generate_content: 'Generate Content',
   interactions: 'Interactions',
+  decisions: 'Decisions',
   image: 'Image',
   transcription: 'Transcription',
   video: 'Video',
@@ -184,7 +204,7 @@ export const API_FORMAT_KIND_LABELS: Record<string, string> = {
 }
 
 // Family 排序顺序
-const FAMILY_ORDER = ['openai', 'codex', 'claude', 'gemini', 'jina', 'doubao', 'aliyun']
+const FAMILY_ORDER = ['openai', 'codex', 'claude', 'gemini', 'jina', 'doubao', 'aliyun', 'systemone']
 
 // 工具函数：从 API 格式中提取 family 和 kind
 export function parseApiFormat(format: string): { family: string; kind: string } {
@@ -233,6 +253,18 @@ export function normalizeApiFormatAlias(format: string | null | undefined): stri
       return API_FORMATS.GEMINI_GENERATE_CONTENT
     case 'GEMINI_INTERACTIONS':
       return API_FORMATS.GEMINI_INTERACTIONS
+    case 'GEMINI_DECISIONS':
+    case 'GEMINI_DECISION':
+      return API_FORMATS.GEMINI_DECISIONS
+    case 'OPENAI_DECISIONS':
+    case 'OPENAI_DECISION':
+      return API_FORMATS.OPENAI_DECISIONS
+    case 'SYSTEMONE_DECISIONS':
+    case 'SYSTEMONE':
+    case 'SYSTEM_ONE':
+    case 'SYSTEM_ONE_DECISIONS':
+    case 'TYPESAFE_SYSTEMONE':
+      return API_FORMATS.SYSTEMONE_DECISIONS
     case 'GEMINI_VIDEO':
       return API_FORMATS.GEMINI_VIDEO
     case 'GEMINI_FILES':

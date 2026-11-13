@@ -118,6 +118,53 @@ describe('buildDefaultModelTestRequestBody', () => {
     expect(body.messages).toBeUndefined()
   })
 
+  it('uses Gemini Decisions payloads for decision endpoints', () => {
+    const body = JSON.parse(buildDefaultModelTestRequestBody('gemini-decision-1', 'gemini:decisions'))
+
+    expect(body).toEqual({
+      model: 'gemini-decision-1',
+      input: 'Hello! This is a test message.',
+      questions: {
+        is_test_message: {
+          type: 'noul',
+          instructions: 'Is this a test message?',
+        },
+      },
+    })
+    expect(body.messages).toBeUndefined()
+  })
+
+  it('uses OpenAI Decisions payloads for openai decision endpoints', () => {
+    const body = JSON.parse(buildDefaultModelTestRequestBody('gpt-6-luna', 'openai:decisions'))
+
+    expect(body).toEqual({
+      model: 'gpt-6-luna',
+      input: 'Hello! This is a test message.',
+      questions: [{
+        type: 'predicate',
+        name: 'is_test_message',
+        instructions: 'Is this a test message?',
+      }],
+    })
+    expect(body.messages).toBeUndefined()
+  })
+
+  it('uses System One payloads for systemone decision endpoints', () => {
+    const body = JSON.parse(buildDefaultModelTestRequestBody('typesafe/jev-1.13', 'systemone:decisions'))
+
+    expect(body).toEqual({
+      model: 'typesafe/jev-1.13',
+      state: 'Hello! This is a test message.',
+      questions: {
+        is_test_message: {
+          type: 'noul',
+          instructions: 'Is this a test message?',
+        },
+      },
+    })
+    expect(body.messages).toBeUndefined()
+  })
+
   it('uses the synchronous OpenAI Search request contract', () => {
     const body = JSON.parse(buildDefaultModelTestRequestBody('gpt-5.6-sol', 'openai:search'))
 

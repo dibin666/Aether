@@ -325,7 +325,10 @@ fn select_primary_credential(
     if signature.starts_with("claude:") {
         return select_claude_messages_credential(bundle);
     }
-    if signature.starts_with("openai:") || signature.starts_with("codex:") {
+    if signature.starts_with("openai:")
+        || signature.starts_with("codex:")
+        || signature.starts_with("systemone:")
+    {
         return select_openai_credential(bundle);
     }
     if signature.starts_with("aether:") {

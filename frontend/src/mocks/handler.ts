@@ -537,6 +537,9 @@ function mockApiFormatDisplayName(apiFormat: string) {
     'claude:messages': 'Claude Messages',
     'gemini:generate_content': 'Gemini Generate Content',
     'gemini:interactions': 'Gemini Interactions',
+    'gemini:decisions': 'Gemini Decisions',
+    'openai:decisions': 'OpenAI Decisions',
+    'systemone:decisions': 'System One Decisions',
     'openai:chat': 'OpenAI Chat',
     'openai:embedding': 'OpenAI Embedding'
   }

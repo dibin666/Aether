@@ -1232,6 +1232,14 @@ mod tests {
         ));
         let executable_directory = root.join("bin");
         std::fs::create_dir_all(&executable_directory).unwrap();
+        // A 002 process umask leaves these at 775, which the storage
+        // validator correctly rejects; make the fixture modes explicit.
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(
+            &executable_directory,
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
         let current = executable_directory.join("aether-tunnel");
         std::fs::write(&current, b"old").unwrap();
         std::fs::set_permissions(&current, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1276,6 +1284,7 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
         let current = root.join("aether-tunnel");
         let staged = root.join("candidate");
         std::fs::write(&current, b"old-binary").unwrap();

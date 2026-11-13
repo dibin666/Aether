@@ -290,11 +290,11 @@ describe('UsageRecordsTable', () => {
     expect(root.textContent).toContain('输出速度')
     expect(root.textContent).toContain('0.50s / 1.00s')
     expect(root.textContent).not.toContain('500ms')
-    expect(root.textContent).toContain('100 tps')
+    expect(root.textContent).toContain('50.0 tps')
     expect([...root.querySelectorAll<HTMLElement>('.text-muted-foreground')]
-      .some((element) => element.textContent?.includes('100 tps'))).toBe(true)
+      .some((element) => element.textContent?.includes('50.0 tps'))).toBe(true)
     const tpsElements = [...root.querySelectorAll<HTMLElement>('.text-muted-foreground')]
-      .filter((element) => element.textContent?.trim() === '100 tps')
+      .filter((element) => element.textContent?.trim() === '50.0 tps')
     expect(tpsElements.some((element) => element.classList.contains('text-[11px]'))).toBe(false)
 
     const titles = [...root.querySelectorAll<HTMLElement>('[title]')]
@@ -305,7 +305,7 @@ describe('UsageRecordsTable', () => {
       '成功候选首字: 0.50s',
       '成功候选耗时: 1.00s',
       '生成耗时: 0.50s',
-      '输出速度: 100 tokens/s',
+      '输出速度: 50.0 tokens/s',
     ].join('\n'))
     expect(titles.join('\n')).not.toContain('500ms')
     expect(titles.join('\n')).not.toContain('首字后生成耗时')
@@ -322,8 +322,8 @@ describe('UsageRecordsTable', () => {
 
     const performanceCell = root.querySelector('table tbody tr td:last-child') as HTMLElement
     expect(performanceCell.textContent).toContain('10.12s / 10.63s')
-    expect(performanceCell.textContent).toContain('95.1 tps')
-    expect(performanceCell.textContent).not.toContain('98.8 tps')
+    expect(performanceCell.textContent).toContain('79.9 tps')
+    expect(performanceCell.textContent).not.toContain('95.1 tps')
 
     const titles = [...root.querySelectorAll<HTMLElement>('[title]')]
       .map((element) => element.getAttribute('title'))
@@ -333,7 +333,7 @@ describe('UsageRecordsTable', () => {
       '成功候选首字: 0.10s',
       '成功候选耗时: 0.63s',
       '生成耗时: 0.53s',
-      '输出速度: 95.1 tokens/s',
+      '输出速度: 79.9 tokens/s',
     ].join('\n'))
   })
 
@@ -442,7 +442,7 @@ describe('UsageRecordsTable', () => {
   it('renders output TPS in the non-admin usage table', () => {
     const root = mountUsageRecordsTable([buildRecord()], { isAdmin: false })
 
-    expect(root.textContent).toContain('100 tps')
+    expect(root.textContent).toContain('50.0 tps')
     expect(root.textContent).toContain('0.50s / 1.00s')
     expect(root.textContent).toContain('gpt-5')
   })

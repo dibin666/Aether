@@ -138,7 +138,7 @@ validate_tunnel_mode() {
 print_result() {
     echo ">>> Done!"
     echo ">>> Built image: ${LOCAL_APP_IMAGE}"
-    echo ">>> Build version: ${AETHER_BUILD_VERSION}"
+    echo ">>> AETHER_BUILD_VERSION: ${AETHER_BUILD_VERSION}"
     echo ">>> Aether tunnel mode: ${AETHER_TUNNEL_MODE}"
     if [ "$AETHER_TUNNEL_MODE" = "release" ]; then
         echo ">>> Aether tunnel release: ${AETHER_TUNNEL_RELEASE_REPO}@${AETHER_TUNNEL_RELEASE_TAG}"
@@ -471,10 +471,10 @@ promote_docker_build_cache() {
 build_app() {
     require_file Dockerfile.app.local
     echo ">>> Building app image: $LOCAL_APP_IMAGE"
-    echo ">>> Build version: $AETHER_BUILD_VERSION"
+    echo ">>> AETHER_BUILD_VERSION: $AETHER_BUILD_VERSION"
     local build_args=(
         --build-arg "BUILDKIT_INLINE_CACHE=1"
-        --build-arg "AETHER_BUILD_VERSION=${AETHER_BUILD_VERSION}"
+        --build-arg "AETHER_BUILD_VERSION=$AETHER_BUILD_VERSION"
         --build-arg "AETHER_TUNNEL_MODE=${AETHER_TUNNEL_MODE}"
         --build-arg "AETHER_TUNNEL_RELEASE_REPO=${AETHER_TUNNEL_RELEASE_REPO}"
         --build-arg "AETHER_TUNNEL_RELEASE_TAG=${AETHER_TUNNEL_RELEASE_TAG}"

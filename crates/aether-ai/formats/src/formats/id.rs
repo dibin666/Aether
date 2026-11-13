@@ -11,6 +11,7 @@ pub enum FormatFamily {
     Jina,
     Doubao,
     Aliyun,
+    SystemOne,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -29,15 +30,18 @@ pub enum FormatId {
     OpenAiEmbedding,
     OpenAiRerank,
     OpenAiTranscription,
+    OpenAiDecisions,
     CodexLive,
     ClaudeMessages,
     GeminiGenerateContent,
     GeminiInteractions,
+    GeminiDecisions,
     GeminiEmbedding,
     JinaEmbedding,
     JinaRerank,
     DoubaoEmbedding,
     AliyunMultimodalEmbedding,
+    SystemOneDecisions,
 }
 
 impl FormatId {
@@ -58,15 +62,18 @@ impl FormatId {
             | Self::OpenAiSearch
             | Self::OpenAiEmbedding
             | Self::OpenAiRerank
-            | Self::OpenAiTranscription => FormatFamily::OpenAi,
+            | Self::OpenAiTranscription
+            | Self::OpenAiDecisions => FormatFamily::OpenAi,
             Self::CodexLive => FormatFamily::Codex,
             Self::ClaudeMessages => FormatFamily::Claude,
-            Self::GeminiGenerateContent | Self::GeminiInteractions | Self::GeminiEmbedding => {
-                FormatFamily::Gemini
-            }
+            Self::GeminiGenerateContent
+            | Self::GeminiInteractions
+            | Self::GeminiDecisions
+            | Self::GeminiEmbedding => FormatFamily::Gemini,
             Self::JinaEmbedding | Self::JinaRerank => FormatFamily::Jina,
             Self::DoubaoEmbedding => FormatFamily::Doubao,
             Self::AliyunMultimodalEmbedding => FormatFamily::Aliyun,
+            Self::SystemOneDecisions => FormatFamily::SystemOne,
         }
     }
 
@@ -87,15 +94,18 @@ impl FormatId {
             Self::OpenAiEmbedding => "openai:embedding",
             Self::OpenAiRerank => "openai:rerank",
             Self::OpenAiTranscription => "openai:transcription",
+            Self::OpenAiDecisions => "openai:decisions",
             Self::CodexLive => "codex:live",
             Self::ClaudeMessages => "claude:messages",
             Self::GeminiGenerateContent => "gemini:generate_content",
             Self::GeminiInteractions => "gemini:interactions",
+            Self::GeminiDecisions => "gemini:decisions",
             Self::GeminiEmbedding => "gemini:embedding",
             Self::JinaEmbedding => "jina:embedding",
             Self::JinaRerank => "jina:rerank",
             Self::DoubaoEmbedding => "doubao:embedding",
             Self::AliyunMultimodalEmbedding => "aliyun:multimodal_embedding",
+            Self::SystemOneDecisions => "systemone:decisions",
         }
     }
 }
@@ -129,6 +139,8 @@ impl FromStr for FormatId {
             | "transcription"
             | "transcriptions"
             | "/v1/audio/transcriptions" => Ok(Self::OpenAiTranscription),
+            "openai:decisions" | "openai:decision" | "openai_decisions" | "openai_decision"
+            | "/v1/decisions" => Ok(Self::OpenAiDecisions),
             "codex:live" | "codex_live" | "live" | "/v1/live" => Ok(Self::CodexLive),
             "claude:messages" | "/v1/messages" => Ok(Self::ClaudeMessages),
             "gemini:generate_content" => Ok(Self::GeminiGenerateContent),
@@ -138,6 +150,8 @@ impl FromStr for FormatId {
             | "gemini_interaction"
             | "/v1/interactions"
             | "/v1beta/interactions" => Ok(Self::GeminiInteractions),
+            "gemini:decisions" | "gemini:decision" | "gemini_decisions" | "gemini_decision"
+            | "/v1beta/decisions" => Ok(Self::GeminiDecisions),
             "gemini:embedding" => Ok(Self::GeminiEmbedding),
             "jina:embedding" | "/jina/v1/embeddings" => Ok(Self::JinaEmbedding),
             "jina:rerank" | "/jina/v1/rerank" => Ok(Self::JinaRerank),
@@ -148,6 +162,14 @@ impl FromStr for FormatId {
             | "dashscope:multimodal_embedding"
             | "dashscope_embedding"
             | "dashscope_multimodal_embedding" => Ok(Self::AliyunMultimodalEmbedding),
+            "systemone:decisions"
+            | "systemone"
+            | "system_one"
+            | "systemone_decisions"
+            | "system_one_decisions"
+            | "typesafe:systemone"
+            | "typesafe:decisions"
+            | "/v1/systemone" => Ok(Self::SystemOneDecisions),
             _ => Err(()),
         }
     }
@@ -174,6 +196,9 @@ pub fn api_format_defaults_to_non_stream(value: &str) -> bool {
             | "openai:image"
             | "openai:transcription"
             | "claude:messages"
+            | "gemini:decisions"
+            | "openai:decisions"
+            | "systemone:decisions"
     )
 }
 
@@ -282,6 +307,75 @@ mod tests {
         api_format_uses_body_stream_field, intersect_api_format_allowed_lists,
         normalize_api_format_alias, FormatId,
     };
+
+    #[test]
+    fn gemini_decisions_is_a_distinct_sync_only_beta_format() {
+        for alias in [
+            "gemini:decisions",
+            "GEMINI_DECISIONS",
+            "gemini:decision",
+            "gemini_decision",
+            "/v1beta/decisions",
+        ] {
+            assert_eq!(FormatId::parse(alias), Some(FormatId::GeminiDecisions));
+            assert_eq!(normalize_api_format_alias(alias), "gemini:decisions");
+            assert!(api_format_defaults_to_non_stream(alias));
+            assert!(!api_format_uses_body_stream_field(alias));
+        }
+        assert_eq!(
+            FormatId::GeminiDecisions.family(),
+            super::FormatFamily::Gemini
+        );
+        assert_eq!(
+            FormatId::parse("/v1beta/decisions"),
+            Some(FormatId::GeminiDecisions)
+        );
+        for alias in [
+            "openai:decisions",
+            "OPENAI_DECISIONS",
+            "openai:decision",
+            "/v1/decisions",
+        ] {
+            assert_eq!(FormatId::parse(alias), Some(FormatId::OpenAiDecisions));
+            assert_eq!(normalize_api_format_alias(alias), "openai:decisions");
+            assert!(api_format_defaults_to_non_stream(alias));
+            assert!(!api_format_uses_body_stream_field(alias));
+        }
+        assert_eq!(
+            FormatId::OpenAiDecisions.family(),
+            super::FormatFamily::OpenAi
+        );
+        for alias in [
+            "systemone:decisions",
+            "SYSTEMONE_DECISIONS",
+            "systemone",
+            "system_one",
+            "typesafe:systemone",
+            "typesafe:decisions",
+            "/v1/systemone",
+        ] {
+            assert_eq!(FormatId::parse(alias), Some(FormatId::SystemOneDecisions));
+            assert_eq!(normalize_api_format_alias(alias), "systemone:decisions");
+            assert!(api_format_defaults_to_non_stream(alias));
+            assert!(!api_format_uses_body_stream_field(alias));
+        }
+        assert_eq!(
+            FormatId::SystemOneDecisions.family(),
+            super::FormatFamily::SystemOne
+        );
+        assert!(!api_format_permission_covers(
+            "gemini:generate_content",
+            "gemini:decisions"
+        ));
+        assert!(!api_format_permission_covers(
+            "gemini:interactions",
+            "gemini:decisions"
+        ));
+        assert!(api_format_permission_covers(
+            "gemini_decisions",
+            "gemini:decisions"
+        ));
+    }
 
     #[test]
     fn retired_api_formats_do_not_parse() {

@@ -3,15 +3,18 @@ use crate::contracts::{
     CLAUDE_CLI_STREAM_PLAN_KIND, CLAUDE_CLI_SYNC_PLAN_KIND, CLAUDE_COUNT_TOKENS_SYNC_PLAN_KIND,
     CLAUDE_COUNT_TOKENS_SYNC_SUCCESS_REPORT_KIND, CODEX_LIVE_STREAM_PLAN_KIND,
     GEMINI_CHAT_STREAM_PLAN_KIND, GEMINI_CHAT_SYNC_PLAN_KIND, GEMINI_CLI_STREAM_PLAN_KIND,
-    GEMINI_CLI_SYNC_PLAN_KIND, GEMINI_EMBEDDING_SYNC_PLAN_KIND,
+    GEMINI_CLI_SYNC_PLAN_KIND, GEMINI_DECISIONS_SYNC_PLAN_KIND,
+    GEMINI_DECISIONS_SYNC_SUCCESS_REPORT_KIND, GEMINI_EMBEDDING_SYNC_PLAN_KIND,
     GEMINI_EMBEDDING_SYNC_SUCCESS_REPORT_KIND, GEMINI_INTERACTIONS_STREAM_PLAN_KIND,
     GEMINI_INTERACTIONS_STREAM_SUCCESS_REPORT_KIND, GEMINI_INTERACTIONS_SYNC_PLAN_KIND,
-    GEMINI_INTERACTIONS_SYNC_SUCCESS_REPORT_KIND, OPENAI_EMBEDDING_SYNC_PLAN_KIND,
+    GEMINI_INTERACTIONS_SYNC_SUCCESS_REPORT_KIND, OPENAI_DECISIONS_SYNC_PLAN_KIND,
+    OPENAI_DECISIONS_SYNC_SUCCESS_REPORT_KIND, OPENAI_EMBEDDING_SYNC_PLAN_KIND,
     OPENAI_MEMORIES_SYNC_PLAN_KIND, OPENAI_MEMORIES_SYNC_SUCCESS_REPORT_KIND,
     OPENAI_REALTIME_STREAM_PLAN_KIND, OPENAI_RERANK_SYNC_PLAN_KIND, OPENAI_SEARCH_SYNC_PLAN_KIND,
     OPENAI_SEARCH_SYNC_SUCCESS_REPORT_KIND, OPENAI_TRANSCRIPTION_STREAM_PLAN_KIND,
     OPENAI_TRANSCRIPTION_STREAM_SUCCESS_REPORT_KIND, OPENAI_TRANSCRIPTION_SYNC_PLAN_KIND,
-    OPENAI_TRANSCRIPTION_SYNC_SUCCESS_REPORT_KIND,
+    OPENAI_TRANSCRIPTION_SYNC_SUCCESS_REPORT_KIND, SYSTEMONE_DECISIONS_SYNC_PLAN_KIND,
+    SYSTEMONE_DECISIONS_SYNC_SUCCESS_REPORT_KIND,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +96,30 @@ pub fn resolve_sync_spec(plan_kind: &str) -> Option<LocalSameFormatProviderSpec>
             decision_kind: GEMINI_INTERACTIONS_SYNC_PLAN_KIND,
             report_kind: GEMINI_INTERACTIONS_SYNC_SUCCESS_REPORT_KIND,
             family: LocalSameFormatProviderFamily::Gemini,
+            require_streaming: false,
+            operation: None,
+        }),
+        GEMINI_DECISIONS_SYNC_PLAN_KIND => Some(LocalSameFormatProviderSpec {
+            api_format: "gemini:decisions",
+            decision_kind: GEMINI_DECISIONS_SYNC_PLAN_KIND,
+            report_kind: GEMINI_DECISIONS_SYNC_SUCCESS_REPORT_KIND,
+            family: LocalSameFormatProviderFamily::Gemini,
+            require_streaming: false,
+            operation: None,
+        }),
+        OPENAI_DECISIONS_SYNC_PLAN_KIND => Some(LocalSameFormatProviderSpec {
+            api_format: "openai:decisions",
+            decision_kind: OPENAI_DECISIONS_SYNC_PLAN_KIND,
+            report_kind: OPENAI_DECISIONS_SYNC_SUCCESS_REPORT_KIND,
+            family: LocalSameFormatProviderFamily::Standard,
+            require_streaming: false,
+            operation: None,
+        }),
+        SYSTEMONE_DECISIONS_SYNC_PLAN_KIND => Some(LocalSameFormatProviderSpec {
+            api_format: "systemone:decisions",
+            decision_kind: SYSTEMONE_DECISIONS_SYNC_PLAN_KIND,
+            report_kind: SYSTEMONE_DECISIONS_SYNC_SUCCESS_REPORT_KIND,
+            family: LocalSameFormatProviderFamily::Standard,
             require_streaming: false,
             operation: None,
         }),
@@ -273,6 +300,17 @@ mod tests {
         assert_eq!(spec.report_kind, "gemini_embedding_sync_success");
         assert_eq!(spec.family, super::LocalSameFormatProviderFamily::Gemini);
         assert!(!spec.require_streaming);
+    }
+
+    #[test]
+    fn gemini_decisions_has_only_a_native_sync_spec() {
+        let spec = resolve_sync_spec("gemini_decisions_sync").expect("decisions spec");
+        assert_eq!(spec.api_format, "gemini:decisions");
+        assert_eq!(spec.report_kind, "gemini_decisions_sync_success");
+        assert_eq!(spec.family, super::LocalSameFormatProviderFamily::Gemini);
+        assert!(!spec.require_streaming);
+        assert!(resolve_stream_spec("gemini_decisions_sync").is_none());
+        assert!(resolve_stream_spec("gemini_decisions_stream").is_none());
     }
 
     #[test]

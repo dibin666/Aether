@@ -1792,6 +1792,21 @@ async fn gateway_handles_admin_system_api_formats_locally_with_trusted_admin_pri
         .find(|item| item["value"] == "gemini:interactions")
         .expect("gemini interactions format should exist");
     assert_eq!(gemini_interactions["default_path"], "/v1/interactions");
+    let gemini_decisions = formats
+        .iter()
+        .find(|item| item["value"] == "gemini:decisions")
+        .expect("gemini decisions format should exist");
+    assert_eq!(gemini_decisions["default_path"], "/v1beta/decisions");
+    let openai_decisions = formats
+        .iter()
+        .find(|item| item["value"] == "openai:decisions")
+        .expect("openai decisions format should exist");
+    assert_eq!(openai_decisions["default_path"], "/v1/decisions");
+    let systemone_decisions = formats
+        .iter()
+        .find(|item| item["value"] == "systemone:decisions")
+        .expect("systemone decisions format should exist");
+    assert_eq!(systemone_decisions["default_path"], "/v1/systemone");
     let aliyun_embedding = formats
         .iter()
         .find(|item| item["value"] == "aliyun:multimodal_embedding")

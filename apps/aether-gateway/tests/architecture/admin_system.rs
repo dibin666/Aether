@@ -52,16 +52,16 @@ fn admin_system_build_version_contract_uses_explicit_local_build_arg() {
         );
     }
 
+    let build_version = read_workspace_file("apps/aether-gateway/src/build_version.rs");
     let core_api = read_workspace_file("apps/aether-gateway/src/api/core.rs");
-    for pattern in [
-        "option_env!(\"AETHER_BUILD_VERSION\")",
-        "\"version\": current_gateway_version()",
-    ] {
-        assert!(
-            core_api.contains(pattern),
-            "api/core.rs should expose build version pattern {pattern}"
-        );
-    }
+    assert!(
+        build_version.contains("option_env!(\"AETHER_BUILD_VERSION\")"),
+        "build_version.rs should expose build version pattern option_env!(\"AETHER_BUILD_VERSION\")"
+    );
+    assert!(
+        core_api.contains("\"version\": current_gateway_version()"),
+        "api/core.rs should expose build version pattern \"version\": current_gateway_version()"
+    );
 
     let build_rs = read_workspace_file("apps/aether-gateway/build.rs");
     for pattern in [

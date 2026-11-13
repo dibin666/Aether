@@ -85,10 +85,38 @@ async fn xai_video_native_and_compatibility_http_lifecycle() {
     .await;
 }
 
+fn local_postgres_test_binaries_available() -> bool {
+    ["AETHER_INITDB_BIN", "AETHER_POSTGRES_BIN"]
+        .into_iter()
+        .map(|var| {
+            std::env::var(var)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| {
+                    var.trim_start_matches("AETHER_")
+                        .trim_end_matches("_BIN")
+                        .to_ascii_lowercase()
+                })
+        })
+        .all(|binary| {
+            std::process::Command::new(&binary)
+                .arg("--version")
+                .output()
+                .is_ok_and(|output| output.status.success())
+        })
+}
+
 #[tokio::test]
 async fn xai_video_native_and_compatibility_http_lifecycle_postgres() {
     let configured_database_url = std::env::var("AETHER_TEST_DATABASE_URL").ok();
     let managed_database = if configured_database_url.is_none() {
+        if !local_postgres_test_binaries_available() {
+            eprintln!(
+                "skipping postgres lifecycle test: initdb/postgres binaries unavailable \
+                 (set AETHER_TEST_DATABASE_URL or AETHER_INITDB_BIN/AETHER_POSTGRES_BIN/AETHER_PG_CTL_BIN)"
+            );
+            return;
+        }
         Some(
             aether_testkit::ManagedPostgresServer::start()
                 .await

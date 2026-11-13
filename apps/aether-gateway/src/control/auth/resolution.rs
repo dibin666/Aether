@@ -1600,9 +1600,34 @@ mod tests {
         _database: aether_testkit::ManagedPostgresServer,
     }
 
+    fn local_postgres_test_binaries_available() -> bool {
+        ["AETHER_INITDB_BIN", "AETHER_POSTGRES_BIN"]
+            .into_iter()
+            .map(|var| {
+                std::env::var(var)
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        var.trim_start_matches("AETHER_")
+                            .trim_end_matches("_BIN")
+                            .to_ascii_lowercase()
+                    })
+            })
+            .all(|binary| {
+                std::process::Command::new(&binary)
+                    .arg("--version")
+                    .output()
+                    .is_ok_and(|output| output.status.success())
+            })
+    }
+
     async fn postgres_auth_config_nodes(
         auth_repository: Arc<InMemoryAuthApiKeySnapshotRepository>,
-    ) -> PostgresAuthConfigNodes {
+    ) -> Option<PostgresAuthConfigNodes> {
+        if !local_postgres_test_binaries_available() {
+            eprintln!("skipping postgres-backed auth test: initdb/postgres binaries unavailable");
+            return None;
+        }
         let server = aether_testkit::ManagedPostgresServer::start()
             .await
             .expect("temporary PostgreSQL should start");
@@ -1626,7 +1651,7 @@ mod tests {
             .with_auth_api_key_reader(auth_repository)
             .without_wallet_reader_for_tests();
 
-        PostgresAuthConfigNodes {
+        Some(PostgresAuthConfigNodes {
             first: AppState::new()
                 .expect("first app state should build")
                 .with_data_state_for_tests(first_data),
@@ -1634,14 +1659,17 @@ mod tests {
                 .expect("second app state should build")
                 .with_data_state_for_tests(second_data),
             _database: server,
-        }
+        })
     }
 
     #[tokio::test]
     async fn strong_system_config_read_bypasses_app_and_data_caches() {
-        let nodes =
+        let Some(nodes) =
             postgres_auth_config_nodes(Arc::new(InMemoryAuthApiKeySnapshotRepository::seed([])))
-                .await;
+                .await
+        else {
+            return;
+        };
         let key = format!("test.auth.strong-read.{}", uuid::Uuid::new_v4());
         let old_value = serde_json::json!({"version": "old"});
         let new_value = serde_json::json!({"version": "new"});
@@ -2610,7 +2638,9 @@ mod tests {
         let auth_repository = Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(
             None, snapshot,
         )]));
-        let nodes = postgres_auth_config_nodes(auth_repository.clone()).await;
+        let Some(nodes) = postgres_auth_config_nodes(auth_repository.clone()).await else {
+            return;
+        };
         nodes
             .first
             .auth_context_cache

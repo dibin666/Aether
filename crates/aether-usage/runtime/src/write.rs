@@ -804,10 +804,14 @@ fn build_terminal_usage_event_from_seed_impl(
     }
 
     if data.total_tokens.is_none() {
+        // An all-zero extraction is a weak signal (e.g. a stream that never
+        // delivered counters), not an authoritative zero; leave the fields
+        // empty so the estimate paths below can still fill them.
         if let Some(tokens) = data
             .response_body
             .as_ref()
             .and_then(extract_token_counts_from_value)
+            .filter(|tokens| tokens.0 + tokens.1 + tokens.2 > 0)
         {
             data.input_tokens = Some(tokens.0);
             mark_analytics_measurement(&mut data, token_measurement_source);
@@ -1057,9 +1061,22 @@ pub fn build_sync_terminal_usage_seed(
         standardized_usage,
         capture_metadata,
     } = payload_seed;
-    let derived_standardized_usage = provider_response_full
+    let mut derived_standardized_usage = provider_response_full
         .as_ref()
         .map(|response| map_usage_from_response(response, context_seed.provider_contract.as_str()));
+    // A present provider usage object is authoritative for the sync path,
+    // including explicit zero counters. Context-simulated values (e.g. Kiro
+    // cache usage) still fill fields the provider left unset downstream.
+    if provider_response_full.as_ref().is_some_and(|response| {
+        crate::usage_mapper::response_reports_usage_object(
+            response,
+            context_seed.provider_contract.as_str(),
+        )
+    }) {
+        if let Some(usage) = derived_standardized_usage.as_mut() {
+            usage.token_source = Some(aether_contracts::UsageTokenSource::Reported);
+        }
+    }
     // Context usage here is Kiro's locally simulated input/cache usage. A
     // standard response may still contribute independently reported output.
     let token_measurement_source =
@@ -2725,6 +2742,7 @@ fn apply_standardized_usage_seed(
 ) {
     let token_source = usage
         .token_source
+        .filter(|_| token_source != "mixed" && token_source != "estimated")
         .map(|source| source.as_str())
         .unwrap_or(token_source);
     // Dimensions such as image_count are not evidence of measured tokens.
@@ -2742,11 +2760,19 @@ fn apply_standardized_usage_seed(
     {
         mark_analytics_measurement(data, token_source);
     }
-    if usage.input_tokens > 0 {
-        data.input_tokens = Some(usage.input_tokens as u64);
+    // Provider-reported usage is authoritative: explicit zero counters are
+    // kept as Some(0) instead of falling through to request/response
+    // estimation. Reported zeros never overwrite values a context source
+    // already measured, and non-reported seeds keep the >0 filter.
+    let reported = matches!(
+        usage.token_source,
+        Some(aether_contracts::UsageTokenSource::Reported)
+    );
+    if usage.input_tokens > 0 || (reported && data.input_tokens.is_none()) {
+        data.input_tokens = Some(usage.input_tokens.max(0) as u64);
     }
-    if usage.output_tokens > 0 {
-        data.output_tokens = Some(usage.output_tokens as u64);
+    if usage.output_tokens > 0 || (reported && data.output_tokens.is_none()) {
+        data.output_tokens = Some(usage.output_tokens.max(0) as u64);
     }
     if usage.cache_creation_tokens > 0 {
         data.cache_creation_input_tokens = Some(usage.cache_creation_tokens as u64);
@@ -2763,7 +2789,7 @@ fn apply_standardized_usage_seed(
         data.cache_read_input_tokens = Some(usage.cache_read_tokens as u64);
     }
     let total_tokens = standardized_usage_total_tokens(usage);
-    if total_tokens > 0 {
+    if total_tokens > 0 || (reported && data.total_tokens.is_none()) {
         data.total_tokens = Some(total_tokens);
     }
     apply_standardized_usage_dimensions_seed(usage, data);
@@ -3263,15 +3289,15 @@ fn apply_completed_chat_usage_estimate(data: &mut UsageEventData) {
         return;
     }
 
-    if input_tokens > 0 {
+    if input_tokens > 0 && data.input_tokens.is_none() {
         data.input_tokens = Some(input_tokens);
     }
-    if output_tokens > 0 {
+    if output_tokens > 0 && data.output_tokens.is_none() {
         data.output_tokens = Some(output_tokens);
     }
     apply_request_cache_usage_estimate(data, request_usage.as_ref());
     let total_tokens = input_tokens.saturating_add(output_tokens);
-    if total_tokens > 0 {
+    if total_tokens > 0 && data.total_tokens.is_none() {
         data.total_tokens = Some(total_tokens);
     }
     set_usage_dimension_if_absent(data, "token_usage_estimated", Value::Bool(true));
@@ -3473,6 +3499,7 @@ fn apply_completed_image_usage_estimate(data: &mut UsageEventData) {
         .response_body
         .as_ref()
         .and_then(extract_token_counts_from_value)
+        .filter(|tokens| tokens.0 + tokens.1 + tokens.2 > 0)
         .is_some()
     {
         return;
@@ -3483,14 +3510,14 @@ fn apply_completed_image_usage_estimate(data: &mut UsageEventData) {
         .or(data.request_body.as_ref())
         .and_then(estimate_request_usage);
 
-    if positive_tokens(data.input_tokens) == 0 {
+    if data.input_tokens.is_none() {
         if let Some(usage) = request_usage.as_ref() {
             data.input_tokens = Some(usage.input_tokens);
             mark_analytics_measurement(data, "estimated");
         }
     }
     apply_request_cache_usage_estimate(data, request_usage.as_ref());
-    if positive_tokens(data.total_tokens) == 0 {
+    if data.total_tokens.is_none() {
         let total_tokens =
             positive_tokens(data.input_tokens).saturating_add(positive_tokens(data.output_tokens));
         if total_tokens > 0 {

@@ -110,6 +110,18 @@ fn resolve_core_error_background_report_kind_maps_all_core_finalize_kinds() {
             Some("gemini_interactions_sync_error"),
         ),
         (
+            "gemini_decisions_sync_finalize",
+            Some("gemini_decisions_sync_error"),
+        ),
+        (
+            "openai_decisions_sync_finalize",
+            Some("openai_decisions_sync_error"),
+        ),
+        (
+            "systemone_decisions_sync_finalize",
+            Some("systemone_decisions_sync_error"),
+        ),
+        (
             "openai_responses_sync_finalize",
             Some("openai_responses_sync_error"),
         ),
@@ -159,6 +171,18 @@ fn resolve_core_success_background_report_kind_maps_all_core_finalize_kinds() {
         (
             "gemini_interactions_sync_finalize",
             Some("gemini_interactions_sync_success"),
+        ),
+        (
+            "gemini_decisions_sync_finalize",
+            Some("gemini_decisions_sync_success"),
+        ),
+        (
+            "openai_decisions_sync_finalize",
+            Some("openai_decisions_sync_success"),
+        ),
+        (
+            "systemone_decisions_sync_finalize",
+            Some("systemone_decisions_sync_success"),
         ),
         (
             "openai_responses_sync_finalize",

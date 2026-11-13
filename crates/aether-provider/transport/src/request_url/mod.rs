@@ -298,6 +298,13 @@ fn build_transport_request_url_inner(
         "gemini:interactions" => {
             build_gemini_interactions_url(request_base_url, params.request_query)
         }
+        "gemini:decisions" => build_gemini_decisions_url(request_base_url, params.request_query),
+        "openai:decisions" => {
+            build_passthrough_path_url(request_base_url, "/v1/decisions", params.request_query, &[])
+        }
+        "systemone:decisions" => {
+            build_passthrough_path_url(request_base_url, "/v1/systemone", params.request_query, &[])
+        }
         "doubao:embedding" => {
             build_passthrough_path_url(request_base_url, "/embeddings", params.request_query, &[])
         }
@@ -708,6 +715,11 @@ fn build_provider_rerank_v1_url(upstream_base_url: &str, query: Option<&str>) ->
 
 fn build_gemini_interactions_url(upstream_base_url: &str, query: Option<&str>) -> Option<String> {
     build_passthrough_path_url(upstream_base_url, "/v1/interactions", query, &["key"])
+}
+
+fn build_gemini_decisions_url(upstream_base_url: &str, query: Option<&str>) -> Option<String> {
+    // The Decisions API is Beta-only and only exists under /v1beta.
+    build_passthrough_path_url(upstream_base_url, "/v1beta/decisions", query, &["key"])
 }
 
 fn build_provider_api_root_url(
@@ -2088,6 +2100,116 @@ mod tests {
             )
             .as_deref(),
             Some("https://generativelanguage.googleapis.com/v1/interactions?trace=2")
+        );
+    }
+
+    #[test]
+    fn gemini_decisions_request_url_uses_v1beta_endpoint() {
+        let gemini = sample_transport(
+            "gemini",
+            "gemini:decisions",
+            "https://generativelanguage.googleapis.com",
+            None,
+        );
+        let versioned = sample_transport(
+            "gemini",
+            "gemini:decisions",
+            "https://generativelanguage.googleapis.com/v1beta",
+            None,
+        );
+
+        assert_eq!(
+            build_transport_request_url(
+                &gemini,
+                TransportRequestUrlParams {
+                    provider_api_format: "gemini:decisions",
+                    mapped_model: Some("gemini-decision-1"),
+                    upstream_is_stream: false,
+                    request_query: Some("key=client-key&trace=1"),
+                    kiro_api_region: None,
+                    api_operation: None,
+                },
+            )
+            .as_deref(),
+            Some("https://generativelanguage.googleapis.com/v1beta/decisions?trace=1")
+        );
+        assert_eq!(
+            build_transport_request_url(
+                &versioned,
+                TransportRequestUrlParams {
+                    provider_api_format: "gemini:decisions",
+                    mapped_model: Some("gemini-decision-1"),
+                    upstream_is_stream: false,
+                    request_query: Some("key=client-key&trace=2"),
+                    kiro_api_region: None,
+                    api_operation: None,
+                },
+            )
+            .as_deref(),
+            Some("https://generativelanguage.googleapis.com/v1beta/decisions?trace=2")
+        );
+    }
+
+    #[test]
+    fn openai_and_systemone_decisions_request_urls_use_v1_endpoints() {
+        let openai = sample_transport("openai", "openai:decisions", "https://api.openai.com", None);
+        let systemone = sample_transport(
+            "custom",
+            "systemone:decisions",
+            "https://router.requesty.ai",
+            None,
+        );
+        let versioned_systemone = sample_transport(
+            "custom",
+            "systemone:decisions",
+            "https://api.llm.buzz/api/v1",
+            None,
+        );
+
+        assert_eq!(
+            build_transport_request_url(
+                &openai,
+                TransportRequestUrlParams {
+                    provider_api_format: "openai:decisions",
+                    mapped_model: Some("gpt-6-luna"),
+                    upstream_is_stream: false,
+                    request_query: Some("trace=1"),
+                    kiro_api_region: None,
+                    api_operation: None,
+                },
+            )
+            .as_deref(),
+            Some("https://api.openai.com/v1/decisions?trace=1")
+        );
+        assert_eq!(
+            build_transport_request_url(
+                &systemone,
+                TransportRequestUrlParams {
+                    provider_api_format: "systemone:decisions",
+                    mapped_model: Some("typesafe/jev-1.13"),
+                    upstream_is_stream: false,
+                    request_query: Some("trace=2"),
+                    kiro_api_region: None,
+                    api_operation: None,
+                },
+            )
+            .as_deref(),
+            Some("https://router.requesty.ai/v1/systemone?trace=2")
+        );
+        assert_eq!(
+            build_transport_request_url(
+                &versioned_systemone,
+                TransportRequestUrlParams {
+                    provider_api_format: "systemone:decisions",
+                    mapped_model: Some("typesafe/jev-1.13"),
+                    upstream_is_stream: false,
+                    request_query: None,
+                    kiro_api_region: None,
+                    api_operation: None,
+                },
+            )
+            .as_deref(),
+            Some("https://api.llm.buzz/api/v1/systemone")
         );
     }
 

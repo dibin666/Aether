@@ -1645,14 +1645,29 @@ async fn gateway_tests_selected_keys_without_pool_scheduling_filters_impl() {
                 assert_eq!(attempts.len(), 1);
                 assert_eq!(payload["total_candidates"], json!(1));
             } else {
-                assert!(attempts
-                    .iter()
-                    .any(|attempt| attempt["key_id"] == "key-cooling"
-                        && attempt["skip_reason"] == "pool_cooldown"));
-                assert!(attempts
-                    .iter()
-                    .any(|attempt| attempt["key_id"] == "key-restricted"
-                        && attempt["status"] == "skipped"));
+                // The attempt loop stops at the first success, so the
+                // scheduler-skipped cooldown key is recorded as an unused
+                // post-winner candidate rather than an attempt row. The
+                // observable contract: it never executes, the restricted key
+                // surfaces its model skip, and the summary counts it unused.
+                assert!(
+                    attempts
+                        .iter()
+                        .all(|attempt| attempt["key_id"] != "key-cooling"),
+                    "cooldown key must not execute; mode={mode} attempts={attempts:?}"
+                );
+                assert!(
+                    payload["candidate_summary"]["unused"] == 1,
+                    "cooldown key should be the unused candidate; mode={mode} summary={:?}",
+                    payload["candidate_summary"]
+                );
+                assert!(
+                    attempts
+                        .iter()
+                        .any(|attempt| attempt["key_id"] == "key-restricted"
+                            && attempt["status"] == "skipped"),
+                    "expected skipped status for key-restricted; mode={mode} attempts={attempts:?}"
+                );
             }
         }
     }

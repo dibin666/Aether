@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 
 use super::{
     augment_sync_report_context, build_ai_execution_plan_from_decision,
-    resolve_ai_passthrough_request_body, take_ai_decision_plan_core, take_ai_upstream_auth_pair,
-    take_non_empty_string, AiExecutionPlanFromDecisionParts, AiStreamAttempt, AiSyncAttempt,
+    resolve_ai_passthrough_sync_request_body, take_ai_decision_plan_core,
+    take_ai_upstream_auth_pair, take_non_empty_string, AiExecutionPlanFromDecisionParts,
+    AiStreamAttempt, AiSyncAttempt,
 };
 use crate::ai_serving::transport::{
     build_standard_plan_fallback_headers, StandardPlanFallbackAcceptPolicy,
@@ -61,7 +62,7 @@ pub(crate) fn build_standard_sync_plan_from_decision(
         &provider_request_headers,
         &provider_request_body_value,
     )?;
-    let request_body = resolve_ai_passthrough_request_body(
+    let request_body = resolve_ai_passthrough_sync_request_body(
         Some(provider_request_body_value),
         payload.provider_request_body_base64.take(),
     );
@@ -148,7 +149,7 @@ pub(crate) fn build_standard_stream_plan_from_decision(
         &provider_request_headers,
         &provider_request_body_value,
     )?;
-    let request_body = resolve_ai_passthrough_request_body(
+    let request_body = resolve_ai_passthrough_sync_request_body(
         Some(provider_request_body_value),
         payload.provider_request_body_base64.take(),
     );

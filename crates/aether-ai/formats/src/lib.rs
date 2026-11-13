@@ -28,7 +28,8 @@ pub use formats::id::{
     is_openai_responses_format, normalize_api_format_alias, FormatFamily, FormatId, FormatProfile,
 };
 pub use formats::matrix::{
-    is_embedding_api_format, is_gemini_interactions_api_format, is_rerank_api_format,
+    is_embedding_api_format, is_gemini_decisions_api_format, is_gemini_interactions_api_format,
+    is_openai_decisions_api_format, is_rerank_api_format, is_systemone_decisions_api_format,
     request_candidate_api_format_preference, request_candidate_api_formats,
     request_conversion_kind, request_conversion_requires_enable_flag,
     sync_chat_response_conversion_kind, sync_cli_response_conversion_kind, RequestConversionKind,

@@ -118,7 +118,13 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
     let format_value = crate::ai_serving::normalize_api_format_alias(&format_value);
     if !matches!(
         format_value.as_str(),
-        "openai:chat" | "claude:messages" | "gemini:generate_content" | "gemini:interactions"
+        "openai:chat"
+            | "claude:messages"
+            | "gemini:generate_content"
+            | "gemini:interactions"
+            | "gemini:decisions"
+            | "openai:decisions"
+            | "systemone:decisions"
     ) {
         return None;
     }
@@ -206,6 +212,35 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
             "model": model,
             "input": "Health check",
         }),
+        "gemini:decisions" => json!({
+            "model": model,
+            "input": "Health check",
+            "questions": {
+                "is_health_check": {
+                    "type": "noul",
+                    "instructions": "Is this message a health check?",
+                },
+            },
+        }),
+        "openai:decisions" => json!({
+            "model": model,
+            "input": "Health check",
+            "questions": [{
+                "type": "predicate",
+                "name": "is_health_check",
+                "instructions": "Is this message a health check?",
+            }],
+        }),
+        "systemone:decisions" => json!({
+            "model": model,
+            "state": "Health check",
+            "questions": {
+                "is_health_check": {
+                    "type": "noul",
+                    "instructions": "Is this message a health check?",
+                }
+            },
+        }),
         _ => return None,
     };
     if !crate::provider_transport::apply_local_body_rules(
@@ -217,15 +252,19 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
     }
 
     let oauth_auth = match format_value.as_str() {
-        "openai:chat" | "claude:messages" | "gemini:generate_content" | "gemini:interactions" => {
-            match state.resolve_local_oauth_request_auth(&transport).await {
-                Ok(Some(crate::provider_transport::LocalResolvedOAuthRequestAuth::Header {
-                    name,
-                    value,
-                })) => Some((name, value)),
-                _ => None,
-            }
-        }
+        "openai:chat"
+        | "claude:messages"
+        | "gemini:generate_content"
+        | "gemini:interactions"
+        | "gemini:decisions"
+        | "openai:decisions"
+        | "systemone:decisions" => match state.resolve_local_oauth_request_auth(&transport).await {
+            Ok(Some(crate::provider_transport::LocalResolvedOAuthRequestAuth::Header {
+                name,
+                value,
+            })) => Some((name, value)),
+            _ => None,
+        },
         _ => None,
     };
 
@@ -238,8 +277,16 @@ pub(super) async fn maybe_build_local_test_connection_route_response(
             crate::provider_transport::auth::resolve_local_standard_auth(&transport)
                 .or(oauth_auth.clone())
         }
-        "gemini:generate_content" | "gemini:interactions" => {
+        "gemini:generate_content" | "gemini:interactions" | "gemini:decisions" => {
             crate::provider_transport::auth::resolve_local_gemini_auth(&transport)
+                .or(oauth_auth.clone())
+        }
+        "openai:decisions" => {
+            crate::provider_transport::auth::resolve_local_openai_bearer_auth(&transport)
+                .or(oauth_auth.clone())
+        }
+        "systemone:decisions" => {
+            crate::provider_transport::auth::resolve_local_standard_auth(&transport)
                 .or(oauth_auth.clone())
         }
         _ => None,
@@ -554,5 +601,4 @@ mod tests {
             );
         }
     }
-
 }

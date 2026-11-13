@@ -1971,12 +1971,89 @@ mod tests {
         ))
     }
 
+    /// Create `path` (and parents) with non-group-writable modes. The test
+    /// process may run under a 002 umask, which makes `create_dir_all`
+    /// produce 775 directories that the update validators correctly reject.
+    /// Normalize every component of `path` we own to `mode`, top-down so a
+    /// too-strict parent is relaxed before deeper components are inspected.
+    #[cfg(unix)]
+    fn normalize_test_dir_modes(path: &Path, mode: u32) -> std::io::Result<()> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let effective_uid = unsafe { libc::geteuid() };
+        let mut components: Vec<&Path> = path.ancestors().collect();
+        components.reverse();
+        for component in components {
+            let Ok(metadata) = std::fs::symlink_metadata(component) else {
+                continue;
+            };
+            if metadata.is_dir() && metadata.uid() == effective_uid {
+                std::fs::set_permissions(component, std::fs::Permissions::from_mode(mode))?;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn create_safe_test_dir(path: impl AsRef<Path>) -> std::io::Result<()> {
+        use std::os::unix::fs::DirBuilderExt;
+        let path = path.as_ref();
+        // A concurrent test may temporarily flip the process umask to 0o177,
+        // which can mkdir an intermediate component at 0600 and make a later
+        // mkdir fail with EACCES. Normalize owned components and retry.
+        let mut last_error = None;
+        for _ in 0..4 {
+            match std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o755)
+                .create(path)
+            {
+                Ok(()) => {
+                    last_error = None;
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    last_error = Some(error);
+                    normalize_test_dir_modes(path, 0o755)?;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if let Some(error) = last_error {
+            return Err(error);
+        }
+        normalize_test_dir_modes(path, 0o755)
+    }
+
+    #[cfg(not(unix))]
+    fn create_safe_test_dir(path: impl AsRef<Path>) -> std::io::Result<()> {
+        std::fs::create_dir_all(path)
+    }
+
+    /// Write `path` with 644 permissions regardless of the process umask.
+    #[cfg(unix)]
+    fn write_safe_test_file(
+        path: impl AsRef<Path>,
+        contents: impl AsRef<[u8]>,
+    ) -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(&path, contents)?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644))
+    }
+
+    #[cfg(not(unix))]
+    fn write_safe_test_file(
+        path: impl AsRef<Path>,
+        contents: impl AsRef<[u8]>,
+    ) -> std::io::Result<()> {
+        std::fs::write(path, contents)
+    }
+
     fn write_release_payload(root: &Path) {
-        std::fs::create_dir_all(root.join("bin")).expect("bin dir should be created");
-        std::fs::create_dir_all(root.join("frontend")).expect("frontend dir should be created");
-        std::fs::write(root.join("bin/aether-gateway"), b"test-binary")
+        create_safe_test_dir(root.join("bin")).expect("bin dir should be created");
+        create_safe_test_dir(root.join("frontend")).expect("frontend dir should be created");
+        write_safe_test_file(root.join("bin/aether-gateway"), b"test-binary")
             .expect("binary should be written");
-        std::fs::write(root.join("frontend/index.html"), b"<html></html>")
+        write_safe_test_file(root.join("frontend/index.html"), b"<html></html>")
             .expect("frontend index should be written");
     }
 
@@ -1984,7 +2061,7 @@ mod tests {
     fn reading_update_history_rewrites_legacy_sensitive_fields() {
         let dir = temp_test_dir("history-read-redaction");
         let path = dir.join(UPDATE_HISTORY_FILENAME);
-        std::fs::create_dir_all(&dir).expect("history directory should be created");
+        create_safe_test_dir(&dir).expect("history directory should be created");
         let legacy = json!([{
             "timestamp": "Bearer timestamp-secret",
             "operation": "prepare?token=operation-secret",
@@ -1992,7 +2069,7 @@ mod tests {
             "error": "download failed for https://user:password@internal.test/file?token=query-secret; Authorization: Bearer error-secret",
             "output_tail": "installed /opt/private; access_token=output-secret"
         }]);
-        std::fs::write(
+        write_safe_test_file(
             &path,
             serde_json::to_vec_pretty(&legacy).expect("legacy history should serialize"),
         )
@@ -2034,7 +2111,7 @@ mod tests {
     fn appending_update_history_sanitizes_existing_entries_before_write() {
         let dir = temp_test_dir("history-append-redaction");
         let path = dir.join(UPDATE_HISTORY_FILENAME);
-        std::fs::create_dir_all(&dir).expect("history directory should be created");
+        create_safe_test_dir(&dir).expect("history directory should be created");
         let legacy = json!([{
             "timestamp": "2026-08-27T00:00:00Z",
             "operation": "apply",
@@ -2042,7 +2119,7 @@ mod tests {
             "error": "Authorization: Bearer legacy-secret",
             "output_tail": "legacy output token=old-secret"
         }]);
-        std::fs::write(
+        write_safe_test_file(
             &path,
             serde_json::to_vec_pretty(&legacy).expect("legacy history should serialize"),
         )
@@ -2078,7 +2155,7 @@ mod tests {
         use std::os::unix::fs::{symlink, PermissionsExt};
 
         let dir = temp_test_dir("metadata-atomic");
-        std::fs::create_dir_all(&dir).expect("metadata directory should be created");
+        create_safe_test_dir(&dir).expect("metadata directory should be created");
         let path = dir.join(UPDATE_HISTORY_FILENAME);
 
         write_update_metadata_atomic(&path, b"first").expect("metadata should be written");
@@ -2092,7 +2169,7 @@ mod tests {
 
         std::fs::remove_file(&path).unwrap();
         let victim = dir.join("victim");
-        std::fs::write(&victim, b"known-good").unwrap();
+        write_safe_test_file(&victim, b"known-good").unwrap();
         symlink(&victim, &path).expect("metadata symlink should be created");
 
         let err = write_update_metadata_atomic(&path, b"attacker-controlled")
@@ -2127,10 +2204,10 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let dir = temp_test_dir("history-symlink");
-        std::fs::create_dir_all(&dir).expect("history directory should be created");
+        create_safe_test_dir(&dir).expect("history directory should be created");
         let victim = dir.join("victim.json");
         let victim_contents = br#"[{"timestamp":"2026-01-01T00:00:00Z","operation":"apply","success":true,"error":null,"output_tail":null}]"#;
-        std::fs::write(&victim, victim_contents).unwrap();
+        write_safe_test_file(&victim, victim_contents).unwrap();
         let path = dir.join(UPDATE_HISTORY_FILENAME);
         symlink(&victim, &path).expect("history symlink should be created");
 
@@ -2159,7 +2236,7 @@ mod tests {
         let previous = base.join(PREVIOUS_RELEASE_FILENAME);
         std::fs::remove_file(&previous).unwrap();
         let victim = base.join("victim");
-        std::fs::write(&victim, b"v1.2.3").unwrap();
+        write_safe_test_file(&victim, b"v1.2.3").unwrap();
         symlink(&victim, &previous).expect("previous-release symlink should be created");
 
         assert!(find_rollback_target_at(&base).is_none());
@@ -2174,7 +2251,7 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let base = temp_test_dir("outside-current");
-        std::fs::create_dir_all(base.join("releases")).unwrap();
+        create_safe_test_dir(base.join("releases")).unwrap();
         let outside = temp_test_dir("outside-current-target");
         write_release_payload(&outside);
         symlink(&outside, base.join("current")).expect("outside current link should be created");
@@ -2272,7 +2349,7 @@ mod tests {
         let staging = temp_test_dir("nested-extra");
         let bundle = staging.join("aether-v1.2.3-linux-amd64");
         write_release_payload(&bundle);
-        std::fs::write(staging.join("unexpected"), b"extra")
+        write_safe_test_file(staging.join("unexpected"), b"extra")
             .expect("extra entry should be written");
 
         let err = find_release_payload_dir(&staging)
@@ -2290,7 +2367,7 @@ mod tests {
         let release = temp_test_dir("payload-revalidation");
         write_release_payload(&release);
         let victim = release.join("victim");
-        std::fs::write(&victim, b"outside-index").unwrap();
+        write_safe_test_file(&victim, b"outside-index").unwrap();
         std::fs::remove_file(release.join("frontend/index.html")).unwrap();
         symlink(&victim, release.join("frontend/index.html")).unwrap();
 
@@ -2316,8 +2393,8 @@ mod tests {
         write_release_payload(&base.join("releases/v2.0.0"));
         symlink("releases/v1.0.0", base.join("current")).unwrap();
         let predictable = base.join("current.new");
-        std::fs::create_dir(&predictable).unwrap();
-        std::fs::write(predictable.join("keep"), b"known-good").unwrap();
+        create_safe_test_dir(&predictable).unwrap();
+        write_safe_test_file(predictable.join("keep"), b"known-good").unwrap();
 
         switch_current_symlink_at(&base, "v2.0.0").expect("version switch should succeed");
 
@@ -2365,7 +2442,7 @@ mod tests {
         }
         let tarball = encoder.finish().expect("gzip encoder should finish");
         let staging = temp_test_dir("workflow-layout-destination");
-        std::fs::create_dir_all(&staging).expect("staging should be created");
+        create_safe_test_dir(&staging).expect("staging should be created");
 
         unpack_release_archive(&tarball, &staging)
             .expect("workflow-style release archive should unpack");
@@ -2496,7 +2573,7 @@ mod tests {
     #[test]
     fn update_rejects_archive_symlinks() {
         let staging = temp_test_dir("symlink");
-        std::fs::create_dir_all(&staging).expect("staging dir should be created");
+        create_safe_test_dir(&staging).expect("staging dir should be created");
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), Compression::default());
         {
             let mut builder = tar::Builder::new(&mut encoder);
@@ -2524,7 +2601,7 @@ mod tests {
     #[test]
     fn update_rejects_duplicate_archive_paths() {
         let staging = temp_test_dir("duplicate-path");
-        std::fs::create_dir_all(&staging).expect("staging dir should be created");
+        create_safe_test_dir(&staging).expect("staging dir should be created");
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), Compression::default());
         {
             let mut builder = tar::Builder::new(&mut encoder);
@@ -2552,7 +2629,7 @@ mod tests {
     #[test]
     fn update_enforces_archive_entry_limit() {
         let staging = temp_test_dir("entry-limit");
-        std::fs::create_dir_all(&staging).expect("staging dir should be created");
+        create_safe_test_dir(&staging).expect("staging dir should be created");
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), Compression::default());
         {
             let mut builder = tar::Builder::new(&mut encoder);
@@ -2580,7 +2657,7 @@ mod tests {
     #[test]
     fn update_rejects_group_or_world_writable_archive_members() {
         let staging = temp_test_dir("writable-member");
-        std::fs::create_dir_all(&staging).expect("staging dir should be created");
+        create_safe_test_dir(&staging).expect("staging dir should be created");
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), Compression::default());
         {
             let mut builder = tar::Builder::new(&mut encoder);
@@ -2613,10 +2690,10 @@ mod tests {
         let dir = temp_test_dir("existing-release");
         let source = dir.join("prepared-v1.2.3");
         let release = dir.join("releases/v1.2.3");
-        std::fs::create_dir_all(&source).expect("prepared release should be created");
-        std::fs::create_dir_all(&release).expect("existing release should be created");
+        create_safe_test_dir(&source).expect("prepared release should be created");
+        create_safe_test_dir(&release).expect("existing release should be created");
         let sentinel = release.join("keep");
-        std::fs::write(&sentinel, b"known-good").expect("sentinel should be written");
+        write_safe_test_file(&sentinel, b"known-good").expect("sentinel should be written");
 
         let err = rename_release_dir_noreplace(&source, &release)
             .expect_err("existing release must not be replaceable");
@@ -2633,8 +2710,8 @@ mod tests {
         let dir = temp_test_dir("existing-empty-release");
         let source = dir.join("prepared-v1.2.3");
         let release = dir.join("releases/v1.2.3");
-        std::fs::create_dir_all(&source).expect("prepared release should be created");
-        std::fs::create_dir_all(&release).expect("existing release should be created");
+        create_safe_test_dir(&source).expect("prepared release should be created");
+        create_safe_test_dir(&release).expect("existing release should be created");
 
         let err = rename_release_dir_noreplace(&source, &release)
             .expect_err("existing empty release must not be replaceable");
@@ -2654,10 +2731,9 @@ mod tests {
         let dir = temp_test_dir("new-release");
         let source = dir.join("prepared-v1.2.3");
         let release = dir.join("releases/v1.2.3");
-        std::fs::create_dir_all(&source).expect("prepared release should be created");
-        std::fs::create_dir_all(release.parent().unwrap())
-            .expect("releases parent should be created");
-        std::fs::write(source.join("sentinel"), b"prepared")
+        create_safe_test_dir(&source).expect("prepared release should be created");
+        create_safe_test_dir(release.parent().unwrap()).expect("releases parent should be created");
+        write_safe_test_file(source.join("sentinel"), b"prepared")
             .expect("prepared sentinel should be written");
 
         rename_release_dir_noreplace(&source, &release)
@@ -2677,10 +2753,10 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let base = temp_test_dir("private-staging");
-        std::fs::create_dir_all(&base).expect("base should be created");
+        create_safe_test_dir(&base).expect("base should be created");
         let legacy = base.join(format!(".prepare-v1.2.3-{}", std::process::id()));
-        std::fs::create_dir(&legacy).expect("legacy staging should be created");
-        std::fs::write(legacy.join("keep"), b"existing")
+        create_safe_test_dir(&legacy).expect("legacy staging should be created");
+        write_safe_test_file(legacy.join("keep"), b"existing")
             .expect("legacy sentinel should be written");
 
         let staging =
@@ -2728,7 +2804,7 @@ mod tests {
         .unwrap();
         std::fs::remove_file(base.join("current")).unwrap();
         let outside = temp_test_dir("storage-capability-outside");
-        std::fs::create_dir_all(&outside).unwrap();
+        create_safe_test_dir(&outside).unwrap();
         symlink(&outside, base.join("current")).expect("outside current link should be created");
         assert!(!self_update_storage_ready_at(&base));
 

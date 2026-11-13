@@ -7,6 +7,7 @@ pub(crate) fn normalized_signature(api_format: &str) -> Option<&'static str> {
         "openai:responses:compact" => Some("openai:responses:compact"),
         "openai:realtime" => Some("openai:realtime"),
         "openai:search" => Some("openai:search"),
+        "openai:decisions" => Some("openai:decisions"),
         "openai:image" => Some("openai:image"),
         "openai:transcription" => Some("openai:transcription"),
         "openai:video" => Some("openai:video"),
@@ -24,6 +25,7 @@ pub(crate) fn local_path(api_format: &str) -> Option<&'static str> {
         "openai:responses:compact" => Some("/v1/responses/compact"),
         "openai:realtime" => Some("/v1/realtime"),
         "openai:search" => Some("/v1/alpha/search"),
+        "openai:decisions" => Some("/v1/decisions"),
         "openai:image" => Some("/v1/images/generations"),
         "openai:transcription" => Some("/v1/audio/transcriptions"),
 

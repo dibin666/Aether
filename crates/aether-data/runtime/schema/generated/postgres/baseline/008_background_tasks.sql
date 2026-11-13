@@ -41,3 +41,4 @@ CREATE TABLE IF NOT EXISTS public.background_task_events (
 ALTER TABLE ONLY public.background_task_events ADD CONSTRAINT background_task_events_pkey PRIMARY KEY (id);
 CREATE INDEX IF NOT EXISTS idx_background_task_events_run_id ON public.background_task_events USING btree (run_id, created_at_unix_secs);
 ALTER TABLE ONLY public.background_task_events ADD CONSTRAINT fk_background_task_events_run FOREIGN KEY (run_id) REFERENCES public.background_task_runs(id) ON DELETE CASCADE;
+

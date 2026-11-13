@@ -464,8 +464,11 @@ impl ProviderStreamParser {
             | FormatId::OpenAiSearch
             | FormatId::OpenAiRerank
             | FormatId::OpenAiTranscription
+            | FormatId::OpenAiDecisions
+            | FormatId::SystemOneDecisions
             | FormatId::GeminiEmbedding
             | FormatId::GeminiInteractions
+            | FormatId::GeminiDecisions
             | FormatId::JinaEmbedding
             | FormatId::JinaRerank
             | FormatId::DoubaoEmbedding
@@ -588,8 +591,11 @@ impl ClientStreamEmitter {
             | FormatId::OpenAiSearch
             | FormatId::OpenAiRerank
             | FormatId::OpenAiTranscription
+            | FormatId::OpenAiDecisions
+            | FormatId::SystemOneDecisions
             | FormatId::GeminiEmbedding
             | FormatId::GeminiInteractions
+            | FormatId::GeminiDecisions
             | FormatId::JinaEmbedding
             | FormatId::JinaRerank
             | FormatId::DoubaoEmbedding
@@ -751,13 +757,15 @@ fn parse_provider_error(
     payload: &Value,
 ) -> Option<(String, Option<String>, LocalCoreSyncErrorKind)> {
     match FormatId::parse(provider_api_format)? {
-        FormatId::OpenAiChat | FormatId::OpenAiResponses | FormatId::OpenAiResponsesCompact => {
-            parse_openai_error(payload)
-        }
+        FormatId::OpenAiChat
+        | FormatId::OpenAiResponses
+        | FormatId::OpenAiResponsesCompact
+        | FormatId::OpenAiDecisions
+        | FormatId::SystemOneDecisions => parse_openai_error(payload),
         FormatId::ClaudeMessages => parse_claude_error(payload),
-        FormatId::GeminiGenerateContent | FormatId::GeminiInteractions => {
-            parse_gemini_error(payload)
-        }
+        FormatId::GeminiGenerateContent
+        | FormatId::GeminiInteractions
+        | FormatId::GeminiDecisions => parse_gemini_error(payload),
         FormatId::OpenAiEmbedding
         | FormatId::OpenAiRealtime
         | FormatId::OpenAiSearch

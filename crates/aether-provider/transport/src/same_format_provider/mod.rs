@@ -469,6 +469,9 @@ fn build_same_format_provider_request_body_inner(
             if aether_ai_formats::api_format_alias_matches(
                 input.provider_api_format,
                 "gemini:interactions",
+            ) || aether_ai_formats::api_format_alias_matches(
+                input.provider_api_format,
+                "gemini:decisions",
             ) {
                 let rewrite_field = if provider_request_body.contains_key("model") {
                     "model"
@@ -487,7 +490,7 @@ fn build_same_format_provider_request_body_inner(
                         &mut compatibility_edits,
                         rewrite_field,
                         SameFormatProviderCompatibilityEditAction::RuntimeRewrite,
-                        "rewrote Gemini Interactions routing field to mapped upstream target",
+                        "rewrote Gemini routing field to mapped upstream target",
                     );
                 }
             } else {
@@ -930,6 +933,9 @@ pub fn same_format_provider_transport_unsupported_reason_for_trace(
             "claude:messages" => "claude:messages",
             "gemini:generate_content" => "gemini:generate_content",
             "gemini:interactions" => "gemini:interactions",
+            "gemini:decisions" => "gemini:decisions",
+            "openai:decisions" => "openai:decisions",
+            "systemone:decisions" => "systemone:decisions",
             _ => return Some("transport_api_format_unsupported"),
         };
     let behavior = classify_same_format_provider_request_behavior(
@@ -1011,6 +1017,8 @@ fn resolve_same_format_standard_direct_auth(
         || aether_ai_formats::api_format_alias_matches(provider_api_format, "openai:search")
         || aether_ai_formats::api_format_alias_matches(provider_api_format, "openai:transcription")
         || aether_ai_formats::api_format_alias_matches(provider_api_format, "openai:realtime")
+        || aether_ai_formats::api_format_alias_matches(provider_api_format, "openai:decisions")
+        || aether_ai_formats::api_format_alias_matches(provider_api_format, "systemone:decisions")
         || aether_ai_formats::api_format_alias_matches(provider_api_format, "codex:live")
     {
         resolve_local_openai_bearer_auth(transport)

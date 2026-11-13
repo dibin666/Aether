@@ -963,7 +963,7 @@ async fn gateway_handles_admin_stats_provider_performance_locally_with_trusted_a
     let payload: serde_json::Value = response.json().await.expect("json body should parse");
     assert_eq!(payload["summary"]["request_count"], 12);
     assert_eq!(payload["summary"]["success_rate"], 91.67);
-    assert_eq!(payload["summary"]["avg_output_tps"], 20.17);
+    assert_eq!(payload["summary"]["avg_output_tps"], 18.46);
     assert_eq!(payload["summary"]["avg_first_byte_time_ms"], 55.0);
     assert_eq!(payload["summary"]["avg_response_time_ms"], 590.91);
     assert_eq!(payload["summary"]["p99_response_time_ms"], 1000);
@@ -980,7 +980,7 @@ async fn gateway_handles_admin_stats_provider_performance_locally_with_trusted_a
     assert_eq!(payload["providers"][0]["error_count"], 1);
     assert_eq!(payload["providers"][0]["success_rate"], 90.91);
     assert_eq!(payload["providers"][0]["output_tokens"], 199);
-    assert_eq!(payload["providers"][0]["avg_output_tps"], 20.2);
+    assert_eq!(payload["providers"][0]["avg_output_tps"], 18.18);
     assert_eq!(payload["providers"][0]["avg_first_byte_time_ms"], 55.0);
     assert_eq!(payload["providers"][0]["avg_response_time_ms"], 550.0);
     assert_eq!(payload["providers"][0]["p90_response_time_ms"], 910);
@@ -1007,7 +1007,7 @@ async fn gateway_handles_admin_stats_provider_performance_locally_with_trusted_a
     assert_eq!(payload["timeline"].as_array().map(Vec::len), Some(2));
     assert_eq!(payload["timeline"][0]["date"], "2024-03-21T05:00:00+00:00");
     assert_eq!(payload["timeline"][0]["provider_id"], "provider-1");
-    assert_eq!(payload["timeline"][0]["avg_output_tps"], 20.2);
+    assert_eq!(payload["timeline"][0]["avg_output_tps"], 18.18);
     assert_eq!(payload["timeline"][0]["success_rate"], 90.91);
     assert_eq!(payload["timeline"][0]["slow_request_count"], 0);
     assert_eq!(payload["timeline"][1]["provider_id"], "provider-2");

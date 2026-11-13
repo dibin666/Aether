@@ -83,6 +83,9 @@ const RECEIVE_TIMEOUT: Duration = Duration::from_secs(15);
 #[tokio::test]
 async fn continuation_reuses_one_upstream_connection_and_bills_both_turns() -> Result<(), BoxError>
 {
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start(UpstreamBehavior::CompleteEveryTurn).await?;
     let mut client = harness.connect().await?;
 
@@ -167,6 +170,9 @@ async fn continuation_reuses_one_upstream_connection_and_bills_both_turns() -> R
 #[tokio::test]
 async fn weekly_plan_request_limit_counts_turns_but_not_the_websocket_upgrade(
 ) -> Result<(), BoxError> {
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start_with_weekly_request_limit(1).await?;
     let mut client = harness.connect().await?;
 
@@ -199,6 +205,9 @@ async fn weekly_plan_request_limit_counts_turns_but_not_the_websocket_upgrade(
 #[tokio::test]
 async fn persisted_previous_response_can_continue_on_a_new_client_connection(
 ) -> Result<(), BoxError> {
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start(UpstreamBehavior::CompleteEveryTurn).await?;
 
     let mut first_client = harness.connect().await?;
@@ -250,6 +259,9 @@ async fn persisted_previous_response_can_continue_on_a_new_client_connection(
 
 #[tokio::test]
 async fn unknown_future_request_and_response_fields_round_trip_opaquely() -> Result<(), BoxError> {
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start(UpstreamBehavior::FutureEventThenComplete).await?;
     let mut client = harness.connect().await?;
 
@@ -282,6 +294,9 @@ async fn unknown_future_request_and_response_fields_round_trip_opaquely() -> Res
 #[tokio::test]
 async fn invalid_or_control_text_on_a_bound_socket_does_not_poison_the_next_valid_turn(
 ) -> Result<(), BoxError> {
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start(UpstreamBehavior::CompleteEveryTurn).await?;
     let mut client = harness.connect().await?;
 
@@ -358,6 +373,9 @@ async fn downstream_credentials_and_handshake_headers_do_not_reach_upstream() ->
     const WEBSOCKET_FUTURE_VALUE: &str = "downstream-future-websocket-secret";
     const CONNECTION_SECRET: &str = "downstream-connection-secret";
 
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start(UpstreamBehavior::CompleteEveryTurn).await?;
     let mut request = format!(
         "{}?key={QUERY_CREDENTIAL}&client_version=0.145.2",
@@ -447,6 +465,9 @@ async fn downstream_credentials_and_handshake_headers_do_not_reach_upstream() ->
 #[tokio::test]
 async fn disabling_the_downstream_key_is_enforced_on_the_next_turn_of_the_same_socket(
 ) -> Result<(), BoxError> {
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start(UpstreamBehavior::CompleteEveryTurn).await?;
     let mut client = harness.connect().await?;
 
@@ -508,6 +529,9 @@ async fn disabling_the_downstream_key_is_enforced_on_the_next_turn_of_the_same_s
 /// `a_closed_client_socket_before_any_terminal_still_voids_the_bill`.
 #[tokio::test]
 async fn client_disconnect_before_any_provider_output_settles_a_void_row() -> Result<(), BoxError> {
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start_configured(
         UpstreamBehavior::StallAfterCreated,
         ProviderFixture::SingleOpenAiKey,
@@ -553,6 +577,9 @@ async fn client_disconnect_before_any_provider_output_settles_a_void_row() -> Re
 
 #[tokio::test]
 async fn client_disconnect_defaults_to_completing_and_billing_the_turn() -> Result<(), BoxError> {
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start(UpstreamBehavior::CompleteAfterRelease).await?;
     let mut client = harness.connect().await?;
     client
@@ -577,6 +604,9 @@ async fn client_disconnect_defaults_to_completing_and_billing_the_turn() -> Resu
 #[tokio::test]
 async fn client_disconnect_still_settles_the_per_request_fee_when_aborted() -> Result<(), BoxError>
 {
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start_configured(
         UpstreamBehavior::StallAfterCreated,
         ProviderFixture::SingleOpenAiKey,
@@ -622,6 +652,9 @@ async fn client_disconnect_still_settles_the_per_request_fee_when_aborted() -> R
 #[tokio::test]
 async fn upstream_drop_mid_turn_reports_an_error_and_settles_the_usage_row() -> Result<(), BoxError>
 {
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start(UpstreamBehavior::CloseAfterCreated).await?;
     let mut client = harness.connect().await?;
 
@@ -659,6 +692,9 @@ async fn upstream_drop_mid_turn_reports_an_error_and_settles_the_usage_row() -> 
 #[tokio::test]
 async fn provider_quota_exhaustion_transparently_retries_onto_another_key() -> Result<(), BoxError>
 {
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start_with_fixture(
         UpstreamBehavior::QuotaExhaustedThenComplete,
         ProviderFixture::CodexKeyPair,
@@ -753,6 +789,9 @@ async fn redacted_pii_is_restored_before_the_client_sees_a_provider_frame() -> R
 {
     const CLIENT_EMAIL: &str = "responses.ws.pii@example.com";
 
+    if postgres_e2e_unavailable_skip() {
+        return Ok(());
+    }
     let harness = Harness::start_with_pii_redaction(UpstreamBehavior::EchoInputBack).await?;
     let mut client = harness.connect().await?;
 
@@ -1494,6 +1533,39 @@ async fn send_mock_event(socket: &mut WebSocket, event: Value) -> Result<(), axu
 // ---------------------------------------------------------------------------
 // Seeded data store
 // ---------------------------------------------------------------------------
+
+fn postgres_e2e_binaries_available() -> bool {
+    ["AETHER_INITDB_BIN", "AETHER_POSTGRES_BIN"]
+        .into_iter()
+        .map(|var| {
+            std::env::var(var)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| {
+                    var.trim_start_matches("AETHER_")
+                        .trim_end_matches("_BIN")
+                        .to_ascii_lowercase()
+                })
+        })
+        .all(|binary| {
+            std::process::Command::new(&binary)
+                .arg("--version")
+                .output()
+                .is_ok_and(|output| output.status.success())
+        })
+}
+
+fn postgres_e2e_unavailable_skip() -> bool {
+    if postgres_e2e_binaries_available() {
+        false
+    } else {
+        eprintln!(
+            "skipping e2e test: initdb/postgres binaries unavailable \
+             (set AETHER_INITDB_BIN/AETHER_POSTGRES_BIN/AETHER_PG_CTL_BIN)"
+        );
+        true
+    }
+}
 
 struct TemporaryPostgres {
     _server: ManagedPostgresServer,

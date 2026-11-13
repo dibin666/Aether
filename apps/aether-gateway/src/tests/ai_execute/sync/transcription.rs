@@ -450,9 +450,12 @@ async fn gateway_preserves_transcription_sync_binary_body_response_formats_and_f
         .filter(|plan| plan["request_id"] == "trace-transcription-failover-1")
         .map(|plan| plan["provider_id"].clone())
         .collect::<Vec<_>>();
+    // Same-key retry: the retryable upstream 500 re-issues one attempt against
+    // provider-transcription-1 before failing over to provider-transcription-2.
     assert_eq!(
         failover_provider_ids,
         vec![
+            json!("provider-transcription-1"),
             json!("provider-transcription-1"),
             json!("provider-transcription-2")
         ]
@@ -461,9 +464,12 @@ async fn gateway_preserves_transcription_sync_binary_body_response_formats_and_f
         .list_by_request_id("trace-transcription-failover-1")
         .await
         .expect("failover candidates should read");
-    assert_eq!(candidates.len(), 2);
+    // The same-key retry against provider-transcription-1 is persisted as its
+    // own attempt row before the failover to provider-transcription-2.
+    assert_eq!(candidates.len(), 3);
     assert_eq!(candidates[0].status, RequestCandidateStatus::Failed);
-    assert_eq!(candidates[1].status, RequestCandidateStatus::Success);
+    assert_eq!(candidates[1].status, RequestCandidateStatus::Failed);
+    assert_eq!(candidates[2].status, RequestCandidateStatus::Success);
 
     gateway_handle.abort();
     execution_runtime_handle.abort();

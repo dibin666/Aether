@@ -337,10 +337,23 @@ async fn gateway_executes_gemini_video_cancel_via_data_backed_local_follow_up_wi
         "sk-upstream-gemini-video"
     );
 
-    let stored_candidates = request_candidate_repository
-        .list_by_request_id("request-gemini-video-cancel-local-123")
-        .await
-        .expect("request candidate trace should read");
+    // Candidate persistence and its terminal status write are asynchronous;
+    // poll briefly instead of racing them.
+    let mut stored_candidates = Vec::new();
+    for _ in 0..80 {
+        stored_candidates = request_candidate_repository
+            .list_by_request_id("request-gemini-video-cancel-local-123")
+            .await
+            .expect("request candidate trace should read");
+        if !stored_candidates.is_empty()
+            && stored_candidates
+                .iter()
+                .all(|candidate| candidate.status == RequestCandidateStatus::Success)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
     assert_eq!(stored_candidates.len(), 1);
     assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Success);
 
@@ -602,10 +615,23 @@ async fn gateway_executes_gemini_video_cancel_via_reconstructed_data_backed_loca
         "sk-upstream-gemini-video"
     );
 
-    let stored_candidates = request_candidate_repository
-        .list_by_request_id("request-gemini-video-cancel-op-123")
-        .await
-        .expect("request candidate trace should read");
+    // Candidate persistence and its terminal status write are asynchronous;
+    // poll briefly instead of racing them.
+    let mut stored_candidates = Vec::new();
+    for _ in 0..80 {
+        stored_candidates = request_candidate_repository
+            .list_by_request_id("request-gemini-video-cancel-op-123")
+            .await
+            .expect("request candidate trace should read");
+        if !stored_candidates.is_empty()
+            && stored_candidates
+                .iter()
+                .all(|candidate| candidate.status == RequestCandidateStatus::Success)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
     assert_eq!(stored_candidates.len(), 1);
     assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Success);
 

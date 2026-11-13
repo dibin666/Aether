@@ -349,10 +349,23 @@ async fn gateway_executes_openai_video_delete_via_reconstructed_data_backed_loca
         "Bearer sk-upstream-openai-video"
     );
 
-    let stored_candidates = request_candidate_repository
-        .list_by_request_id("request-openai-video-delete-local-123")
-        .await
-        .expect("request candidate trace should read");
+    // Candidate persistence and its terminal status write are asynchronous;
+    // poll briefly instead of racing them.
+    let mut stored_candidates = Vec::new();
+    for _ in 0..80 {
+        stored_candidates = request_candidate_repository
+            .list_by_request_id("request-openai-video-delete-local-123")
+            .await
+            .expect("request candidate trace should read");
+        if !stored_candidates.is_empty()
+            && stored_candidates
+                .iter()
+                .all(|candidate| candidate.status == RequestCandidateStatus::Success)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
     assert_eq!(stored_candidates.len(), 1);
     assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Success);
 

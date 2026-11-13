@@ -150,7 +150,7 @@ async fn gateway_serves_frontend_routes_and_assets_without_shadowing_public_api(
             .headers()
             .get("cache-control")
             .and_then(|value| value.to_str().ok()),
-        Some("no-store, no-cache, must-revalidate")
+        Some("no-cache, no-store, must-revalidate")
     );
     let content_type = response
         .headers()
@@ -173,7 +173,7 @@ async fn gateway_serves_frontend_routes_and_assets_without_shadowing_public_api(
             .headers()
             .get("cache-control")
             .and_then(|value| value.to_str().ok()),
-        Some("no-store, no-cache, must-revalidate")
+        Some("no-cache, no-store, must-revalidate")
     );
     let body = response.text().await.expect("spa body should be readable");
     assert!(body.contains("Aether Frontend"));

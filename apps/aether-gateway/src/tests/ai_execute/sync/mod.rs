@@ -26,6 +26,7 @@ use super::{
 mod chat;
 mod claude;
 mod cli;
+mod decisions;
 mod gemini;
 mod image;
 mod pii_redaction_formats;

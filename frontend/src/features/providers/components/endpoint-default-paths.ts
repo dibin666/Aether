@@ -92,7 +92,9 @@ function usesVersionedApiRootByDefault(apiFormat: string): boolean {
     || apiFormat === 'openai:responses:compact'
     || apiFormat === 'openai:realtime'
     || apiFormat === 'openai:search'
+    || apiFormat === 'openai:decisions'
     || apiFormat === 'openai:embedding'
+    || apiFormat === 'systemone:decisions'
     || apiFormat === 'openai:rerank'
     || apiFormat === 'openai:image'
     || apiFormat === 'openai:video'
@@ -102,6 +104,7 @@ function usesVersionedApiRootByDefault(apiFormat: string): boolean {
     || apiFormat === 'claude:messages'
     || apiFormat === 'gemini:generate_content'
     || apiFormat === 'gemini:interactions'
+    || apiFormat === 'gemini:decisions'
     || apiFormat === 'gemini:embedding'
     || apiFormat === 'gemini:video'
 }
@@ -114,6 +117,7 @@ function versionedApiRootSuffix(apiFormat: string): '/v1' | '/v1beta' {
   }
   if (
     apiFormat === 'gemini:generate_content'
+    || apiFormat === 'gemini:decisions'
     || apiFormat === 'gemini:embedding'
     || apiFormat === 'gemini:video'
   ) {
@@ -126,6 +130,7 @@ function skipsVersionedApiRootDefault(apiFormat: string, baseUrl: string): boole
   if (
     apiFormat === 'gemini:generate_content'
     || apiFormat === 'gemini:interactions'
+    || apiFormat === 'gemini:decisions'
     || apiFormat === 'gemini:embedding'
     || apiFormat === 'gemini:video'
   ) {

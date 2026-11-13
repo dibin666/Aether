@@ -4148,8 +4148,8 @@ VALUES ($1, $2, $3, 0, 0, $4::jsonb)
             );
         }
         assert!(sql.contains("is_active = $25"));
-        assert!(sql.contains("updated_at = CASE"));
-        assert!(sql.contains("WHEN $26::double precision IS NULL THEN NOW()"));
+        assert!(sql.contains("updated_at = case"));
+        assert!(sql.contains("when $26::double precision is null then now()"));
         assert!(sql.contains("auth_type_by_format = $27"));
         assert!(sql.contains("allow_auth_channel_mismatch_formats = $28"));
         assert!(sql.contains("rpm_limit = $12"));

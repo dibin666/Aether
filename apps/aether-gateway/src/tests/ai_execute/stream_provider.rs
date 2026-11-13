@@ -1060,10 +1060,23 @@ async fn gateway_executes_claude_cli_stream_via_local_decision_gate_without_wait
         "chrome_136"
     );
 
-    let stored_candidates = request_candidate_repository
-        .list_by_request_id("trace-claude-cli-local-stream-123")
-        .await
-        .expect("request candidate trace should read");
+    // The terminal candidate status is written by a spawned finalize task after
+    // the stream completes; poll briefly instead of racing that write.
+    let mut stored_candidates = Vec::new();
+    for _ in 0..80 {
+        stored_candidates = request_candidate_repository
+            .list_by_request_id("trace-claude-cli-local-stream-123")
+            .await
+            .expect("request candidate trace should read");
+        if !stored_candidates.is_empty()
+            && stored_candidates
+                .iter()
+                .all(|candidate| candidate.status == RequestCandidateStatus::Success)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
     assert_eq!(stored_candidates.len(), 1);
     assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Success);
 
@@ -2066,10 +2079,23 @@ async fn gateway_executes_claude_chat_stream_via_local_decision_gate_with_local_
         "chrome_136"
     );
 
-    let stored_candidates = request_candidate_repository
-        .list_by_request_id("trace-claude-chat-local-stream-123")
-        .await
-        .expect("request candidate trace should read");
+    // The terminal candidate status is written by a spawned finalize task after
+    // the stream completes; poll briefly instead of racing that write.
+    let mut stored_candidates = Vec::new();
+    for _ in 0..80 {
+        stored_candidates = request_candidate_repository
+            .list_by_request_id("trace-claude-chat-local-stream-123")
+            .await
+            .expect("request candidate trace should read");
+        if !stored_candidates.is_empty()
+            && stored_candidates
+                .iter()
+                .all(|candidate| candidate.status == RequestCandidateStatus::Success)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
     assert_eq!(stored_candidates.len(), 1);
     assert_eq!(stored_candidates[0].status, RequestCandidateStatus::Success);
 

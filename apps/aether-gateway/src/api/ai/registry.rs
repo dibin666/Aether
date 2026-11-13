@@ -7,7 +7,7 @@ use axum::http::{header, HeaderMap, HeaderValue, Response, StatusCode, Uri};
 use axum::routing::{any, get, post};
 use axum::Router;
 
-use super::{aliyun, claude, doubao, gemini, jina, openai};
+use super::{aliyun, claude, doubao, gemini, jina, openai, systemone};
 use crate::api::response::build_local_http_error_response_with_request_path;
 use crate::headers::extract_or_generate_trace_id;
 use crate::{
@@ -28,11 +28,14 @@ const AI_POST_ROUTE_PATTERNS: &[&str] = &[
     "/v1/live",
     "/v1/realtime/calls",
     "/v1/alpha/search",
+    "/v1/decisions",
+    "/v1/systemone",
     "/v1/images/generations",
     "/v1/images/edits",
     "/v1/audio/transcriptions",
     "/v1/interactions",
     "/v1beta/interactions",
+    "/v1beta/decisions",
     "/v1internal:loadCodeAssist",
     "/v1internal:fetchAvailableModels",
     "/v1internal:retrieveUserQuotaSummary",
@@ -158,6 +161,7 @@ async fn claude_method_not_allowed(request: Request) -> Result<Response<Body>, G
 pub(crate) fn public_api_format_local_path(api_format: &str) -> &'static str {
     let normalized = api_format.trim().to_ascii_lowercase();
     openai::local_path(&normalized)
+        .or_else(|| systemone::local_path(&normalized))
         .or_else(|| claude::local_path(&normalized))
         .or_else(|| gemini::local_path(&normalized))
         .or_else(|| jina::local_path(&normalized))
@@ -169,6 +173,7 @@ pub(crate) fn public_api_format_local_path(api_format: &str) -> &'static str {
 pub(crate) fn normalize_admin_endpoint_signature(api_format: &str) -> Option<&'static str> {
     let normalized = api_format.trim().to_ascii_lowercase();
     openai::normalized_signature(&normalized)
+        .or_else(|| systemone::normalized_signature(&normalized))
         .or_else(|| claude::normalized_signature(&normalized))
         .or_else(|| gemini::normalized_signature(&normalized))
         .or_else(|| jina::normalized_signature(&normalized))
@@ -271,6 +276,19 @@ mod tests {
                 "gemini",
                 "interactions",
                 "/v1/interactions",
+            ),
+            (
+                "gemini:decisions",
+                "gemini",
+                "decisions",
+                "/v1beta/decisions",
+            ),
+            ("openai:decisions", "openai", "decisions", "/v1/decisions"),
+            (
+                "systemone:decisions",
+                "systemone",
+                "decisions",
+                "/v1/systemone",
             ),
             (
                 "gemini:embedding",

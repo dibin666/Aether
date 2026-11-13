@@ -156,8 +156,7 @@ pub(crate) fn websocket_upstream_url(
     };
     url.set_scheme(http_scheme).map_err(|_| invalid_code)?;
     // fork：私网/保留地址放行，与执行路径一致。
-    let mut url =
-        validate_execution_upstream_url(url.as_str()).map_err(|_| invalid_code)?;
+    let mut url = validate_execution_upstream_url(url.as_str()).map_err(|_| invalid_code)?;
     url.set_scheme(websocket_scheme).map_err(|_| invalid_code)?;
     Ok(url)
 }
@@ -817,10 +816,7 @@ mod tests {
 
     #[test]
     fn rejects_upstream_url_with_credentials() {
-        assert!(
-            websocket_upstream_url("https://token@example.test/responses", "invalid")
-                .is_err()
-        );
+        assert!(websocket_upstream_url("https://token@example.test/responses", "invalid").is_err());
     }
 
     #[test]

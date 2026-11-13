@@ -223,6 +223,44 @@ export function buildDefaultModelTestRequestBody(
     }, null, 2)
   }
 
+  if (normalizedApiFormat === 'openai:decisions') {
+    return JSON.stringify({
+      model: modelName,
+      input: DEFAULT_MODEL_TEST_MESSAGE,
+      questions: [{
+        type: 'predicate',
+        name: 'is_test_message',
+        instructions: 'Is this a test message?',
+      }],
+    }, null, 2)
+  }
+
+  if (normalizedApiFormat === 'systemone:decisions') {
+    return JSON.stringify({
+      model: modelName,
+      state: DEFAULT_MODEL_TEST_MESSAGE,
+      questions: {
+        is_test_message: {
+          type: 'noul',
+          instructions: 'Is this a test message?',
+        },
+      },
+    }, null, 2)
+  }
+
+  if (normalizedApiFormat === 'gemini:decisions') {
+    return JSON.stringify({
+      model: modelName,
+      input: DEFAULT_MODEL_TEST_MESSAGE,
+      questions: {
+        is_test_message: {
+          type: 'noul',
+          instructions: 'Is this a test message?',
+        },
+      },
+    }, null, 2)
+  }
+
   if (normalizedApiFormat === 'gemini:interactions') {
     return JSON.stringify({
       model: modelName,

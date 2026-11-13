@@ -469,9 +469,13 @@ fn prepare_execution_runtime_socket_path(requested_path: &Path) -> io::Result<Pa
     let parent = std::fs::canonicalize(requested_parent)?;
     validate_execution_runtime_socket_parent(&parent)?;
     let metadata = std::fs::symlink_metadata(&parent)?;
-    if metadata.mode() & 0o022 != 0
-        && metadata.mode() & 0o1000 == 0
-        && metadata.uid() == unsafe { libc::geteuid() }
+    let mode = metadata.mode();
+    // Harden a leaf we own whenever it is writable without sticky protection
+    // or the owner unexpectedly lacks access. The latter can happen when a
+    // concurrent bind's temporary umask(0o177) raced mkdir(0o700) and left
+    // the directory at 0600, which would make the bind fail with EACCES.
+    if metadata.uid() == unsafe { libc::geteuid() }
+        && ((mode & 0o022 != 0 && mode & 0o1000 == 0) || mode & 0o700 != 0o700)
     {
         std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700))?;
     }
@@ -942,7 +946,7 @@ mod tests {
     use std::convert::Infallible;
     use std::fs;
     #[cfg(unix)]
-    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
     #[cfg(unix)]
     use std::os::unix::net::UnixListener as StdUnixListener;
     use std::path::PathBuf;
@@ -1179,6 +1183,42 @@ mod tests {
         }
     }
 
+    /// Create a private parent chain regardless of the process umask. A
+    /// concurrent socket bind temporarily flips the process umask to 0o177,
+    /// which can tighten a freshly mkdir'd component to 0600 mid-create, so
+    /// normalize every component we own after creation.
+    #[cfg(unix)]
+    fn create_private_parent(path: &std::path::Path) {
+        let normalize_owned_components = |path: &std::path::Path| {
+            let effective_uid = unsafe { libc::geteuid() };
+            let mut components: Vec<&std::path::Path> = path.ancestors().collect();
+            components.reverse();
+            for component in components {
+                let Ok(metadata) = fs::symlink_metadata(component) else {
+                    continue;
+                };
+                if metadata.is_dir() && metadata.uid() == effective_uid {
+                    fs::set_permissions(component, fs::Permissions::from_mode(0o700))
+                        .expect("parent mode should normalize");
+                }
+            }
+        };
+        for _ in 0..4 {
+            match std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(path)
+            {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    normalize_owned_components(path);
+                }
+                Err(error) => panic!("parent should be created: {error}"),
+            }
+        }
+        normalize_owned_components(path);
+    }
+
     #[cfg(unix)]
     fn test_socket_path() -> PathBuf {
         std::env::temp_dir()
@@ -1225,7 +1265,7 @@ mod tests {
     async fn execution_runtime_unix_socket_rejects_regular_file_path() {
         let socket_path = test_socket_path();
         let parent = socket_path.parent().expect("socket should have a parent");
-        fs::create_dir_all(parent).expect("parent should be created");
+        create_private_parent(parent);
         fs::write(&socket_path, b"do not replace this file").expect("file should be created");
 
         let error = super::bind_secure_execution_runtime_socket(&socket_path)
@@ -1247,7 +1287,7 @@ mod tests {
 
         let socket_path = test_socket_path();
         let parent = socket_path.parent().expect("socket should have a parent");
-        fs::create_dir_all(parent).expect("parent should be created");
+        create_private_parent(parent);
         let target = parent.join("target");
         fs::write(&target, b"target must not be followed").expect("target should be created");
         symlink(&target, &socket_path).expect("symlink should be created");
@@ -1316,7 +1356,10 @@ mod tests {
     async fn execution_runtime_unix_socket_rebinds_stale_current_user_socket() {
         let socket_path = test_socket_path();
         let parent = socket_path.parent().expect("socket should have a parent");
-        fs::create_dir_all(parent).expect("parent should be created");
+        // A 002 umask would otherwise leave 775 ancestors that the
+        // socket-path validator correctly rejects as writable without sticky
+        // protection; create the parent private explicitly.
+        create_private_parent(parent);
         let stale_listener = StdUnixListener::bind(&socket_path).expect("stale socket should bind");
         drop(stale_listener);
 
