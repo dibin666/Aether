@@ -33,6 +33,159 @@ const DECISIONS_SYNC_TEST_STACK_BYTES: usize = 16 * 1024 * 1024;
 const CLIENT_MODEL: &str = "decision-client-model";
 const CLIENT_API_KEY: &str = "sk-client-decisions";
 
+#[test]
+fn gateway_converts_decisions_pairs_and_enforces_conversion_gate() {
+    run_decisions_sync_test(
+        "gateway_converts_decisions_pairs_and_enforces_conversion_gate",
+        || async {
+            let formats = [
+                "gemini:decisions",
+                "openai:decisions",
+                "systemone:decisions",
+            ];
+            for client in formats {
+                for upstream in formats {
+                    if client == upstream {
+                        continue;
+                    }
+                    assert_cross_format_route(client, upstream, true, false).await;
+                }
+            }
+            assert_cross_format_route("openai:decisions", "gemini:decisions", false, false).await;
+            assert_cross_format_route("openai:decisions", "gemini:decisions", false, true).await;
+        },
+    );
+}
+
+async fn assert_cross_format_route(
+    client: &str,
+    upstream: &str,
+    enabled: bool,
+    endpoint_enabled: bool,
+) {
+    let seen = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+    let capture = Arc::clone(&seen);
+    let runtime=Router::new().route("/v1/execute/sync",any(move |request:Request| {
+        let capture=Arc::clone(&capture);
+        async move {
+            let bytes=to_bytes(request.into_body(),usize::MAX).await.unwrap();
+            let plan:serde_json::Value=serde_json::from_slice(&bytes).unwrap();
+            let response=if plan["provider_api_format"]=="openai:decisions" {
+                json!({"model":"gemini-decision-1","answers":[{"name":"team","type":"choice","choice":"billing","confidence":0.9,"probabilities":[{"value":"billing","probability":0.9},{"value":"shipping","probability":0.1}]}],"usage":{"input_tokens":23,"output_tokens":0,"total_tokens":23}})
+            } else {
+                json!({"model":"gemini-decision-1","answers":{"team":{"type":"choice","choice":"billing","confidence":0.9,"probabilities":{"billing":0.9,"shipping":0.1}}},"usage":if plan["provider_api_format"]=="gemini:decisions" {json!({"total_input_tokens":23,"total_output_tokens":0,"total_tokens":23})} else {json!({"input_tokens":23,"cached_input_tokens":0,"output_tokens":0})}})
+            };
+            let request_id=plan["request_id"].clone();capture.lock().unwrap().push(plan);
+            Json(json!({"request_id":request_id,"status_code":200,"headers":{"content-type":"application/json"},"body":{"json_body":response},"telemetry":{"elapsed_ms":5}}))
+        }
+    }));
+    let (runtime_url, runtime_handle) = start_server(runtime).await;
+    let mut upstream_provider = provider(1);
+    upstream_provider.enable_format_conversion = enabled;
+    let mut upstream_endpoint = endpoint(1, upstream);
+    if endpoint_enabled {
+        upstream_endpoint.format_acceptance_config =
+            Some(json!({"enabled":true,"accept_formats":[client]}));
+    }
+    let data_state=crate::data::GatewayDataState::with_auth_candidate_selection_provider_catalog_and_request_candidate_repository_for_tests(
+        Arc::new(InMemoryAuthApiKeySnapshotRepository::seed(vec![(Some(hash_api_key(CLIENT_API_KEY)),auth_snapshot())])),
+        Arc::new(InMemoryMinimalCandidateSelectionReadRepository::seed(vec![candidate_row(1,upstream)])),
+        Arc::new(InMemoryProviderCatalogReadRepository::seed(vec![upstream_provider],vec![upstream_endpoint],vec![key(1,upstream)])),
+        Arc::new(InMemoryRequestCandidateRepository::default()),DEVELOPMENT_ENCRYPTION_KEY,
+    );
+    let state = build_state_with_execution_runtime_override(runtime_url)
+        .with_data_state_for_tests(data_state);
+    let (url, handle) = start_server(build_router_with_state(state)).await;
+    let body = if client == "openai:decisions" {
+        json!({"model":CLIENT_MODEL,"input":"A billing question","questions":[{"name":"team","type":"choice","instructions":"Which team?","choices":[{"value":"billing","description":"Payments"},{"value":"shipping","description":"Delivery"}]}]})
+    } else {
+        json!({"model":CLIENT_MODEL,if client=="systemone:decisions" {"state"} else {"input"}:"A billing question","questions":{"team":{"type":"choice","instructions":"Which team?","criteria":{"billing":"Payments","shipping":"Delivery"}}}})
+    };
+    let path = match client {
+        "gemini:decisions" => "/v1beta/decisions",
+        "openai:decisions" => "/v1/decisions",
+        _ => "/v1/systemone",
+    };
+    let mut request = reqwest::Client::new()
+        .post(format!("{url}{path}"))
+        .header(TRACE_ID_HEADER, "trace-decisions-cross")
+        .json(&body);
+    request = if client == "gemini:decisions" {
+        request.header("x-goog-api-key", CLIENT_API_KEY)
+    } else {
+        request.bearer_auth(CLIENT_API_KEY)
+    };
+    let response = request.send().await.unwrap();
+    let status = response.status();
+    let payload: serde_json::Value = response.json().await.unwrap();
+    if enabled || endpoint_enabled {
+        assert_eq!(status, StatusCode::OK, "{client} -> {upstream}: {payload}");
+        if client == "openai:decisions" {
+            assert_eq!(payload["answers"][0]["name"], "team");
+            assert_eq!(payload["answers"][0]["choice"], "billing");
+        } else {
+            assert_eq!(payload["answers"]["team"]["choice"], "billing");
+        }
+        let plans = seen.lock().unwrap();
+        assert_eq!(plans.len(), 1);
+        let plan = &plans[0];
+        assert_eq!(plan["provider_api_format"], upstream);
+        assert_eq!(plan["client_api_format"], client);
+        assert_eq!(plan["stream"], false);
+        assert_eq!(plan["body"]["json_body"]["model"], provider_model(1));
+        assert_eq!(
+            plan["body"]["json_body"][if upstream == "systemone:decisions" {
+                "state"
+            } else {
+                "input"
+            }],
+            "A billing question"
+        );
+        if upstream == "gemini:decisions" {
+            assert_eq!(plan["headers"]["x-goog-api-key"], "sk-upstream-decisions-1");
+        } else {
+            assert_eq!(
+                plan["headers"]["authorization"],
+                "Bearer sk-upstream-decisions-1"
+            );
+        }
+    } else {
+        assert!(
+            status.is_client_error() || status.is_server_error(),
+            "{status}: {payload}"
+        );
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "disabled conversion must not execute upstream"
+        );
+    }
+    if client == "openai:decisions" && (enabled || endpoint_enabled) {
+        let mut invalid = body.clone();
+        invalid["questions"]
+            .as_array_mut()
+            .unwrap()
+            .push(body["questions"][0].clone());
+        let response = reqwest::Client::new()
+            .post(format!("{url}{path}"))
+            .bearer_auth(CLIENT_API_KEY)
+            .json(&invalid)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let error = response.text().await.unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+        assert!(error.contains("duplicate"), "{error}");
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "invalid conversion must not execute upstream"
+        );
+    }
+    handle.abort();
+    runtime_handle.abort();
+}
+
 fn run_decisions_sync_test<F, Fut>(test_name: &'static str, make_future: F)
 where
     F: FnOnce() -> Fut + Send + 'static,
@@ -650,6 +803,17 @@ async fn gateway_executes_all_decisions_dialects_with_documented_contracts_impl(
         .list_by_request_id("trace-decisions-gemini-1")
         .await
         .expect("candidates should read");
+    assert_eq!(
+        candidates
+            .iter()
+            .filter(|c| c.status == RequestCandidateStatus::Skipped)
+            .count(),
+        2
+    );
+    let candidates = candidates
+        .into_iter()
+        .filter(|c| c.status != RequestCandidateStatus::Skipped)
+        .collect::<Vec<_>>();
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].status, RequestCandidateStatus::Success);
 

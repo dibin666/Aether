@@ -170,6 +170,15 @@ pub fn request_conversion_transport_unsupported_reason(
             transport,
             "gemini:generate_content",
         ),
+        "gemini:decisions" => {
+            local_gemini_transport_unsupported_reason_with_network(transport, "gemini:decisions")
+        }
+        "openai:decisions" | "systemone:decisions" => {
+            local_standard_transport_unsupported_reason_with_network(
+                transport,
+                transport.endpoint.api_format.trim(),
+            )
+        }
         _ => Some("transport_api_format_unsupported"),
     }
 }
@@ -247,8 +256,10 @@ fn request_direct_auth_for_provider_format(
         | "aliyun:multimodal_embedding"
         | "openai:rerank"
         | "openai:transcription"
+        | "openai:decisions"
+        | "systemone:decisions"
         | "jina:rerank" => resolve_local_openai_bearer_auth(transport),
-        "gemini:generate_content" | "gemini:embedding" => {
+        "gemini:generate_content" | "gemini:embedding" | "gemini:decisions" => {
             if is_vertex_api_key_transport_context(transport) {
                 resolve_local_vertex_api_key_query_auth(transport)
                     .map(|auth| (VERTEX_API_KEY_QUERY_PARAM.to_string(), auth.value))
@@ -461,7 +472,8 @@ mod tests {
         candidate_common_transport_skip_reason, candidate_transport_pair_skip_reason,
         request_conversion_direct_auth, request_conversion_enabled_for_transport,
         request_conversion_transport_supported, request_pair_allowed_for_transport,
-        request_pair_direct_auth, CandidateTransportPolicyFacts,
+        request_pair_direct_auth, request_pair_transport_unsupported_reason,
+        CandidateTransportPolicyFacts,
     };
     use aether_ai_formats::formats::matrix::RequestConversionKind;
     use serde_json::json;
@@ -590,6 +602,54 @@ mod tests {
             "gemini:generate_content",
             "openai:responses"
         ));
+    }
+
+    #[test]
+    fn decisions_pairs_require_provider_or_endpoint_conversion_enablement() {
+        let formats = [
+            "gemini:decisions",
+            "openai:decisions",
+            "systemone:decisions",
+        ];
+        for client in formats {
+            for provider in formats {
+                if client == provider {
+                    continue;
+                }
+                let disabled = transport_snapshot("custom", provider, "api_key", false, None);
+                assert!(!request_pair_allowed_for_transport(
+                    &disabled, client, provider
+                ));
+                let enabled = transport_snapshot("custom", provider, "api_key", true, None);
+                assert!(request_pair_allowed_for_transport(
+                    &enabled, client, provider
+                ));
+                assert!(
+                    request_pair_transport_unsupported_reason(&enabled, client, provider).is_none()
+                );
+                assert!(request_pair_direct_auth(&enabled, provider).is_some());
+                let endpoint = transport_snapshot(
+                    "custom",
+                    provider,
+                    "api_key",
+                    false,
+                    Some(json!({"enabled":true,"accept_formats":[client]})),
+                );
+                assert!(request_pair_allowed_for_transport(
+                    &endpoint, client, provider
+                ));
+                let rejected = transport_snapshot(
+                    "custom",
+                    provider,
+                    "api_key",
+                    false,
+                    Some(json!({"enabled":true,"reject_formats":[client]})),
+                );
+                assert!(!request_pair_allowed_for_transport(
+                    &rejected, client, provider
+                ));
+            }
+        }
     }
 
     #[test]

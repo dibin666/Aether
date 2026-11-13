@@ -87,6 +87,14 @@ fn input(value: &Value, format: FormatId) -> Result<Value, FormatError> {
         "input_text"
     };
     if let Some(blocks) = value.as_array() {
+        if format == FormatId::OpenAiDecisions
+            && !blocks.is_empty()
+            && blocks
+                .iter()
+                .all(|v| v.is_object() && v["type"] != "input_text" && !unsupported_openai_input(v))
+        {
+            return Ok(value.clone());
+        }
         let mut result = String::new();
         for block in blocks {
             if block["type"] != block_type {
@@ -99,7 +107,8 @@ fn input(value: &Value, format: FormatId) -> Result<Value, FormatError> {
     if value["type"] == block_type {
         return Ok(json!(text(&value["text"], format, "input.text")?));
     }
-    if format == FormatId::OpenAiDecisions && value.is_object() && value.get("type").is_none() {
+    if format == FormatId::OpenAiDecisions && value.is_object() && !unsupported_openai_input(value)
+    {
         return Ok(value.clone());
     }
     Err(invalid(
@@ -107,6 +116,22 @@ fn input(value: &Value, format: FormatId) -> Result<Value, FormatError> {
         "input",
         "unsupported modality or input shape",
     ))
+}
+
+fn unsupported_openai_input(value: &Value) -> bool {
+    matches!(
+        value["type"].as_str(),
+        Some(
+            "input_image"
+                | "input_audio"
+                | "input_file"
+                | "message"
+                | "function_call"
+                | "function_call_output"
+                | "custom_tool_call"
+                | "custom_tool_call_output"
+        )
+    ) || (value.get("role").is_some() && value.get("content").is_some())
 }
 
 pub fn parse_request(
@@ -202,6 +227,13 @@ pub fn parse_request(
         let q = question
             .as_object()
             .ok_or_else(|| invalid(format, "questions", "expected a question object"))?;
+        if question.get("name").is_some_and(|name| !name.is_string()) {
+            return Err(invalid(
+                format,
+                "questions.name",
+                "question names must be strings when supplied",
+            ));
+        }
         for field in q.keys() {
             if !matches!(
                 field.as_str(),
@@ -452,7 +484,9 @@ pub fn emit_request(
     } else {
         "input"
     };
-    let input = if format == FormatId::GeminiDecisions && !decisions.input.is_string() {
+    let input = if (format == FormatId::GeminiDecisions && !decisions.input.is_string())
+        || (format == FormatId::SystemOneDecisions && decisions.input.is_array())
+    {
         json!(decisions.input.to_string())
     } else {
         decisions.input
@@ -962,6 +996,12 @@ mod tests {
                     &FormatContext::default().with_upstream_stream(true)
                 )
                 .is_err());
+                assert!(crate::formats::registry::build_stream_transcoder(
+                    source,
+                    target,
+                    &FormatContext::default()
+                )
+                .is_err());
                 assert!(convert_response(
                     source,
                     target,
@@ -978,6 +1018,58 @@ mod tests {
                 .is_err());
             }
         }
+    }
+
+    #[test]
+    fn decisions_sync_finalize_converts_and_fails_closed() {
+        use crate::formats::shared::sync_products::{
+            maybe_build_standard_sync_finalize_product_from_normalized_payload as finalize,
+            StandardSyncFinalizeNormalizedProduct,
+        };
+        let context = json!({"provider_api_format":"openai:decisions","client_api_format":"systemone:decisions","needs_conversion":true});
+        let body = response("openai:decisions");
+        let product = finalize(
+            "systemone_decisions_sync_finalize",
+            200,
+            Some(&context),
+            Some(&body),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let StandardSyncFinalizeNormalizedProduct::CrossFormat(product) = product else {
+            panic!("expected conversion")
+        };
+        assert_eq!(
+            product.client_body_json["answers"]["team"]["choice"],
+            "shipping"
+        );
+        assert_eq!(product.provider_body_json, body);
+        assert!(finalize(
+            "systemone_decisions_sync_finalize",
+            200,
+            Some(&context),
+            None,
+            None
+        )
+        .is_err());
+        assert!(finalize(
+            "systemone_decisions_sync_finalize",
+            200,
+            Some(&context),
+            Some(&json!({"answers":[{"name":"team","type":"refusal"}]})),
+            None
+        )
+        .is_err());
+        assert!(finalize(
+            "systemone_decisions_sync_finalize",
+            503,
+            Some(&context),
+            Some(&json!({"error":"upstream"})),
+            None
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]
@@ -1032,5 +1124,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result["input"], body["state"]);
+        for input in [
+            json!({"type":"order","amount":5}),
+            json!([{"type":"order","amount":5}]),
+        ] {
+            let mut body = request("openai:decisions");
+            body["input"] = input.clone();
+            for target in ["gemini:decisions", "systemone:decisions"] {
+                let result =
+                    convert_request("openai:decisions", target, &body, &FormatContext::default())
+                        .unwrap();
+                let expected = if target == "gemini:decisions" || input.is_array() {
+                    json!(input.to_string())
+                } else {
+                    input.clone()
+                };
+                assert_eq!(
+                    result[if target == "systemone:decisions" {
+                        "state"
+                    } else {
+                        "input"
+                    }],
+                    expected
+                );
+            }
+        }
     }
 }

@@ -29,6 +29,7 @@ use crate::ai_serving::{
 };
 use crate::{AppState, GatewayError};
 
+mod decisions;
 mod policy;
 mod prepare;
 
@@ -128,6 +129,47 @@ pub(crate) struct LocalSameFormatProviderCandidatePayloadParts {
 }
 
 pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
+    state: &AppState,
+    parts: &http::request::Parts,
+    trace_id: &str,
+    body_json: &serde_json::Value,
+    body_base64: Option<&str>,
+    input: &LocalSameFormatProviderDecisionInput,
+    attempt: &LocalSameFormatProviderCandidateAttempt,
+    spec: LocalSameFormatProviderSpec,
+) -> Result<Option<LocalSameFormatProviderCandidatePayloadParts>, GatewayError> {
+    if aether_ai_formats::formats::matrix::is_decisions_api_format(spec.api_format)
+        && !crate::ai_serving::api_format_alias_matches(
+            spec.api_format,
+            &attempt.eligible.provider_api_format,
+        )
+    {
+        return decisions::resolve_decisions_conversion_candidate(
+            state,
+            parts,
+            trace_id,
+            body_json,
+            body_base64,
+            input,
+            attempt,
+            spec,
+        )
+        .await;
+    }
+    resolve_native_provider_candidate_payload_parts(
+        state,
+        parts,
+        trace_id,
+        body_json,
+        body_base64,
+        input,
+        attempt,
+        spec,
+    )
+    .await
+}
+
+async fn resolve_native_provider_candidate_payload_parts(
     state: &AppState,
     parts: &http::request::Parts,
     trace_id: &str,

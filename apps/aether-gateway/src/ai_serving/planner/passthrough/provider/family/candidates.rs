@@ -13,6 +13,9 @@ use crate::ai_serving::planner::candidate_metadata::{
     LocalExecutionCandidateMetadataParts,
 };
 use crate::ai_serving::planner::candidate_resolution::SkippedLocalExecutionCandidate;
+use crate::ai_serving::planner::candidate_source::{
+    preselect_local_execution_candidates_with_serving, LocalCandidatePreselectionKeyMode,
+};
 use crate::ai_serving::planner::common::extract_requested_model_from_request;
 use crate::ai_serving::planner::decision_input::{
     attach_routing_policy_to_local_requested_model_input,
@@ -34,6 +37,70 @@ use super::{
     LocalSameFormatProviderCandidateAttempt, LocalSameFormatProviderDecisionInput,
     LocalSameFormatProviderSpec,
 };
+
+async fn list_provider_candidates(
+    state: PlannerAppState<'_>,
+    input: &LocalSameFormatProviderDecisionInput,
+    spec: LocalSameFormatProviderSpec,
+) -> Result<
+    (
+        Vec<aether_scheduler_core::SchedulerMinimalCandidateSelectionCandidate>,
+        Vec<SkippedLocalExecutionCandidate>,
+    ),
+    GatewayError,
+> {
+    if aether_ai_formats::formats::matrix::is_decisions_api_format(spec.api_format) {
+        let outcome = preselect_local_execution_candidates_with_serving(
+            state,
+            &input.model_directive_policy,
+            spec.api_format,
+            &input.requested_model,
+            None,
+            spec.require_streaming,
+            input.required_capabilities.as_ref(),
+            &input.auth_snapshot,
+            input.routing_policy.as_ref(),
+            input.client_session_affinity.as_ref(),
+            false,
+            LocalCandidatePreselectionKeyMode::ProviderEndpointKeyModelAndApiFormat,
+        )
+        .await?;
+        return Ok((outcome.candidates, outcome.skipped_candidates));
+    }
+    let resolution = input
+        .model_directive_policy
+        .resolve_reasoning(spec.api_format, Some(&input.requested_model));
+    let routing_model = resolution.base_model().unwrap_or(&input.requested_model);
+    let (candidates, skipped) = state
+        .list_selectable_candidates_with_skip_reasons_for_request_operation(
+            spec.api_format,
+            routing_model,
+            spec.require_streaming,
+            input.required_capabilities.as_ref(),
+            Some(&input.auth_snapshot),
+            input.client_session_affinity.as_ref(),
+            current_unix_secs(),
+            false,
+            spec.operation.map(|operation| operation.as_str()),
+            crate::ai_serving::planner::candidate_ranking::scheduler_ordering_config_for_routing_policy(
+                input.routing_policy.as_ref(),
+            ),
+        )
+        .await?;
+    Ok((
+        candidates,
+        skipped
+            .into_iter()
+            .map(|item| SkippedLocalExecutionCandidate {
+                candidate: item.candidate,
+                skip_reason: item.skip_reason,
+                transport: None,
+                ranking: None,
+                extra_data: None,
+            })
+            .collect(),
+    ))
+}
 
 pub(crate) async fn resolve_local_same_format_provider_decision_input(
     state: &AppState,
@@ -157,28 +224,8 @@ pub(crate) async fn materialize_local_same_format_provider_candidate_attempts(
         input.required_capabilities.as_ref(),
         LocalCandidatePersistencePolicyKind::SameFormatProviderDecision,
     );
-    let model_directive_resolution = input
-        .model_directive_policy
-        .resolve_reasoning(spec_metadata.api_format, Some(&input.requested_model));
-    let routing_model = model_directive_resolution
-        .base_model()
-        .unwrap_or(&input.requested_model);
-    let (candidates, preselection_skipped) = planner_state
-        .list_selectable_candidates_with_skip_reasons_for_request_operation(
-            spec_metadata.api_format,
-            routing_model,
-            spec_metadata.require_streaming,
-            input.required_capabilities.as_ref(),
-            Some(&input.auth_snapshot),
-            input.client_session_affinity.as_ref(),
-            current_unix_secs(),
-            false,
-            spec.operation.map(|operation| operation.as_str()),
-            crate::ai_serving::planner::candidate_ranking::scheduler_ordering_config_for_routing_policy(
-                input.routing_policy.as_ref(),
-            ),
-        )
-        .await?;
+    let (candidates, preselection_skipped) =
+        list_provider_candidates(planner_state, input, spec).await?;
     let outcome = materialize_local_execution_candidates_with_serving(
         planner_state,
         trace_id,
@@ -192,16 +239,7 @@ pub(crate) async fn materialize_local_same_format_provider_candidate_attempts(
         input.request_auth_channel.as_deref(),
         persistence_policy,
         candidates,
-        preselection_skipped
-            .into_iter()
-            .map(|item| SkippedLocalExecutionCandidate {
-                candidate: item.candidate,
-                skip_reason: item.skip_reason,
-                transport: None,
-                ranking: None,
-                extra_data: None,
-            })
-            .collect(),
+        preselection_skipped,
         LocalCandidateResolutionMode::Standard,
         |eligible| {
             let provider_api_format = eligible.provider_api_format.clone();
@@ -266,28 +304,8 @@ pub(crate) async fn build_local_same_format_provider_candidate_attempt_source<'a
         input.required_capabilities.as_ref(),
         LocalCandidatePersistencePolicyKind::SameFormatProviderDecision,
     );
-    let model_directive_resolution = input
-        .model_directive_policy
-        .resolve_reasoning(spec_metadata.api_format, Some(&input.requested_model));
-    let routing_model = model_directive_resolution
-        .base_model()
-        .unwrap_or(&input.requested_model);
-    let (candidates, preselection_skipped) = planner_state
-        .list_selectable_candidates_with_skip_reasons_for_request_operation(
-            spec_metadata.api_format,
-            routing_model,
-            spec_metadata.require_streaming,
-            input.required_capabilities.as_ref(),
-            Some(&input.auth_snapshot),
-            input.client_session_affinity.as_ref(),
-            current_unix_secs(),
-            false,
-            spec.operation.map(|operation| operation.as_str()),
-            crate::ai_serving::planner::candidate_ranking::scheduler_ordering_config_for_routing_policy(
-                input.routing_policy.as_ref(),
-            ),
-        )
-        .await?;
+    let (candidates, preselection_skipped) =
+        list_provider_candidates(planner_state, input, spec).await?;
 
     Ok(build_local_execution_candidate_attempt_source_with_serving(
         planner_state,
@@ -302,16 +320,7 @@ pub(crate) async fn build_local_same_format_provider_candidate_attempt_source<'a
         input.request_auth_channel.as_deref(),
         persistence_policy,
         candidates,
-        preselection_skipped
-            .into_iter()
-            .map(|item| SkippedLocalExecutionCandidate {
-                candidate: item.candidate,
-                skip_reason: item.skip_reason,
-                transport: None,
-                ranking: None,
-                extra_data: None,
-            })
-            .collect(),
+        preselection_skipped,
         LocalCandidateResolutionMode::Standard,
         |eligible| {
             let provider_api_format = eligible.provider_api_format.clone();

@@ -104,6 +104,9 @@ pub fn map_usage_from_response(
 }
 
 fn api_family(api_format: &str) -> String {
+    if aether_ai_formats::is_gemini_decisions_api_format(api_format) {
+        return "gemini_decisions".to_string();
+    }
     api_format
         .split(':')
         .next()
@@ -203,7 +206,20 @@ fn image_result_count(value: Option<&serde_json::Value>) -> Option<i64> {
 
 fn base_mapping(api_format: &str) -> BTreeMap<String, String> {
     let mut mapping = BTreeMap::new();
+    if aether_ai_formats::is_systemone_decisions_api_format(api_format) {
+        mapping.insert(
+            "cached_input_tokens".to_string(),
+            "cache_read_tokens".to_string(),
+        );
+    }
     match api_family(api_format).as_str() {
+        "gemini_decisions" => {
+            mapping.insert("total_input_tokens".to_string(), "input_tokens".to_string());
+            mapping.insert(
+                "total_output_tokens".to_string(),
+                "output_tokens".to_string(),
+            );
+        }
         "openai" => {
             mapping.insert("prompt_tokens".to_string(), "input_tokens".to_string());
             mapping.insert("completion_tokens".to_string(), "output_tokens".to_string());
@@ -470,6 +486,39 @@ fn resolve_usage_value<'a>(
 #[cfg(test)]
 mod tests {
     use super::{map_usage, map_usage_from_response};
+
+    #[test]
+    fn maps_decisions_usage_without_generate_content_field_names() {
+        for (format, response) in [
+            (
+                "gemini:decisions",
+                serde_json::json!({"usage":{"total_input_tokens":100,"total_output_tokens":0,"total_tokens":100}}),
+            ),
+            (
+                "openai:decisions",
+                serde_json::json!({"usage":{"input_tokens":100,"output_tokens":0,"total_tokens":100}}),
+            ),
+            (
+                "systemone:decisions",
+                serde_json::json!({"usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":0}}),
+            ),
+        ] {
+            let usage = map_usage_from_response(&response, format);
+            assert_eq!(usage.input_tokens, 100);
+            assert_eq!(usage.output_tokens, 0);
+            if format == "systemone:decisions" {
+                assert_eq!(usage.cache_read_tokens, 20);
+            }
+            assert_eq!(
+                map_usage_from_response(&serde_json::json!({"usage":null}), format).input_tokens,
+                0
+            );
+            assert_eq!(
+                map_usage_from_response(&serde_json::json!({}), format).input_tokens,
+                0
+            );
+        }
+    }
 
     #[test]
     fn maps_openai_usage() {

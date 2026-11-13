@@ -512,6 +512,38 @@ pub fn maybe_build_standard_sync_finalize_product_from_normalized_payload(
     body_json: Option<&Value>,
     body_base64: Option<&str>,
 ) -> Result<Option<StandardSyncFinalizeNormalizedProduct>, AiSurfaceFinalizeError> {
+    if status_code < 400 {
+        if let Some(context) = report_context {
+            let provider = context["provider_api_format"].as_str().unwrap_or_default();
+            let client = context["client_api_format"].as_str().unwrap_or_default();
+            if crate::formats::matrix::is_decisions_api_format(provider)
+                && crate::formats::matrix::is_decisions_api_format(client)
+                && !aether_ai_formats::api_format_alias_matches(provider, client)
+            {
+                let decoded = body_base64.and_then(decode_non_stream_sync_capture_body);
+                let provider_body = body_json.or(decoded.as_ref()).ok_or_else(|| {
+                    AiSurfaceFinalizeError::new("Decisions conversion requires a JSON response")
+                })?;
+                let client_body = convert_response(
+                    provider,
+                    client,
+                    provider_body,
+                    &format_context_from_report_context(context),
+                )
+                .map_err(|error| {
+                    AiSurfaceFinalizeError::new(format!(
+                        "Decisions response conversion failed: {error}"
+                    ))
+                })?;
+                return Ok(Some(StandardSyncFinalizeNormalizedProduct::CrossFormat(
+                    StandardCrossFormatSyncProduct {
+                        client_body_json: client_body,
+                        provider_body_json: provider_body.clone(),
+                    },
+                )));
+            }
+        }
+    }
     let capture_stream_body_base64 = if status_code < 400
         && body_base64.is_none()
         && sync_finalize_supports_capture_envelope(report_kind, report_context)

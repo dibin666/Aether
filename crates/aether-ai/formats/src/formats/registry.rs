@@ -536,10 +536,18 @@ pub fn build_stream_transcoder(
     target_format: &str,
     _ctx: &FormatContext,
 ) -> Result<StreamTranscoderSpec, FormatError> {
-    Ok(StreamTranscoderSpec {
-        source: parse_format(source_format)?,
-        target: parse_format(target_format)?,
-    })
+    let source = parse_format(source_format)?;
+    let target = parse_format(target_format)?;
+    if crate::formats::decisions::is_decisions(source)
+        || crate::formats::decisions::is_decisions(target)
+    {
+        return Err(FormatError::UnsupportedField {
+            format: source.as_str().to_string(),
+            field: "stream".to_string(),
+            reason: "Decisions conversion is sync-only".to_string(),
+        });
+    }
+    Ok(StreamTranscoderSpec { source, target })
 }
 
 fn parse_format(format: &str) -> Result<FormatId, FormatError> {
